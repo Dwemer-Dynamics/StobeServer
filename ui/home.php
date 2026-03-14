@@ -465,7 +465,7 @@ if (count($wordCloud) > 0) {
             const words = " . json_encode($wordCloud) . ";
             const display = document.getElementById('word-count-display');
             const color = d3.scaleOrdinal()
-                .range(['#e6b76c', 'rgb(242, 144, 47)', 'rgb(242, 164, 77)', 'rgb(242, 184, 107)', 'rgb(242, 204, 137)']);
+                .range(['#e6b76c', '#d9aa62', '#cc9d58', '#f0c888', '#f4dcb2']);
 
             const layout = d3.layout.cloud()
                 .size([document.getElementById('word-cloud').clientWidth, 500])
@@ -511,7 +511,7 @@ if (count($wordCloud) > 0) {
             });
         </script>";
 } else {
-    $wordWidgetContent = "<div style='color:#9ca3af; text-align:center; padding:40px 20px;'>Not enough chat history to build a word list yet.</div>";
+    $wordWidgetContent = "<div style='color:#d9aa62; text-align:center; padding:40px 20px;'>Not enough chat history to build a word list yet.</div>";
 }
 
 ?>
@@ -750,6 +750,12 @@ if (count($wordCloud) > 0) {
             padding: 20px;
             position: relative;
         }
+        .widget-recent-words .widget-header h3 {
+            color: #e6b76c;
+        }
+        .widget-recent-words .widget-content {
+            color: #e6b76c;
+        }
         .word-cloud-text {
             font-family: 'Arial', sans-serif;
             cursor: pointer;
@@ -840,7 +846,7 @@ if (count($wordCloud) > 0) {
             <?= render_widget('Recent Dialogue', $recentDialogueContent, 'table') ?>
             <?= render_widget('STOBE Stats', $statsContent, 'default') ?>
             <?= render_widget('Latest Diary Entry', $diaryContent, 'default', ['class' => 'widget-full-width']) ?>
-            <?= render_widget('Recent Most Used Words', $wordWidgetContent, 'default', ['class' => 'widget-full-width']) ?>
+            <?= render_widget('Recent Most Used Words', $wordWidgetContent, 'default', ['class' => 'widget-full-width widget-recent-words']) ?>
         </div>
         <?= $locationsTraveledModalHtml ?>
 
