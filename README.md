@@ -1,0 +1,42 @@
+# StobeServer
+
+PHP backend server for the Stobe AI Framework for Kenshi. 
+It is the Kenshi-side counterpart to HerikaServer patterns (event routing, prompt building, connector model), with Stobe-specific schema and game logic.
+
+## Runtime Topology
+
+1. Kenshi + `Stobe.dll` sends HTTP events to StobeServer.
+2. StobeServer routes events through `main.php` and `processor/*`.
+3. Prompt/context is built from DB state and recent event history.
+4. LLM connectors generate responses.
+5. Responses are streamed back to the plugin and optional TTS is produced/cached.
+
+## Key Paths
+
+- `main.php`, `stream.php`, `chat.php`, `gamedata.php`, `stt.php`: main HTTP entry points.
+- `lib/bootstrap.php`: canonical runtime bootstrap and shared includes.
+- `lib/settings.php`: `general_settings` read/write helpers.
+- `lib/chat_helper_functions.php`: prompt assembly, world knowledge retrieval, response shaping.
+- `processor/`: event processors (`chat.php`, `rechat.php`, `bored.php`, `combat.php`, `context.php`, `location.php`, etc).
+- `connector/`: LLM connectors.
+- `tts/`, `stt/`: speech connectors.
+- `ui/`: dashboard and admin pages.
+- `data/schema.sql`: schema + default settings.
+- `log/`: runtime logs.
+- `soundcache/`: TTS audio cache.
+
+## Settings Model
+
+StobeServer is DB-config driven:
+
+- Runtime settings are stored in `general_settings`.
+- There is no runtime `conf.php`/INI settings model for server behavior.
+- Global Settings UI reads/writes those DB keys.
+
+
+
+## Requirements
+
+- PHP 8.2+ with Apache
+- PostgreSQL with pgvector
+- DwemerDistro/WSL runtime (recommended deployment target)

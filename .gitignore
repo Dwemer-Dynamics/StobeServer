@@ -1,0 +1,30 @@
+/ext/*
+!/ext/generic_installer.php
+!/ext/relationship_system/
+!/ext/relationship_system/**
+# Runtime logs
+/log/*
+!/log/.gitkeep
+
+# Generated TTS cache
+/soundcache/*
+!/soundcache/.gitkeep
+*/Zone.Identifier
+
+# Local developer tooling
+/.vscode/
+/.idea/
+*.code-workspace
+
+# Local env / temp files
+/.env
+/.env.*
+!/.env.example
+/.phpunit.result.cache
+/tmp/
+*.tmp
+*.bak
+*.orig
+*.swp
+*.swo
+*.log

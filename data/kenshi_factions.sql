@@ -1,0 +1,1 @@
+-- Deprecated: no static Kenshi race/faction lists are persisted in conf_opts.
