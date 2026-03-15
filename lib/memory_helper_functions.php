@@ -615,12 +615,8 @@ function stobeRegularMemoryGenerateSummary(string $peopleKey, array $rows): stri
         $peopleLabel = '(unknown group)';
     }
 
-    $defaultSystemPrompt = "<regular_memory_summarizer>\n"
-        . "  <rule>Summarize accumulated episodic memories for a Kenshi participant group.</rule>\n"
-        . "  <rule>Stay factual to the provided events. Do not invent new events.</rule>\n"
-        . "  <rule>Keep durable continuity: relationships, conflicts, injuries, objectives, and unresolved tensions among participants.</rule>\n"
-        . "  <rule>Output plain text only.</rule>\n"
-        . "</regular_memory_summarizer>";
+    $defaultSystemPrompt = "Focus on key events, tagging characters, locations, and factions accurately. "
+        . "Ensure memories align and maintain chronological order while foreshadowing future arcs.";
     $systemPrompt = function_exists('stobeGetPromptTemplateValue')
         ? stobeGetPromptTemplateValue('regular_memory_summarizer', $defaultSystemPrompt)
         : $defaultSystemPrompt;

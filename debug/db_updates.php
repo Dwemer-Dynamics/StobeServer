@@ -816,6 +816,18 @@ PROMPT;
                     updated_at = NOW()
             ");
         });
+        $applyPatch('prompts', 202603150007, static function () use ($db): void {
+            $prompt = 'Focus on key events, tagging characters, locations, and factions accurately. Ensure memories align and maintain chronological order while foreshadowing future arcs.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('regular_memory_summarizer', $1, 'System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.')
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
         $applyPatch('core_npc_master', 202603150006, static function () use ($db): void {
             $db->exec("CREATE INDEX IF NOT EXISTS idx_core_npc_master_history_npc_history ON core_npc_master_history (npc_id, history_id DESC)");
             $db->exec("CREATE OR REPLACE FUNCTION core_npc_master_history_audit_fn()

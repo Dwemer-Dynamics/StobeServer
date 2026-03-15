@@ -2073,12 +2073,7 @@ BONDED: Absolute trust, would die for them$$,
 ),
 (
     'regular_memory_summarizer',
-    $$<regular_memory_summarizer>
-  <rule>Summarize accumulated episodic memories for a Kenshi participant group.</rule>
-  <rule>Stay factual to the provided events. Do not invent new events.</rule>
-  <rule>Keep durable continuity: relationships, conflicts, injuries, objectives, and unresolved tensions among participants.</rule>
-  <rule>Output plain text only.</rule>
-</regular_memory_summarizer>$$,
+    $$Focus on key events, tagging characters, locations, and factions accurately. Ensure memories align and maintain chronological order while foreshadowing future arcs.$$,
     $$System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.$$
 ),
 (
