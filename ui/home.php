@@ -254,7 +254,6 @@ $currentPlaythroughContent = "
         <tr><th>Stats</th><th>Value</th></tr>
         <tr><td>Last Played (UTC)</td><td>" . h($lastPlayedUtc) . "</td></tr>
         <tr><td>Current In-Game Time</td><td>" . h($currentInGameTime) . "</td></tr>
-        <tr><td>Background Processor</td><td>Not running</td></tr>
     </table>
 </div>";
 

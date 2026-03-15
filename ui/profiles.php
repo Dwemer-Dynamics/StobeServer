@@ -638,37 +638,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             </div>
                         </div>
 
-                        <div class="provider-card" id="meta_cat_diary">
-                            <div class="provider-head">
-                                <div class="provider-title">
-                                    <div class="provider-icon">&#x1F4D3;</div>
-                                    <div>Diary Controls (WIP, not working yet)</div>
-                                </div>
-                            </div>
-                            <div class="provider-body">
-                                <div class="setting-row">
-                                    <div>
-                                        <div class="setting-key">DIARY_DAYS</div>
-                                        <div class="setting-desc">Minimum in-game days between automatic diary entries.</div>
-                                    </div>
-                                    <div class="range-pair">
-                                        <input type="range" id="meta_diary_days_range" min="0" max="60" step="1" value="<?= h($metaInt('DIARY_DAYS')) ?>">
-                                        <input type="number" id="meta_diary_days_num" name="meta_vis[DIARY_DAYS]" min="0" max="60" step="1" value="<?= h($metaInt('DIARY_DAYS')) ?>">
-                                    </div>
-                                </div>
-                                <div class="setting-row">
-                                    <div>
-                                        <div class="setting-key">DIARY_COOLDOWN</div>
-                                        <div class="setting-desc">Cooldown in seconds before another diary write is allowed.</div>
-                                    </div>
-                                    <div class="range-pair">
-                                        <input type="range" id="meta_diary_cooldown_range" min="0" max="3600" step="10" value="<?= h($metaInt('DIARY_COOLDOWN')) ?>">
-                                        <input type="number" id="meta_diary_cooldown_num" name="meta_vis[DIARY_COOLDOWN]" min="0" max="3600" step="10" value="<?= h($metaInt('DIARY_COOLDOWN')) ?>">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
                         <div class="provider-card" id="meta_cat_dynamic_fields">
                             <div class="provider-head">
                                 <div class="provider-title">
@@ -743,8 +712,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
         ['meta_context_history_range', 'meta_context_history_num', 0, 300],
         ['meta_context_history_diary_range', 'meta_context_history_diary_num', 0, 300],
         ['meta_context_history_dyn_range', 'meta_context_history_dyn_num', 0, 300],
-        ['meta_diary_days_range', 'meta_diary_days_num', 0, 60],
-        ['meta_diary_cooldown_range', 'meta_diary_cooldown_num', 0, 3600],
     ].forEach(function(pair){
         bindRangePair(pair[0], pair[1], pair[2], pair[3]);
     });
@@ -810,4 +777,3 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 })();
 </script>
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'tmpl' . DIRECTORY_SEPARATOR . 'footer.html'); ?>
-
