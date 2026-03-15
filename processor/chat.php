@@ -13,11 +13,26 @@ if (!function_exists('stobeNormalizeManualChatActionKey')) {
             'remove_limb_right_arm',
             'remove_limb_left_leg',
             'remove_limb_right_leg',
+            'kill',
         ];
         if (!in_array($normalized, $allowed, true)) {
             return '';
         }
         return $normalized;
+    }
+}
+
+if (!function_exists('stobeManualChatActionType')) {
+    function stobeManualChatActionType(string $actionKey): string
+    {
+        $normalized = strtolower(trim($actionKey));
+        if ($normalized === 'kill') {
+            return 'kill';
+        }
+        if (strpos($normalized, 'remove_limb_') === 0) {
+            return 'remove_limb';
+        }
+        return '';
     }
 }
 
@@ -48,8 +63,13 @@ if (!function_exists('stobeManualChatActionLimbLabel')) {
 }
 
 if (!function_exists('stobeManualActionTargetCannotSpeak')) {
-    function stobeManualActionTargetCannotSpeak(array $npcData): bool
+    function stobeManualActionTargetCannotSpeak(array $npcData, string $actionKey = ''): bool
     {
+        $actionType = stobeManualChatActionType($actionKey);
+        if ($actionType === 'kill') {
+            return true;
+        }
+
         $cannotSpeakStates = ['dead', 'unconscious'];
 
         $characterState = strtolower(trim(strval($npcData['character_state'] ?? '')));
@@ -107,10 +127,181 @@ if (!function_exists('stobeBuildManualActionPainFallback')) {
     ): string {
         $safeTarget = trim($targetNpc) !== '' ? trim($targetNpc) : 'The target';
         $safeActor = trim($actorName) !== '' ? trim($actorName) : 'the attacker';
+        $actionType = stobeManualChatActionType($actionKey);
+        if ($actionType === 'kill') {
+            // For manual kill, avoid emitting a second world notification.
+            // The plugin kill execution message is the single source of truth.
+            return '';
+        }
         $limbLabel = stobeManualChatActionLimbLabel($actionKey);
         $notice = $safeTarget . ' convulses in overwhelming pain as '
             . $safeActor . ' saws into their ' . $limbLabel . '.';
         return 'ROLEPLAY_ACTION@' . $notice;
+    }
+}
+
+if (!function_exists('stobeTraderInventoryEntryCountFromNpcData')) {
+    function stobeTraderInventoryEntryCountFromNpcData(array $npcData): int
+    {
+        $metadataRaw = $npcData['metadata'] ?? [];
+        $metadata = [];
+        if (is_array($metadataRaw)) {
+            $metadata = $metadataRaw;
+        } elseif (is_string($metadataRaw) && trim($metadataRaw) !== '') {
+            $decoded = json_decode($metadataRaw, true);
+            if (is_array($decoded)) {
+                $metadata = $decoded;
+            }
+        }
+
+        $entriesRaw = $metadata['trader_inventory_items'] ?? [];
+        $entries = [];
+        if (is_array($entriesRaw)) {
+            $entries = $entriesRaw;
+        } elseif (is_string($entriesRaw) && trim($entriesRaw) !== '') {
+            $decodedEntries = json_decode($entriesRaw, true);
+            if (is_array($decodedEntries)) {
+                $entries = $decodedEntries;
+            }
+        }
+
+        $count = 0;
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $name = trim(strval($entry['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $count++;
+        }
+        if ($count > 0) {
+            return $count;
+        }
+
+        $shopSourcesRaw = $metadata['trader_shop_sources'] ?? [];
+        $shopSources = [];
+        if (is_array($shopSourcesRaw)) {
+            $shopSources = $shopSourcesRaw;
+        } elseif (is_string($shopSourcesRaw) && trim($shopSourcesRaw) !== '') {
+            $decodedShopSources = json_decode($shopSourcesRaw, true);
+            if (is_array($decodedShopSources)) {
+                $shopSources = $decodedShopSources;
+            }
+        }
+
+        if (count($shopSources) > 0) {
+            return max(1, intval($metadata['trader_shop_item_count'] ?? 0));
+        }
+
+        return 0;
+    }
+}
+
+if (!function_exists('stobeNpcLikelyTraderFromData')) {
+    function stobeNpcLikelyTraderFromData(array $npcData): bool
+    {
+        $metadataRaw = $npcData['metadata'] ?? [];
+        $metadata = [];
+        if (is_array($metadataRaw)) {
+            $metadata = $metadataRaw;
+        } elseif (is_string($metadataRaw) && trim($metadataRaw) !== '') {
+            $decoded = json_decode($metadataRaw, true);
+            if (is_array($decoded)) {
+                $metadata = $decoded;
+            }
+        }
+
+        $isTraderRaw = $metadata['is_trader'] ?? ($npcData['is_trader'] ?? false);
+        if (is_bool($isTraderRaw)) {
+            return $isTraderRaw;
+        }
+        if (is_int($isTraderRaw) || is_float($isTraderRaw)) {
+            return intval($isTraderRaw) !== 0;
+        }
+        if (is_string($isTraderRaw)) {
+            $normalized = strtolower(trim($isTraderRaw));
+            return in_array($normalized, ['1', 'true', 'yes', 'on', 'enabled'], true);
+        }
+        return false;
+    }
+}
+
+if (!function_exists('stobeMessageLooksTradeIntent')) {
+    function stobeMessageLooksTradeIntent(string $message): bool
+    {
+        $text = strtolower(trim($message));
+        if ($text === '') {
+            return false;
+        }
+        $keywords = [
+            'trade',
+            'trading',
+            'business',
+            'shop',
+            'buy',
+            'sell',
+            'for sale',
+            'cats',
+            'price',
+            'cost',
+            'merchant',
+            'vendor',
+        ];
+        foreach ($keywords as $keyword) {
+            if (strpos($text, $keyword) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('stobeRefreshNpcDataForTraderInventory')) {
+    function stobeRefreshNpcDataForTraderInventory(string $targetNpc, array $npcData, string $message): array
+    {
+        $initialCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
+        if ($initialCount > 0) {
+            return $npcData;
+        }
+
+        $likelyTrader = stobeNpcLikelyTraderFromData($npcData);
+        $tradeIntent = stobeMessageLooksTradeIntent($message);
+        if (!$likelyTrader && !$tradeIntent) {
+            return $npcData;
+        }
+
+        $maxAttempts = 8;
+        $sleepMs = 100;
+        $latest = $npcData;
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            usleep($sleepMs * 1000);
+            $refreshed = getNpcData($targetNpc);
+            if (!is_array($refreshed)) {
+                continue;
+            }
+            $latest = $refreshed;
+            $count = stobeTraderInventoryEntryCountFromNpcData($refreshed);
+            if ($count > 0) {
+                stobeLogInfo('Chat trader metadata hydration succeeded', [
+                    'target_npc' => $targetNpc,
+                    'attempt' => $attempt,
+                    'entry_count' => $count,
+                    'trade_intent' => $tradeIntent,
+                    'is_trader' => $likelyTrader,
+                ]);
+                return $refreshed;
+            }
+        }
+
+        stobeLogDebug('Chat trader metadata hydration timed out', [
+            'target_npc' => $targetNpc,
+            'trade_intent' => $tradeIntent,
+            'is_trader' => $likelyTrader,
+            'entry_count' => stobeTraderInventoryEntryCountFromNpcData($latest),
+        ]);
+        return $latest;
     }
 }
 
@@ -227,6 +418,18 @@ if ($manualActionActive) {
 }
 $manualActionLimbToken = stobeManualChatActionLimbToken($manualActionKey);
 $manualActionLimbLabel = stobeManualChatActionLimbLabel($manualActionKey);
+$manualActionType = stobeManualChatActionType($manualActionKey);
+
+$npcData = stobeRefreshNpcDataForTraderInventory($targetNpc, is_array($npcData) ? $npcData : [], $message);
+$traderInventoryEntryCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
+if ($traderInventoryEntryCount > 0 || stobeMessageLooksTradeIntent($message)) {
+    stobeLogInfo('Chat prompt trader inventory context', [
+        'target_npc' => $targetNpc,
+        'speaker' => $speaker,
+        'entry_count' => $traderInventoryEntryCount,
+        'is_trader' => stobeNpcLikelyTraderFromData($npcData),
+    ]);
+}
 
 $contextHistory = getNpcProfileIntegerSetting(
     $npcData,
@@ -300,7 +503,7 @@ if ($dialogueMode === 'autochat' && trim($message) !== '') {
 }
 
 $manualActionCannotSpeak = $manualActionActive
-    ? stobeManualActionTargetCannotSpeak($npcData)
+    ? stobeManualActionTargetCannotSpeak($npcData, $manualActionKey)
     : false;
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
@@ -321,19 +524,25 @@ if ($deliveryStyleInstruction !== '') {
         . "</speech_mode>";
 }
 if ($manualActionActive) {
-    $manualInstruction = $manualActionCannotSpeak
-        ? 'Manual limb removal is happening now, and the target cannot speak. Do not invent coherent spoken dialogue for the target.'
-        : 'Manual limb removal is happening now. The target should react with immediate extreme pain, shock, and desperation.';
+    if ($manualActionType === 'kill') {
+        $manualInstruction = 'Manual execution is happening now. The target is killed immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
+    } else {
+        $manualInstruction = $manualActionCannotSpeak
+            ? 'Manual limb removal is happening now, and the target cannot speak. Do not invent coherent spoken dialogue for the target.'
+            : 'Manual limb removal is happening now. The target should react with immediate extreme pain, shock, and desperation.';
+    }
     $systemPrompt .= "\n\n<manual_action_context>\n"
-        . "  <type>remove_limb</type>\n"
+        . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
         . "  <action_key>" . stobePromptXmlEscape($manualActionKey) . "</action_key>\n"
         . "  <actor>" . stobePromptXmlEscape($manualActionActor) . "</actor>\n"
         . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-        . "  <limb_token>" . stobePromptXmlEscape($manualActionLimbToken) . "</limb_token>\n"
-        . "  <limb_label>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb_label>\n"
         . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n"
-        . "  <instruction>" . stobePromptXmlEscape($manualInstruction) . "</instruction>\n"
-        . "</manual_action_context>";
+        . "  <instruction>" . stobePromptXmlEscape($manualInstruction) . "</instruction>\n";
+    if ($manualActionType === 'remove_limb') {
+        $systemPrompt .= "  <limb_token>" . stobePromptXmlEscape($manualActionLimbToken) . "</limb_token>\n"
+            . "  <limb_label>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb_label>\n";
+    }
+    $systemPrompt .= "</manual_action_context>";
 }
 $userContent = "<player_input>\n"
     . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
@@ -343,12 +552,14 @@ $userContent = "<player_input>\n"
     . "</player_input>";
 if ($manualActionActive) {
     $userContent .= "\n<manual_action_event>\n"
-        . "  <type>remove_limb</type>\n"
+        . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
         . "  <actor>" . stobePromptXmlEscape($manualActionActor) . "</actor>\n"
         . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-        . "  <limb>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb>\n"
-        . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n"
-        . "</manual_action_event>";
+        . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n";
+    if ($manualActionType === 'remove_limb') {
+        $userContent .= "  <limb>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb>\n";
+    }
+    $userContent .= "</manual_action_event>";
 }
 if ($dialogueMode === 'cheat') {
     $priorityInstruction = "PRIORITY INSTRUCTION - {$targetNpc} must do this, even if it breaks character roleplay: {$message}";
@@ -399,9 +610,12 @@ $manualActionForcedEmoteOnly = false;
 if ($manualActionActive && $manualActionCannotSpeak) {
     $manualActionForcedEmoteOnly = true;
     $responseText = '';
-    $responseActions = [
-        stobeBuildManualActionPainFallback($targetNpc, $manualActionActor, $manualActionKey),
-    ];
+    $fallbackAction = stobeBuildManualActionPainFallback(
+        $targetNpc,
+        $manualActionActor,
+        $manualActionKey
+    );
+    $responseActions = $fallbackAction !== '' ? [$fallbackAction] : [];
     stobeLogInfo('Manual action fallback emitted: target cannot speak', [
         'target_npc' => $targetNpc,
         'manual_action' => $manualActionKey,

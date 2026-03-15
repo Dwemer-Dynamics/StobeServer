@@ -244,8 +244,8 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 END IF;
             END $$;");
 
+            $db->exec("ALTER TABLE core_npc_master ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT ''");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS bounty JSONB DEFAULT '{}'::jsonb");
-            $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS knowledge_tags TEXT DEFAULT ''");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT ''");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS snapshot_reason VARCHAR(64) DEFAULT 'snapshot'");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS snapshot_hash TEXT DEFAULT ''");
@@ -273,7 +273,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     goals, relationships, voiceid, metadata, race, faction, gender,
                     profile_id, dynamic_profile, extended_data, md5, gamets_last_updated,
                     bounty, limbs, blood, hunger, tags, is_animal, is_slave,
-                    knowledge_tags, world_knowledge_tags,
+                    world_knowledge_tags,
                     snapshot_reason, snapshot_hash, source_created_at, source_updated_at, created
                 ) VALUES (
                     COALESCE(src.id,0), COALESCE(src.name,''), COALESCE(src.original_name,''),
@@ -283,7 +283,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     COALESCE(src.goals,''), COALESCE(src.relationships,''), COALESCE(src.voiceid,''), COALESCE(src.metadata,'{}'::jsonb), COALESCE(src.race,''), COALESCE(src.faction,''), COALESCE(src.gender,''),
                     src.profile_id, FALSE, COALESCE(src.extended_data,'{}'::jsonb), COALESCE(src.md5,''), COALESCE(src.gamets_last_updated,0),
                     COALESCE(src.bounty,'{}'::jsonb), COALESCE(src.limbs,'{}'::jsonb), COALESCE(src.blood,'0/0'), COALESCE(src.hunger,'300/300'), COALESCE(src.tags,''), COALESCE(src.is_animal,FALSE), COALESCE(src.is_slave,FALSE),
-                    COALESCE(src.knowledge_tags,''), COALESCE(src.world_knowledge_tags,''),
+                    COALESCE(src.world_knowledge_tags,''),
                     reason, md5(COALESCE(to_jsonb(src)::text,'')), src.created_at, src.updated_at, NOW()
                 );
                 IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -425,12 +425,12 @@ PROMPT;
         });
 
         $applyPatch('core_action', 202603130204, static function () use ($db): void {
-            $desc = 'Display a descriptive roleplay action as a world notification. Put action text in target or message field.';
+            $desc = 'Describe a roleplay action along with your dialogue.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('ROLEPLAY_ACTION','RoleplayAction',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
-                VALUES ('TRAVEL_LOCATION','TravelLocation','Travel to a previously visited location by name. Uses stored x/y/z coordinates from location_zones.',TRUE,NOW())
+                VALUES ('TRAVEL_LOCATION','TravelLocation','Travel to a previously visited location by name.',TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()");
             $db->exec("DELETE FROM core_action WHERE UPPER(COALESCE(command,'')) IN ('NOTIFY','RELEASE_PLAYER','RELEASE_PRISONER','RELEASEPLAYER')");
             $db->exec("UPDATE core_action_custom SET command='ROLEPLAY_ACTION', action_name='RoleplayAction', description=$1, updated_at=NOW() WHERE UPPER(COALESCE(command,''))='NOTIFY'", [$desc]);
@@ -441,6 +441,156 @@ PROMPT;
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('REMOVE_LIMB','RemoveLimb',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_action', 202603140206, static function () use ($db): void {
+            $desc = 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time. Put the item name in target or message field.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('USE_DRUGS','UseDrugs',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_action', 202603140207, static function () use ($db): void {
+            $desc = 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout. Put the item name in target or message field.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('DRINK','Drink',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_action', 202603140208, static function () use ($db): void {
+            $desc = 'Kill a helpless target immediately.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('KILL','Kill',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_npc_master', 202603140211, static function () use ($db): void {
+            $db->exec("DO $$
+            DECLARE
+                schema_name TEXT;
+                source_schema TEXT;
+                col_list TEXT;
+            BEGIN
+                FOR schema_name IN
+                    SELECT t.table_schema
+                    FROM information_schema.tables t
+                    WHERE t.table_name='core_npc_master' AND t.table_type='BASE TABLE'
+                LOOP
+                    EXECUTE format(
+                        'ALTER TABLE %I.core_npc_master ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT %L',
+                        schema_name,
+                        ''
+                    );
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT t.table_schema
+                    FROM information_schema.tables t
+                    WHERE t.table_name='core_npc_master_history' AND t.table_type='BASE TABLE'
+                LOOP
+                    EXECUTE format(
+                        'ALTER TABLE %I.core_npc_master_history ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT %L',
+                        schema_name,
+                        ''
+                    );
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT v.table_schema
+                    FROM information_schema.views v
+                    WHERE v.table_name='core_npc'
+                LOOP
+                    source_schema := schema_name;
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables t
+                        WHERE t.table_schema = schema_name
+                          AND t.table_name = 'core_npc_master'
+                          AND t.table_type = 'BASE TABLE'
+                    ) THEN
+                        source_schema := 'public';
+                    END IF;
+
+                    SELECT string_agg(format('%I', c.column_name), ', ' ORDER BY c.ordinal_position)
+                    INTO col_list
+                    FROM information_schema.columns c
+                    WHERE c.table_schema = source_schema
+                      AND c.table_name = 'core_npc_master'
+                      AND c.column_name <> 'knowledge_tags';
+
+                    IF COALESCE(col_list, '') <> '' THEN
+                        EXECUTE format('DROP VIEW IF EXISTS %I.core_npc', schema_name);
+                        EXECUTE format(
+                            'CREATE VIEW %I.core_npc AS SELECT %s FROM %I.core_npc_master',
+                            schema_name,
+                            col_list,
+                            source_schema
+                        );
+                    END IF;
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT c.table_schema
+                    FROM information_schema.columns c
+                    WHERE c.table_name='core_npc_master' AND c.column_name='knowledge_tags'
+                LOOP
+                    EXECUTE format(
+                        'UPDATE %I.core_npc_master SET world_knowledge_tags = COALESCE(NULLIF(world_knowledge_tags, %L), NULLIF(knowledge_tags, %L), %L)',
+                        schema_name,
+                        '',
+                        '',
+                        ''
+                    );
+                    EXECUTE format('ALTER TABLE %I.core_npc_master DROP COLUMN knowledge_tags', schema_name);
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT c.table_schema
+                    FROM information_schema.columns c
+                    WHERE c.table_name='core_npc_master_history' AND c.column_name='knowledge_tags'
+                LOOP
+                    EXECUTE format(
+                        'UPDATE %I.core_npc_master_history SET world_knowledge_tags = COALESCE(NULLIF(world_knowledge_tags, %L), NULLIF(knowledge_tags, %L), %L)',
+                        schema_name,
+                        '',
+                        '',
+                        ''
+                    );
+                    EXECUTE format('ALTER TABLE %I.core_npc_master_history DROP COLUMN knowledge_tags', schema_name);
+                END LOOP;
+            END $$;");
+            $db->exec("CREATE OR REPLACE FUNCTION core_npc_master_history_audit_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE src RECORD; reason TEXT;
+            BEGIN
+                IF TG_OP='DELETE' THEN src := OLD; reason := 'delete';
+                ELSIF TG_OP='INSERT' THEN src := NEW; reason := 'create';
+                ELSE src := NEW; reason := 'snapshot';
+                END IF;
+                INSERT INTO core_npc_master_history (
+                    npc_id, name, original_name, npc_favorite, lock_profile,
+                    prompt_head, personality, backstory, emote_moods, occupation,
+                    appearance, equipment, inventory, skills, speechstyle,
+                    goals, relationships, voiceid, metadata, race, faction, gender,
+                    profile_id, dynamic_profile, extended_data, md5, gamets_last_updated,
+                    bounty, limbs, blood, hunger, tags, is_animal, is_slave,
+                    world_knowledge_tags,
+                    snapshot_reason, snapshot_hash, source_created_at, source_updated_at, created
+                ) VALUES (
+                    COALESCE(src.id,0), COALESCE(src.name,''), COALESCE(src.original_name,''),
+                    COALESCE(src.npc_favorite,FALSE), COALESCE(src.lock_profile,FALSE),
+                    COALESCE(src.prompt_head,''), COALESCE(src.personality,''), COALESCE(src.backstory,''), COALESCE(src.emote_moods,''), COALESCE(src.occupation,''),
+                    COALESCE(src.appearance,''), COALESCE(src.equipment,''), COALESCE(src.inventory,''), COALESCE(src.skills,''), COALESCE(src.speechstyle,''),
+                    COALESCE(src.goals,''), COALESCE(src.relationships,''), COALESCE(src.voiceid,''), COALESCE(src.metadata,'{}'::jsonb), COALESCE(src.race,''), COALESCE(src.faction,''), COALESCE(src.gender,''),
+                    src.profile_id, FALSE, COALESCE(src.extended_data,'{}'::jsonb), COALESCE(src.md5,''), COALESCE(src.gamets_last_updated,0),
+                    COALESCE(src.bounty,'{}'::jsonb), COALESCE(src.limbs,'{}'::jsonb), COALESCE(src.blood,'0/0'), COALESCE(src.hunger,'300/300'), COALESCE(src.tags,''), COALESCE(src.is_animal,FALSE), COALESCE(src.is_slave,FALSE),
+                    COALESCE(src.world_knowledge_tags,''),
+                    reason, md5(COALESCE(to_jsonb(src)::text,'')), src.created_at, src.updated_at, NOW()
+                );
+                IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+                RETURN NEW;
+            END;
+            $$;");
+            $db->exec("DROP TRIGGER IF EXISTS trg_core_npc_master_history_audit ON core_npc_master");
+            $db->exec("CREATE TRIGGER trg_core_npc_master_history_audit AFTER INSERT OR UPDATE OR DELETE ON core_npc_master FOR EACH ROW EXECUTE FUNCTION core_npc_master_history_audit_fn()");
         });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {
@@ -571,6 +721,83 @@ PROMPT;
         $applyPatch('world_knowledge_seed', 202603130209, static function () use ($importWorldKnowledgeCsv): void {
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
             $importWorldKnowledgeCsv($seed);
+        });
+
+        $applyPatch('world_state', 202603150001, static function () use ($db): void {
+            $db->exec("CREATE TABLE IF NOT EXISTS world_state (
+                id BIGSERIAL PRIMARY KEY,
+                game_ts BIGINT NOT NULL DEFAULT 0,
+                source VARCHAR(64) NOT NULL DEFAULT 'world_event_state_query',
+                query_name TEXT NOT NULL DEFAULT '',
+                query_string_id TEXT NOT NULL DEFAULT '',
+                query_numeric_id INT NOT NULL DEFAULT 0,
+                player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+                rule_category VARCHAR(64) NOT NULL,
+                entity_name TEXT NOT NULL DEFAULT '',
+                entity_string_id TEXT NOT NULL DEFAULT '',
+                entity_numeric_id INT NOT NULL DEFAULT 0,
+                state_value VARCHAR(32) NOT NULL DEFAULT '',
+                bool_value BOOLEAN,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_game_ts ON world_state (game_ts DESC, id DESC)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_created_at ON world_state (created_at DESC, id DESC)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_rule_category ON world_state (rule_category)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWER(query_name))");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name))");
+        });
+        $applyPatch('world_state', 202603150002, static function () use ($db): void {
+            $db->exec("DROP TABLE IF EXISTS world_state_snapshot");
+            $db->exec("DELETE FROM public.database_versioning WHERE tablename='world_state_snapshot'");
+        });
+        $applyPatch('world_state', 202603150003, static function () use ($db): void {
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_source ON world_state (source)");
+        });
+        $applyPatch('world_state', 202603150004, static function () use ($db): void {
+            $db->exec("ALTER TABLE world_state ADD COLUMN IF NOT EXISTS merge_key TEXT");
+            $db->exec("
+                UPDATE world_state
+                SET merge_key =
+                    LOWER(COALESCE(source, '')) || '|' ||
+                    LOWER(COALESCE(query_name, '')) || '|' ||
+                    LOWER(COALESCE(query_string_id, '')) || '|' ||
+                    COALESCE(query_numeric_id, 0)::text || '|' ||
+                    CASE WHEN COALESCE(player_involvement, FALSE) THEN '1' ELSE '0' END || '|' ||
+                    LOWER(COALESCE(rule_category, '')) || '|' ||
+                    LOWER(COALESCE(entity_name, '')) || '|' ||
+                    LOWER(COALESCE(entity_string_id, '')) || '|' ||
+                    COALESCE(entity_numeric_id, 0)::text
+                WHERE COALESCE(merge_key, '') = ''
+            ");
+            $db->exec("
+                WITH ranked AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(merge_key, '')
+                            ORDER BY COALESCE(game_ts, 0) DESC, id DESC
+                        ) AS rn
+                    FROM world_state
+                )
+                DELETE FROM world_state
+                WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+            ");
+            $db->exec("
+                UPDATE world_state
+                SET merge_key =
+                    LOWER(COALESCE(source, '')) || '|' ||
+                    LOWER(COALESCE(query_name, '')) || '|' ||
+                    LOWER(COALESCE(query_string_id, '')) || '|' ||
+                    COALESCE(query_numeric_id, 0)::text || '|' ||
+                    CASE WHEN COALESCE(player_involvement, FALSE) THEN '1' ELSE '0' END || '|' ||
+                    LOWER(COALESCE(rule_category, '')) || '|' ||
+                    LOWER(COALESCE(entity_name, '')) || '|' ||
+                    LOWER(COALESCE(entity_string_id, '')) || '|' ||
+                    COALESCE(entity_numeric_id, 0)::text
+                WHERE merge_key IS NULL
+            ");
+            $db->exec("ALTER TABLE world_state ALTER COLUMN merge_key SET NOT NULL");
+            $db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_world_state_merge_key ON world_state (merge_key)");
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

@@ -125,12 +125,21 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
     $rows = $db->fetchAll($sql);
     $hasTravelLocation = false;
     $hasUseObject = false;
+    $hasUseDrugs = false;
+    $hasDrinkItem = false;
+    $hasKill = false;
     foreach ($rows as $row) {
         $command = stobeCanonicalizeActionCommand(strval($row['command'] ?? ''));
         if ($command === 'TRAVEL_LOCATION') {
             $hasTravelLocation = true;
         } elseif ($command === 'USE_OBJECT') {
             $hasUseObject = true;
+        } elseif ($command === 'USE_DRUGS') {
+            $hasUseDrugs = true;
+        } elseif ($command === 'DRINK_ITEM') {
+            $hasDrinkItem = true;
+        } elseif ($command === 'KILL') {
+            $hasKill = true;
         }
     }
 
@@ -186,6 +195,27 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             'USE_OBJECT',
             'UseObject',
             'Use a nearby point of interest that has a free usable slot.'
+        );
+    }
+    if (!$hasUseDrugs) {
+        $appendFallbackAction(
+            'USE_DRUGS',
+            'UseDrugs',
+            'Consume Hashish from inventory/equipment.'
+        );
+    }
+    if (!$hasDrinkItem) {
+        $appendFallbackAction(
+            'DRINK',
+            'Drink',
+            'Consume Bloodrum, Cactus Rum, Grog, or Sake from inventory/equipment.'
+        );
+    }
+    if (!$hasKill) {
+        $appendFallbackAction(
+            'KILL',
+            'Kill',
+            'Kill a helpless target immediately.'
         );
     }
 
@@ -292,6 +322,8 @@ function getActionRuntimeConfig(string $eventType): array {
         'min_faction_relation' => $minFaction,
         'max_faction_relation' => $maxFaction,
         'disallow_follow_for_player_faction' => false,
+        'disallow_give_cats' => false,
+        'disallow_take_cats' => false,
         'allow_travel_location' => true,
     ];
 }
@@ -300,6 +332,12 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config = getActionRuntimeConfig($eventType);
     $config['disallow_stop_carrying'] = false;
     $config['disallow_remove_limb'] = true;
+    $config['disallow_use_drugs'] = true;
+    $config['disallow_drink_item'] = true;
+    // AI-generated money transfers are currently too error-prone in trade dialog.
+    // Keep cats transfer as manual-action only from the chatbox.
+    $config['disallow_give_cats'] = true;
+    $config['disallow_take_cats'] = true;
     $config['allow_travel_location'] = true;
     if (is_array($npcData) && count($npcData) > 0 && npcIsInPlayerFaction($npcData)) {
         $config['disallow_follow_for_player_faction'] = true;
@@ -309,6 +347,14 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     }
     if (is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData)) {
         $config['disallow_remove_limb'] = false;
+    }
+    if (is_array($npcData) && count($npcData) > 0 && !stobeNpcIsSkeletonRace($npcData)) {
+        if (stobeNpcHasHashish($npcData)) {
+            $config['disallow_use_drugs'] = false;
+        }
+        if (stobeNpcHasDrinkItem($npcData)) {
+            $config['disallow_drink_item'] = false;
+        }
     }
     return $config;
 }
@@ -360,10 +406,22 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
             if (count($allowed) > 0 && !in_array($command, $allowed, true)) {
                 continue;
             }
+            if ($command === 'GIVE_CATS' && boolval($config['disallow_give_cats'] ?? false)) {
+                continue;
+            }
+            if ($command === 'TAKE_CATS' && boolval($config['disallow_take_cats'] ?? false)) {
+                continue;
+            }
             if ($command === 'STOP_CARRYING' && boolval($config['disallow_stop_carrying'] ?? false)) {
                 continue;
             }
             if ($command === 'REMOVE_LIMB' && boolval($config['disallow_remove_limb'] ?? false)) {
+                continue;
+            }
+            if ($command === 'USE_DRUGS' && boolval($config['disallow_use_drugs'] ?? false)) {
+                continue;
+            }
+            if ($command === 'DRINK_ITEM' && boolval($config['disallow_drink_item'] ?? false)) {
                 continue;
             }
             if ($command === 'TRAVEL_LOCATION' && !boolval($config['allow_travel_location'] ?? false)) {
@@ -450,8 +508,17 @@ function stobeCanonicalizeActionCommand(string $command): string {
     if (in_array($upper, ['REMOVELIMB'], true)) {
         return 'REMOVE_LIMB';
     }
+    if (in_array($upper, ['KILLTARGET', 'EXECUTE', 'MURDER'], true)) {
+        return 'KILL';
+    }
     if (in_array($upper, ['USEOBJECT', 'USE-OBJECT'], true)) {
         return 'USE_OBJECT';
+    }
+    if (in_array($upper, ['USEDRUGS', 'USE-DRUGS'], true)) {
+        return 'USE_DRUGS';
+    }
+    if (in_array($upper, ['DRINK', 'DRINKITEM', 'DRINK_ITEM', 'DRINK-ITEM'], true)) {
+        return 'DRINK_ITEM';
     }
     if (in_array($upper, ['ROLEPLAYACTION', 'ROLEPLAY-ACTION', 'NOTIFY'], true)) {
         return 'ROLEPLAY_ACTION';
@@ -589,6 +656,34 @@ function stobeNpcHasHacksaw(array $npcData): bool {
     return stobeNpcHasItemKeyword($npcData, ['hacksaw', 'hack saw']);
 }
 
+function stobeNpcHasHashish(array $npcData): bool {
+    return stobeNpcHasItemKeyword($npcData, ['hashish']);
+}
+
+function stobeNpcHasDrinkItem(array $npcData): bool {
+    return stobeNpcHasItemKeyword($npcData, [
+        'bloodrum',
+        'blood rum',
+        'cactus rum',
+        'cactusrum',
+        'grog',
+        'sake',
+    ]);
+}
+
+function stobeNpcIsSkeletonRace(array $npcData): bool {
+    $race = strtolower(trim(strval($npcData['race'] ?? '')));
+    if ($race !== '' && strpos($race, 'skeleton') !== false) {
+        return true;
+    }
+    $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $metaRace = strtolower(trim(strval($metadata['race'] ?? '')));
+    if ($metaRace !== '' && strpos($metaRace, 'skeleton') !== false) {
+        return true;
+    }
+    return false;
+}
+
 function isAllowedActionCommand(string $command, array $allowlist): bool {
     $command = stobeCanonicalizeActionCommand($command);
     if (in_array($command, ['RELEASE_PLAYER', 'RELEASE_PRISONER', 'RELEASEPLAYER'], true)) {
@@ -649,8 +744,17 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'SETRESOURCE' => 'SET_RESOURCE',
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
+        'KILLTARGET' => 'KILL',
+        'EXECUTE' => 'KILL',
+        'MURDER' => 'KILL',
         'USEOBJECT' => 'USE_OBJECT',
         'USE-OBJECT' => 'USE_OBJECT',
+        'USEDRUGS' => 'USE_DRUGS',
+        'USE-DRUGS' => 'USE_DRUGS',
+        'DRINK' => 'DRINK_ITEM',
+        'DRINKITEM' => 'DRINK_ITEM',
+        'DRINK_ITEM' => 'DRINK_ITEM',
+        'DRINK-ITEM' => 'DRINK_ITEM',
         'TRAVELLOCATION' => 'TRAVEL_LOCATION',
         'ROLEPLAYACTION' => 'ROLEPLAY_ACTION',
         'ROLEPLAY-ACTION' => 'ROLEPLAY_ACTION',
@@ -668,12 +772,28 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         ($command === 'FOLLOW' || $command === 'STOP_FOLLOW')) {
         return '';
     }
+    if (boolval($config['disallow_give_cats'] ?? false) &&
+        $command === 'GIVE_CATS') {
+        return '';
+    }
+    if (boolval($config['disallow_take_cats'] ?? false) &&
+        $command === 'TAKE_CATS') {
+        return '';
+    }
     if (boolval($config['disallow_stop_carrying'] ?? false) &&
         $command === 'STOP_CARRYING') {
         return '';
     }
     if (boolval($config['disallow_remove_limb'] ?? false) &&
         $command === 'REMOVE_LIMB') {
+        return '';
+    }
+    if (boolval($config['disallow_use_drugs'] ?? false) &&
+        $command === 'USE_DRUGS') {
+        return '';
+    }
+    if (boolval($config['disallow_drink_item'] ?? false) &&
+        $command === 'DRINK_ITEM') {
         return '';
     }
     if ($command === 'TRAVEL_LOCATION' && !boolval($config['allow_travel_location'] ?? false)) {
@@ -783,12 +903,33 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         }
         return 'REMOVE_LIMB@' . $targetName . '@' . strval($limbAliases[$limbToken]);
     }
+    if ($command === 'KILL') {
+        $targetName = $sanitizeInlineText($argument, 120);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'KILL@' . $targetName;
+    }
     if ($command === 'USE_OBJECT') {
         $objectToken = $sanitizeInlineText($argument, 160);
         if ($objectToken === '') {
             return 'USE_OBJECT@';
         }
         return 'USE_OBJECT@' . $objectToken;
+    }
+    if ($command === 'USE_DRUGS') {
+        $drugName = $sanitizeInlineText($argument, 80);
+        if ($drugName === '') {
+            return '';
+        }
+        return 'USE_DRUGS@' . $drugName;
+    }
+    if ($command === 'DRINK_ITEM') {
+        $drinkName = $sanitizeInlineText($argument, 80);
+        if ($drinkName === '') {
+            return '';
+        }
+        return 'DRINK_ITEM@' . $drinkName;
     }
 
     if ($command === 'ATTACK') {
@@ -1036,13 +1177,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -1108,14 +1249,8 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
 function parseNpcKnowledgeTags(array $npcData, string $npcName = ''): array {
     $rawTags = trim(strval($npcData['world_knowledge_tags'] ?? ''));
     if ($rawTags === '') {
-        $rawTags = trim(strval($npcData['knowledge_tags'] ?? ''));
-    }
-    if ($rawTags === '') {
         $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
         $rawTags = trim(strval($metadata['world_knowledge_tags'] ?? ''));
-        if ($rawTags === '') {
-            $rawTags = trim(strval($metadata['knowledge_tags'] ?? ''));
-        }
     }
     $tokens = [];
     if ($rawTags !== '') {
@@ -1769,7 +1904,8 @@ function truncatePromptValue(string $value, int $maxLength = 220): string {
 function stobePromptXmlEscape(mixed $value): string {
     $text = strval($value);
     $text = str_replace(["\r\n", "\r"], "\n", $text);
-    return htmlspecialchars($text, ENT_QUOTES | ENT_XML1, 'UTF-8');
+    // Keep apostrophes readable in text nodes while still escaping XML control chars.
+    return htmlspecialchars($text, ENT_COMPAT | ENT_XML1, 'UTF-8');
 }
 
 function stobeBuildGameTimePromptBlock(mixed $gamets): string {
@@ -2003,21 +2139,28 @@ function stobeBuildOutputContractUserPrompt(
     }
     $canStopCarrying = is_array($npcData) && count($npcData) > 0 && stobeNpcIsCarryingTarget($npcData);
     $canRemoveLimb = is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData);
+    $npcIsSkeleton = is_array($npcData) && count($npcData) > 0 && stobeNpcIsSkeletonRace($npcData);
+    $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
+    $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
+    $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
+    $allowGiveCats = !boolval($actionConfig['disallow_give_cats'] ?? false);
+    $allowTakeCats = !boolval($actionConfig['disallow_take_cats'] ?? false);
 
     $actionLine = $preferAction
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
+    $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
+    $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
 
     $actions = [
         'Talk',
         'Attack',
         'Suicide',
         'Idle',
-        'GiveCats',
-        'TakeCats',
         'TakeItem',
         'GiveItem',
         'DropItem',
+        'Kill',
         'RoleplayAction',
         'FactionRelations',
         'Task',
@@ -2031,11 +2174,23 @@ function stobeBuildOutputContractUserPrompt(
         'SetResource',
         'SetMedic',
     ];
+    if ($allowGiveCats) {
+        $actions[] = 'GiveCats';
+    }
+    if ($allowTakeCats) {
+        $actions[] = 'TakeCats';
+    }
     if ($canStopCarrying) {
         $actions[] = 'StopCarrying';
     }
     if ($canRemoveLimb) {
         $actions[] = 'RemoveLimb';
+    }
+    if ($canUseDrugs) {
+        $actions[] = 'UseDrugs';
+    }
+    if ($canDrinkItem) {
+        $actions[] = 'Drink';
     }
     if ($inPlayerFaction !== true) {
         $actions[] = 'Follow';
@@ -2106,13 +2261,23 @@ function stobeBuildOutputContractUserPrompt(
         $exampleFollow = $inPlayerFaction === true ? '' : 'FOLLOW@TargetName, STOP_FOLLOW@, ';
         $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@TargetName, ' : '';
         $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
+        $exampleKill = 'KILL@TargetName, ';
         $exampleUseObject = 'USE_OBJECT@ChairName, ';
+        $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
+        $exampleDrink = $canDrinkItem ? 'DRINK@Sake, ' : '';
         $exampleTravel = 'TRAVEL_LOCATION@LocationName, ';
+        $exampleCats = '';
+        if ($allowTakeCats) {
+            $exampleCats .= 'TAKE_CATS@50, ';
+        }
+        if ($allowGiveCats) {
+            $exampleCats .= 'GIVE_CATS@50, ';
+        }
         return $actionLine
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleUseObject . $exampleTravel . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF, GIVE_CATS@50.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -2122,7 +2287,7 @@ function stobeBuildOutputContractUserPrompt(
         'mood' => implode('|', $moods),
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
-        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), or object token for USE_OBJECT',
+        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS',
         'message' => 'lines of dialogue',
     ];
 
@@ -2339,8 +2504,17 @@ function stobeBuildActionTagFromStructuredPayload(
         'SETRESOURCE' => 'SET_RESOURCE',
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
+        'KILLTARGET' => 'KILL',
+        'EXECUTE' => 'KILL',
+        'MURDER' => 'KILL',
         'USEOBJECT' => 'USE_OBJECT',
         'USE-OBJECT' => 'USE_OBJECT',
+        'USEDRUGS' => 'USE_DRUGS',
+        'USE-DRUGS' => 'USE_DRUGS',
+        'DRINK' => 'DRINK_ITEM',
+        'DRINKITEM' => 'DRINK_ITEM',
+        'DRINK_ITEM' => 'DRINK_ITEM',
+        'DRINK-ITEM' => 'DRINK_ITEM',
         'TRAVELLOCATION' => 'TRAVEL_LOCATION',
         'ROLEPLAYACTION' => 'ROLEPLAY_ACTION',
         'ROLEPLAY-ACTION' => 'ROLEPLAY_ACTION',
@@ -2382,6 +2556,20 @@ function stobeBuildActionTagFromStructuredPayload(
             return 'USE_OBJECT@';
         }
         return 'USE_OBJECT@' . $objectToken;
+    }
+    if ($actionUpper === 'USE_DRUGS') {
+        $drugName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
+        if ($drugName === '') {
+            return '';
+        }
+        return 'USE_DRUGS@' . $drugName;
+    }
+    if ($actionUpper === 'DRINK_ITEM') {
+        $drinkName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
+        if ($drinkName === '') {
+            return '';
+        }
+        return 'DRINK_ITEM@' . $drinkName;
     }
     if (in_array($actionUpper, ['STOP_FOLLOW', 'STOP_CARRYING', 'JOIN_PARTY', 'LEAVE', 'IDLE', 'SUICIDE'], true)) {
         return $actionUpper . '@';
@@ -2431,6 +2619,13 @@ function stobeBuildActionTagFromStructuredPayload(
             return '';
         }
         return 'REMOVE_LIMB@' . $targetName . '@' . $limbToken;
+    }
+    if ($actionUpper === 'KILL') {
+        $targetName = trim($target !== '' ? $target : $item);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'KILL@' . $targetName;
     }
     if ($actionUpper === 'ROLEPLAY_ACTION') {
         $notice = trim($target !== '' ? $target : $message);
@@ -2855,6 +3050,88 @@ function getItemDescriptionFromCombinedTable(string $itemName, string $itemId = 
     }
 }
 
+function stobeResolveArmorQualityLabelFromLevel(int $level): string {
+    if ($level >= 95) {
+        return 'Masterwork';
+    }
+    if ($level >= 80) {
+        return 'Specialist';
+    }
+    if ($level >= 60) {
+        return 'High';
+    }
+    if ($level >= 40) {
+        return 'Standard';
+    }
+    if ($level >= 20) {
+        return 'Shoddy';
+    }
+    return 'Prototype';
+}
+
+function stobeResolveItemQualityFromEntry(array $entry): array {
+    $label = trim(strval(
+        $entry['quality']
+            ?? ($entry['quality_label']
+            ?? ($entry['quality_name'] ?? ''))
+    ));
+    if ($label !== '') {
+        $label = preg_replace('/\s+/u', ' ', $label) ?? $label;
+        $label = trim($label);
+    }
+
+    $level = -1;
+    foreach (['quality_level', 'qualityLevel', 'level', 'gear_level'] as $field) {
+        if (!array_key_exists($field, $entry)) {
+            continue;
+        }
+        $rawLevel = $entry[$field];
+        if (is_int($rawLevel) || is_float($rawLevel)) {
+            $level = intval(round(floatval($rawLevel)));
+            break;
+        }
+        if (is_string($rawLevel)) {
+            $text = trim($rawLevel);
+            if ($text === '' || preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $text) !== 1) {
+                continue;
+            }
+            $level = intval(round(floatval($text)));
+            break;
+        }
+    }
+    if ($level >= 0) {
+        if ($level > 100) {
+            $level = 100;
+        }
+        if ($label === '') {
+            $label = stobeResolveArmorQualityLabelFromLevel($level);
+        }
+    } else {
+        $level = -1;
+    }
+
+    return [
+        'label' => $label,
+        'level' => $level,
+    ];
+}
+
+function stobeFormatInventoryItemNameWithQuality(string $itemName, array $entry): string {
+    $name = trim($itemName);
+    if ($name === '') {
+        return '';
+    }
+    if (preg_match('/\[[^\]]+\]/', $name) === 1) {
+        return $name;
+    }
+    $quality = stobeResolveItemQualityFromEntry($entry);
+    $label = trim(strval($quality['label'] ?? ''));
+    if ($label === '') {
+        return $name;
+    }
+    return $name . ' [' . $label . ']';
+}
+
 function buildInventoryContextFromMetadata(array $metadata): array {
     $rawEntries = $metadata['inventory_items'] ?? [];
     if (is_string($rawEntries) && trim($rawEntries) !== '') {
@@ -2863,8 +3140,30 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             $rawEntries = $decoded;
         }
     }
-    if (!is_array($rawEntries) || count($rawEntries) === 0) {
-        return ['equipment' => '', 'inventory' => '', 'has_items' => false];
+
+    $rawTraderEntries = $metadata['trader_inventory_items'] ?? [];
+    if (is_string($rawTraderEntries) && trim($rawTraderEntries) !== '') {
+        $decodedTrader = json_decode($rawTraderEntries, true);
+        if (is_array($decodedTrader)) {
+            $rawTraderEntries = $decodedTrader;
+        }
+    }
+
+    if (!is_array($rawEntries)) {
+        $rawEntries = [];
+    }
+    if (!is_array($rawTraderEntries)) {
+        $rawTraderEntries = [];
+    }
+    if (count($rawEntries) === 0 && count($rawTraderEntries) === 0) {
+        return [
+            'equipment' => '',
+            'inventory' => '',
+            'trader_inventory' => '',
+            'merchant_inventory' => '',
+            'has_items' => false,
+            'has_trader_items' => false,
+        ];
     }
 
     $parseFlag = static function (mixed $value): bool {
@@ -2883,6 +3182,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
 
     $equipmentCounts = [];
     $inventoryCounts = [];
+    $traderInventoryCounts = [];
     foreach ($rawEntries as $entry) {
         if (!is_array($entry)) {
             continue;
@@ -2912,6 +3212,9 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             $itemDescription = preg_replace('/\s+/u', ' ', $itemDescription) ?? $itemDescription;
             $itemDescription = trim($itemDescription);
         }
+        $itemQuality = stobeResolveItemQualityFromEntry($entry);
+        $itemQualityLabel = trim(strval($itemQuality['label'] ?? ''));
+        $itemQualityLevel = intval($itemQuality['level'] ?? -1);
         $itemModel = '';
         $itemManufacturer = '';
         $itemManufacturerId = '';
@@ -2921,13 +3224,18 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
         $isEquipped = $parseFlag($entry['equipped'] ?? ($entry['is_equipped'] ?? false));
 
-        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName));
+        $qualityKey = $itemQualityLevel >= 0
+            ? ('q:' . strval($itemQualityLevel))
+            : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
         if ($isEquipped) {
             if (!array_key_exists($entryKey, $equipmentCounts)) {
                 $equipmentCounts[$entryKey] = [
                     'name' => $itemName,
                     'item_id' => $itemId,
                     'description' => $itemDescription,
+                    'quality' => $itemQualityLabel,
+                    'quality_level' => $itemQualityLevel,
                     'value_each' => $itemValueEach,
                     'count' => 0,
                 ];
@@ -2938,6 +3246,12 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             }
             if (trim(strval($equipmentCounts[$entryKey]['description'] ?? '')) === '' && $itemDescription !== '') {
                 $equipmentCounts[$entryKey]['description'] = $itemDescription;
+            }
+            if (trim(strval($equipmentCounts[$entryKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+                $equipmentCounts[$entryKey]['quality'] = $itemQualityLabel;
+            }
+            if (intval($equipmentCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+                $equipmentCounts[$entryKey]['quality_level'] = $itemQualityLevel;
             }
             if (intval($equipmentCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
                 $equipmentCounts[$entryKey]['value_each'] = $itemValueEach;
@@ -2950,6 +3264,8 @@ function buildInventoryContextFromMetadata(array $metadata): array {
                 'name' => $itemName,
                 'item_id' => $itemId,
                 'description' => $itemDescription,
+                'quality' => $itemQualityLabel,
+                'quality_level' => $itemQualityLevel,
                 'value_each' => $itemValueEach,
                 'count' => 0,
             ];
@@ -2961,8 +3277,87 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         if (trim(strval($inventoryCounts[$entryKey]['description'] ?? '')) === '' && $itemDescription !== '') {
             $inventoryCounts[$entryKey]['description'] = $itemDescription;
         }
+        if (trim(strval($inventoryCounts[$entryKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+            $inventoryCounts[$entryKey]['quality'] = $itemQualityLabel;
+        }
+        if (intval($inventoryCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+            $inventoryCounts[$entryKey]['quality_level'] = $itemQualityLevel;
+        }
         if (intval($inventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
             $inventoryCounts[$entryKey]['value_each'] = $itemValueEach;
+        }
+    }
+
+    foreach ($rawTraderEntries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $itemName = trim(strval($entry['name'] ?? ''));
+        if ($itemName === '') {
+            continue;
+        }
+        $itemCount = intval($entry['count'] ?? ($entry['quantity'] ?? 1));
+        if ($itemCount <= 0) {
+            $itemCount = 1;
+        }
+        $itemId = trim(strval(
+            $entry['item_id']
+                ?? ($entry['itemId']
+                ?? ($entry['string_id']
+                ?? ($entry['stringid']
+                ?? ($entry['sid']
+                ?? ($entry['baseid']
+                ?? ($entry['id'] ?? ''))))))
+        ));
+        $itemDescription = trim(strval($entry['description'] ?? ''));
+        if ($itemDescription !== '') {
+            $itemDescription = preg_replace('/\s+/u', ' ', $itemDescription) ?? $itemDescription;
+            $itemDescription = trim($itemDescription);
+        }
+        $itemQuality = stobeResolveItemQualityFromEntry($entry);
+        $itemQualityLabel = trim(strval($itemQuality['label'] ?? ''));
+        $itemQualityLevel = intval($itemQuality['level'] ?? -1);
+        $itemValueEach = intval($entry['value_each'] ?? ($entry['value_single'] ?? 0));
+        if ($itemValueEach < 0) {
+            $itemValueEach = 0;
+        }
+
+        $qualityKey = $itemQualityLevel >= 0
+            ? ('q:' . strval($itemQualityLevel))
+            : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
+        if (!array_key_exists($entryKey, $traderInventoryCounts)) {
+            $traderInventoryCounts[$entryKey] = [
+                'name' => $itemName,
+                'item_id' => $itemId,
+                'description' => $itemDescription,
+                'quality' => $itemQualityLabel,
+                'quality_level' => $itemQualityLevel,
+                'value_each' => $itemValueEach,
+                'count' => 0,
+            ];
+        }
+        $traderInventoryCounts[$entryKey]['count'] += $itemCount;
+        if (trim(strval($traderInventoryCounts[$entryKey]['item_id'] ?? '')) === '' && $itemId !== '') {
+            $traderInventoryCounts[$entryKey]['item_id'] = $itemId;
+        }
+        if (
+            trim(strval($traderInventoryCounts[$entryKey]['description'] ?? '')) === '' &&
+            $itemDescription !== ''
+        ) {
+            $traderInventoryCounts[$entryKey]['description'] = $itemDescription;
+        }
+        if (
+            trim(strval($traderInventoryCounts[$entryKey]['quality'] ?? '')) === '' &&
+            $itemQualityLabel !== ''
+        ) {
+            $traderInventoryCounts[$entryKey]['quality'] = $itemQualityLabel;
+        }
+        if (intval($traderInventoryCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+            $traderInventoryCounts[$entryKey]['quality_level'] = $itemQualityLevel;
+        }
+        if (intval($traderInventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
+            $traderInventoryCounts[$entryKey]['value_each'] = $itemValueEach;
         }
     }
 
@@ -3006,11 +3401,15 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         if ($entryName === '') {
             continue;
         }
+        $entryDisplayName = stobeFormatInventoryItemNameWithQuality($entryName, $entry);
+        if ($entryDisplayName === '') {
+            $entryDisplayName = $entryName;
+        }
         $entryCount = intval($entry['count'] ?? 1);
         if ($entryCount <= 0) {
             $entryCount = 1;
         }
-        $entryText = $entryName . ' x' . strval($entryCount);
+        $entryText = $entryDisplayName . ' x' . strval($entryCount);
         $entryValueEach = intval($entry['value_each'] ?? 0);
         if ($entryValueEach > 0) {
             $entryText .= ' value ' . strval($entryValueEach);
@@ -3031,12 +3430,16 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         if ($entryName === '') {
             continue;
         }
+        $entryDisplayName = stobeFormatInventoryItemNameWithQuality($entryName, $entry);
+        if ($entryDisplayName === '') {
+            $entryDisplayName = $entryName;
+        }
         $entryCount = intval($entry['count'] ?? 1);
         if ($entryCount <= 0) {
             $entryCount = 1;
         }
         $description = $resolveDescription($entry, true);
-        $entryText = $entryName . ' x' . strval($entryCount);
+        $entryText = $entryDisplayName . ' x' . strval($entryCount);
         $entryValueEach = intval($entry['value_each'] ?? 0);
         if ($entryValueEach > 0) {
             $entryText .= ' value ' . strval($entryValueEach);
@@ -3050,12 +3453,49 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
     }
 
-    $hasItems = (count($equipmentCounts) + count($inventoryCounts)) > 0;
+    $traderInventoryParts = [];
+    foreach ($traderInventoryCounts as $entry) {
+        $entryName = trim(strval($entry['name'] ?? ''));
+        if ($entryName === '') {
+            continue;
+        }
+        $entryDisplayName = stobeFormatInventoryItemNameWithQuality($entryName, $entry);
+        if ($entryDisplayName === '') {
+            $entryDisplayName = $entryName;
+        }
+        $entryCount = intval($entry['count'] ?? 1);
+        if ($entryCount <= 0) {
+            $entryCount = 1;
+        }
+        $description = $resolveDescription($entry, true);
+        $entryText = $entryDisplayName . ' x' . strval($entryCount);
+        $entryValueEach = intval($entry['value_each'] ?? 0);
+        if ($entryValueEach > 0) {
+            $entryText .= ' value ' . strval($entryValueEach);
+        }
+        if ($description !== '') {
+            $entryText .= ' (' . $description . ')';
+        }
+        $traderInventoryParts[] = $entryText;
+        if (count($traderInventoryParts) >= 80) {
+            break;
+        }
+    }
+
+    if (count($inventoryParts) === 0 && count($traderInventoryParts) > 0) {
+        $inventoryParts = $traderInventoryParts;
+    }
+
+    $hasTraderItems = count($traderInventoryCounts) > 0;
+    $hasItems = (count($equipmentCounts) + count($inventoryCounts) + count($traderInventoryCounts)) > 0;
 
     return [
         'equipment' => implode(', ', $equipmentParts),
         'inventory' => implode(', ', $inventoryParts),
+        'trader_inventory' => implode(', ', $traderInventoryParts),
+        'merchant_inventory' => implode(', ', $traderInventoryParts),
         'has_items' => $hasItems,
+        'has_trader_items' => $hasTraderItems,
     ];
 }
 
@@ -3404,6 +3844,7 @@ function stobeDescribeLimbStatus(mixed $limbsRaw): string {
 function buildWorldStateBlock(array $npcData): string {
     $fields = [];
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
     $parseFlag = static function (mixed $value): ?bool {
         if (is_bool($value)) {
             return $value;
@@ -3425,6 +3866,125 @@ function buildWorldStateBlock(array $npcData): string {
         }
         return null;
     };
+    $rawEnvironment = $extendedData['environment'] ?? ($metadata['environment'] ?? []);
+    $environment = [];
+    if (is_array($rawEnvironment)) {
+        $environment = $rawEnvironment;
+    } elseif (is_string($rawEnvironment) && trim($rawEnvironment) !== '') {
+        $decodedEnvironment = json_decode($rawEnvironment, true);
+        if (is_array($decodedEnvironment)) {
+            $environment = $decodedEnvironment;
+        }
+    }
+    $normalizeEnvironmentToken = static function (mixed $value): string {
+        if (is_array($value) || is_object($value) || $value === null) {
+            return '';
+        }
+        $text = trim(strval($value));
+        if ($text === '') {
+            return '';
+        }
+        $lower = strtolower($text);
+        if (in_array($lower, ['unknown', 'none', 'n/a', 'null', 'unset'], true)) {
+            return '';
+        }
+        return $text;
+    };
+    $pickEnvironmentToken = static function (array $source, array $keys) use ($normalizeEnvironmentToken): string {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $source)) {
+                continue;
+            }
+            $token = $normalizeEnvironmentToken($source[$key]);
+            if ($token !== '') {
+                return $token;
+            }
+        }
+        return '';
+    };
+    $locationCandidates = [
+        $pickEnvironmentToken($environment, ['building_name', 'indoors_name']),
+        $pickEnvironmentToken($environment, ['town_name', 'town', 'city', 'settlement']),
+        $pickEnvironmentToken($environment, ['zone_name', 'zone']),
+        $pickEnvironmentToken($environment, ['region', 'region_name']),
+    ];
+    if (count(array_filter($locationCandidates, static function (string $value): bool {
+        return $value !== '';
+    })) === 0) {
+        $locationCandidates = [
+            $normalizeEnvironmentToken($npcData['town'] ?? ''),
+            $normalizeEnvironmentToken($npcData['zone'] ?? ''),
+            $normalizeEnvironmentToken($npcData['region'] ?? ''),
+        ];
+    }
+    $locationParts = [];
+    $seenLocationParts = [];
+    foreach ($locationCandidates as $candidate) {
+        if ($candidate === '') {
+            continue;
+        }
+        $dedupeKey = strtolower($candidate);
+        if (isset($seenLocationParts[$dedupeKey])) {
+            continue;
+        }
+        $seenLocationParts[$dedupeKey] = true;
+        $locationParts[] = $candidate;
+    }
+    if (count($locationParts) > 0) {
+        $locationText = implode(', ', $locationParts);
+        $locationFlags = [];
+        $indoorsFlag = $parseFlag($environment['indoors'] ?? null);
+        $outdoorsFlag = $parseFlag($environment['outdoors'] ?? null);
+        $inTownFlag = $parseFlag($environment['in_town'] ?? null);
+        if ($indoorsFlag === true) {
+            $locationFlags[] = 'indoors';
+        } elseif ($outdoorsFlag === true) {
+            $locationFlags[] = 'outdoors';
+        }
+        if ($inTownFlag === true) {
+            $locationFlags[] = 'in town';
+        }
+        if (count($locationFlags) > 0) {
+            $locationText .= ' (' . implode(', ', $locationFlags) . ')';
+        }
+        $fields['location'] = truncatePromptValue($locationText, 260);
+    }
+    $parseWeatherCode = static function (mixed $value): ?int {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_float($value)) {
+            return intval(round($value));
+        }
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed !== '' && preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $trimmed) === 1) {
+                return intval(round(floatval($trimmed)));
+            }
+        }
+        return null;
+    };
+    $weatherCode = $parseWeatherCode($environment['weather'] ?? ($metadata['weather'] ?? null));
+    if ($weatherCode !== null) {
+        $weatherLabelMap = [
+            0 => 'Clear',
+            1 => 'Duststorm',
+            2 => 'Acid',
+            3 => 'Burning',
+            4 => 'Gas',
+            5 => 'Rain',
+        ];
+        $fields['weather'] = $weatherLabelMap[$weatherCode] ?? 'Unknown';
+    } else {
+        $weatherText = $pickEnvironmentToken(
+            $environment,
+            ['weather_name', 'weather_state', 'weather_type']
+        );
+        if ($weatherText !== '') {
+            $normalizedWeatherText = preg_replace('/\s+/', ' ', trim($weatherText)) ?? trim($weatherText);
+            $fields['weather'] = truncatePromptValue(ucfirst(strtolower($normalizedWeatherText)), 120);
+        }
+    }
 
     $bloodState = stobeDescribeBloodStatus($npcData['blood'] ?? '');
     if ($bloodState !== '') {
@@ -3531,7 +4091,16 @@ function buildWorldStateBlock(array $npcData): string {
     }
     $inventory = truncatePromptValue($inventoryRaw, 3600);
     if ($inventory !== '') {
-        $fields['inventory'] = $inventory;
+        $fields['personal_inventory'] = $inventory;
+    }
+
+    $merchantInventoryRaw = trim(strval(
+        $inventoryContext['merchant_inventory']
+            ?? ($inventoryContext['trader_inventory'] ?? '')
+    ));
+    $merchantInventory = truncatePromptValue($merchantInventoryRaw, 3600);
+    if ($merchantInventory !== '') {
+        $fields['merchant_inventory'] = $merchantInventory;
     }
 
     $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '');
@@ -3789,6 +4358,53 @@ function stobeDescribeDrunkPromptState(mixed $rawLevel, mixed $rawIsDrunk, mixed
     return '';
 }
 
+function stobeDescribeHighPromptState(
+    mixed $rawIsHigh,
+    mixed $rawStatus,
+    mixed $rawSecondsRemaining,
+    mixed $rawHungerMultiplier
+): string {
+    $status = strtolower(trim(strval($rawStatus)));
+    $isHigh = stobeCoerceTruthyPromptFlag($rawIsHigh);
+    if (!$isHigh && $status !== '') {
+        $isHigh = in_array($status, ['high', 'stoned', 'drugged'], true);
+    }
+    if (!$isHigh) {
+        return '';
+    }
+
+    $hungerMultiplier = 1.0;
+    if (is_int($rawHungerMultiplier) || is_float($rawHungerMultiplier)) {
+        $hungerMultiplier = floatval($rawHungerMultiplier);
+    } elseif (is_string($rawHungerMultiplier) && preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', trim($rawHungerMultiplier)) === 1) {
+        $hungerMultiplier = floatval($rawHungerMultiplier);
+    }
+    if ($hungerMultiplier < 1.0) {
+        $hungerMultiplier = 1.0;
+    }
+
+    $secondsRemaining = 0;
+    if (is_int($rawSecondsRemaining) || is_float($rawSecondsRemaining)) {
+        $secondsRemaining = max(0, intval($rawSecondsRemaining));
+    } elseif (is_string($rawSecondsRemaining) && preg_match('/^-?[0-9]+$/', trim($rawSecondsRemaining)) === 1) {
+        $secondsRemaining = max(0, intval($rawSecondsRemaining));
+    }
+
+    $parts = ['High'];
+    if ($hungerMultiplier > 1.0) {
+        $parts[] = 'hunger x' . rtrim(rtrim(sprintf('%.2f', $hungerMultiplier), '0'), '.');
+    }
+    if ($secondsRemaining > 0) {
+        $minutes = intval(ceil($secondsRemaining / 60.0));
+        if ($minutes < 1) {
+            $minutes = 1;
+        }
+        $parts[] = strval($minutes) . 'm remaining';
+    }
+
+    return implode(' | ', $parts);
+}
+
 function stobeDescribeNearbyEntryAppearance(array $entry): string {
     $appearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
     if ($appearance !== '') {
@@ -3962,6 +4578,15 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         );
         if ($drunkState !== '') {
             $detailParts[] = 'Drunk state: ' . $drunkState;
+        }
+        $highState = stobeDescribeHighPromptState(
+            $entry['is_high'] ?? null,
+            $entry['high_status'] ?? null,
+            $entry['high_seconds_remaining'] ?? null,
+            $entry['high_hunger_rate_multiplier'] ?? null
+        );
+        if ($highState !== '') {
+            $detailParts[] = 'Drug state: ' . $highState;
         }
         $appearance = stobeDescribeNearbyEntryAppearance($entry);
         if ($appearance !== '') {
@@ -4569,6 +5194,15 @@ function stobeBuildNpcConditionText(array $npcData, array $metadata): string {
     );
     if ($drunkState !== '') {
         $parts[] = 'Drunk state: ' . $drunkState;
+    }
+    $highState = stobeDescribeHighPromptState(
+        $npcData['is_high'] ?? ($metadata['is_high'] ?? null),
+        $npcData['high_status'] ?? ($metadata['high_status'] ?? null),
+        $npcData['high_seconds_remaining'] ?? ($metadata['high_seconds_remaining'] ?? null),
+        $npcData['high_hunger_rate_multiplier'] ?? ($metadata['high_hunger_rate_multiplier'] ?? null)
+    );
+    if ($highState !== '') {
+        $parts[] = 'Drug state: ' . $highState;
     }
 
     $characterState = trim(strval($metadata['character_state'] ?? ''));
@@ -6419,12 +7053,12 @@ function stobeStripParentheticalDialogueText(string $text): string {
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',

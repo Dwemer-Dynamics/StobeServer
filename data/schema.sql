@@ -177,6 +177,33 @@ CREATE TABLE IF NOT EXISTS location_zones (
 CREATE INDEX IF NOT EXISTS idx_location_zones_zone_name_lower ON location_zones (LOWER(zone_name));
 CREATE INDEX IF NOT EXISTS idx_location_zones_first_game_ts ON location_zones (first_game_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_location_zones_last_seen_ts ON location_zones (last_seen_ts DESC);
+-- ----------------------------------------------------------
+-- WORLD_STATE - Row-level WorldEventStateQuery entries
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state (
+    id BIGSERIAL PRIMARY KEY,
+    merge_key TEXT NOT NULL DEFAULT '',
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    source VARCHAR(64) NOT NULL DEFAULT 'world_event_state_query',
+    query_name TEXT NOT NULL DEFAULT '',
+    query_string_id TEXT NOT NULL DEFAULT '',
+    query_numeric_id INT NOT NULL DEFAULT 0,
+    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+    rule_category VARCHAR(64) NOT NULL,
+    entity_name TEXT NOT NULL DEFAULT '',
+    entity_string_id TEXT NOT NULL DEFAULT '',
+    entity_numeric_id INT NOT NULL DEFAULT 0,
+    state_value VARCHAR(32) NOT NULL DEFAULT '',
+    bool_value BOOLEAN,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_world_state_merge_key ON world_state (merge_key);
+CREATE INDEX IF NOT EXISTS idx_world_state_game_ts ON world_state (game_ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_state_created_at ON world_state (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_state_source ON world_state (source);
+CREATE INDEX IF NOT EXISTS idx_world_state_rule_category ON world_state (rule_category);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWER(query_name));
+CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
 
 -- ----------------------------------------------------------
 -- rename_global — DB-backed rename pools
@@ -546,7 +573,6 @@ CREATE TABLE IF NOT EXISTS core_npc (
     tags TEXT DEFAULT '',
     is_animal BOOLEAN DEFAULT FALSE,
     is_slave BOOLEAN DEFAULT FALSE,
-    knowledge_tags TEXT DEFAULT '',
     world_knowledge_tags TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -600,7 +626,6 @@ CREATE TABLE IF NOT EXISTS core_npc_master_history (
     tags TEXT DEFAULT '',
     is_animal BOOLEAN DEFAULT FALSE,
     is_slave BOOLEAN DEFAULT FALSE,
-    knowledge_tags TEXT DEFAULT '',
     world_knowledge_tags TEXT DEFAULT '',
     snapshot_reason VARCHAR(64) DEFAULT 'snapshot',
     snapshot_hash TEXT DEFAULT '',
@@ -1899,10 +1924,10 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('STOP_CARRYING', 'StopCarrying', 'Put down what you are currently carrying.', TRUE),
 ('GIVE_CATS', 'GiveCats', 'Give cats to the player. Put amount in item field.', TRUE),
 ('TAKE_CATS', 'TakeCats', 'Take cats from the player. Put amount in item field.', TRUE),
-('TAKE_ITEM', 'TakeItem', 'Take a specific item from the player. Put exact item name in item field.', TRUE),
-('GIVE_ITEM', 'GiveItem', 'Give a specific item to the player. Put exact item name in item field.', TRUE),
-('DROP_ITEM', 'DropItem', 'Drop a specific item. Put exact item name in item field.', TRUE),
-('ROLEPLAY_ACTION', 'RoleplayAction', 'Display a descriptive roleplay action as a world notification. Put action text in target or message field.', TRUE),
+('TAKE_ITEM', 'TakeItem', 'Take a specific item from the player.', TRUE),
+('GIVE_ITEM', 'GiveItem', 'Give a specific item to the player.', TRUE),
+('DROP_ITEM', 'DropItem', 'Drop a specific item.', TRUE),
+('ROLEPLAY_ACTION', 'RoleplayAction', 'Describe a roleplay action along with your dialogue.', TRUE),
 ('FACTION_RELATIONS', 'FactionRelations', 'Change relation between your faction and a nearby player-faction person''s faction. Put target person name in target and use item as -100 or 100.', TRUE),
 ('SET_BLOCK', 'SetBlock', 'Toggle defensive block behavior using ON/OFF in item or target.', TRUE),
 ('SET_HOLD', 'SetHold', 'Toggle hold position using ON/OFF in item or target.', TRUE),
@@ -1914,8 +1939,11 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('SET_RESOURCE', 'SetResource', 'Toggle resource-work behavior using ON/OFF in item or target.', TRUE),
 ('SET_MEDIC', 'SetMedic', 'Toggle medic behavior using ON/OFF in item or target.', TRUE),
 ('REMOVE_LIMB', 'RemoveLimb', 'Remove one limb from a helpless target. Requires a hacksaw in inventory. Use target and item as LEFT_ARM, RIGHT_ARM, LEFT_LEG, or RIGHT_LEG. Works only on knocked-out, unconscious, imprisoned, or carried targets.', TRUE),
+('KILL', 'Kill', 'Kill a helpless target immediately.', TRUE),
 ('USE_OBJECT', 'UseObject', 'Use a nearby point of interest such as a chair, turret, bed, throne, or work spot. Use target or item as an object name/refid, or leave blank to use the nearest usable free slot.', TRUE),
-('TRAVEL_LOCATION', 'TravelLocation', 'Travel to a previously visited location by name. Uses stored x/y/z coordinates from location_zones.', TRUE),
+('USE_DRUGS', 'UseDrugs', 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time.', TRUE),
+('DRINK', 'Drink', 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout.', TRUE),
+('TRAVEL_LOCATION', 'TravelLocation', 'Travel to a previously visited location by name.', TRUE),
 ('TALK', 'Talk', 'Speak normally without issuing an in-world action.', TRUE)
 ON CONFLICT (command) DO UPDATE SET
     action_name = EXCLUDED.action_name,

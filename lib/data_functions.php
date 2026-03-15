@@ -3487,6 +3487,386 @@ function storeGameData(string $name, string $type, array $data): bool {
     return $result !== false;
 }
 
+function storeWorldStateEntries(array $payload): int {
+    $db = $GLOBALS["db"];
+
+    $gameTs = intval($payload['game_ts'] ?? 0);
+    if ($gameTs < 0) {
+        $gameTs = 0;
+    }
+
+    $source = trim(strval($payload['source'] ?? 'world_event_state_query'));
+    if ($source === '') {
+        $source = 'world_event_state_query';
+    }
+
+    $queries = $payload['queries'] ?? [];
+    if (!is_array($queries) && is_string($queries) && trim($queries) !== '') {
+        $decodedQueries = json_decode($queries, true);
+        if (is_array($decodedQueries)) {
+            $queries = $decodedQueries;
+        }
+    }
+    if (!is_array($queries)) {
+        $queries = [];
+    }
+
+    $parseBool = static function (mixed $value): ?bool {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return intval($value) !== 0;
+        }
+        $text = strtolower(trim(strval($value)));
+        if ($text === '') {
+            return null;
+        }
+        if (in_array($text, ['1', 'true', 'yes', 'on'], true)) {
+            return true;
+        }
+        if (in_array($text, ['0', 'false', 'no', 'off'], true)) {
+            return false;
+        }
+        return null;
+    };
+
+    $normalizeList = static function (mixed $value): array {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value) && trim($value) !== '') {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+        return [];
+    };
+
+    $entriesByKey = [];
+    $buildEntryKey = static function (
+        string $source,
+        string $queryName,
+        string $queryStringId,
+        int $queryNumericId,
+        bool $playerInvolvement,
+        string $ruleCategory,
+        string $entityName,
+        string $entityStringId,
+        int $entityNumericId
+    ): string {
+        return implode('|', [
+            strtolower(trim($source)),
+            strtolower(trim($queryName)),
+            strtolower(trim($queryStringId)),
+            strval($queryNumericId),
+            $playerInvolvement ? '1' : '0',
+            strtolower(trim($ruleCategory)),
+            strtolower(trim($entityName)),
+            strtolower(trim($entityStringId)),
+            strval($entityNumericId),
+        ]);
+    };
+    $setEntry = static function (
+        int $gameTs,
+        string $source,
+        string $queryName,
+        string $queryStringId,
+        int $queryNumericId,
+        bool $playerInvolvement,
+        string $ruleCategory,
+        string $entityName,
+        string $entityStringId,
+        int $entityNumericId,
+        string $stateValue,
+        ?bool $boolValue
+    ) use (&$entriesByKey, $buildEntryKey): void {
+        $key = $buildEntryKey(
+            $source,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement,
+            $ruleCategory,
+            $entityName,
+            $entityStringId,
+            $entityNumericId
+        );
+        $entriesByKey[$key] = [
+            'merge_key' => $key,
+            'game_ts' => $gameTs,
+            'source' => $source,
+            'query_name' => $queryName,
+            'query_string_id' => $queryStringId,
+            'query_numeric_id' => $queryNumericId,
+            'player_involvement' => $playerInvolvement,
+            'rule_category' => $ruleCategory,
+            'entity_name' => $entityName,
+            'entity_string_id' => $entityStringId,
+            'entity_numeric_id' => $entityNumericId,
+            'state_value' => $stateValue,
+            'bool_value' => $boolValue,
+        ];
+    };
+
+    foreach ($queries as $query) {
+        if (!is_array($query)) {
+            continue;
+        }
+
+        $queryName = trim(strval($query['query_name'] ?? ''));
+        $queryStringId = trim(strval($query['query_string_id'] ?? ''));
+        $queryNumericId = intval($query['query_numeric_id'] ?? 0);
+        $playerInvolvement = boolval($query['player_involvement'] ?? false);
+
+        $insertStateList = static function (
+            mixed $listValue,
+            string $ruleCategory,
+            string $source,
+            int $gameTs,
+            string $queryName,
+            string $queryStringId,
+            int $queryNumericId,
+            bool $playerInvolvement
+        ) use ($normalizeList, $setEntry): bool {
+            $list = $normalizeList($listValue);
+            foreach ($list as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $entityName = trim(strval($entry['name'] ?? ''));
+                $entityStringId = trim(strval($entry['string_id'] ?? ''));
+                $entityNumericId = intval($entry['numeric_id'] ?? 0);
+                $stateValue = strtolower(trim(strval($entry['state'] ?? '')));
+                if (!in_array($stateValue, ['dead', 'alive', 'imprisoned'], true)) {
+                    $stateValue = '';
+                }
+                if (
+                    $entityName === '' &&
+                    $entityStringId === '' &&
+                    $entityNumericId <= 0 &&
+                    $stateValue === ''
+                ) {
+                    continue;
+                }
+                $setEntry(
+                    $gameTs,
+                    $source,
+                    $queryName,
+                    $queryStringId,
+                    $queryNumericId,
+                    $playerInvolvement,
+                    $ruleCategory,
+                    $entityName,
+                    $entityStringId,
+                    $entityNumericId,
+                    $stateValue,
+                    null
+                );
+            }
+            return true;
+        };
+
+        $ok = $insertStateList(
+            $query['unique_npcs_are'] ?? [],
+            'unique_npcs_are',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+        $ok = $insertStateList(
+            $query['unique_npcs_are_not'] ?? [],
+            'unique_npcs_are_not',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+        $ok = $insertStateList(
+            $query['towns'] ?? [],
+            'towns',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+
+        $insertBoolList = static function (
+            mixed $listValue,
+            string $ruleCategory,
+            string $boolKey,
+            string $source,
+            int $gameTs,
+            string $queryName,
+            string $queryStringId,
+            int $queryNumericId,
+            bool $playerInvolvement
+        ) use ($normalizeList, $parseBool, $setEntry): bool {
+            $list = $normalizeList($listValue);
+            foreach ($list as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $entityName = trim(strval($entry['name'] ?? ''));
+                $entityStringId = trim(strval($entry['string_id'] ?? ''));
+                $entityNumericId = intval($entry['numeric_id'] ?? 0);
+                $boolValue = $parseBool($entry[$boolKey] ?? null);
+                if (
+                    $entityName === '' &&
+                    $entityStringId === '' &&
+                    $entityNumericId <= 0 &&
+                    $boolValue === null
+                ) {
+                    continue;
+                }
+                $setEntry(
+                    $gameTs,
+                    $source,
+                    $queryName,
+                    $queryStringId,
+                    $queryNumericId,
+                    $playerInvolvement,
+                    $ruleCategory,
+                    $entityName,
+                    $entityStringId,
+                    $entityNumericId,
+                    '',
+                    $boolValue
+                );
+            }
+            return true;
+        };
+
+        $ok = $insertBoolList(
+            $query['is_ally_of'] ?? [],
+            'is_ally_of',
+            'is_ally',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+        $ok = $insertBoolList(
+            $query['is_enemy_of'] ?? [],
+            'is_enemy_of',
+            'is_enemy',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+    }
+
+    $txStarted = false;
+    try {
+        $beginOk = $db->exec("BEGIN");
+        if ($beginOk === false) {
+            return -1;
+        }
+        $txStarted = true;
+
+        foreach ($entriesByKey as $entry) {
+            $ok = $db->exec(
+                "INSERT INTO world_state (
+                    merge_key,
+                    game_ts,
+                    source,
+                    query_name,
+                    query_string_id,
+                    query_numeric_id,
+                    player_involvement,
+                    rule_category,
+                    entity_name,
+                    entity_string_id,
+                    entity_numeric_id,
+                    state_value,
+                    bool_value,
+                    created_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW()
+                )
+                ON CONFLICT (merge_key) DO UPDATE SET
+                    game_ts = EXCLUDED.game_ts,
+                    source = EXCLUDED.source,
+                    query_name = EXCLUDED.query_name,
+                    query_string_id = EXCLUDED.query_string_id,
+                    query_numeric_id = EXCLUDED.query_numeric_id,
+                    player_involvement = EXCLUDED.player_involvement,
+                    rule_category = EXCLUDED.rule_category,
+                    entity_name = EXCLUDED.entity_name,
+                    entity_string_id = EXCLUDED.entity_string_id,
+                    entity_numeric_id = EXCLUDED.entity_numeric_id,
+                    state_value = EXCLUDED.state_value,
+                    bool_value = EXCLUDED.bool_value,
+                    created_at = NOW()",
+                [
+                    strval($entry['merge_key'] ?? ''),
+                    intval($entry['game_ts'] ?? 0),
+                    strval($entry['source'] ?? ''),
+                    strval($entry['query_name'] ?? ''),
+                    strval($entry['query_string_id'] ?? ''),
+                    intval($entry['query_numeric_id'] ?? 0),
+                    boolval($entry['player_involvement'] ?? false),
+                    strval($entry['rule_category'] ?? ''),
+                    strval($entry['entity_name'] ?? ''),
+                    strval($entry['entity_string_id'] ?? ''),
+                    intval($entry['entity_numeric_id'] ?? 0),
+                    strval($entry['state_value'] ?? ''),
+                    $entry['bool_value'] ?? null,
+                ]
+            );
+            if ($ok === false) {
+                $db->exec("ROLLBACK");
+                return -1;
+            }
+        }
+
+        $commitOk = $db->exec("COMMIT");
+        if ($commitOk === false) {
+            $db->exec("ROLLBACK");
+            return -1;
+        }
+    } catch (Throwable $exception) {
+        if ($txStarted) {
+            $db->exec("ROLLBACK");
+        }
+        stobeLogException($exception, 'storeWorldStateEntries failed', [
+            'source' => $source,
+            'game_ts' => $gameTs,
+        ]);
+        return -1;
+    }
+
+    return count($entriesByKey);
+}
+
 function getNpcData(string $name): array|false {
     $db = $GLOBALS["db"];
     $normalizedName = normalizeParticipantNameToken($name);
@@ -4325,7 +4705,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
     $genderRaw = trim(strval($profile['gender'] ?? ''));
     $originalNameRaw = trim(strval($profile['original_name'] ?? ''));
     $tagsRaw = trim(strval($profile['tags'] ?? ''));
-    $world_knowledgeRaw = trim(strval($profile['world_knowledge_tags'] ?? ($profile['knowledge_tags'] ?? '')));
+    $world_knowledgeRaw = trim(strval($profile['world_knowledge_tags'] ?? ''));
     $bountyRaw = $profile['bounty'] ?? 0;
     $bountyInfoRaw = $profile['bounty_info'] ?? ($profile['bounty_details'] ?? null);
     $factionCombined = composeFactionWithId($factionRaw, $factionIdRaw);
@@ -5234,6 +5614,84 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     }
     $inventoryCounts = [];
     $equipmentCounts = [];
+    $resolveQualityLabelFromLevel = static function (int $level): string {
+        if ($level >= 95) {
+            return 'Masterwork';
+        }
+        if ($level >= 80) {
+            return 'Specialist';
+        }
+        if ($level >= 60) {
+            return 'High';
+        }
+        if ($level >= 40) {
+            return 'Standard';
+        }
+        if ($level >= 20) {
+            return 'Shoddy';
+        }
+        return 'Prototype';
+    };
+    $resolveEntryQuality = static function (array $entry) use ($resolveQualityLabelFromLevel): array {
+        $qualityLabel = trim(strval(
+            $entry['quality']
+                ?? ($entry['quality_label']
+                ?? ($entry['quality_name'] ?? ''))
+        ));
+        if ($qualityLabel !== '') {
+            $qualityLabel = preg_replace('/\s+/u', ' ', $qualityLabel) ?? $qualityLabel;
+            $qualityLabel = trim($qualityLabel);
+        }
+
+        $qualityLevel = -1;
+        foreach (['quality_level', 'qualityLevel', 'level', 'gear_level'] as $qualityField) {
+            if (!array_key_exists($qualityField, $entry)) {
+                continue;
+            }
+            $rawQualityLevel = $entry[$qualityField];
+            if (is_int($rawQualityLevel) || is_float($rawQualityLevel)) {
+                $qualityLevel = intval(round(floatval($rawQualityLevel)));
+                break;
+            }
+            if (is_string($rawQualityLevel)) {
+                $text = trim($rawQualityLevel);
+                if ($text === '' || preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $text) !== 1) {
+                    continue;
+                }
+                $qualityLevel = intval(round(floatval($text)));
+                break;
+            }
+        }
+        if ($qualityLevel >= 0) {
+            if ($qualityLevel > 100) {
+                $qualityLevel = 100;
+            }
+            if ($qualityLabel === '') {
+                $qualityLabel = $resolveQualityLabelFromLevel($qualityLevel);
+            }
+        } else {
+            $qualityLevel = -1;
+        }
+
+        return [
+            'label' => $qualityLabel,
+            'level' => $qualityLevel,
+        ];
+    };
+    $formatItemNameWithQuality = static function (string $name, array $entry): string {
+        $trimmedName = trim($name);
+        if ($trimmedName === '') {
+            return '';
+        }
+        if (preg_match('/\[[^\]]+\]/', $trimmedName) === 1) {
+            return $trimmedName;
+        }
+        $qualityLabel = trim(strval($entry['quality'] ?? ''));
+        if ($qualityLabel === '') {
+            return $trimmedName;
+        }
+        return $trimmedName . ' [' . $qualityLabel . ']';
+    };
     $inventoryDescriptionCount = 0;
     if (is_array($inventoryEntries)) {
         foreach ($inventoryEntries as $entryKey => $entry) {
@@ -5257,6 +5715,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     $inventoryCounts[$itemCountKey] = [
                         'name' => $itemNameFromString,
                         'item_id' => '',
+                        'quality' => '',
+                        'quality_level' => -1,
                         'count' => 0,
                         'value_each' => null,
                     ];
@@ -5308,8 +5768,14 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             $itemIdPick = $pickText($entry, ['item_id', 'itemId', 'string_id', 'stringid', 'sid', 'baseid', 'id']);
             $itemId = trim(strval($itemIdPick['value']));
+            $entryQuality = $resolveEntryQuality($entry);
+            $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
+            $itemQualityLevel = intval($entryQuality['level'] ?? -1);
             $itemCountKeyId = $itemId !== '' ? strtolower($itemId) : strtolower($itemName);
-            $itemCountKey = $itemCountKeyId;
+            $qualityKey = $itemQualityLevel >= 0
+                ? ('q:' . strval($itemQualityLevel))
+                : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+            $itemCountKey = $itemCountKeyId . '|' . $qualityKey;
             $isEquippedEntry = coerceBoolean($entry['equipped'] ?? ($entry['is_equipped'] ?? false));
             if ($isEquippedEntry) {
                 if (!array_key_exists($itemCountKey, $equipmentCounts)) {
@@ -5317,6 +5783,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                         'name' => $itemName,
                         'item_id' => $itemId,
                         'description' => $itemDescription,
+                        'quality' => $itemQualityLabel,
+                        'quality_level' => $itemQualityLevel,
                         'count' => 0,
                         'value_each' => null,
                     ];
@@ -5327,6 +5795,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 }
                 if (trim(strval($equipmentCounts[$itemCountKey]['description'] ?? '')) === '' && $itemDescription !== '') {
                     $equipmentCounts[$itemCountKey]['description'] = $itemDescription;
+                }
+                if (trim(strval($equipmentCounts[$itemCountKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+                    $equipmentCounts[$itemCountKey]['quality'] = $itemQualityLabel;
+                }
+                if (intval($equipmentCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+                    $equipmentCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
                 }
                 if (
                     $itemValueEach > 0 &&
@@ -5341,6 +5815,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'name' => $itemName,
                     'item_id' => $itemId,
                     'description' => $itemDescription,
+                    'quality' => $itemQualityLabel,
+                    'quality_level' => $itemQualityLevel,
                     'count' => 0,
                     'value_each' => null,
                 ];
@@ -5351,6 +5827,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             if (trim(strval($inventoryCounts[$itemCountKey]['description'] ?? '')) === '' && $itemDescription !== '') {
                 $inventoryCounts[$itemCountKey]['description'] = $itemDescription;
+            }
+            if (trim(strval($inventoryCounts[$itemCountKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+                $inventoryCounts[$itemCountKey]['quality'] = $itemQualityLabel;
+            }
+            if (intval($inventoryCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+                $inventoryCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
             }
             if (
                 $itemValueEach > 0 &&
@@ -5368,12 +5850,16 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             if ($entryName === '') {
                 continue;
             }
+            $entryDisplayName = $formatItemNameWithQuality($entryName, $entry);
+            if ($entryDisplayName === '') {
+                $entryDisplayName = $entryName;
+            }
             $entryCount = intval($entry['count'] ?? 1);
             if ($entryCount <= 0) {
                 $entryCount = 1;
             }
             $entryValueEach = intval($entry['value_each'] ?? 0);
-            $inventoryEntryText = $entryName . ' x' . strval($entryCount);
+            $inventoryEntryText = $entryDisplayName . ' x' . strval($entryCount);
             if ($entryValueEach > 0) {
                 $inventoryEntryText .= ' value ' . strval($entryValueEach);
             }
@@ -5401,11 +5887,15 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             if ($entryName === '') {
                 continue;
             }
+            $entryDisplayName = $formatItemNameWithQuality($entryName, $entry);
+            if ($entryDisplayName === '') {
+                $entryDisplayName = $entryName;
+            }
             $entryCount = intval($entry['count'] ?? 1);
             if ($entryCount <= 0) {
                 $entryCount = 1;
             }
-            $equipmentEntryText = $entryName . ' x' . strval($entryCount);
+            $equipmentEntryText = $entryDisplayName . ' x' . strval($entryCount);
             $entryValueEach = intval($entry['value_each'] ?? 0);
             if ($entryValueEach > 0) {
                 $equipmentEntryText .= ' value ' . strval($entryValueEach);
@@ -5437,6 +5927,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'count' => $entryCount,
                 'equipped' => true,
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
+                'quality' => trim(strval($entry['quality'] ?? '')),
+                'quality_level' => intval($entry['quality_level'] ?? -1),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -5460,6 +5952,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'count' => $entryCount,
                 'equipped' => false,
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
+                'quality' => trim(strval($entry['quality'] ?? '')),
+                'quality_level' => intval($entry['quality_level'] ?? -1),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -5705,8 +6199,187 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $skills = implode(' || ', $skillSections);
     }
 
+    $traderShopSourcesRaw = $snapshot['trader_shop_sources'] ?? [];
+    $traderShopSources = [];
+    if (is_array($traderShopSourcesRaw)) {
+        $traderShopSources = $traderShopSourcesRaw;
+    } elseif (is_string($traderShopSourcesRaw) && trim($traderShopSourcesRaw) !== '') {
+        $decodedTraderShopSources = json_decode($traderShopSourcesRaw, true);
+        if (is_array($decodedTraderShopSources)) {
+            $traderShopSources = $decodedTraderShopSources;
+        }
+    }
+
+    $traderShopSourceSummaries = [];
+    $traderShopInventoryCounts = [];
+    $traderShopInventoryTotalCount = 0;
+    foreach ($traderShopSources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+
+        $sourceName = trim(strval($source['name'] ?? ''));
+        if ($sourceName === '') {
+            $sourceName = 'shop storage';
+        }
+        $sourceSerial = $parseNonNegativeInt($source['serial'] ?? 0, 0);
+        $sourceDist = 0.0;
+        if (isset($source['dist']) && is_numeric($source['dist'])) {
+            $sourceDist = floatval($source['dist']);
+            if (!is_finite($sourceDist) || $sourceDist < 0.0) {
+                $sourceDist = 0.0;
+            }
+        }
+        $sourceBuildingClass = trim(strval($source['building_class'] ?? ''));
+        $sourceSpecialFunction = trim(strval($source['special_function'] ?? ''));
+
+        $sourceInventoryRaw = $source['inventory'] ?? [];
+        $sourceInventory = [];
+        if (is_array($sourceInventoryRaw)) {
+            $sourceInventory = $sourceInventoryRaw;
+        } elseif (is_string($sourceInventoryRaw) && trim($sourceInventoryRaw) !== '') {
+            $decodedSourceInventory = json_decode($sourceInventoryRaw, true);
+            if (is_array($decodedSourceInventory)) {
+                $sourceInventory = $decodedSourceInventory;
+            }
+        }
+
+        $sourceInventoryTotalCount = 0;
+        foreach ($sourceInventory as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $itemName = trim(strval($entry['name'] ?? ''));
+            if ($itemName === '') {
+                continue;
+            }
+            $itemCount = $parseNonNegativeInt($entry['count'] ?? ($entry['quantity'] ?? 1), 1);
+            if ($itemCount <= 0) {
+                $itemCount = 1;
+            }
+            $itemId = trim(strval(
+                $entry['item_id']
+                    ?? ($entry['itemId']
+                    ?? ($entry['string_id']
+                    ?? ($entry['stringid']
+                    ?? ($entry['sid']
+                    ?? ($entry['baseid']
+                    ?? ($entry['id'] ?? ''))))))
+            ));
+            $itemDescription = stobeNormalizeItemDescriptionText(strval($entry['description'] ?? ''));
+            $entryQuality = $resolveEntryQuality($entry);
+            $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
+            $itemQualityLevel = intval($entryQuality['level'] ?? -1);
+            $itemValueEach = $parseNonNegativeInt(
+                $entry['value_each'] ?? ($entry['value_single'] ?? ($entry['value'] ?? 0)),
+                0
+            );
+
+            $qualityKey = $itemQualityLevel >= 0
+                ? ('q:' . strval($itemQualityLevel))
+                : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
+            if (!array_key_exists($itemKey, $traderShopInventoryCounts)) {
+                $traderShopInventoryCounts[$itemKey] = [
+                    'name' => $itemName,
+                    'count' => 0,
+                    'equipped' => false,
+                    'item_id' => $itemId,
+                    'quality' => $itemQualityLabel,
+                    'quality_level' => $itemQualityLevel,
+                    'description' => $itemDescription,
+                    'value_each' => $itemValueEach,
+                ];
+            }
+            $traderShopInventoryCounts[$itemKey]['count'] += $itemCount;
+            if (trim(strval($traderShopInventoryCounts[$itemKey]['item_id'] ?? '')) === '' && $itemId !== '') {
+                $traderShopInventoryCounts[$itemKey]['item_id'] = $itemId;
+            }
+            if (
+                trim(strval($traderShopInventoryCounts[$itemKey]['description'] ?? '')) === '' &&
+                $itemDescription !== ''
+            ) {
+                $traderShopInventoryCounts[$itemKey]['description'] = $itemDescription;
+            }
+            if (
+                trim(strval($traderShopInventoryCounts[$itemKey]['quality'] ?? '')) === '' &&
+                $itemQualityLabel !== ''
+            ) {
+                $traderShopInventoryCounts[$itemKey]['quality'] = $itemQualityLabel;
+            }
+            if (
+                intval($traderShopInventoryCounts[$itemKey]['quality_level'] ?? -1) < 0 &&
+                $itemQualityLevel >= 0
+            ) {
+                $traderShopInventoryCounts[$itemKey]['quality_level'] = $itemQualityLevel;
+            }
+            if (
+                intval($traderShopInventoryCounts[$itemKey]['value_each'] ?? 0) <= 0 &&
+                $itemValueEach > 0
+            ) {
+                $traderShopInventoryCounts[$itemKey]['value_each'] = $itemValueEach;
+            }
+            $sourceInventoryTotalCount += $itemCount;
+            $traderShopInventoryTotalCount += $itemCount;
+            if (count($traderShopInventoryCounts) >= 260) {
+                break;
+            }
+        }
+
+        $sourceItemCountFromPayload = $parseNonNegativeInt(
+            $source['inventory_item_count'] ?? $sourceInventoryTotalCount,
+            $sourceInventoryTotalCount
+        );
+        if ($sourceItemCountFromPayload <= 0) {
+            $sourceItemCountFromPayload = $sourceInventoryTotalCount;
+        }
+
+        $traderShopSourceSummaries[] = [
+            'name' => $sourceName,
+            'serial' => $sourceSerial,
+            'dist' => $sourceDist,
+            'building_class' => $sourceBuildingClass,
+            'special_function' => $sourceSpecialFunction,
+            'inventory_item_count' => $sourceItemCountFromPayload,
+        ];
+        if (count($traderShopSourceSummaries) >= 8) {
+            break;
+        }
+    }
+
+    $snapshotTraderInventoryItemsRaw = $snapshot['trader_inventory_items'] ?? [];
+    $snapshotTraderInventoryItems = [];
+    if (is_array($snapshotTraderInventoryItemsRaw)) {
+        $snapshotTraderInventoryItems = $snapshotTraderInventoryItemsRaw;
+    } elseif (is_string($snapshotTraderInventoryItemsRaw) && trim($snapshotTraderInventoryItemsRaw) !== '') {
+        $decodedSnapshotTraderInventoryItems = json_decode($snapshotTraderInventoryItemsRaw, true);
+        if (is_array($decodedSnapshotTraderInventoryItems)) {
+            $snapshotTraderInventoryItems = $decodedSnapshotTraderInventoryItems;
+        }
+    }
+    $snapshotTraderInventoryEntryCount = 0;
+    foreach ($snapshotTraderInventoryItems as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $entryName = trim(strval($entry['name'] ?? ''));
+        if ($entryName === '') {
+            continue;
+        }
+        $snapshotTraderInventoryEntryCount++;
+    }
+
+    $traderShopSourceCount = count($traderShopSourceSummaries);
+    $traderShopItemCountFromSnapshot = $parseNonNegativeInt(
+        $snapshot['trader_shop_item_count'] ?? $traderShopInventoryTotalCount,
+        $traderShopInventoryTotalCount
+    );
+    $traderShopItemCount = max($traderShopInventoryTotalCount, $traderShopItemCountFromSnapshot);
+    $isLikelyTraderContext = coerceBoolean($snapshot['is_trader'] ?? false) ||
+        $traderShopSourceCount > 0 || $snapshotTraderInventoryEntryCount > 0;
+
     $occupationParts = [];
-    if (coerceBoolean($snapshot['is_trader'] ?? false)) {
+    if ($isLikelyTraderContext) {
         $occupationParts[] = 'Trader';
     }
     if (coerceBoolean($snapshot['is_leader'] ?? false)) {
@@ -5795,6 +6468,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         'nearby_actors' => $snapshot['nearby'] ?? [],
         'nearby_items' => $snapshot['nearby_items'] ?? [],
         'points_of_interest' => $snapshot['points_of_interest'] ?? [],
+        'trader_shop_sources' => $traderShopSourceSummaries,
+        'trader_shop_source_count' => $traderShopSourceCount,
+        'trader_shop_item_count' => $traderShopItemCount,
     ]);
 
     if ($storageId !== '') {
@@ -5804,8 +6480,194 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($storageId !== '' && !array_key_exists('storage_id', $metadataForStorage)) {
         $metadataForStorage['storage_id'] = $storageId;
     }
+    $shouldPreserveTraderMetadata =
+        $snapshotTraderInventoryEntryCount <= 0 &&
+        $traderShopSourceCount <= 0 &&
+        !array_key_exists('trader_inventory_items', $metadataForStorage) &&
+        !array_key_exists('trader_shop_sources', $metadataForStorage);
+    if ($shouldPreserveTraderMetadata) {
+        $existingMasterRow = $db->fetchOne(
+            "SELECT metadata
+             FROM core_npc_master
+             WHERE LOWER(name) = LOWER($1)
+             LIMIT 1",
+            [$name]
+        );
+        $existingMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
+        $preservedTraderKeys = [
+            'is_trader',
+            'trader_inventory_items',
+            'trader_inventory_item_count',
+            'trader_inventory_snapshot_gamets',
+            'trader_shop_sources',
+            'trader_shop_source_count',
+            'trader_shop_item_count',
+        ];
+        $preservedApplied = [];
+        foreach ($preservedTraderKeys as $preservedKey) {
+            if (
+                !array_key_exists($preservedKey, $metadataForStorage) &&
+                array_key_exists($preservedKey, $existingMetadata)
+            ) {
+                $metadataForStorage[$preservedKey] = $existingMetadata[$preservedKey];
+                $preservedApplied[] = $preservedKey;
+            }
+        }
+        if (count($preservedApplied) > 0) {
+            stobeLogImport('Snapshot preserved trader metadata', [
+                'name' => $name,
+                'keys' => $preservedApplied,
+                'gamets' => max(0, $gamets),
+                'source' => $snapshotSource,
+            ], 'DEBUG');
+        }
+    }
     if (count($inventoryPromptItems) > 0) {
         $metadataForStorage['inventory_items'] = $inventoryPromptItems;
+    }
+    if ($snapshotTraderInventoryEntryCount > 0) {
+        $metadataForStorage['trader_inventory_items'] = $snapshotTraderInventoryItems;
+        if (!array_key_exists('trader_inventory_item_count', $metadataForStorage)) {
+            $metadataForStorage['trader_inventory_item_count'] = $snapshotTraderInventoryEntryCount;
+        }
+        if (!array_key_exists('trader_inventory_snapshot_gamets', $metadataForStorage)) {
+            $metadataForStorage['trader_inventory_snapshot_gamets'] = max(0, $gamets);
+        }
+    }
+    if ($traderShopSourceCount > 0) {
+        $metadataForStorage['trader_shop_sources'] = $traderShopSourceSummaries;
+        $metadataForStorage['trader_shop_source_count'] = $traderShopSourceCount;
+        $metadataForStorage['trader_shop_item_count'] = $traderShopItemCount;
+    }
+    if ($isLikelyTraderContext) {
+        $mergeTraderEntry = static function (array &$bucket, array $entry): void {
+            $entryName = trim(strval($entry['name'] ?? ''));
+            if ($entryName === '') {
+                return;
+            }
+            $entryCount = intval($entry['count'] ?? 1);
+            if ($entryCount <= 0) {
+                $entryCount = 1;
+            }
+            $entryItemId = trim(strval($entry['item_id'] ?? ''));
+            $entryDescription = stobeNormalizeItemDescriptionText(strval($entry['description'] ?? ''));
+            $entryQualityLabel = trim(strval(
+                $entry['quality']
+                    ?? ($entry['quality_label']
+                    ?? ($entry['quality_name'] ?? ''))
+            ));
+            $entryQualityLevel = intval($entry['quality_level'] ?? ($entry['qualityLevel'] ?? -1));
+            if ($entryQualityLevel > 100) {
+                $entryQualityLevel = 100;
+            }
+            if ($entryQualityLevel < 0) {
+                $entryQualityLevel = -1;
+            }
+            $entryValueEach = intval($entry['value_each'] ?? 0);
+            if ($entryValueEach < 0) {
+                $entryValueEach = 0;
+            }
+
+            $qualityKey = $entryQualityLevel >= 0
+                ? ('q:' . strval($entryQualityLevel))
+                : ('q:' . strtolower($entryQualityLabel !== '' ? $entryQualityLabel : 'none'));
+            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName)) . '|' . $qualityKey;
+            if (!array_key_exists($entryKey, $bucket)) {
+                $bucket[$entryKey] = [
+                    'name' => $entryName,
+                    'count' => 0,
+                    'equipped' => false,
+                    'item_id' => $entryItemId,
+                    'quality' => $entryQualityLabel,
+                    'quality_level' => $entryQualityLevel,
+                    'description' => $entryDescription,
+                    'value_each' => $entryValueEach,
+                ];
+            }
+
+            $bucket[$entryKey]['count'] += $entryCount;
+            if (trim(strval($bucket[$entryKey]['item_id'] ?? '')) === '' && $entryItemId !== '') {
+                $bucket[$entryKey]['item_id'] = $entryItemId;
+            }
+            if (
+                trim(strval($bucket[$entryKey]['description'] ?? '')) === '' &&
+                $entryDescription !== ''
+            ) {
+                $bucket[$entryKey]['description'] = $entryDescription;
+            }
+            if (
+                trim(strval($bucket[$entryKey]['quality'] ?? '')) === '' &&
+                $entryQualityLabel !== ''
+            ) {
+                $bucket[$entryKey]['quality'] = $entryQualityLabel;
+            }
+            if (intval($bucket[$entryKey]['quality_level'] ?? -1) < 0 && $entryQualityLevel >= 0) {
+                $bucket[$entryKey]['quality_level'] = $entryQualityLevel;
+            }
+            if (
+                intval($bucket[$entryKey]['value_each'] ?? 0) <= 0 &&
+                $entryValueEach > 0
+            ) {
+                $bucket[$entryKey]['value_each'] = $entryValueEach;
+            }
+        };
+
+        $traderInventoryByKey = [];
+        $traderInventoryItems = [];
+        $traderInventoryCount = 0;
+        foreach ($inventoryPromptItems as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            if (coerceBoolean($entry['equipped'] ?? false)) {
+                continue;
+            }
+            $mergeTraderEntry($traderInventoryByKey, $entry);
+        }
+        foreach ($traderShopInventoryCounts as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $mergeTraderEntry($traderInventoryByKey, $entry);
+        }
+
+        foreach ($traderInventoryByKey as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $traderInventoryItems[] = $entry;
+            $entryCount = intval($entry['count'] ?? 1);
+            if ($entryCount <= 0) {
+                $entryCount = 1;
+            }
+            $traderInventoryCount += $entryCount;
+            if (count($traderInventoryItems) >= 260) {
+                break;
+            }
+        }
+
+        // Fallback: if slot classification is unavailable, keep the full snapshot list.
+        if (count($traderInventoryItems) === 0 && count($inventoryPromptItems) > 0) {
+            $traderInventoryItems = $inventoryPromptItems;
+            $traderInventoryCount = 0;
+            foreach ($traderInventoryItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $entryCount = intval($entry['count'] ?? 1);
+                if ($entryCount <= 0) {
+                    $entryCount = 1;
+                }
+                $traderInventoryCount += $entryCount;
+            }
+        }
+        if ($traderInventoryCount <= 0) {
+            $traderInventoryCount = $traderShopItemCount;
+        }
+
+        $metadataForStorage['trader_inventory_items'] = $traderInventoryItems;
+        $metadataForStorage['trader_inventory_item_count'] = $traderInventoryCount;
+        $metadataForStorage['trader_inventory_snapshot_gamets'] = max(0, $gamets);
     }
     storeNpcProfile($name, [
         'race' => $race,
@@ -7582,6 +8444,10 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
             'is_drunk',
             'drunk_status',
             'drunk_seconds_remaining',
+            'is_high',
+            'high_status',
+            'high_seconds_remaining',
+            'high_hunger_rate_multiplier',
             'dist',
             'is_player_character',
             'is_animal',
@@ -7600,6 +8466,34 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
         ['name', 'type', 'kind', 'location', 'dist'],
         32
     );
+    $traderShopSources = $extractSceneRows(
+        $extended['trader_shop_sources'] ?? [],
+        ['name', 'serial', 'dist', 'building_class', 'special_function', 'inventory_item_count'],
+        8
+    );
+    $traderShopSourceCount = parseIntLike(
+        $extended['trader_shop_source_count'] ?? count($traderShopSources),
+        count($traderShopSources)
+    );
+    if ($traderShopSourceCount < count($traderShopSources)) {
+        $traderShopSourceCount = count($traderShopSources);
+    }
+    $traderShopItemCount = parseIntLike(
+        $extended['trader_shop_item_count'] ?? 0,
+        0
+    );
+    if ($traderShopItemCount < 0) {
+        $traderShopItemCount = 0;
+    }
+    foreach ($traderShopSources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+        $sourceItemCount = parseIntLike($source['inventory_item_count'] ?? 0, 0);
+        if ($sourceItemCount > 0) {
+            $traderShopItemCount += $sourceItemCount;
+        }
+    }
 
     $redundantTopLevel = [
         'stats',
@@ -7643,6 +8537,18 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
         $extended['points_of_interest'] = $pointsOfInterest;
     } elseif (array_key_exists('points_of_interest', $extended)) {
         unset($extended['points_of_interest']);
+    }
+
+    if (count($traderShopSources) > 0) {
+        $extended['trader_shop_sources'] = $traderShopSources;
+        $extended['trader_shop_source_count'] = $traderShopSourceCount;
+        $extended['trader_shop_item_count'] = $traderShopItemCount;
+    } else {
+        foreach (['trader_shop_sources', 'trader_shop_source_count', 'trader_shop_item_count'] as $key) {
+            if (array_key_exists($key, $extended)) {
+                unset($extended[$key]);
+            }
+        }
     }
 
     return $extended;

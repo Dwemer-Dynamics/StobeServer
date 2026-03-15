@@ -1255,7 +1255,7 @@ if (isset($_GET['bio_search'])) {
     $cntRow = $GLOBALS['db']->fetchOne("select count(*) as c from combined_bio_templates {$whereSql}");
     $total = intval($cntRow['c'] ?? 0);
     $offset = ($page - 1) * $pageSize;
-    $rows = $GLOBALS['db']->fetchAll("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), nullif(to_jsonb(cbt)->>'knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt {$whereSql} order by lower(npc_name) asc limit {$pageSize} offset {$offset}");
+    $rows = $GLOBALS['db']->fetchAll("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt {$whereSql} order by lower(npc_name) asc limit {$pageSize} offset {$offset}");
     $items = [];
     foreach (($rows ?? []) as $r) {
         $extFields = ['npc_static_bio','personality','appearance','relationships','occupation','skills','speechstyle','goals'];
@@ -1288,7 +1288,7 @@ if (isset($_GET['bio_detail'])) {
     if ($name === '') { echo json_encode(['ok'=>false,'error'=>'Missing name']); exit; }
     $esc = $GLOBALS['db']->escape($name);
     // Case-insensitive exact match on npc_name to tolerate capitalization differences
-    $r = $GLOBALS['db']->fetchOne("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), nullif(to_jsonb(cbt)->>'knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt where lower(npc_name) = lower('{$esc}') limit 1");
+    $r = $GLOBALS['db']->fetchOne("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt where lower(npc_name) = lower('{$esc}') limit 1");
     if (!$r) { echo json_encode(['ok'=>false,'error'=>'Not found']); exit; }
     echo json_encode(['ok'=>true,'data'=>$r]);
     exit;
@@ -1308,7 +1308,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         $profileId   = isset($_POST['profile_id']) && $_POST['profile_id']!=='' ? intval($_POST['profile_id']) : null;
 
         $esc = $GLOBALS['db']->escape($name);
-        $r = $GLOBALS['db']->fetchOne("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), nullif(to_jsonb(cbt)->>'knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt where npc_name = '{$esc}' limit 1");
+        $r = $GLOBALS['db']->fetchOne("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt where npc_name = '{$esc}' limit 1");
         if (!$r) { echo json_encode(['ok'=>false,'error'=>'Template not found']); exit; }
 
         $data = [ 'npc_name' => $r['npc_name'] ?? $name ];
