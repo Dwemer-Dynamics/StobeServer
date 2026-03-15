@@ -1904,7 +1904,8 @@ function truncatePromptValue(string $value, int $maxLength = 220): string {
 function stobePromptXmlEscape(mixed $value): string {
     $text = strval($value);
     $text = str_replace(["\r\n", "\r"], "\n", $text);
-    return htmlspecialchars($text, ENT_QUOTES | ENT_XML1, 'UTF-8');
+    // Keep apostrophes readable in text nodes while still escaping XML control chars.
+    return htmlspecialchars($text, ENT_COMPAT | ENT_XML1, 'UTF-8');
 }
 
 function stobeBuildGameTimePromptBlock(mixed $gamets): string {
@@ -3049,6 +3050,88 @@ function getItemDescriptionFromCombinedTable(string $itemName, string $itemId = 
     }
 }
 
+function stobeResolveArmorQualityLabelFromLevel(int $level): string {
+    if ($level >= 95) {
+        return 'Masterwork';
+    }
+    if ($level >= 80) {
+        return 'Specialist';
+    }
+    if ($level >= 60) {
+        return 'High';
+    }
+    if ($level >= 40) {
+        return 'Standard';
+    }
+    if ($level >= 20) {
+        return 'Shoddy';
+    }
+    return 'Prototype';
+}
+
+function stobeResolveItemQualityFromEntry(array $entry): array {
+    $label = trim(strval(
+        $entry['quality']
+            ?? ($entry['quality_label']
+            ?? ($entry['quality_name'] ?? ''))
+    ));
+    if ($label !== '') {
+        $label = preg_replace('/\s+/u', ' ', $label) ?? $label;
+        $label = trim($label);
+    }
+
+    $level = -1;
+    foreach (['quality_level', 'qualityLevel', 'level', 'gear_level'] as $field) {
+        if (!array_key_exists($field, $entry)) {
+            continue;
+        }
+        $rawLevel = $entry[$field];
+        if (is_int($rawLevel) || is_float($rawLevel)) {
+            $level = intval(round(floatval($rawLevel)));
+            break;
+        }
+        if (is_string($rawLevel)) {
+            $text = trim($rawLevel);
+            if ($text === '' || preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $text) !== 1) {
+                continue;
+            }
+            $level = intval(round(floatval($text)));
+            break;
+        }
+    }
+    if ($level >= 0) {
+        if ($level > 100) {
+            $level = 100;
+        }
+        if ($label === '') {
+            $label = stobeResolveArmorQualityLabelFromLevel($level);
+        }
+    } else {
+        $level = -1;
+    }
+
+    return [
+        'label' => $label,
+        'level' => $level,
+    ];
+}
+
+function stobeFormatInventoryItemNameWithQuality(string $itemName, array $entry): string {
+    $name = trim($itemName);
+    if ($name === '') {
+        return '';
+    }
+    if (preg_match('/\[[^\]]+\]/', $name) === 1) {
+        return $name;
+    }
+    $quality = stobeResolveItemQualityFromEntry($entry);
+    $label = trim(strval($quality['label'] ?? ''));
+    if ($label === '') {
+        return $name;
+    }
+    return $name . ' [' . $label . ']';
+}
+
 function buildInventoryContextFromMetadata(array $metadata): array {
     $rawEntries = $metadata['inventory_items'] ?? [];
     if (is_string($rawEntries) && trim($rawEntries) !== '') {
@@ -3129,6 +3212,9 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             $itemDescription = preg_replace('/\s+/u', ' ', $itemDescription) ?? $itemDescription;
             $itemDescription = trim($itemDescription);
         }
+        $itemQuality = stobeResolveItemQualityFromEntry($entry);
+        $itemQualityLabel = trim(strval($itemQuality['label'] ?? ''));
+        $itemQualityLevel = intval($itemQuality['level'] ?? -1);
         $itemModel = '';
         $itemManufacturer = '';
         $itemManufacturerId = '';
@@ -3138,13 +3224,18 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
         $isEquipped = $parseFlag($entry['equipped'] ?? ($entry['is_equipped'] ?? false));
 
-        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName));
+        $qualityKey = $itemQualityLevel >= 0
+            ? ('q:' . strval($itemQualityLevel))
+            : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
         if ($isEquipped) {
             if (!array_key_exists($entryKey, $equipmentCounts)) {
                 $equipmentCounts[$entryKey] = [
                     'name' => $itemName,
                     'item_id' => $itemId,
                     'description' => $itemDescription,
+                    'quality' => $itemQualityLabel,
+                    'quality_level' => $itemQualityLevel,
                     'value_each' => $itemValueEach,
                     'count' => 0,
                 ];
@@ -3155,6 +3246,12 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             }
             if (trim(strval($equipmentCounts[$entryKey]['description'] ?? '')) === '' && $itemDescription !== '') {
                 $equipmentCounts[$entryKey]['description'] = $itemDescription;
+            }
+            if (trim(strval($equipmentCounts[$entryKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+                $equipmentCounts[$entryKey]['quality'] = $itemQualityLabel;
+            }
+            if (intval($equipmentCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+                $equipmentCounts[$entryKey]['quality_level'] = $itemQualityLevel;
             }
             if (intval($equipmentCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
                 $equipmentCounts[$entryKey]['value_each'] = $itemValueEach;
@@ -3167,6 +3264,8 @@ function buildInventoryContextFromMetadata(array $metadata): array {
                 'name' => $itemName,
                 'item_id' => $itemId,
                 'description' => $itemDescription,
+                'quality' => $itemQualityLabel,
+                'quality_level' => $itemQualityLevel,
                 'value_each' => $itemValueEach,
                 'count' => 0,
             ];
@@ -3177,6 +3276,12 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
         if (trim(strval($inventoryCounts[$entryKey]['description'] ?? '')) === '' && $itemDescription !== '') {
             $inventoryCounts[$entryKey]['description'] = $itemDescription;
+        }
+        if (trim(strval($inventoryCounts[$entryKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+            $inventoryCounts[$entryKey]['quality'] = $itemQualityLabel;
+        }
+        if (intval($inventoryCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+            $inventoryCounts[$entryKey]['quality_level'] = $itemQualityLevel;
         }
         if (intval($inventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
             $inventoryCounts[$entryKey]['value_each'] = $itemValueEach;
@@ -3209,17 +3314,25 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             $itemDescription = preg_replace('/\s+/u', ' ', $itemDescription) ?? $itemDescription;
             $itemDescription = trim($itemDescription);
         }
+        $itemQuality = stobeResolveItemQualityFromEntry($entry);
+        $itemQualityLabel = trim(strval($itemQuality['label'] ?? ''));
+        $itemQualityLevel = intval($itemQuality['level'] ?? -1);
         $itemValueEach = intval($entry['value_each'] ?? ($entry['value_single'] ?? 0));
         if ($itemValueEach < 0) {
             $itemValueEach = 0;
         }
 
-        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName));
+        $qualityKey = $itemQualityLevel >= 0
+            ? ('q:' . strval($itemQualityLevel))
+            : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
         if (!array_key_exists($entryKey, $traderInventoryCounts)) {
             $traderInventoryCounts[$entryKey] = [
                 'name' => $itemName,
                 'item_id' => $itemId,
                 'description' => $itemDescription,
+                'quality' => $itemQualityLabel,
+                'quality_level' => $itemQualityLevel,
                 'value_each' => $itemValueEach,
                 'count' => 0,
             ];
@@ -3233,6 +3346,15 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             $itemDescription !== ''
         ) {
             $traderInventoryCounts[$entryKey]['description'] = $itemDescription;
+        }
+        if (
+            trim(strval($traderInventoryCounts[$entryKey]['quality'] ?? '')) === '' &&
+            $itemQualityLabel !== ''
+        ) {
+            $traderInventoryCounts[$entryKey]['quality'] = $itemQualityLabel;
+        }
+        if (intval($traderInventoryCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+            $traderInventoryCounts[$entryKey]['quality_level'] = $itemQualityLevel;
         }
         if (intval($traderInventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
             $traderInventoryCounts[$entryKey]['value_each'] = $itemValueEach;
@@ -3279,11 +3401,15 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         if ($entryName === '') {
             continue;
         }
+        $entryDisplayName = stobeFormatInventoryItemNameWithQuality($entryName, $entry);
+        if ($entryDisplayName === '') {
+            $entryDisplayName = $entryName;
+        }
         $entryCount = intval($entry['count'] ?? 1);
         if ($entryCount <= 0) {
             $entryCount = 1;
         }
-        $entryText = $entryName . ' x' . strval($entryCount);
+        $entryText = $entryDisplayName . ' x' . strval($entryCount);
         $entryValueEach = intval($entry['value_each'] ?? 0);
         if ($entryValueEach > 0) {
             $entryText .= ' value ' . strval($entryValueEach);
@@ -3304,12 +3430,16 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         if ($entryName === '') {
             continue;
         }
+        $entryDisplayName = stobeFormatInventoryItemNameWithQuality($entryName, $entry);
+        if ($entryDisplayName === '') {
+            $entryDisplayName = $entryName;
+        }
         $entryCount = intval($entry['count'] ?? 1);
         if ($entryCount <= 0) {
             $entryCount = 1;
         }
         $description = $resolveDescription($entry, true);
-        $entryText = $entryName . ' x' . strval($entryCount);
+        $entryText = $entryDisplayName . ' x' . strval($entryCount);
         $entryValueEach = intval($entry['value_each'] ?? 0);
         if ($entryValueEach > 0) {
             $entryText .= ' value ' . strval($entryValueEach);
@@ -3329,12 +3459,16 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         if ($entryName === '') {
             continue;
         }
+        $entryDisplayName = stobeFormatInventoryItemNameWithQuality($entryName, $entry);
+        if ($entryDisplayName === '') {
+            $entryDisplayName = $entryName;
+        }
         $entryCount = intval($entry['count'] ?? 1);
         if ($entryCount <= 0) {
             $entryCount = 1;
         }
         $description = $resolveDescription($entry, true);
-        $entryText = $entryName . ' x' . strval($entryCount);
+        $entryText = $entryDisplayName . ' x' . strval($entryCount);
         $entryValueEach = intval($entry['value_each'] ?? 0);
         if ($entryValueEach > 0) {
             $entryText .= ' value ' . strval($entryValueEach);

@@ -5614,6 +5614,84 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     }
     $inventoryCounts = [];
     $equipmentCounts = [];
+    $resolveQualityLabelFromLevel = static function (int $level): string {
+        if ($level >= 95) {
+            return 'Masterwork';
+        }
+        if ($level >= 80) {
+            return 'Specialist';
+        }
+        if ($level >= 60) {
+            return 'High';
+        }
+        if ($level >= 40) {
+            return 'Standard';
+        }
+        if ($level >= 20) {
+            return 'Shoddy';
+        }
+        return 'Prototype';
+    };
+    $resolveEntryQuality = static function (array $entry) use ($resolveQualityLabelFromLevel): array {
+        $qualityLabel = trim(strval(
+            $entry['quality']
+                ?? ($entry['quality_label']
+                ?? ($entry['quality_name'] ?? ''))
+        ));
+        if ($qualityLabel !== '') {
+            $qualityLabel = preg_replace('/\s+/u', ' ', $qualityLabel) ?? $qualityLabel;
+            $qualityLabel = trim($qualityLabel);
+        }
+
+        $qualityLevel = -1;
+        foreach (['quality_level', 'qualityLevel', 'level', 'gear_level'] as $qualityField) {
+            if (!array_key_exists($qualityField, $entry)) {
+                continue;
+            }
+            $rawQualityLevel = $entry[$qualityField];
+            if (is_int($rawQualityLevel) || is_float($rawQualityLevel)) {
+                $qualityLevel = intval(round(floatval($rawQualityLevel)));
+                break;
+            }
+            if (is_string($rawQualityLevel)) {
+                $text = trim($rawQualityLevel);
+                if ($text === '' || preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $text) !== 1) {
+                    continue;
+                }
+                $qualityLevel = intval(round(floatval($text)));
+                break;
+            }
+        }
+        if ($qualityLevel >= 0) {
+            if ($qualityLevel > 100) {
+                $qualityLevel = 100;
+            }
+            if ($qualityLabel === '') {
+                $qualityLabel = $resolveQualityLabelFromLevel($qualityLevel);
+            }
+        } else {
+            $qualityLevel = -1;
+        }
+
+        return [
+            'label' => $qualityLabel,
+            'level' => $qualityLevel,
+        ];
+    };
+    $formatItemNameWithQuality = static function (string $name, array $entry): string {
+        $trimmedName = trim($name);
+        if ($trimmedName === '') {
+            return '';
+        }
+        if (preg_match('/\[[^\]]+\]/', $trimmedName) === 1) {
+            return $trimmedName;
+        }
+        $qualityLabel = trim(strval($entry['quality'] ?? ''));
+        if ($qualityLabel === '') {
+            return $trimmedName;
+        }
+        return $trimmedName . ' [' . $qualityLabel . ']';
+    };
     $inventoryDescriptionCount = 0;
     if (is_array($inventoryEntries)) {
         foreach ($inventoryEntries as $entryKey => $entry) {
@@ -5637,6 +5715,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     $inventoryCounts[$itemCountKey] = [
                         'name' => $itemNameFromString,
                         'item_id' => '',
+                        'quality' => '',
+                        'quality_level' => -1,
                         'count' => 0,
                         'value_each' => null,
                     ];
@@ -5688,8 +5768,14 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             $itemIdPick = $pickText($entry, ['item_id', 'itemId', 'string_id', 'stringid', 'sid', 'baseid', 'id']);
             $itemId = trim(strval($itemIdPick['value']));
+            $entryQuality = $resolveEntryQuality($entry);
+            $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
+            $itemQualityLevel = intval($entryQuality['level'] ?? -1);
             $itemCountKeyId = $itemId !== '' ? strtolower($itemId) : strtolower($itemName);
-            $itemCountKey = $itemCountKeyId;
+            $qualityKey = $itemQualityLevel >= 0
+                ? ('q:' . strval($itemQualityLevel))
+                : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+            $itemCountKey = $itemCountKeyId . '|' . $qualityKey;
             $isEquippedEntry = coerceBoolean($entry['equipped'] ?? ($entry['is_equipped'] ?? false));
             if ($isEquippedEntry) {
                 if (!array_key_exists($itemCountKey, $equipmentCounts)) {
@@ -5697,6 +5783,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                         'name' => $itemName,
                         'item_id' => $itemId,
                         'description' => $itemDescription,
+                        'quality' => $itemQualityLabel,
+                        'quality_level' => $itemQualityLevel,
                         'count' => 0,
                         'value_each' => null,
                     ];
@@ -5707,6 +5795,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 }
                 if (trim(strval($equipmentCounts[$itemCountKey]['description'] ?? '')) === '' && $itemDescription !== '') {
                     $equipmentCounts[$itemCountKey]['description'] = $itemDescription;
+                }
+                if (trim(strval($equipmentCounts[$itemCountKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+                    $equipmentCounts[$itemCountKey]['quality'] = $itemQualityLabel;
+                }
+                if (intval($equipmentCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+                    $equipmentCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
                 }
                 if (
                     $itemValueEach > 0 &&
@@ -5721,6 +5815,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'name' => $itemName,
                     'item_id' => $itemId,
                     'description' => $itemDescription,
+                    'quality' => $itemQualityLabel,
+                    'quality_level' => $itemQualityLevel,
                     'count' => 0,
                     'value_each' => null,
                 ];
@@ -5731,6 +5827,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             if (trim(strval($inventoryCounts[$itemCountKey]['description'] ?? '')) === '' && $itemDescription !== '') {
                 $inventoryCounts[$itemCountKey]['description'] = $itemDescription;
+            }
+            if (trim(strval($inventoryCounts[$itemCountKey]['quality'] ?? '')) === '' && $itemQualityLabel !== '') {
+                $inventoryCounts[$itemCountKey]['quality'] = $itemQualityLabel;
+            }
+            if (intval($inventoryCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
+                $inventoryCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
             }
             if (
                 $itemValueEach > 0 &&
@@ -5748,12 +5850,16 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             if ($entryName === '') {
                 continue;
             }
+            $entryDisplayName = $formatItemNameWithQuality($entryName, $entry);
+            if ($entryDisplayName === '') {
+                $entryDisplayName = $entryName;
+            }
             $entryCount = intval($entry['count'] ?? 1);
             if ($entryCount <= 0) {
                 $entryCount = 1;
             }
             $entryValueEach = intval($entry['value_each'] ?? 0);
-            $inventoryEntryText = $entryName . ' x' . strval($entryCount);
+            $inventoryEntryText = $entryDisplayName . ' x' . strval($entryCount);
             if ($entryValueEach > 0) {
                 $inventoryEntryText .= ' value ' . strval($entryValueEach);
             }
@@ -5781,11 +5887,15 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             if ($entryName === '') {
                 continue;
             }
+            $entryDisplayName = $formatItemNameWithQuality($entryName, $entry);
+            if ($entryDisplayName === '') {
+                $entryDisplayName = $entryName;
+            }
             $entryCount = intval($entry['count'] ?? 1);
             if ($entryCount <= 0) {
                 $entryCount = 1;
             }
-            $equipmentEntryText = $entryName . ' x' . strval($entryCount);
+            $equipmentEntryText = $entryDisplayName . ' x' . strval($entryCount);
             $entryValueEach = intval($entry['value_each'] ?? 0);
             if ($entryValueEach > 0) {
                 $equipmentEntryText .= ' value ' . strval($entryValueEach);
@@ -5817,6 +5927,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'count' => $entryCount,
                 'equipped' => true,
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
+                'quality' => trim(strval($entry['quality'] ?? '')),
+                'quality_level' => intval($entry['quality_level'] ?? -1),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -5840,6 +5952,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'count' => $entryCount,
                 'equipped' => false,
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
+                'quality' => trim(strval($entry['quality'] ?? '')),
+                'quality_level' => intval($entry['quality_level'] ?? -1),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -6153,18 +6267,26 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     ?? ($entry['id'] ?? ''))))))
             ));
             $itemDescription = stobeNormalizeItemDescriptionText(strval($entry['description'] ?? ''));
+            $entryQuality = $resolveEntryQuality($entry);
+            $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
+            $itemQualityLevel = intval($entryQuality['level'] ?? -1);
             $itemValueEach = $parseNonNegativeInt(
                 $entry['value_each'] ?? ($entry['value_single'] ?? ($entry['value'] ?? 0)),
                 0
             );
 
-            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName));
+            $qualityKey = $itemQualityLevel >= 0
+                ? ('q:' . strval($itemQualityLevel))
+                : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
+            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
             if (!array_key_exists($itemKey, $traderShopInventoryCounts)) {
                 $traderShopInventoryCounts[$itemKey] = [
                     'name' => $itemName,
                     'count' => 0,
                     'equipped' => false,
                     'item_id' => $itemId,
+                    'quality' => $itemQualityLabel,
+                    'quality_level' => $itemQualityLevel,
                     'description' => $itemDescription,
                     'value_each' => $itemValueEach,
                 ];
@@ -6178,6 +6300,18 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 $itemDescription !== ''
             ) {
                 $traderShopInventoryCounts[$itemKey]['description'] = $itemDescription;
+            }
+            if (
+                trim(strval($traderShopInventoryCounts[$itemKey]['quality'] ?? '')) === '' &&
+                $itemQualityLabel !== ''
+            ) {
+                $traderShopInventoryCounts[$itemKey]['quality'] = $itemQualityLabel;
+            }
+            if (
+                intval($traderShopInventoryCounts[$itemKey]['quality_level'] ?? -1) < 0 &&
+                $itemQualityLevel >= 0
+            ) {
+                $traderShopInventoryCounts[$itemKey]['quality_level'] = $itemQualityLevel;
             }
             if (
                 intval($traderShopInventoryCounts[$itemKey]['value_each'] ?? 0) <= 0 &&
@@ -6417,18 +6551,35 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             $entryItemId = trim(strval($entry['item_id'] ?? ''));
             $entryDescription = stobeNormalizeItemDescriptionText(strval($entry['description'] ?? ''));
+            $entryQualityLabel = trim(strval(
+                $entry['quality']
+                    ?? ($entry['quality_label']
+                    ?? ($entry['quality_name'] ?? ''))
+            ));
+            $entryQualityLevel = intval($entry['quality_level'] ?? ($entry['qualityLevel'] ?? -1));
+            if ($entryQualityLevel > 100) {
+                $entryQualityLevel = 100;
+            }
+            if ($entryQualityLevel < 0) {
+                $entryQualityLevel = -1;
+            }
             $entryValueEach = intval($entry['value_each'] ?? 0);
             if ($entryValueEach < 0) {
                 $entryValueEach = 0;
             }
 
-            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName));
+            $qualityKey = $entryQualityLevel >= 0
+                ? ('q:' . strval($entryQualityLevel))
+                : ('q:' . strtolower($entryQualityLabel !== '' ? $entryQualityLabel : 'none'));
+            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName)) . '|' . $qualityKey;
             if (!array_key_exists($entryKey, $bucket)) {
                 $bucket[$entryKey] = [
                     'name' => $entryName,
                     'count' => 0,
                     'equipped' => false,
                     'item_id' => $entryItemId,
+                    'quality' => $entryQualityLabel,
+                    'quality_level' => $entryQualityLevel,
                     'description' => $entryDescription,
                     'value_each' => $entryValueEach,
                 ];
@@ -6443,6 +6594,15 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 $entryDescription !== ''
             ) {
                 $bucket[$entryKey]['description'] = $entryDescription;
+            }
+            if (
+                trim(strval($bucket[$entryKey]['quality'] ?? '')) === '' &&
+                $entryQualityLabel !== ''
+            ) {
+                $bucket[$entryKey]['quality'] = $entryQualityLabel;
+            }
+            if (intval($bucket[$entryKey]['quality_level'] ?? -1) < 0 && $entryQualityLevel >= 0) {
+                $bucket[$entryKey]['quality_level'] = $entryQualityLevel;
             }
             if (
                 intval($bucket[$entryKey]['value_each'] ?? 0) <= 0 &&
