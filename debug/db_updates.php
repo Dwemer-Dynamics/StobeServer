@@ -799,6 +799,23 @@ PROMPT;
             $db->exec("ALTER TABLE world_state ALTER COLUMN merge_key SET NOT NULL");
             $db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_world_state_merge_key ON world_state (merge_key)");
         });
+        $applyPatch('general_settings', 202603150005, static function () use ($db): void {
+            $db->exec("
+                INSERT INTO general_settings (id, value, description, updated_at)
+                VALUES (
+                    'RELATIONSHIP_SYSTEM',
+                    COALESCE(
+                        (SELECT value FROM general_settings WHERE id='RELATIONSHIP_SYSTEM_ENABLED' LIMIT 1),
+                        'true'
+                    ),
+                    'Master toggle for relationship connector evaluation. When false, relationship LLM updates are skipped.',
+                    NOW()
+                )
+                ON CONFLICT (id) DO UPDATE
+                SET description = EXCLUDED.description,
+                    updated_at = NOW()
+            ");
+        });
 
         stobeLogInfo('DB updates completed (release consolidator)');
     }

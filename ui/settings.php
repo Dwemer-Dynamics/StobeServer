@@ -52,6 +52,10 @@ function stobeHideFromGlobalSettingsUi(string $id): bool
     if ($idUpper === 'STOBE_QUICKSTART_COMPLETED') {
         return true;
     }
+    // Legacy relationship toggle key; RELATIONSHIP_SYSTEM is the canonical setting.
+    if ($idUpper === 'RELATIONSHIP_SYSTEM_ENABLED') {
+        return true;
+    }
 
     return false;
 }
@@ -124,7 +128,9 @@ function stobeInferGroup(string $id): string
         'HTTP_TIMEOUT',
         'BRACKET_ORIGINAL_NAME',
         'SPEAKER_RECHAT',
-        'PLAYER_NAME'
+        'PLAYER_NAME',
+        'RELATIONSHIP_SYSTEM',
+        'RELATIONSHIP_SYSTEM_ENABLED'
     ], true)) {
         return 'Core';
     }
@@ -218,6 +224,7 @@ foreach ($grouped as $groupName => $rows) {
             'EMOTEMOODS' => 1,
             'BRACKET_ORIGINAL_NAME' => 0,
             'SPEAKER_RECHAT' => 1,
+            'RELATIONSHIP_SYSTEM' => 2,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
             'PLAYTHROUGH_AUTOLOAD_ENABLED' => 0,

@@ -36,7 +36,11 @@
  *   require_once(__DIR__."/../ext/relationship_system/postrequest.php");
  */
 
-// Master toggle - if disabled, skip everything in this file
+// Master toggle - if disabled in global settings, skip everything in this file.
+if (function_exists('stobeIsRelationshipSystemEnabled') && !stobeIsRelationshipSystemEnabled()) {
+    return;
+}
+// Legacy runtime toggle fallback.
 if (empty($GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'])) {
     return;
 }

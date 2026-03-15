@@ -2146,6 +2146,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
 ('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),
+('RELATIONSHIP_SYSTEM',  'true',         'Master toggle for relationship connector evaluation. When false, relationship LLM updates are skipped.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
 

@@ -6100,10 +6100,15 @@ function stobeEvaluateRelationshipsForTurn(
         return $result;
     }
 
+    if (function_exists('stobeIsRelationshipSystemEnabled') && !stobeIsRelationshipSystemEnabled()) {
+        $result['error'] = 'relationship_system_disabled';
+        return $result;
+    }
+
     $enabled = getNpcProfileBoolSetting(
         $speakerNpcData,
-        ['RELATIONSHIP_SYSTEM_ENABLED'],
-        'RELATIONSHIP_SYSTEM_ENABLED',
+        ['RELATIONSHIP_SYSTEM', 'RELATIONSHIP_SYSTEM_ENABLED'],
+        'RELATIONSHIP_SYSTEM',
         true
     );
     if (!$enabled) {
