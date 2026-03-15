@@ -215,7 +215,7 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
         $appendFallbackAction(
             'KILL',
             'Kill',
-            'Kill a helpless target immediately. Works only on knocked-out, unconscious, imprisoned, or carried targets.'
+            'Kill a helpless target immediately.'
         );
     }
 
@@ -3710,6 +3710,7 @@ function stobeDescribeLimbStatus(mixed $limbsRaw): string {
 function buildWorldStateBlock(array $npcData): string {
     $fields = [];
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
     $parseFlag = static function (mixed $value): ?bool {
         if (is_bool($value)) {
             return $value;
@@ -3731,6 +3732,125 @@ function buildWorldStateBlock(array $npcData): string {
         }
         return null;
     };
+    $rawEnvironment = $extendedData['environment'] ?? ($metadata['environment'] ?? []);
+    $environment = [];
+    if (is_array($rawEnvironment)) {
+        $environment = $rawEnvironment;
+    } elseif (is_string($rawEnvironment) && trim($rawEnvironment) !== '') {
+        $decodedEnvironment = json_decode($rawEnvironment, true);
+        if (is_array($decodedEnvironment)) {
+            $environment = $decodedEnvironment;
+        }
+    }
+    $normalizeEnvironmentToken = static function (mixed $value): string {
+        if (is_array($value) || is_object($value) || $value === null) {
+            return '';
+        }
+        $text = trim(strval($value));
+        if ($text === '') {
+            return '';
+        }
+        $lower = strtolower($text);
+        if (in_array($lower, ['unknown', 'none', 'n/a', 'null', 'unset'], true)) {
+            return '';
+        }
+        return $text;
+    };
+    $pickEnvironmentToken = static function (array $source, array $keys) use ($normalizeEnvironmentToken): string {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $source)) {
+                continue;
+            }
+            $token = $normalizeEnvironmentToken($source[$key]);
+            if ($token !== '') {
+                return $token;
+            }
+        }
+        return '';
+    };
+    $locationCandidates = [
+        $pickEnvironmentToken($environment, ['building_name', 'indoors_name']),
+        $pickEnvironmentToken($environment, ['town_name', 'town', 'city', 'settlement']),
+        $pickEnvironmentToken($environment, ['zone_name', 'zone']),
+        $pickEnvironmentToken($environment, ['region', 'region_name']),
+    ];
+    if (count(array_filter($locationCandidates, static function (string $value): bool {
+        return $value !== '';
+    })) === 0) {
+        $locationCandidates = [
+            $normalizeEnvironmentToken($npcData['town'] ?? ''),
+            $normalizeEnvironmentToken($npcData['zone'] ?? ''),
+            $normalizeEnvironmentToken($npcData['region'] ?? ''),
+        ];
+    }
+    $locationParts = [];
+    $seenLocationParts = [];
+    foreach ($locationCandidates as $candidate) {
+        if ($candidate === '') {
+            continue;
+        }
+        $dedupeKey = strtolower($candidate);
+        if (isset($seenLocationParts[$dedupeKey])) {
+            continue;
+        }
+        $seenLocationParts[$dedupeKey] = true;
+        $locationParts[] = $candidate;
+    }
+    if (count($locationParts) > 0) {
+        $locationText = implode(', ', $locationParts);
+        $locationFlags = [];
+        $indoorsFlag = $parseFlag($environment['indoors'] ?? null);
+        $outdoorsFlag = $parseFlag($environment['outdoors'] ?? null);
+        $inTownFlag = $parseFlag($environment['in_town'] ?? null);
+        if ($indoorsFlag === true) {
+            $locationFlags[] = 'indoors';
+        } elseif ($outdoorsFlag === true) {
+            $locationFlags[] = 'outdoors';
+        }
+        if ($inTownFlag === true) {
+            $locationFlags[] = 'in town';
+        }
+        if (count($locationFlags) > 0) {
+            $locationText .= ' (' . implode(', ', $locationFlags) . ')';
+        }
+        $fields['location'] = truncatePromptValue($locationText, 260);
+    }
+    $parseWeatherCode = static function (mixed $value): ?int {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_float($value)) {
+            return intval(round($value));
+        }
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed !== '' && preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $trimmed) === 1) {
+                return intval(round(floatval($trimmed)));
+            }
+        }
+        return null;
+    };
+    $weatherCode = $parseWeatherCode($environment['weather'] ?? ($metadata['weather'] ?? null));
+    if ($weatherCode !== null) {
+        $weatherLabelMap = [
+            0 => 'Clear',
+            1 => 'Duststorm',
+            2 => 'Acid',
+            3 => 'Burning',
+            4 => 'Gas',
+            5 => 'Rain',
+        ];
+        $fields['weather'] = $weatherLabelMap[$weatherCode] ?? 'Unknown';
+    } else {
+        $weatherText = $pickEnvironmentToken(
+            $environment,
+            ['weather_name', 'weather_state', 'weather_type']
+        );
+        if ($weatherText !== '') {
+            $normalizedWeatherText = preg_replace('/\s+/', ' ', trim($weatherText)) ?? trim($weatherText);
+            $fields['weather'] = truncatePromptValue(ucfirst(strtolower($normalizedWeatherText)), 120);
+        }
+    }
 
     $bloodState = stobeDescribeBloodStatus($npcData['blood'] ?? '');
     if ($bloodState !== '') {

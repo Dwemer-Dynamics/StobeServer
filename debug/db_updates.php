@@ -422,12 +422,12 @@ PROMPT;
         });
 
         $applyPatch('core_action', 202603130204, static function () use ($db): void {
-            $desc = 'Display a descriptive roleplay action as a world notification. Put action text in target or message field.';
+            $desc = 'Describe a roleplay action along with your dialogue.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('ROLEPLAY_ACTION','RoleplayAction',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
-                VALUES ('TRAVEL_LOCATION','TravelLocation','Travel to a previously visited location by name. Uses stored x/y/z coordinates from location_zones.',TRUE,NOW())
+                VALUES ('TRAVEL_LOCATION','TravelLocation','Travel to a previously visited location by name.',TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()");
             $db->exec("DELETE FROM core_action WHERE UPPER(COALESCE(command,'')) IN ('NOTIFY','RELEASE_PLAYER','RELEASE_PRISONER','RELEASEPLAYER')");
             $db->exec("UPDATE core_action_custom SET command='ROLEPLAY_ACTION', action_name='RoleplayAction', description=$1, updated_at=NOW() WHERE UPPER(COALESCE(command,''))='NOTIFY'", [$desc]);
@@ -452,7 +452,7 @@ PROMPT;
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
         $applyPatch('core_action', 202603140208, static function () use ($db): void {
-            $desc = 'Kill a helpless target immediately. Works only on knocked-out, unconscious, imprisoned, or carried targets. Put target name in target or message field.';
+            $desc = 'Kill a helpless target immediately.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('KILL','Kill',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
