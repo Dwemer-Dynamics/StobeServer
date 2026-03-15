@@ -315,6 +315,24 @@ $cleanedMessage = trim(strval($targetExtract['cleaned'] ?? ''));
 if ($cleanedMessage !== '') {
     $message = $cleanedMessage;
 }
+$sanitizeChatMessage = static function (string $value): string {
+    $clean = sanitizeForKenshi(trim($value));
+    if ($clean !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $clean = stobeSanitizeDialogueMessageForLog($clean);
+    }
+    return trim($clean);
+};
+$message = $sanitizeChatMessage($message);
+if ($message === '') {
+    stobeLogWarn('Chat input rejected: empty message after sanitize', [
+        'event_type' => $eventType,
+        'speaker' => $speaker,
+        'gamets' => intval($gamets),
+        'data_preview' => substr($eventData, 0, 180),
+    ]);
+    echo "ok";
+    return;
+}
 
 $messagePreview = $message;
 if (strlen($messagePreview) > 180) {
@@ -463,7 +481,10 @@ if ($dialogueMode === 'autochat') {
         $historyText
     );
     if (boolval($rewriteResult['rewritten'] ?? false)) {
-        $message = trim(strval($rewriteResult['message'] ?? $message));
+        $rewrittenMessage = $sanitizeChatMessage(trim(strval($rewriteResult['message'] ?? $message)));
+        if ($rewrittenMessage !== '') {
+            $message = $rewrittenMessage;
+        }
         $autochatRewriteApplied = true;
         stobeLogInfo('Autochat rewrite generated', [
             'speaker' => $speaker,
@@ -488,6 +509,7 @@ if ($dialogueMode === 'autochat') {
     ]);
 }
 
+$message = $sanitizeChatMessage($message);
 $eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, $timestamp, $gamets, $eventData);
 

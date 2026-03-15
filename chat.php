@@ -28,6 +28,23 @@ if (!is_array($payload)) {
 $targetNpc = trim(strval($payload['npc'] ?? ''));
 $speaker = trim(strval($payload['player'] ?? getSetting('PLAYER_NAME', 'Drifter')));
 $message = trim(strval($payload['message'] ?? ''));
+$targetExtract = extractDialogueTarget($message);
+$cleanedMessage = trim(strval($targetExtract['cleaned'] ?? ''));
+if ($cleanedMessage !== '') {
+    $message = $cleanedMessage;
+}
+$extractedTargetNpc = normalizeParticipantNameToken(strval($targetExtract['target'] ?? ''));
+if ($targetNpc === '' && $extractedTargetNpc !== '') {
+    $targetNpc = $extractedTargetNpc;
+}
+$sanitizeChatMessage = static function (string $value): string {
+    $clean = sanitizeForKenshi(trim($value));
+    if ($clean !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $clean = stobeSanitizeDialogueMessageForLog($clean);
+    }
+    return trim($clean);
+};
+$message = $sanitizeChatMessage($message);
 $mode = strtolower(trim(strval($payload['mode'] ?? 'talk')));
 $gamets = intval($payload['gamets'] ?? 0);
 $nearby = is_array($payload['nearby'] ?? null) ? $payload['nearby'] : [];
@@ -205,7 +222,10 @@ if ($mode === 'autochat') {
         $historyText
     );
     if (boolval($rewriteResult['rewritten'] ?? false)) {
-        $message = trim(strval($rewriteResult['message'] ?? $message));
+        $rewrittenMessage = $sanitizeChatMessage(trim(strval($rewriteResult['message'] ?? $message)));
+        if ($rewrittenMessage !== '') {
+            $message = $rewrittenMessage;
+        }
         stobeLogInfo('JSON autochat rewrite generated', [
             'speaker' => $speaker,
             'target_npc' => $targetNpc,
@@ -229,7 +249,8 @@ if ($mode === 'autochat') {
 }
 
 $eventType = 'inputtext';
-$eventData = $speaker . ': ' . $message;
+$message = $sanitizeChatMessage($message);
+$eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, time(), $gamets, $eventData);
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets)

@@ -1947,6 +1947,52 @@ function stobeBuildRecentContextPromptBlock(string $historyText, string $tag = '
     return implode("\n", $xml);
 }
 
+function stobeSanitizePromptContextLine(string $line): string {
+    $clean = sanitizeForKenshi(trim(strval($line)));
+    if ($clean === '') {
+        return '';
+    }
+
+    $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
+    $clean = trim($clean);
+    if ($clean === '') {
+        return '';
+    }
+
+    $parsed = parseDialogueEventData($clean);
+    $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    $message = trim(strval($parsed['message'] ?? ''));
+
+    if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $message = stobeSanitizeDialogueMessageForLog($message);
+    }
+
+    if ($speaker !== '' && $message !== '') {
+        $normalizedLine = $speaker . ': ' . $message;
+        if ($target !== '') {
+            $normalizedLine .= ' (talking to: ' . $target . ')';
+        }
+        return trim($normalizedLine);
+    }
+
+    if ($message !== '') {
+        $clean = $message;
+    }
+
+    $clean = preg_replace(
+        '/(\(talking to:\s*[^\)]+\))\s*(?:\?+|[0-9]{1,3})\s*$/iu',
+        '$1',
+        $clean
+    ) ?? $clean;
+    $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
+    $clean = preg_replace('/(?<=\D)7+\s*$/u', '', $clean) ?? $clean;
+    $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
+    $clean = preg_replace('/\s{2,}/u', ' ', $clean) ?? $clean;
+
+    return trim($clean);
+}
+
 function stobeNormalizeContextHistoryDataLine(string $historyData): string {
     $raw = trim($historyData);
     if ($raw === '') {
@@ -1962,19 +2008,25 @@ function stobeNormalizeContextHistoryDataLine(string $historyData): string {
         $jsonPayload = trim(strval($matches[2] ?? ''));
         $structured = stobeParseStructuredDialogueResponse($jsonPayload, 'chat');
         $message = trim(strval($structured['message'] ?? ''));
+        if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+            $message = stobeSanitizeDialogueMessageForLog($message);
+        }
         if ($message !== '') {
             $line = $speaker !== '' ? ($speaker . ': ' . $message) : $message;
             $listener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
             if ($listener !== '') {
                 $line .= ' (talking to: ' . $listener . ')';
             }
-            return trim($line);
+            return stobeSanitizePromptContextLine($line);
         }
     }
 
     if (str_starts_with(ltrim($raw), '{')) {
         $structured = stobeParseStructuredDialogueResponse($raw, 'chat');
         $message = trim(strval($structured['message'] ?? ''));
+        if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+            $message = stobeSanitizeDialogueMessageForLog($message);
+        }
         if ($message !== '') {
             $character = normalizeParticipantNameToken(strval($structured['character'] ?? ''));
             $line = $character !== '' ? ($character . ': ' . $message) : $message;
@@ -1982,11 +2034,11 @@ function stobeNormalizeContextHistoryDataLine(string $historyData): string {
             if ($listener !== '') {
                 $line .= ' (talking to: ' . $listener . ')';
             }
-            return trim($line);
+            return stobeSanitizePromptContextLine($line);
         }
     }
 
-    return $singleLine;
+    return stobeSanitizePromptContextLine($singleLine);
 }
 
 function stobeIsMergeableRecentContextType(string $historyType): bool {
@@ -2082,6 +2134,7 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
     $lines = preg_split('/\R+/', trim($historyText)) ?: [];
     foreach ($lines as $line) {
         $clean = trim(strval($line));
+        $clean = stobeSanitizePromptContextLine($clean);
         if ($clean === '') {
             continue;
         }
@@ -6303,8 +6356,33 @@ function stobeExtractMiddleTermMemoryEntriesFromExtendedData(array $npcData, int
         return [];
     }
 
+    $orderedEntries = [];
+    $isSequential = array_keys($rawEntries) === range(0, count($rawEntries) - 1);
+    if ($isSequential) {
+        $orderedEntries = array_values($rawEntries);
+    } else {
+        $numeric = [];
+        $other = [];
+        foreach ($rawEntries as $key => $entry) {
+            if (preg_match('/^-?\d+$/', strval($key)) === 1) {
+                $numeric[intval($key)] = $entry;
+            } else {
+                $other[] = $entry;
+            }
+        }
+        if (count($numeric) > 0) {
+            ksort($numeric, SORT_NUMERIC);
+            foreach ($numeric as $entry) {
+                $orderedEntries[] = $entry;
+            }
+        }
+        foreach ($other as $entry) {
+            $orderedEntries[] = $entry;
+        }
+    }
+
     $entries = [];
-    foreach ($rawEntries as $entry) {
+    foreach ($orderedEntries as $entry) {
         if (!is_scalar($entry) || $entry === null) {
             continue;
         }
@@ -6429,9 +6507,6 @@ function stobeBuildMiddleTermMemoryPromptBlock(array $npcData, string $npcName):
     );
 
     $entries = stobeExtractMiddleTermMemoryEntriesFromExtendedData($npcData, $maxEntries);
-    if (count($entries) === 0) {
-        $entries = stobeFetchMiddleTermMemorySummaryEntries($safeNpcName, $npcData, $maxEntries);
-    }
     if (count($entries) === 0) {
         return '';
     }
@@ -6635,6 +6710,9 @@ function rewriteSpeakerMessageForAutochat(
     string $historyText = ''
 ): array {
     $original = trim($sourceMessage);
+    if (function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $original = stobeSanitizeDialogueMessageForLog($original);
+    }
     if ($original === '') {
         return [
             'message' => $sourceMessage,
@@ -6716,6 +6794,9 @@ function rewriteSpeakerMessageForAutochat(
         $rewritten = preg_replace($prefixPattern, '', $rewritten) ?? $rewritten;
     }
     $rewritten = trim($rewritten, " \t\n\r\0\x0B\"'");
+    if (function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $rewritten = stobeSanitizeDialogueMessageForLog($rewritten);
+    }
 
     if ($rewritten === '') {
         return [

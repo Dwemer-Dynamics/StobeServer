@@ -131,9 +131,9 @@ if (isset($_GET["delete_memory"])) {
     }
 }
 
-if (isset($_GET["reset"]) && $_GET["reset"]) {
+if (strtolower(trim((string)($_GET["reset"] ?? ""))) === "true") {
     safeExec($db, "DELETE FROM memory_summary");
-    header("Location: memories.php?reset=1");
+    header("Location: " . memoriesUrl(1, $limit) . "&reset=1");
     exit;
 }
 
@@ -388,7 +388,7 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
             <?php if (isset($_GET["deleted"])): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">Memory summary deleted successfully.</div>
             <?php endif; ?>
-            <?php if (isset($_GET["reset"])): ?>
+            <?php if (intval($_GET["reset"] ?? 0) === 1): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">All memory summaries deleted.</div>
             <?php endif; ?>
 
@@ -530,7 +530,7 @@ function deleteOneMemory(memoryId) {
 function deleteAllMemoriesConfirm() {
     const userInput = prompt("THIS WILL DELETE ALL SUMMARIZED MEMORIES!\n\nThis action cannot be undone.\n\nTo confirm this operation, type exactly: Delete");
     if (userInput === "Delete") {
-        window.location.href = "memories.php?reset=true";
+        window.location.href = "<?= h(memoriesUrl(1, $limit)) ?>&reset=true";
     } else if (userInput !== null) {
         alert("Operation cancelled. You must type exactly \"Delete\" to confirm.");
     }
