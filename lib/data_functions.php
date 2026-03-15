@@ -1460,6 +1460,117 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     }
 }
 
+function stobeSanitizeDialogueMessageForLog(string $message): string {
+    $clean = sanitizeForKenshi(strval($message));
+    $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
+    $clean = trim($clean);
+
+    // Strip repeated trailing question marks that are emitted as corruption tails.
+    $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
+    // Strip known Kenshi payload corruption where a solitary "7" is appended to dialogue.
+    $clean = preg_replace('/(?<=\D)7+\s*$/u', '', $clean) ?? $clean;
+    // Strip trailing numeric tails after punctuation, e.g. ")7" or "!?12".
+    $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
+    $clean = preg_replace('/\s{2,}/u', ' ', $clean) ?? $clean;
+
+    return trim($clean);
+}
+
+function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
+    $speaker = normalizeParticipantNameToken($speakerName);
+    if ($speaker === '') {
+        return '';
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return '';
+    }
+
+    $row = $db->fetchOne(
+        "SELECT data
+         FROM eventlog
+         WHERE type IN ('chat', 'rechat', 'bored', 'inputtext', 'inputtext_s')
+           AND localts >= $2
+           AND LOWER(data) LIKE LOWER($1)
+           AND data ILIKE '%(talking to:%'
+         ORDER BY rowid DESC
+         LIMIT 1",
+        [$speaker . ':%', time() - 1200]
+    );
+    if (!is_array($row)) {
+        return '';
+    }
+
+    $data = trim(strval($row['data'] ?? ''));
+    if ($data === '') {
+        return '';
+    }
+
+    $targetExtract = extractDialogueTarget($data);
+    $target = normalizeParticipantNameToken(strval($targetExtract['target'] ?? ''));
+    if ($target === '' || strcasecmp($target, $speaker) === 0) {
+        return '';
+    }
+    return $target;
+}
+
+function stobeInferDialogueTargetForLog(string $speakerName): string {
+    $speaker = normalizeParticipantNameToken($speakerName);
+    if ($speaker === '') {
+        return '';
+    }
+
+    $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
+    $profileName = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
+    if (
+        $profileName !== ''
+        && strcasecmp($profileName, $speaker) !== 0
+        && ($playerName === '' || strcasecmp($profileName, $playerName) !== 0)
+    ) {
+        return $profileName;
+    }
+
+    $peopleRaw = strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? ''));
+    $participants = extractParticipantIdentities([
+        'people' => $peopleRaw,
+        'profile' => $profileName,
+        'speaker' => $speaker,
+    ]);
+
+    $candidateByKey = [];
+    foreach ($participants as $participant) {
+        if (!is_array($participant)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($participant['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        if (strcasecmp($name, $speaker) === 0) {
+            continue;
+        }
+        if ($playerName !== '' && strcasecmp($name, $playerName) === 0) {
+            continue;
+        }
+        if (strcasecmp($name, 'The Narrator') === 0) {
+            continue;
+        }
+        $candidateByKey[strtolower($name)] = $name;
+    }
+
+    if (count($candidateByKey) === 1) {
+        return array_values($candidateByKey)[0];
+    }
+
+    $recentTarget = stobeLoadRecentDialogueTargetForSpeaker($speaker);
+    if ($recentTarget !== '') {
+        return $recentTarget;
+    }
+
+    return '';
+}
+
 function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): string {
     $clean = sanitizeForKenshi(strval($rawData));
 
@@ -1478,6 +1589,29 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         $clean
     ) ?? $clean;
 
+    $speechTypes = ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored'];
+    if (in_array($normalizedType, $speechTypes, true)) {
+        $parsed = parseDialogueEventData($clean);
+        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+        $message = stobeSanitizeDialogueMessageForLog(strval($parsed['message'] ?? ''));
+        if ($message === '') {
+            $message = stobeSanitizeDialogueMessageForLog($clean);
+        }
+        $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+        if ($target === '' && $speaker !== '') {
+            $target = stobeInferDialogueTargetForLog($speaker);
+        }
+
+        if ($speaker !== '' && $message !== '') {
+            $clean = $speaker . ': ' . $message;
+            if ($target !== '') {
+                $clean .= ' (talking to: ' . $target . ')';
+            }
+        } else {
+            $clean = stobeSanitizeDialogueMessageForLog($clean);
+        }
+    }
+
     $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
     if (in_array($normalizedType, $contextOnlyTypes, true)) {
         // Context telemetry rows are not directional dialogue.
@@ -1490,7 +1624,6 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
     $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
     $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
 
-    $speechTypes = ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored'];
     if (!in_array($normalizedType, $speechTypes, true)) {
         // Non-dialogue events should not end with repeated "??" noise.
         $clean = preg_replace('/\s*\?{2,}\s*$/u', '', $clean) ?? $clean;
