@@ -125,12 +125,18 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
     $rows = $db->fetchAll($sql);
     $hasTravelLocation = false;
     $hasUseObject = false;
+    $hasUseDrugs = false;
+    $hasDrinkItem = false;
     foreach ($rows as $row) {
         $command = stobeCanonicalizeActionCommand(strval($row['command'] ?? ''));
         if ($command === 'TRAVEL_LOCATION') {
             $hasTravelLocation = true;
         } elseif ($command === 'USE_OBJECT') {
             $hasUseObject = true;
+        } elseif ($command === 'USE_DRUGS') {
+            $hasUseDrugs = true;
+        } elseif ($command === 'DRINK_ITEM') {
+            $hasDrinkItem = true;
         }
     }
 
@@ -186,6 +192,20 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             'USE_OBJECT',
             'UseObject',
             'Use a nearby point of interest that has a free usable slot.'
+        );
+    }
+    if (!$hasUseDrugs) {
+        $appendFallbackAction(
+            'USE_DRUGS',
+            'UseDrugs',
+            'Consume Hashish from inventory/equipment.'
+        );
+    }
+    if (!$hasDrinkItem) {
+        $appendFallbackAction(
+            'DRINK',
+            'Drink',
+            'Consume Bloodrum, Cactus Rum, Grog, or Sake from inventory/equipment.'
         );
     }
 
@@ -300,6 +320,8 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config = getActionRuntimeConfig($eventType);
     $config['disallow_stop_carrying'] = false;
     $config['disallow_remove_limb'] = true;
+    $config['disallow_use_drugs'] = true;
+    $config['disallow_drink_item'] = true;
     $config['allow_travel_location'] = true;
     if (is_array($npcData) && count($npcData) > 0 && npcIsInPlayerFaction($npcData)) {
         $config['disallow_follow_for_player_faction'] = true;
@@ -309,6 +331,14 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     }
     if (is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData)) {
         $config['disallow_remove_limb'] = false;
+    }
+    if (is_array($npcData) && count($npcData) > 0 && !stobeNpcIsSkeletonRace($npcData)) {
+        if (stobeNpcHasHashish($npcData)) {
+            $config['disallow_use_drugs'] = false;
+        }
+        if (stobeNpcHasDrinkItem($npcData)) {
+            $config['disallow_drink_item'] = false;
+        }
     }
     return $config;
 }
@@ -364,6 +394,12 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
                 continue;
             }
             if ($command === 'REMOVE_LIMB' && boolval($config['disallow_remove_limb'] ?? false)) {
+                continue;
+            }
+            if ($command === 'USE_DRUGS' && boolval($config['disallow_use_drugs'] ?? false)) {
+                continue;
+            }
+            if ($command === 'DRINK_ITEM' && boolval($config['disallow_drink_item'] ?? false)) {
                 continue;
             }
             if ($command === 'TRAVEL_LOCATION' && !boolval($config['allow_travel_location'] ?? false)) {
@@ -455,6 +491,9 @@ function stobeCanonicalizeActionCommand(string $command): string {
     }
     if (in_array($upper, ['USEDRUGS', 'USE-DRUGS'], true)) {
         return 'USE_DRUGS';
+    }
+    if (in_array($upper, ['DRINK', 'DRINKITEM', 'DRINK_ITEM', 'DRINK-ITEM'], true)) {
+        return 'DRINK_ITEM';
     }
     if (in_array($upper, ['ROLEPLAYACTION', 'ROLEPLAY-ACTION', 'NOTIFY'], true)) {
         return 'ROLEPLAY_ACTION';
@@ -592,6 +631,34 @@ function stobeNpcHasHacksaw(array $npcData): bool {
     return stobeNpcHasItemKeyword($npcData, ['hacksaw', 'hack saw']);
 }
 
+function stobeNpcHasHashish(array $npcData): bool {
+    return stobeNpcHasItemKeyword($npcData, ['hashish']);
+}
+
+function stobeNpcHasDrinkItem(array $npcData): bool {
+    return stobeNpcHasItemKeyword($npcData, [
+        'bloodrum',
+        'blood rum',
+        'cactus rum',
+        'cactusrum',
+        'grog',
+        'sake',
+    ]);
+}
+
+function stobeNpcIsSkeletonRace(array $npcData): bool {
+    $race = strtolower(trim(strval($npcData['race'] ?? '')));
+    if ($race !== '' && strpos($race, 'skeleton') !== false) {
+        return true;
+    }
+    $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $metaRace = strtolower(trim(strval($metadata['race'] ?? '')));
+    if ($metaRace !== '' && strpos($metaRace, 'skeleton') !== false) {
+        return true;
+    }
+    return false;
+}
+
 function isAllowedActionCommand(string $command, array $allowlist): bool {
     $command = stobeCanonicalizeActionCommand($command);
     if (in_array($command, ['RELEASE_PLAYER', 'RELEASE_PRISONER', 'RELEASEPLAYER'], true)) {
@@ -656,6 +723,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'USE-OBJECT' => 'USE_OBJECT',
         'USEDRUGS' => 'USE_DRUGS',
         'USE-DRUGS' => 'USE_DRUGS',
+        'DRINK' => 'DRINK_ITEM',
+        'DRINKITEM' => 'DRINK_ITEM',
+        'DRINK_ITEM' => 'DRINK_ITEM',
+        'DRINK-ITEM' => 'DRINK_ITEM',
         'TRAVELLOCATION' => 'TRAVEL_LOCATION',
         'ROLEPLAYACTION' => 'ROLEPLAY_ACTION',
         'ROLEPLAY-ACTION' => 'ROLEPLAY_ACTION',
@@ -679,6 +750,14 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     }
     if (boolval($config['disallow_remove_limb'] ?? false) &&
         $command === 'REMOVE_LIMB') {
+        return '';
+    }
+    if (boolval($config['disallow_use_drugs'] ?? false) &&
+        $command === 'USE_DRUGS') {
+        return '';
+    }
+    if (boolval($config['disallow_drink_item'] ?? false) &&
+        $command === 'DRINK_ITEM') {
         return '';
     }
     if ($command === 'TRAVEL_LOCATION' && !boolval($config['allow_travel_location'] ?? false)) {
@@ -801,6 +880,13 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return '';
         }
         return 'USE_DRUGS@' . $drugName;
+    }
+    if ($command === 'DRINK_ITEM') {
+        $drinkName = $sanitizeInlineText($argument, 80);
+        if ($drinkName === '') {
+            return '';
+        }
+        return 'DRINK_ITEM@' . $drinkName;
     }
 
     if ($command === 'ATTACK') {
@@ -1048,13 +1134,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'USE_DRUGS', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -2015,6 +2101,9 @@ function stobeBuildOutputContractUserPrompt(
     }
     $canStopCarrying = is_array($npcData) && count($npcData) > 0 && stobeNpcIsCarryingTarget($npcData);
     $canRemoveLimb = is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData);
+    $npcIsSkeleton = is_array($npcData) && count($npcData) > 0 && stobeNpcIsSkeletonRace($npcData);
+    $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
+    $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
 
     $actionLine = $preferAction
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
@@ -2048,6 +2137,12 @@ function stobeBuildOutputContractUserPrompt(
     }
     if ($canRemoveLimb) {
         $actions[] = 'RemoveLimb';
+    }
+    if ($canUseDrugs) {
+        $actions[] = 'UseDrugs';
+    }
+    if ($canDrinkItem) {
+        $actions[] = 'Drink';
     }
     if ($inPlayerFaction !== true) {
         $actions[] = 'Follow';
@@ -2119,12 +2214,14 @@ function stobeBuildOutputContractUserPrompt(
         $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@TargetName, ' : '';
         $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
         $exampleUseObject = 'USE_OBJECT@ChairName, ';
+        $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
+        $exampleDrink = $canDrinkItem ? 'DRINK@Sake, ' : '';
         $exampleTravel = 'TRAVEL_LOCATION@LocationName, ';
         return $actionLine
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleUseObject . $exampleTravel . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF, GIVE_CATS@50.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleTravel . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF, GIVE_CATS@50.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -2134,7 +2231,7 @@ function stobeBuildOutputContractUserPrompt(
         'mood' => implode('|', $moods),
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
-        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), or object token for USE_OBJECT',
+        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS',
         'message' => 'lines of dialogue',
     ];
 
@@ -2353,6 +2450,12 @@ function stobeBuildActionTagFromStructuredPayload(
         'REMOVELIMB' => 'REMOVE_LIMB',
         'USEOBJECT' => 'USE_OBJECT',
         'USE-OBJECT' => 'USE_OBJECT',
+        'USEDRUGS' => 'USE_DRUGS',
+        'USE-DRUGS' => 'USE_DRUGS',
+        'DRINK' => 'DRINK_ITEM',
+        'DRINKITEM' => 'DRINK_ITEM',
+        'DRINK_ITEM' => 'DRINK_ITEM',
+        'DRINK-ITEM' => 'DRINK_ITEM',
         'TRAVELLOCATION' => 'TRAVEL_LOCATION',
         'ROLEPLAYACTION' => 'ROLEPLAY_ACTION',
         'ROLEPLAY-ACTION' => 'ROLEPLAY_ACTION',
@@ -2394,6 +2497,20 @@ function stobeBuildActionTagFromStructuredPayload(
             return 'USE_OBJECT@';
         }
         return 'USE_OBJECT@' . $objectToken;
+    }
+    if ($actionUpper === 'USE_DRUGS') {
+        $drugName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
+        if ($drugName === '') {
+            return '';
+        }
+        return 'USE_DRUGS@' . $drugName;
+    }
+    if ($actionUpper === 'DRINK_ITEM') {
+        $drinkName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
+        if ($drinkName === '') {
+            return '';
+        }
+        return 'DRINK_ITEM@' . $drinkName;
     }
     if (in_array($actionUpper, ['STOP_FOLLOW', 'STOP_CARRYING', 'JOIN_PARTY', 'LEAVE', 'IDLE', 'SUICIDE'], true)) {
         return $actionUpper . '@';
@@ -6496,12 +6613,12 @@ function stobeStripParentheticalDialogueText(string $text): string {
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',

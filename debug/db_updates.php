@@ -445,6 +445,12 @@ PROMPT;
                 VALUES ('USE_DRUGS','UseDrugs',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
+        $applyPatch('core_action', 202603140207, static function () use ($db): void {
+            $desc = 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout. Put the item name in target or message field.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('DRINK','Drink',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {
             $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','CHIM') ON CONFLICT (label) DO NOTHING");
