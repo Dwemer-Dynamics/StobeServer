@@ -105,6 +105,9 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 stobeLogWarn($emptyMessage, ['path' => $seedPath]);
                 return;
             }
+            // Some generated/imported seed files can carry a UTF-8 BOM.
+            // PostgreSQL treats that byte order mark as invalid SQL input.
+            $sql = preg_replace('/^\xEF\xBB\xBF/', '', $sql) ?? $sql;
             if ($stripTx) {
                 $sql = preg_replace('/^\s*BEGIN\s*;\s*/mi', '', $sql) ?? $sql;
                 $sql = preg_replace('/\s*COMMIT\s*;\s*$/mi', '', $sql) ?? $sql;
