@@ -453,6 +453,9 @@ function stobeCanonicalizeActionCommand(string $command): string {
     if (in_array($upper, ['USEOBJECT', 'USE-OBJECT'], true)) {
         return 'USE_OBJECT';
     }
+    if (in_array($upper, ['USEDRUGS', 'USE-DRUGS'], true)) {
+        return 'USE_DRUGS';
+    }
     if (in_array($upper, ['ROLEPLAYACTION', 'ROLEPLAY-ACTION', 'NOTIFY'], true)) {
         return 'ROLEPLAY_ACTION';
     }
@@ -651,6 +654,8 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'REMOVELIMB' => 'REMOVE_LIMB',
         'USEOBJECT' => 'USE_OBJECT',
         'USE-OBJECT' => 'USE_OBJECT',
+        'USEDRUGS' => 'USE_DRUGS',
+        'USE-DRUGS' => 'USE_DRUGS',
         'TRAVELLOCATION' => 'TRAVEL_LOCATION',
         'ROLEPLAYACTION' => 'ROLEPLAY_ACTION',
         'ROLEPLAY-ACTION' => 'ROLEPLAY_ACTION',
@@ -789,6 +794,13 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return 'USE_OBJECT@';
         }
         return 'USE_OBJECT@' . $objectToken;
+    }
+    if ($command === 'USE_DRUGS') {
+        $drugName = $sanitizeInlineText($argument, 80);
+        if ($drugName === '') {
+            return '';
+        }
+        return 'USE_DRUGS@' . $drugName;
     }
 
     if ($command === 'ATTACK') {
@@ -1036,13 +1048,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'USE_OBJECT', 'USE_DRUGS', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -3789,6 +3801,53 @@ function stobeDescribeDrunkPromptState(mixed $rawLevel, mixed $rawIsDrunk, mixed
     return '';
 }
 
+function stobeDescribeHighPromptState(
+    mixed $rawIsHigh,
+    mixed $rawStatus,
+    mixed $rawSecondsRemaining,
+    mixed $rawHungerMultiplier
+): string {
+    $status = strtolower(trim(strval($rawStatus)));
+    $isHigh = stobeCoerceTruthyPromptFlag($rawIsHigh);
+    if (!$isHigh && $status !== '') {
+        $isHigh = in_array($status, ['high', 'stoned', 'drugged'], true);
+    }
+    if (!$isHigh) {
+        return '';
+    }
+
+    $hungerMultiplier = 1.0;
+    if (is_int($rawHungerMultiplier) || is_float($rawHungerMultiplier)) {
+        $hungerMultiplier = floatval($rawHungerMultiplier);
+    } elseif (is_string($rawHungerMultiplier) && preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', trim($rawHungerMultiplier)) === 1) {
+        $hungerMultiplier = floatval($rawHungerMultiplier);
+    }
+    if ($hungerMultiplier < 1.0) {
+        $hungerMultiplier = 1.0;
+    }
+
+    $secondsRemaining = 0;
+    if (is_int($rawSecondsRemaining) || is_float($rawSecondsRemaining)) {
+        $secondsRemaining = max(0, intval($rawSecondsRemaining));
+    } elseif (is_string($rawSecondsRemaining) && preg_match('/^-?[0-9]+$/', trim($rawSecondsRemaining)) === 1) {
+        $secondsRemaining = max(0, intval($rawSecondsRemaining));
+    }
+
+    $parts = ['High'];
+    if ($hungerMultiplier > 1.0) {
+        $parts[] = 'hunger x' . rtrim(rtrim(sprintf('%.2f', $hungerMultiplier), '0'), '.');
+    }
+    if ($secondsRemaining > 0) {
+        $minutes = intval(ceil($secondsRemaining / 60.0));
+        if ($minutes < 1) {
+            $minutes = 1;
+        }
+        $parts[] = strval($minutes) . 'm remaining';
+    }
+
+    return implode(' | ', $parts);
+}
+
 function stobeDescribeNearbyEntryAppearance(array $entry): string {
     $appearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
     if ($appearance !== '') {
@@ -3962,6 +4021,15 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         );
         if ($drunkState !== '') {
             $detailParts[] = 'Drunk state: ' . $drunkState;
+        }
+        $highState = stobeDescribeHighPromptState(
+            $entry['is_high'] ?? null,
+            $entry['high_status'] ?? null,
+            $entry['high_seconds_remaining'] ?? null,
+            $entry['high_hunger_rate_multiplier'] ?? null
+        );
+        if ($highState !== '') {
+            $detailParts[] = 'Drug state: ' . $highState;
         }
         $appearance = stobeDescribeNearbyEntryAppearance($entry);
         if ($appearance !== '') {
@@ -4569,6 +4637,15 @@ function stobeBuildNpcConditionText(array $npcData, array $metadata): string {
     );
     if ($drunkState !== '') {
         $parts[] = 'Drunk state: ' . $drunkState;
+    }
+    $highState = stobeDescribeHighPromptState(
+        $npcData['is_high'] ?? ($metadata['is_high'] ?? null),
+        $npcData['high_status'] ?? ($metadata['high_status'] ?? null),
+        $npcData['high_seconds_remaining'] ?? ($metadata['high_seconds_remaining'] ?? null),
+        $npcData['high_hunger_rate_multiplier'] ?? ($metadata['high_hunger_rate_multiplier'] ?? null)
+    );
+    if ($highState !== '') {
+        $parts[] = 'Drug state: ' . $highState;
     }
 
     $characterState = trim(strval($metadata['character_state'] ?? ''));
