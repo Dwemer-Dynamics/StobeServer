@@ -114,6 +114,171 @@ if (!function_exists('stobeBuildManualActionPainFallback')) {
     }
 }
 
+if (!function_exists('stobeTraderInventoryEntryCountFromNpcData')) {
+    function stobeTraderInventoryEntryCountFromNpcData(array $npcData): int
+    {
+        $metadataRaw = $npcData['metadata'] ?? [];
+        $metadata = [];
+        if (is_array($metadataRaw)) {
+            $metadata = $metadataRaw;
+        } elseif (is_string($metadataRaw) && trim($metadataRaw) !== '') {
+            $decoded = json_decode($metadataRaw, true);
+            if (is_array($decoded)) {
+                $metadata = $decoded;
+            }
+        }
+
+        $entriesRaw = $metadata['trader_inventory_items'] ?? [];
+        $entries = [];
+        if (is_array($entriesRaw)) {
+            $entries = $entriesRaw;
+        } elseif (is_string($entriesRaw) && trim($entriesRaw) !== '') {
+            $decodedEntries = json_decode($entriesRaw, true);
+            if (is_array($decodedEntries)) {
+                $entries = $decodedEntries;
+            }
+        }
+
+        $count = 0;
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $name = trim(strval($entry['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $count++;
+        }
+        if ($count > 0) {
+            return $count;
+        }
+
+        $shopSourcesRaw = $metadata['trader_shop_sources'] ?? [];
+        $shopSources = [];
+        if (is_array($shopSourcesRaw)) {
+            $shopSources = $shopSourcesRaw;
+        } elseif (is_string($shopSourcesRaw) && trim($shopSourcesRaw) !== '') {
+            $decodedShopSources = json_decode($shopSourcesRaw, true);
+            if (is_array($decodedShopSources)) {
+                $shopSources = $decodedShopSources;
+            }
+        }
+
+        if (count($shopSources) > 0) {
+            return max(1, intval($metadata['trader_shop_item_count'] ?? 0));
+        }
+
+        return 0;
+    }
+}
+
+if (!function_exists('stobeNpcLikelyTraderFromData')) {
+    function stobeNpcLikelyTraderFromData(array $npcData): bool
+    {
+        $metadataRaw = $npcData['metadata'] ?? [];
+        $metadata = [];
+        if (is_array($metadataRaw)) {
+            $metadata = $metadataRaw;
+        } elseif (is_string($metadataRaw) && trim($metadataRaw) !== '') {
+            $decoded = json_decode($metadataRaw, true);
+            if (is_array($decoded)) {
+                $metadata = $decoded;
+            }
+        }
+
+        $isTraderRaw = $metadata['is_trader'] ?? ($npcData['is_trader'] ?? false);
+        if (is_bool($isTraderRaw)) {
+            return $isTraderRaw;
+        }
+        if (is_int($isTraderRaw) || is_float($isTraderRaw)) {
+            return intval($isTraderRaw) !== 0;
+        }
+        if (is_string($isTraderRaw)) {
+            $normalized = strtolower(trim($isTraderRaw));
+            return in_array($normalized, ['1', 'true', 'yes', 'on', 'enabled'], true);
+        }
+        return false;
+    }
+}
+
+if (!function_exists('stobeMessageLooksTradeIntent')) {
+    function stobeMessageLooksTradeIntent(string $message): bool
+    {
+        $text = strtolower(trim($message));
+        if ($text === '') {
+            return false;
+        }
+        $keywords = [
+            'trade',
+            'trading',
+            'business',
+            'shop',
+            'buy',
+            'sell',
+            'for sale',
+            'cats',
+            'price',
+            'cost',
+            'merchant',
+            'vendor',
+        ];
+        foreach ($keywords as $keyword) {
+            if (strpos($text, $keyword) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('stobeRefreshNpcDataForTraderInventory')) {
+    function stobeRefreshNpcDataForTraderInventory(string $targetNpc, array $npcData, string $message): array
+    {
+        $initialCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
+        if ($initialCount > 0) {
+            return $npcData;
+        }
+
+        $likelyTrader = stobeNpcLikelyTraderFromData($npcData);
+        $tradeIntent = stobeMessageLooksTradeIntent($message);
+        if (!$likelyTrader && !$tradeIntent) {
+            return $npcData;
+        }
+
+        $maxAttempts = 8;
+        $sleepMs = 100;
+        $latest = $npcData;
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            usleep($sleepMs * 1000);
+            $refreshed = getNpcData($targetNpc);
+            if (!is_array($refreshed)) {
+                continue;
+            }
+            $latest = $refreshed;
+            $count = stobeTraderInventoryEntryCountFromNpcData($refreshed);
+            if ($count > 0) {
+                stobeLogInfo('Chat trader metadata hydration succeeded', [
+                    'target_npc' => $targetNpc,
+                    'attempt' => $attempt,
+                    'entry_count' => $count,
+                    'trade_intent' => $tradeIntent,
+                    'is_trader' => $likelyTrader,
+                ]);
+                return $refreshed;
+            }
+        }
+
+        stobeLogDebug('Chat trader metadata hydration timed out', [
+            'target_npc' => $targetNpc,
+            'trade_intent' => $tradeIntent,
+            'is_trader' => $likelyTrader,
+            'entry_count' => stobeTraderInventoryEntryCountFromNpcData($latest),
+        ]);
+        return $latest;
+    }
+}
+
 // $eventData, $eventType, $timestamp, $gamets are set by main.php.
 $parts = explode(": ", $eventData, 2);
 $speaker = $parts[0] ?? getSetting('PLAYER_NAME', 'Drifter');
@@ -227,6 +392,17 @@ if ($manualActionActive) {
 }
 $manualActionLimbToken = stobeManualChatActionLimbToken($manualActionKey);
 $manualActionLimbLabel = stobeManualChatActionLimbLabel($manualActionKey);
+
+$npcData = stobeRefreshNpcDataForTraderInventory($targetNpc, is_array($npcData) ? $npcData : [], $message);
+$traderInventoryEntryCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
+if ($traderInventoryEntryCount > 0 || stobeMessageLooksTradeIntent($message)) {
+    stobeLogInfo('Chat prompt trader inventory context', [
+        'target_npc' => $targetNpc,
+        'speaker' => $speaker,
+        'entry_count' => $traderInventoryEntryCount,
+        'is_trader' => stobeNpcLikelyTraderFromData($npcData),
+    ]);
+}
 
 $contextHistory = getNpcProfileIntegerSetting(
     $npcData,

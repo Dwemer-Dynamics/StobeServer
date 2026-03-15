@@ -5705,8 +5705,167 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $skills = implode(' || ', $skillSections);
     }
 
+    $traderShopSourcesRaw = $snapshot['trader_shop_sources'] ?? [];
+    $traderShopSources = [];
+    if (is_array($traderShopSourcesRaw)) {
+        $traderShopSources = $traderShopSourcesRaw;
+    } elseif (is_string($traderShopSourcesRaw) && trim($traderShopSourcesRaw) !== '') {
+        $decodedTraderShopSources = json_decode($traderShopSourcesRaw, true);
+        if (is_array($decodedTraderShopSources)) {
+            $traderShopSources = $decodedTraderShopSources;
+        }
+    }
+
+    $traderShopSourceSummaries = [];
+    $traderShopInventoryCounts = [];
+    $traderShopInventoryTotalCount = 0;
+    foreach ($traderShopSources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+
+        $sourceName = trim(strval($source['name'] ?? ''));
+        if ($sourceName === '') {
+            $sourceName = 'shop storage';
+        }
+        $sourceSerial = $parseNonNegativeInt($source['serial'] ?? 0, 0);
+        $sourceDist = 0.0;
+        if (isset($source['dist']) && is_numeric($source['dist'])) {
+            $sourceDist = floatval($source['dist']);
+            if (!is_finite($sourceDist) || $sourceDist < 0.0) {
+                $sourceDist = 0.0;
+            }
+        }
+        $sourceBuildingClass = trim(strval($source['building_class'] ?? ''));
+        $sourceSpecialFunction = trim(strval($source['special_function'] ?? ''));
+
+        $sourceInventoryRaw = $source['inventory'] ?? [];
+        $sourceInventory = [];
+        if (is_array($sourceInventoryRaw)) {
+            $sourceInventory = $sourceInventoryRaw;
+        } elseif (is_string($sourceInventoryRaw) && trim($sourceInventoryRaw) !== '') {
+            $decodedSourceInventory = json_decode($sourceInventoryRaw, true);
+            if (is_array($decodedSourceInventory)) {
+                $sourceInventory = $decodedSourceInventory;
+            }
+        }
+
+        $sourceInventoryTotalCount = 0;
+        foreach ($sourceInventory as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $itemName = trim(strval($entry['name'] ?? ''));
+            if ($itemName === '') {
+                continue;
+            }
+            $itemCount = $parseNonNegativeInt($entry['count'] ?? ($entry['quantity'] ?? 1), 1);
+            if ($itemCount <= 0) {
+                $itemCount = 1;
+            }
+            $itemId = trim(strval(
+                $entry['item_id']
+                    ?? ($entry['itemId']
+                    ?? ($entry['string_id']
+                    ?? ($entry['stringid']
+                    ?? ($entry['sid']
+                    ?? ($entry['baseid']
+                    ?? ($entry['id'] ?? ''))))))
+            ));
+            $itemDescription = stobeNormalizeItemDescriptionText(strval($entry['description'] ?? ''));
+            $itemValueEach = $parseNonNegativeInt(
+                $entry['value_each'] ?? ($entry['value_single'] ?? ($entry['value'] ?? 0)),
+                0
+            );
+
+            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName));
+            if (!array_key_exists($itemKey, $traderShopInventoryCounts)) {
+                $traderShopInventoryCounts[$itemKey] = [
+                    'name' => $itemName,
+                    'count' => 0,
+                    'equipped' => false,
+                    'item_id' => $itemId,
+                    'description' => $itemDescription,
+                    'value_each' => $itemValueEach,
+                ];
+            }
+            $traderShopInventoryCounts[$itemKey]['count'] += $itemCount;
+            if (trim(strval($traderShopInventoryCounts[$itemKey]['item_id'] ?? '')) === '' && $itemId !== '') {
+                $traderShopInventoryCounts[$itemKey]['item_id'] = $itemId;
+            }
+            if (
+                trim(strval($traderShopInventoryCounts[$itemKey]['description'] ?? '')) === '' &&
+                $itemDescription !== ''
+            ) {
+                $traderShopInventoryCounts[$itemKey]['description'] = $itemDescription;
+            }
+            if (
+                intval($traderShopInventoryCounts[$itemKey]['value_each'] ?? 0) <= 0 &&
+                $itemValueEach > 0
+            ) {
+                $traderShopInventoryCounts[$itemKey]['value_each'] = $itemValueEach;
+            }
+            $sourceInventoryTotalCount += $itemCount;
+            $traderShopInventoryTotalCount += $itemCount;
+            if (count($traderShopInventoryCounts) >= 260) {
+                break;
+            }
+        }
+
+        $sourceItemCountFromPayload = $parseNonNegativeInt(
+            $source['inventory_item_count'] ?? $sourceInventoryTotalCount,
+            $sourceInventoryTotalCount
+        );
+        if ($sourceItemCountFromPayload <= 0) {
+            $sourceItemCountFromPayload = $sourceInventoryTotalCount;
+        }
+
+        $traderShopSourceSummaries[] = [
+            'name' => $sourceName,
+            'serial' => $sourceSerial,
+            'dist' => $sourceDist,
+            'building_class' => $sourceBuildingClass,
+            'special_function' => $sourceSpecialFunction,
+            'inventory_item_count' => $sourceItemCountFromPayload,
+        ];
+        if (count($traderShopSourceSummaries) >= 8) {
+            break;
+        }
+    }
+
+    $snapshotTraderInventoryItemsRaw = $snapshot['trader_inventory_items'] ?? [];
+    $snapshotTraderInventoryItems = [];
+    if (is_array($snapshotTraderInventoryItemsRaw)) {
+        $snapshotTraderInventoryItems = $snapshotTraderInventoryItemsRaw;
+    } elseif (is_string($snapshotTraderInventoryItemsRaw) && trim($snapshotTraderInventoryItemsRaw) !== '') {
+        $decodedSnapshotTraderInventoryItems = json_decode($snapshotTraderInventoryItemsRaw, true);
+        if (is_array($decodedSnapshotTraderInventoryItems)) {
+            $snapshotTraderInventoryItems = $decodedSnapshotTraderInventoryItems;
+        }
+    }
+    $snapshotTraderInventoryEntryCount = 0;
+    foreach ($snapshotTraderInventoryItems as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $entryName = trim(strval($entry['name'] ?? ''));
+        if ($entryName === '') {
+            continue;
+        }
+        $snapshotTraderInventoryEntryCount++;
+    }
+
+    $traderShopSourceCount = count($traderShopSourceSummaries);
+    $traderShopItemCountFromSnapshot = $parseNonNegativeInt(
+        $snapshot['trader_shop_item_count'] ?? $traderShopInventoryTotalCount,
+        $traderShopInventoryTotalCount
+    );
+    $traderShopItemCount = max($traderShopInventoryTotalCount, $traderShopItemCountFromSnapshot);
+    $isLikelyTraderContext = coerceBoolean($snapshot['is_trader'] ?? false) ||
+        $traderShopSourceCount > 0 || $snapshotTraderInventoryEntryCount > 0;
+
     $occupationParts = [];
-    if (coerceBoolean($snapshot['is_trader'] ?? false)) {
+    if ($isLikelyTraderContext) {
         $occupationParts[] = 'Trader';
     }
     if (coerceBoolean($snapshot['is_leader'] ?? false)) {
@@ -5795,6 +5954,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         'nearby_actors' => $snapshot['nearby'] ?? [],
         'nearby_items' => $snapshot['nearby_items'] ?? [],
         'points_of_interest' => $snapshot['points_of_interest'] ?? [],
+        'trader_shop_sources' => $traderShopSourceSummaries,
+        'trader_shop_source_count' => $traderShopSourceCount,
+        'trader_shop_item_count' => $traderShopItemCount,
     ]);
 
     if ($storageId !== '') {
@@ -5804,8 +5966,168 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($storageId !== '' && !array_key_exists('storage_id', $metadataForStorage)) {
         $metadataForStorage['storage_id'] = $storageId;
     }
+    $shouldPreserveTraderMetadata =
+        $snapshotTraderInventoryEntryCount <= 0 &&
+        $traderShopSourceCount <= 0 &&
+        !array_key_exists('trader_inventory_items', $metadataForStorage) &&
+        !array_key_exists('trader_shop_sources', $metadataForStorage);
+    if ($shouldPreserveTraderMetadata) {
+        $existingMasterRow = $db->fetchOne(
+            "SELECT metadata
+             FROM core_npc_master
+             WHERE LOWER(name) = LOWER($1)
+             LIMIT 1",
+            [$name]
+        );
+        $existingMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
+        $preservedTraderKeys = [
+            'is_trader',
+            'trader_inventory_items',
+            'trader_inventory_item_count',
+            'trader_inventory_snapshot_gamets',
+            'trader_shop_sources',
+            'trader_shop_source_count',
+            'trader_shop_item_count',
+        ];
+        $preservedApplied = [];
+        foreach ($preservedTraderKeys as $preservedKey) {
+            if (
+                !array_key_exists($preservedKey, $metadataForStorage) &&
+                array_key_exists($preservedKey, $existingMetadata)
+            ) {
+                $metadataForStorage[$preservedKey] = $existingMetadata[$preservedKey];
+                $preservedApplied[] = $preservedKey;
+            }
+        }
+        if (count($preservedApplied) > 0) {
+            stobeLogImport('Snapshot preserved trader metadata', [
+                'name' => $name,
+                'keys' => $preservedApplied,
+                'gamets' => max(0, $gamets),
+                'source' => $snapshotSource,
+            ], 'DEBUG');
+        }
+    }
     if (count($inventoryPromptItems) > 0) {
         $metadataForStorage['inventory_items'] = $inventoryPromptItems;
+    }
+    if ($snapshotTraderInventoryEntryCount > 0) {
+        $metadataForStorage['trader_inventory_items'] = $snapshotTraderInventoryItems;
+        if (!array_key_exists('trader_inventory_item_count', $metadataForStorage)) {
+            $metadataForStorage['trader_inventory_item_count'] = $snapshotTraderInventoryEntryCount;
+        }
+        if (!array_key_exists('trader_inventory_snapshot_gamets', $metadataForStorage)) {
+            $metadataForStorage['trader_inventory_snapshot_gamets'] = max(0, $gamets);
+        }
+    }
+    if ($traderShopSourceCount > 0) {
+        $metadataForStorage['trader_shop_sources'] = $traderShopSourceSummaries;
+        $metadataForStorage['trader_shop_source_count'] = $traderShopSourceCount;
+        $metadataForStorage['trader_shop_item_count'] = $traderShopItemCount;
+    }
+    if ($isLikelyTraderContext) {
+        $mergeTraderEntry = static function (array &$bucket, array $entry): void {
+            $entryName = trim(strval($entry['name'] ?? ''));
+            if ($entryName === '') {
+                return;
+            }
+            $entryCount = intval($entry['count'] ?? 1);
+            if ($entryCount <= 0) {
+                $entryCount = 1;
+            }
+            $entryItemId = trim(strval($entry['item_id'] ?? ''));
+            $entryDescription = stobeNormalizeItemDescriptionText(strval($entry['description'] ?? ''));
+            $entryValueEach = intval($entry['value_each'] ?? 0);
+            if ($entryValueEach < 0) {
+                $entryValueEach = 0;
+            }
+
+            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName));
+            if (!array_key_exists($entryKey, $bucket)) {
+                $bucket[$entryKey] = [
+                    'name' => $entryName,
+                    'count' => 0,
+                    'equipped' => false,
+                    'item_id' => $entryItemId,
+                    'description' => $entryDescription,
+                    'value_each' => $entryValueEach,
+                ];
+            }
+
+            $bucket[$entryKey]['count'] += $entryCount;
+            if (trim(strval($bucket[$entryKey]['item_id'] ?? '')) === '' && $entryItemId !== '') {
+                $bucket[$entryKey]['item_id'] = $entryItemId;
+            }
+            if (
+                trim(strval($bucket[$entryKey]['description'] ?? '')) === '' &&
+                $entryDescription !== ''
+            ) {
+                $bucket[$entryKey]['description'] = $entryDescription;
+            }
+            if (
+                intval($bucket[$entryKey]['value_each'] ?? 0) <= 0 &&
+                $entryValueEach > 0
+            ) {
+                $bucket[$entryKey]['value_each'] = $entryValueEach;
+            }
+        };
+
+        $traderInventoryByKey = [];
+        $traderInventoryItems = [];
+        $traderInventoryCount = 0;
+        foreach ($inventoryPromptItems as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            if (coerceBoolean($entry['equipped'] ?? false)) {
+                continue;
+            }
+            $mergeTraderEntry($traderInventoryByKey, $entry);
+        }
+        foreach ($traderShopInventoryCounts as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $mergeTraderEntry($traderInventoryByKey, $entry);
+        }
+
+        foreach ($traderInventoryByKey as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $traderInventoryItems[] = $entry;
+            $entryCount = intval($entry['count'] ?? 1);
+            if ($entryCount <= 0) {
+                $entryCount = 1;
+            }
+            $traderInventoryCount += $entryCount;
+            if (count($traderInventoryItems) >= 260) {
+                break;
+            }
+        }
+
+        // Fallback: if slot classification is unavailable, keep the full snapshot list.
+        if (count($traderInventoryItems) === 0 && count($inventoryPromptItems) > 0) {
+            $traderInventoryItems = $inventoryPromptItems;
+            $traderInventoryCount = 0;
+            foreach ($traderInventoryItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $entryCount = intval($entry['count'] ?? 1);
+                if ($entryCount <= 0) {
+                    $entryCount = 1;
+                }
+                $traderInventoryCount += $entryCount;
+            }
+        }
+        if ($traderInventoryCount <= 0) {
+            $traderInventoryCount = $traderShopItemCount;
+        }
+
+        $metadataForStorage['trader_inventory_items'] = $traderInventoryItems;
+        $metadataForStorage['trader_inventory_item_count'] = $traderInventoryCount;
+        $metadataForStorage['trader_inventory_snapshot_gamets'] = max(0, $gamets);
     }
     storeNpcProfile($name, [
         'race' => $race,
@@ -7604,6 +7926,34 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
         ['name', 'type', 'kind', 'location', 'dist'],
         32
     );
+    $traderShopSources = $extractSceneRows(
+        $extended['trader_shop_sources'] ?? [],
+        ['name', 'serial', 'dist', 'building_class', 'special_function', 'inventory_item_count'],
+        8
+    );
+    $traderShopSourceCount = parseIntLike(
+        $extended['trader_shop_source_count'] ?? count($traderShopSources),
+        count($traderShopSources)
+    );
+    if ($traderShopSourceCount < count($traderShopSources)) {
+        $traderShopSourceCount = count($traderShopSources);
+    }
+    $traderShopItemCount = parseIntLike(
+        $extended['trader_shop_item_count'] ?? 0,
+        0
+    );
+    if ($traderShopItemCount < 0) {
+        $traderShopItemCount = 0;
+    }
+    foreach ($traderShopSources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+        $sourceItemCount = parseIntLike($source['inventory_item_count'] ?? 0, 0);
+        if ($sourceItemCount > 0) {
+            $traderShopItemCount += $sourceItemCount;
+        }
+    }
 
     $redundantTopLevel = [
         'stats',
@@ -7647,6 +7997,18 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
         $extended['points_of_interest'] = $pointsOfInterest;
     } elseif (array_key_exists('points_of_interest', $extended)) {
         unset($extended['points_of_interest']);
+    }
+
+    if (count($traderShopSources) > 0) {
+        $extended['trader_shop_sources'] = $traderShopSources;
+        $extended['trader_shop_source_count'] = $traderShopSourceCount;
+        $extended['trader_shop_item_count'] = $traderShopItemCount;
+    } else {
+        foreach (['trader_shop_sources', 'trader_shop_source_count', 'trader_shop_item_count'] as $key) {
+            if (array_key_exists($key, $extended)) {
+                unset($extended[$key]);
+            }
+        }
     }
 
     return $extended;

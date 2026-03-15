@@ -312,6 +312,8 @@ function getActionRuntimeConfig(string $eventType): array {
         'min_faction_relation' => $minFaction,
         'max_faction_relation' => $maxFaction,
         'disallow_follow_for_player_faction' => false,
+        'disallow_give_cats' => false,
+        'disallow_take_cats' => false,
         'allow_travel_location' => true,
     ];
 }
@@ -322,6 +324,10 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config['disallow_remove_limb'] = true;
     $config['disallow_use_drugs'] = true;
     $config['disallow_drink_item'] = true;
+    // AI-generated money transfers are currently too error-prone in trade dialog.
+    // Keep cats transfer as manual-action only from the chatbox.
+    $config['disallow_give_cats'] = true;
+    $config['disallow_take_cats'] = true;
     $config['allow_travel_location'] = true;
     if (is_array($npcData) && count($npcData) > 0 && npcIsInPlayerFaction($npcData)) {
         $config['disallow_follow_for_player_faction'] = true;
@@ -388,6 +394,12 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
                 continue;
             }
             if (count($allowed) > 0 && !in_array($command, $allowed, true)) {
+                continue;
+            }
+            if ($command === 'GIVE_CATS' && boolval($config['disallow_give_cats'] ?? false)) {
+                continue;
+            }
+            if ($command === 'TAKE_CATS' && boolval($config['disallow_take_cats'] ?? false)) {
                 continue;
             }
             if ($command === 'STOP_CARRYING' && boolval($config['disallow_stop_carrying'] ?? false)) {
@@ -742,6 +754,14 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     }
     if (boolval($config['disallow_follow_for_player_faction'] ?? false) &&
         ($command === 'FOLLOW' || $command === 'STOP_FOLLOW')) {
+        return '';
+    }
+    if (boolval($config['disallow_give_cats'] ?? false) &&
+        $command === 'GIVE_CATS') {
+        return '';
+    }
+    if (boolval($config['disallow_take_cats'] ?? false) &&
+        $command === 'TAKE_CATS') {
         return '';
     }
     if (boolval($config['disallow_stop_carrying'] ?? false) &&
@@ -2104,18 +2124,20 @@ function stobeBuildOutputContractUserPrompt(
     $npcIsSkeleton = is_array($npcData) && count($npcData) > 0 && stobeNpcIsSkeletonRace($npcData);
     $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
     $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
+    $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
+    $allowGiveCats = !boolval($actionConfig['disallow_give_cats'] ?? false);
+    $allowTakeCats = !boolval($actionConfig['disallow_take_cats'] ?? false);
 
     $actionLine = $preferAction
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
+    $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
 
     $actions = [
         'Talk',
         'Attack',
         'Suicide',
         'Idle',
-        'GiveCats',
-        'TakeCats',
         'TakeItem',
         'GiveItem',
         'DropItem',
@@ -2132,6 +2154,12 @@ function stobeBuildOutputContractUserPrompt(
         'SetResource',
         'SetMedic',
     ];
+    if ($allowGiveCats) {
+        $actions[] = 'GiveCats';
+    }
+    if ($allowTakeCats) {
+        $actions[] = 'TakeCats';
+    }
     if ($canStopCarrying) {
         $actions[] = 'StopCarrying';
     }
@@ -2217,11 +2245,18 @@ function stobeBuildOutputContractUserPrompt(
         $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
         $exampleDrink = $canDrinkItem ? 'DRINK@Sake, ' : '';
         $exampleTravel = 'TRAVEL_LOCATION@LocationName, ';
+        $exampleCats = '';
+        if ($allowTakeCats) {
+            $exampleCats .= 'TAKE_CATS@50, ';
+        }
+        if ($allowGiveCats) {
+            $exampleCats .= 'GIVE_CATS@50, ';
+        }
         return $actionLine
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleTravel . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF, GIVE_CATS@50.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -2992,8 +3027,30 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             $rawEntries = $decoded;
         }
     }
-    if (!is_array($rawEntries) || count($rawEntries) === 0) {
-        return ['equipment' => '', 'inventory' => '', 'has_items' => false];
+
+    $rawTraderEntries = $metadata['trader_inventory_items'] ?? [];
+    if (is_string($rawTraderEntries) && trim($rawTraderEntries) !== '') {
+        $decodedTrader = json_decode($rawTraderEntries, true);
+        if (is_array($decodedTrader)) {
+            $rawTraderEntries = $decodedTrader;
+        }
+    }
+
+    if (!is_array($rawEntries)) {
+        $rawEntries = [];
+    }
+    if (!is_array($rawTraderEntries)) {
+        $rawTraderEntries = [];
+    }
+    if (count($rawEntries) === 0 && count($rawTraderEntries) === 0) {
+        return [
+            'equipment' => '',
+            'inventory' => '',
+            'trader_inventory' => '',
+            'merchant_inventory' => '',
+            'has_items' => false,
+            'has_trader_items' => false,
+        ];
     }
 
     $parseFlag = static function (mixed $value): bool {
@@ -3012,6 +3069,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
 
     $equipmentCounts = [];
     $inventoryCounts = [];
+    $traderInventoryCounts = [];
     foreach ($rawEntries as $entry) {
         if (!is_array($entry)) {
             continue;
@@ -3092,6 +3150,62 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
         if (intval($inventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
             $inventoryCounts[$entryKey]['value_each'] = $itemValueEach;
+        }
+    }
+
+    foreach ($rawTraderEntries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $itemName = trim(strval($entry['name'] ?? ''));
+        if ($itemName === '') {
+            continue;
+        }
+        $itemCount = intval($entry['count'] ?? ($entry['quantity'] ?? 1));
+        if ($itemCount <= 0) {
+            $itemCount = 1;
+        }
+        $itemId = trim(strval(
+            $entry['item_id']
+                ?? ($entry['itemId']
+                ?? ($entry['string_id']
+                ?? ($entry['stringid']
+                ?? ($entry['sid']
+                ?? ($entry['baseid']
+                ?? ($entry['id'] ?? ''))))))
+        ));
+        $itemDescription = trim(strval($entry['description'] ?? ''));
+        if ($itemDescription !== '') {
+            $itemDescription = preg_replace('/\s+/u', ' ', $itemDescription) ?? $itemDescription;
+            $itemDescription = trim($itemDescription);
+        }
+        $itemValueEach = intval($entry['value_each'] ?? ($entry['value_single'] ?? 0));
+        if ($itemValueEach < 0) {
+            $itemValueEach = 0;
+        }
+
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName));
+        if (!array_key_exists($entryKey, $traderInventoryCounts)) {
+            $traderInventoryCounts[$entryKey] = [
+                'name' => $itemName,
+                'item_id' => $itemId,
+                'description' => $itemDescription,
+                'value_each' => $itemValueEach,
+                'count' => 0,
+            ];
+        }
+        $traderInventoryCounts[$entryKey]['count'] += $itemCount;
+        if (trim(strval($traderInventoryCounts[$entryKey]['item_id'] ?? '')) === '' && $itemId !== '') {
+            $traderInventoryCounts[$entryKey]['item_id'] = $itemId;
+        }
+        if (
+            trim(strval($traderInventoryCounts[$entryKey]['description'] ?? '')) === '' &&
+            $itemDescription !== ''
+        ) {
+            $traderInventoryCounts[$entryKey]['description'] = $itemDescription;
+        }
+        if (intval($traderInventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
+            $traderInventoryCounts[$entryKey]['value_each'] = $itemValueEach;
         }
     }
 
@@ -3179,12 +3293,45 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
     }
 
-    $hasItems = (count($equipmentCounts) + count($inventoryCounts)) > 0;
+    $traderInventoryParts = [];
+    foreach ($traderInventoryCounts as $entry) {
+        $entryName = trim(strval($entry['name'] ?? ''));
+        if ($entryName === '') {
+            continue;
+        }
+        $entryCount = intval($entry['count'] ?? 1);
+        if ($entryCount <= 0) {
+            $entryCount = 1;
+        }
+        $description = $resolveDescription($entry, true);
+        $entryText = $entryName . ' x' . strval($entryCount);
+        $entryValueEach = intval($entry['value_each'] ?? 0);
+        if ($entryValueEach > 0) {
+            $entryText .= ' value ' . strval($entryValueEach);
+        }
+        if ($description !== '') {
+            $entryText .= ' (' . $description . ')';
+        }
+        $traderInventoryParts[] = $entryText;
+        if (count($traderInventoryParts) >= 80) {
+            break;
+        }
+    }
+
+    if (count($inventoryParts) === 0 && count($traderInventoryParts) > 0) {
+        $inventoryParts = $traderInventoryParts;
+    }
+
+    $hasTraderItems = count($traderInventoryCounts) > 0;
+    $hasItems = (count($equipmentCounts) + count($inventoryCounts) + count($traderInventoryCounts)) > 0;
 
     return [
         'equipment' => implode(', ', $equipmentParts),
         'inventory' => implode(', ', $inventoryParts),
+        'trader_inventory' => implode(', ', $traderInventoryParts),
+        'merchant_inventory' => implode(', ', $traderInventoryParts),
         'has_items' => $hasItems,
+        'has_trader_items' => $hasTraderItems,
     ];
 }
 
@@ -3660,7 +3807,16 @@ function buildWorldStateBlock(array $npcData): string {
     }
     $inventory = truncatePromptValue($inventoryRaw, 3600);
     if ($inventory !== '') {
-        $fields['inventory'] = $inventory;
+        $fields['personal_inventory'] = $inventory;
+    }
+
+    $merchantInventoryRaw = trim(strval(
+        $inventoryContext['merchant_inventory']
+            ?? ($inventoryContext['trader_inventory'] ?? '')
+    ));
+    $merchantInventory = truncatePromptValue($merchantInventoryRaw, 3600);
+    if ($merchantInventory !== '') {
+        $fields['merchant_inventory'] = $merchantInventory;
     }
 
     $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '');
