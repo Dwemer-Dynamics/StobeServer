@@ -241,8 +241,8 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 END IF;
             END $$;");
 
+            $db->exec("ALTER TABLE core_npc_master ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT ''");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS bounty JSONB DEFAULT '{}'::jsonb");
-            $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS knowledge_tags TEXT DEFAULT ''");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT ''");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS snapshot_reason VARCHAR(64) DEFAULT 'snapshot'");
             $db->exec("ALTER TABLE core_npc_master_history ADD COLUMN IF NOT EXISTS snapshot_hash TEXT DEFAULT ''");
@@ -270,7 +270,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     goals, relationships, voiceid, metadata, race, faction, gender,
                     profile_id, dynamic_profile, extended_data, md5, gamets_last_updated,
                     bounty, limbs, blood, hunger, tags, is_animal, is_slave,
-                    knowledge_tags, world_knowledge_tags,
+                    world_knowledge_tags,
                     snapshot_reason, snapshot_hash, source_created_at, source_updated_at, created
                 ) VALUES (
                     COALESCE(src.id,0), COALESCE(src.name,''), COALESCE(src.original_name,''),
@@ -280,7 +280,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     COALESCE(src.goals,''), COALESCE(src.relationships,''), COALESCE(src.voiceid,''), COALESCE(src.metadata,'{}'::jsonb), COALESCE(src.race,''), COALESCE(src.faction,''), COALESCE(src.gender,''),
                     src.profile_id, FALSE, COALESCE(src.extended_data,'{}'::jsonb), COALESCE(src.md5,''), COALESCE(src.gamets_last_updated,0),
                     COALESCE(src.bounty,'{}'::jsonb), COALESCE(src.limbs,'{}'::jsonb), COALESCE(src.blood,'0/0'), COALESCE(src.hunger,'300/300'), COALESCE(src.tags,''), COALESCE(src.is_animal,FALSE), COALESCE(src.is_slave,FALSE),
-                    COALESCE(src.knowledge_tags,''), COALESCE(src.world_knowledge_tags,''),
+                    COALESCE(src.world_knowledge_tags,''),
                     reason, md5(COALESCE(to_jsonb(src)::text,'')), src.created_at, src.updated_at, NOW()
                 );
                 IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -456,6 +456,138 @@ PROMPT;
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('KILL','Kill',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_npc_master', 202603140211, static function () use ($db): void {
+            $db->exec("DO $$
+            DECLARE
+                schema_name TEXT;
+                source_schema TEXT;
+                col_list TEXT;
+            BEGIN
+                FOR schema_name IN
+                    SELECT t.table_schema
+                    FROM information_schema.tables t
+                    WHERE t.table_name='core_npc_master' AND t.table_type='BASE TABLE'
+                LOOP
+                    EXECUTE format(
+                        'ALTER TABLE %I.core_npc_master ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT %L',
+                        schema_name,
+                        ''
+                    );
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT t.table_schema
+                    FROM information_schema.tables t
+                    WHERE t.table_name='core_npc_master_history' AND t.table_type='BASE TABLE'
+                LOOP
+                    EXECUTE format(
+                        'ALTER TABLE %I.core_npc_master_history ADD COLUMN IF NOT EXISTS world_knowledge_tags TEXT DEFAULT %L',
+                        schema_name,
+                        ''
+                    );
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT v.table_schema
+                    FROM information_schema.views v
+                    WHERE v.table_name='core_npc'
+                LOOP
+                    source_schema := schema_name;
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables t
+                        WHERE t.table_schema = schema_name
+                          AND t.table_name = 'core_npc_master'
+                          AND t.table_type = 'BASE TABLE'
+                    ) THEN
+                        source_schema := 'public';
+                    END IF;
+
+                    SELECT string_agg(format('%I', c.column_name), ', ' ORDER BY c.ordinal_position)
+                    INTO col_list
+                    FROM information_schema.columns c
+                    WHERE c.table_schema = source_schema
+                      AND c.table_name = 'core_npc_master'
+                      AND c.column_name <> 'knowledge_tags';
+
+                    IF COALESCE(col_list, '') <> '' THEN
+                        EXECUTE format('DROP VIEW IF EXISTS %I.core_npc', schema_name);
+                        EXECUTE format(
+                            'CREATE VIEW %I.core_npc AS SELECT %s FROM %I.core_npc_master',
+                            schema_name,
+                            col_list,
+                            source_schema
+                        );
+                    END IF;
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT c.table_schema
+                    FROM information_schema.columns c
+                    WHERE c.table_name='core_npc_master' AND c.column_name='knowledge_tags'
+                LOOP
+                    EXECUTE format(
+                        'UPDATE %I.core_npc_master SET world_knowledge_tags = COALESCE(NULLIF(world_knowledge_tags, %L), NULLIF(knowledge_tags, %L), %L)',
+                        schema_name,
+                        '',
+                        '',
+                        ''
+                    );
+                    EXECUTE format('ALTER TABLE %I.core_npc_master DROP COLUMN knowledge_tags', schema_name);
+                END LOOP;
+
+                FOR schema_name IN
+                    SELECT c.table_schema
+                    FROM information_schema.columns c
+                    WHERE c.table_name='core_npc_master_history' AND c.column_name='knowledge_tags'
+                LOOP
+                    EXECUTE format(
+                        'UPDATE %I.core_npc_master_history SET world_knowledge_tags = COALESCE(NULLIF(world_knowledge_tags, %L), NULLIF(knowledge_tags, %L), %L)',
+                        schema_name,
+                        '',
+                        '',
+                        ''
+                    );
+                    EXECUTE format('ALTER TABLE %I.core_npc_master_history DROP COLUMN knowledge_tags', schema_name);
+                END LOOP;
+            END $$;");
+            $db->exec("CREATE OR REPLACE FUNCTION core_npc_master_history_audit_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE src RECORD; reason TEXT;
+            BEGIN
+                IF TG_OP='DELETE' THEN src := OLD; reason := 'delete';
+                ELSIF TG_OP='INSERT' THEN src := NEW; reason := 'create';
+                ELSE src := NEW; reason := 'snapshot';
+                END IF;
+                INSERT INTO core_npc_master_history (
+                    npc_id, name, original_name, npc_favorite, lock_profile,
+                    prompt_head, personality, backstory, emote_moods, occupation,
+                    appearance, equipment, inventory, skills, speechstyle,
+                    goals, relationships, voiceid, metadata, race, faction, gender,
+                    profile_id, dynamic_profile, extended_data, md5, gamets_last_updated,
+                    bounty, limbs, blood, hunger, tags, is_animal, is_slave,
+                    world_knowledge_tags,
+                    snapshot_reason, snapshot_hash, source_created_at, source_updated_at, created
+                ) VALUES (
+                    COALESCE(src.id,0), COALESCE(src.name,''), COALESCE(src.original_name,''),
+                    COALESCE(src.npc_favorite,FALSE), COALESCE(src.lock_profile,FALSE),
+                    COALESCE(src.prompt_head,''), COALESCE(src.personality,''), COALESCE(src.backstory,''), COALESCE(src.emote_moods,''), COALESCE(src.occupation,''),
+                    COALESCE(src.appearance,''), COALESCE(src.equipment,''), COALESCE(src.inventory,''), COALESCE(src.skills,''), COALESCE(src.speechstyle,''),
+                    COALESCE(src.goals,''), COALESCE(src.relationships,''), COALESCE(src.voiceid,''), COALESCE(src.metadata,'{}'::jsonb), COALESCE(src.race,''), COALESCE(src.faction,''), COALESCE(src.gender,''),
+                    src.profile_id, FALSE, COALESCE(src.extended_data,'{}'::jsonb), COALESCE(src.md5,''), COALESCE(src.gamets_last_updated,0),
+                    COALESCE(src.bounty,'{}'::jsonb), COALESCE(src.limbs,'{}'::jsonb), COALESCE(src.blood,'0/0'), COALESCE(src.hunger,'300/300'), COALESCE(src.tags,''), COALESCE(src.is_animal,FALSE), COALESCE(src.is_slave,FALSE),
+                    COALESCE(src.world_knowledge_tags,''),
+                    reason, md5(COALESCE(to_jsonb(src)::text,'')), src.created_at, src.updated_at, NOW()
+                );
+                IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+                RETURN NEW;
+            END;
+            $$;");
+            $db->exec("DROP TRIGGER IF EXISTS trg_core_npc_master_history_audit ON core_npc_master");
+            $db->exec("CREATE TRIGGER trg_core_npc_master_history_audit AFTER INSERT OR UPDATE OR DELETE ON core_npc_master FOR EACH ROW EXECUTE FUNCTION core_npc_master_history_audit_fn()");
         });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {

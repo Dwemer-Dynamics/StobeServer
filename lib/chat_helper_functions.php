@@ -1249,14 +1249,8 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
 function parseNpcKnowledgeTags(array $npcData, string $npcName = ''): array {
     $rawTags = trim(strval($npcData['world_knowledge_tags'] ?? ''));
     if ($rawTags === '') {
-        $rawTags = trim(strval($npcData['knowledge_tags'] ?? ''));
-    }
-    if ($rawTags === '') {
         $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
         $rawTags = trim(strval($metadata['world_knowledge_tags'] ?? ''));
-        if ($rawTags === '') {
-            $rawTags = trim(strval($metadata['knowledge_tags'] ?? ''));
-        }
     }
     $tokens = [];
     if ($rawTags !== '') {

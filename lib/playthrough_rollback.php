@@ -261,7 +261,6 @@ function stobePlaythroughMapHistoryRowToCoreNpcFields(array $historyRow): array
         'tags' => strval($historyRow['tags'] ?? ''),
         'is_animal' => stobePlaythroughToBool($historyRow['is_animal'] ?? false),
         'is_slave' => stobePlaythroughToBool($historyRow['is_slave'] ?? false),
-        'knowledge_tags' => strval($historyRow['knowledge_tags'] ?? ''),
         'world_knowledge_tags' => strval($historyRow['world_knowledge_tags'] ?? ''),
     ];
 }
@@ -393,7 +392,6 @@ function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): b
         'tags' => ['value' => $fields['tags'], 'type' => 'text'],
         'is_animal' => ['value' => $fields['is_animal'], 'type' => 'bool'],
         'is_slave' => ['value' => $fields['is_slave'], 'type' => 'bool'],
-        'knowledge_tags' => ['value' => $fields['knowledge_tags'], 'type' => 'text'],
         'world_knowledge_tags' => ['value' => $fields['world_knowledge_tags'], 'type' => 'text'],
     ];
 
@@ -446,9 +444,6 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
     }
 
     $historyColumns = stobePlaythroughHistoryColumns();
-    $knowledgeSelect = isset($historyColumns['knowledge_tags'])
-        ? 'knowledge_tags'
-        : "''::text AS knowledge_tags";
     $worldKnowledgeSelect = isset($historyColumns['world_knowledge_tags'])
         ? 'world_knowledge_tags'
         : "''::text AS world_knowledge_tags";
@@ -490,7 +485,6 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
             tags,
             is_animal,
             is_slave,
-            ' . $knowledgeSelect . ',
             ' . $worldKnowledgeSelect . ',
             snapshot_reason,
             snapshot_hash

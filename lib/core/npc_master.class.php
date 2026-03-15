@@ -219,11 +219,7 @@ class NpcMaster
                     n.prompt_head,
                     n.backstory,
                     n.backstory AS npc_static_bio,
-                    COALESCE(
-                        NULLIF(to_jsonb(n)->>'world_knowledge_tags', ''),
-                        NULLIF(to_jsonb(n)->>'knowledge_tags', ''),
-                        ''
-                    ) AS world_knowledge_tags,
+                    COALESCE(NULLIF(to_jsonb(n)->>'world_knowledge_tags', ''), '') AS world_knowledge_tags,
                     n.emote_moods,
                     n.personality,
                     n.relationships,

@@ -546,7 +546,6 @@ CREATE TABLE IF NOT EXISTS core_npc (
     tags TEXT DEFAULT '',
     is_animal BOOLEAN DEFAULT FALSE,
     is_slave BOOLEAN DEFAULT FALSE,
-    knowledge_tags TEXT DEFAULT '',
     world_knowledge_tags TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -600,7 +599,6 @@ CREATE TABLE IF NOT EXISTS core_npc_master_history (
     tags TEXT DEFAULT '',
     is_animal BOOLEAN DEFAULT FALSE,
     is_slave BOOLEAN DEFAULT FALSE,
-    knowledge_tags TEXT DEFAULT '',
     world_knowledge_tags TEXT DEFAULT '',
     snapshot_reason VARCHAR(64) DEFAULT 'snapshot',
     snapshot_hash TEXT DEFAULT '',
