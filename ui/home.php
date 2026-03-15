@@ -221,7 +221,7 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.5.0';
+    $serverVersionDisplay = '0.6.0';
 }
 
 $pluginVersionDisplay = 'N/A';
