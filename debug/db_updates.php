@@ -451,6 +451,12 @@ PROMPT;
                 VALUES ('DRINK','Drink',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
+        $applyPatch('core_action', 202603140208, static function () use ($db): void {
+            $desc = 'Kill a helpless target immediately. Works only on knocked-out, unconscious, imprisoned, or carried targets. Put target name in target or message field.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('KILL','Kill',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {
             $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','CHIM') ON CONFLICT (label) DO NOTHING");

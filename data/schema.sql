@@ -1914,6 +1914,7 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('SET_RESOURCE', 'SetResource', 'Toggle resource-work behavior using ON/OFF in item or target.', TRUE),
 ('SET_MEDIC', 'SetMedic', 'Toggle medic behavior using ON/OFF in item or target.', TRUE),
 ('REMOVE_LIMB', 'RemoveLimb', 'Remove one limb from a helpless target. Requires a hacksaw in inventory. Use target and item as LEFT_ARM, RIGHT_ARM, LEFT_LEG, or RIGHT_LEG. Works only on knocked-out, unconscious, imprisoned, or carried targets.', TRUE),
+('KILL', 'Kill', 'Kill a helpless target immediately. Works only on knocked-out, unconscious, imprisoned, or carried targets.', TRUE),
 ('USE_OBJECT', 'UseObject', 'Use a nearby point of interest such as a chair, turret, bed, throne, or work spot. Use target or item as an object name/refid, or leave blank to use the nearest usable free slot.', TRUE),
 ('USE_DRUGS', 'UseDrugs', 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time.', TRUE),
 ('DRINK', 'Drink', 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout.', TRUE),

@@ -13,11 +13,26 @@ if (!function_exists('stobeNormalizeManualChatActionKey')) {
             'remove_limb_right_arm',
             'remove_limb_left_leg',
             'remove_limb_right_leg',
+            'kill',
         ];
         if (!in_array($normalized, $allowed, true)) {
             return '';
         }
         return $normalized;
+    }
+}
+
+if (!function_exists('stobeManualChatActionType')) {
+    function stobeManualChatActionType(string $actionKey): string
+    {
+        $normalized = strtolower(trim($actionKey));
+        if ($normalized === 'kill') {
+            return 'kill';
+        }
+        if (strpos($normalized, 'remove_limb_') === 0) {
+            return 'remove_limb';
+        }
+        return '';
     }
 }
 
@@ -48,8 +63,13 @@ if (!function_exists('stobeManualChatActionLimbLabel')) {
 }
 
 if (!function_exists('stobeManualActionTargetCannotSpeak')) {
-    function stobeManualActionTargetCannotSpeak(array $npcData): bool
+    function stobeManualActionTargetCannotSpeak(array $npcData, string $actionKey = ''): bool
     {
+        $actionType = stobeManualChatActionType($actionKey);
+        if ($actionType === 'kill') {
+            return true;
+        }
+
         $cannotSpeakStates = ['dead', 'unconscious'];
 
         $characterState = strtolower(trim(strval($npcData['character_state'] ?? '')));
@@ -107,6 +127,12 @@ if (!function_exists('stobeBuildManualActionPainFallback')) {
     ): string {
         $safeTarget = trim($targetNpc) !== '' ? trim($targetNpc) : 'The target';
         $safeActor = trim($actorName) !== '' ? trim($actorName) : 'the attacker';
+        $actionType = stobeManualChatActionType($actionKey);
+        if ($actionType === 'kill') {
+            // For manual kill, avoid emitting a second world notification.
+            // The plugin kill execution message is the single source of truth.
+            return '';
+        }
         $limbLabel = stobeManualChatActionLimbLabel($actionKey);
         $notice = $safeTarget . ' convulses in overwhelming pain as '
             . $safeActor . ' saws into their ' . $limbLabel . '.';
@@ -392,6 +418,7 @@ if ($manualActionActive) {
 }
 $manualActionLimbToken = stobeManualChatActionLimbToken($manualActionKey);
 $manualActionLimbLabel = stobeManualChatActionLimbLabel($manualActionKey);
+$manualActionType = stobeManualChatActionType($manualActionKey);
 
 $npcData = stobeRefreshNpcDataForTraderInventory($targetNpc, is_array($npcData) ? $npcData : [], $message);
 $traderInventoryEntryCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
@@ -476,7 +503,7 @@ if ($dialogueMode === 'autochat' && trim($message) !== '') {
 }
 
 $manualActionCannotSpeak = $manualActionActive
-    ? stobeManualActionTargetCannotSpeak($npcData)
+    ? stobeManualActionTargetCannotSpeak($npcData, $manualActionKey)
     : false;
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
@@ -497,19 +524,25 @@ if ($deliveryStyleInstruction !== '') {
         . "</speech_mode>";
 }
 if ($manualActionActive) {
-    $manualInstruction = $manualActionCannotSpeak
-        ? 'Manual limb removal is happening now, and the target cannot speak. Do not invent coherent spoken dialogue for the target.'
-        : 'Manual limb removal is happening now. The target should react with immediate extreme pain, shock, and desperation.';
+    if ($manualActionType === 'kill') {
+        $manualInstruction = 'Manual execution is happening now. The target is killed immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
+    } else {
+        $manualInstruction = $manualActionCannotSpeak
+            ? 'Manual limb removal is happening now, and the target cannot speak. Do not invent coherent spoken dialogue for the target.'
+            : 'Manual limb removal is happening now. The target should react with immediate extreme pain, shock, and desperation.';
+    }
     $systemPrompt .= "\n\n<manual_action_context>\n"
-        . "  <type>remove_limb</type>\n"
+        . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
         . "  <action_key>" . stobePromptXmlEscape($manualActionKey) . "</action_key>\n"
         . "  <actor>" . stobePromptXmlEscape($manualActionActor) . "</actor>\n"
         . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-        . "  <limb_token>" . stobePromptXmlEscape($manualActionLimbToken) . "</limb_token>\n"
-        . "  <limb_label>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb_label>\n"
         . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n"
-        . "  <instruction>" . stobePromptXmlEscape($manualInstruction) . "</instruction>\n"
-        . "</manual_action_context>";
+        . "  <instruction>" . stobePromptXmlEscape($manualInstruction) . "</instruction>\n";
+    if ($manualActionType === 'remove_limb') {
+        $systemPrompt .= "  <limb_token>" . stobePromptXmlEscape($manualActionLimbToken) . "</limb_token>\n"
+            . "  <limb_label>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb_label>\n";
+    }
+    $systemPrompt .= "</manual_action_context>";
 }
 $userContent = "<player_input>\n"
     . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
@@ -519,12 +552,14 @@ $userContent = "<player_input>\n"
     . "</player_input>";
 if ($manualActionActive) {
     $userContent .= "\n<manual_action_event>\n"
-        . "  <type>remove_limb</type>\n"
+        . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
         . "  <actor>" . stobePromptXmlEscape($manualActionActor) . "</actor>\n"
         . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-        . "  <limb>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb>\n"
-        . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n"
-        . "</manual_action_event>";
+        . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n";
+    if ($manualActionType === 'remove_limb') {
+        $userContent .= "  <limb>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb>\n";
+    }
+    $userContent .= "</manual_action_event>";
 }
 if ($dialogueMode === 'cheat') {
     $priorityInstruction = "PRIORITY INSTRUCTION - {$targetNpc} must do this, even if it breaks character roleplay: {$message}";
@@ -575,9 +610,12 @@ $manualActionForcedEmoteOnly = false;
 if ($manualActionActive && $manualActionCannotSpeak) {
     $manualActionForcedEmoteOnly = true;
     $responseText = '';
-    $responseActions = [
-        stobeBuildManualActionPainFallback($targetNpc, $manualActionActor, $manualActionKey),
-    ];
+    $fallbackAction = stobeBuildManualActionPainFallback(
+        $targetNpc,
+        $manualActionActor,
+        $manualActionKey
+    );
+    $responseActions = $fallbackAction !== '' ? [$fallbackAction] : [];
     stobeLogInfo('Manual action fallback emitted: target cannot speak', [
         'target_npc' => $targetNpc,
         'manual_action' => $manualActionKey,
