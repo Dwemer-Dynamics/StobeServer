@@ -4037,14 +4037,9 @@ function stobeNormalizeJsonArrayValue(mixed $value): array {
 }
 
 function stobeBuildNpcHistoryHashFromRow(array $row): string {
-    $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? '{}');
-    $extendedData = normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}');
-    $limbs = stobeNormalizeJsonArrayValue($row['limbs'] ?? '{}');
     $bounty = stobeNormalizeBountyPayload($row['bounty'] ?? '{}');
     $dynamicProfileEnabled = null;
-    if (array_key_exists('DYNAMIC_PROFILE_ENABLED', $metadata)) {
-        $dynamicProfileEnabled = coerceBoolean($metadata['DYNAMIC_PROFILE_ENABLED']);
-    } elseif (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
+    if (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
         $dynamicProfileEnabled = coerceBoolean($row['dynamic_profile']);
     }
 
@@ -4066,18 +4061,13 @@ function stobeBuildNpcHistoryHashFromRow(array $row): string {
         'goals' => strval($row['goals'] ?? ''),
         'relationships' => strval($row['relationships'] ?? ''),
         'voiceid' => strval($row['voiceid'] ?? ''),
-        'metadata' => stobeSortArrayRecursive($metadata),
         'race' => strval($row['race'] ?? ''),
         'faction' => strval($row['faction'] ?? ''),
         'gender' => strval($row['gender'] ?? ''),
         'profile_id' => intval($row['profile_id'] ?? 0),
         'dynamic_profile' => $dynamicProfileEnabled,
-        'extended_data' => stobeSortArrayRecursive($extendedData),
         'md5' => strval($row['md5'] ?? ''),
         'bounty' => stobeSortArrayRecursive($bounty),
-        'limbs' => stobeSortArrayRecursive($limbs),
-        'blood' => strval($row['blood'] ?? ''),
-        'hunger' => strval($row['hunger'] ?? ''),
         'tags' => strval($row['tags'] ?? ''),
         'is_animal' => coerceBoolean($row['is_animal'] ?? false),
         'is_slave' => coerceBoolean($row['is_slave'] ?? false),
@@ -4111,6 +4101,32 @@ function stobeFetchNpcRowForHistoryByName(string $name): array|false {
     return $db->fetchOne(
         "SELECT * FROM core_npc WHERE LOWER(name) = LOWER($1) LIMIT 1",
         [$safeName]
+    );
+}
+
+function stobePruneNpcHistorySnapshots(int $npcId, int $keep = 50): void {
+    if ($npcId <= 0) {
+        return;
+    }
+    if ($keep < 1) {
+        $keep = 1;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return;
+    }
+
+    $db->exec(
+        "DELETE FROM core_npc_master_history
+         WHERE history_id IN (
+            SELECT history_id
+            FROM core_npc_master_history
+            WHERE npc_id = $1
+            ORDER BY history_id DESC
+            OFFSET $2
+         )",
+        [$npcId, $keep]
     );
 }
 
@@ -4220,6 +4236,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
     );
 
     if ($result) {
+        stobePruneNpcHistorySnapshots($npcId, 50);
         stobeLogInfo('NPC history snapshot stored', [
             'npc_id' => $npcId,
             'name' => $name,
