@@ -5678,19 +5678,63 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             'level' => $qualityLevel,
         ];
     };
+    $resolveEntryWeaponModel = static function (array $entry): string {
+        $weaponModel = trim(strval(
+            $entry['weapon_model']
+                ?? ($entry['weaponModel']
+                ?? ($entry['model'] ?? ''))
+        ));
+        if ($weaponModel === '') {
+            return '';
+        }
+        $weaponModel = preg_replace('/\s+/u', ' ', $weaponModel) ?? $weaponModel;
+        $weaponModel = trim($weaponModel);
+        if ($weaponModel === '') {
+            return '';
+        }
+        if (preg_match('/^\[(.*)\]$/u', $weaponModel, $matches) === 1) {
+            $weaponModel = trim(strval($matches[1] ?? ''));
+        }
+        return $weaponModel;
+    };
     $formatItemNameWithQuality = static function (string $name, array $entry): string {
         $trimmedName = trim($name);
         if ($trimmedName === '') {
             return '';
         }
-        if (preg_match('/\[[^\]]+\]/', $trimmedName) === 1) {
-            return $trimmedName;
-        }
+        $tags = [];
         $qualityLabel = trim(strval($entry['quality'] ?? ''));
-        if ($qualityLabel === '') {
+        if ($qualityLabel !== '') {
+            $tags[] = $qualityLabel;
+        }
+        $weaponModel = trim(strval($entry['weapon_model'] ?? ''));
+        if ($weaponModel !== '') {
+            $alreadyPresent = false;
+            foreach ($tags as $tag) {
+                if (strcasecmp($tag, $weaponModel) === 0) {
+                    $alreadyPresent = true;
+                    break;
+                }
+            }
+            if (!$alreadyPresent) {
+                $tags[] = $weaponModel;
+            }
+        }
+        if (count($tags) === 0) {
             return $trimmedName;
         }
-        return $trimmedName . ' [' . $qualityLabel . ']';
+        $out = $trimmedName;
+        foreach ($tags as $tag) {
+            $cleanTag = trim(strval($tag));
+            if ($cleanTag === '') {
+                continue;
+            }
+            if (stripos($out, '[' . $cleanTag . ']') !== false) {
+                continue;
+            }
+            $out .= ' [' . $cleanTag . ']';
+        }
+        return $out;
     };
     $inventoryDescriptionCount = 0;
     if (is_array($inventoryEntries)) {
@@ -5771,11 +5815,13 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $entryQuality = $resolveEntryQuality($entry);
             $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
             $itemQualityLevel = intval($entryQuality['level'] ?? -1);
+            $itemWeaponModel = $resolveEntryWeaponModel($entry);
             $itemCountKeyId = $itemId !== '' ? strtolower($itemId) : strtolower($itemName);
             $qualityKey = $itemQualityLevel >= 0
                 ? ('q:' . strval($itemQualityLevel))
                 : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
-            $itemCountKey = $itemCountKeyId . '|' . $qualityKey;
+            $weaponModelKey = 'wm:' . strtolower($itemWeaponModel !== '' ? $itemWeaponModel : 'none');
+            $itemCountKey = $itemCountKeyId . '|' . $qualityKey . '|' . $weaponModelKey;
             $isEquippedEntry = coerceBoolean($entry['equipped'] ?? ($entry['is_equipped'] ?? false));
             if ($isEquippedEntry) {
                 if (!array_key_exists($itemCountKey, $equipmentCounts)) {
@@ -5785,6 +5831,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                         'description' => $itemDescription,
                         'quality' => $itemQualityLabel,
                         'quality_level' => $itemQualityLevel,
+                        'weapon_model' => $itemWeaponModel,
                         'count' => 0,
                         'value_each' => null,
                     ];
@@ -5802,6 +5849,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 if (intval($equipmentCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
                     $equipmentCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
                 }
+                if (trim(strval($equipmentCounts[$itemCountKey]['weapon_model'] ?? '')) === '' && $itemWeaponModel !== '') {
+                    $equipmentCounts[$itemCountKey]['weapon_model'] = $itemWeaponModel;
+                }
                 if (
                     $itemValueEach > 0 &&
                     (!isset($equipmentCounts[$itemCountKey]['value_each']) || intval($equipmentCounts[$itemCountKey]['value_each']) <= 0)
@@ -5817,6 +5867,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'description' => $itemDescription,
                     'quality' => $itemQualityLabel,
                     'quality_level' => $itemQualityLevel,
+                    'weapon_model' => $itemWeaponModel,
                     'count' => 0,
                     'value_each' => null,
                 ];
@@ -5833,6 +5884,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             if (intval($inventoryCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
                 $inventoryCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
+            }
+            if (trim(strval($inventoryCounts[$itemCountKey]['weapon_model'] ?? '')) === '' && $itemWeaponModel !== '') {
+                $inventoryCounts[$itemCountKey]['weapon_model'] = $itemWeaponModel;
             }
             if (
                 $itemValueEach > 0 &&
@@ -5929,6 +5983,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
                 'quality' => trim(strval($entry['quality'] ?? '')),
                 'quality_level' => intval($entry['quality_level'] ?? -1),
+                'weapon_model' => trim(strval($entry['weapon_model'] ?? '')),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -5954,6 +6009,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
                 'quality' => trim(strval($entry['quality'] ?? '')),
                 'quality_level' => intval($entry['quality_level'] ?? -1),
+                'weapon_model' => trim(strval($entry['weapon_model'] ?? '')),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -6270,6 +6326,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $entryQuality = $resolveEntryQuality($entry);
             $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
             $itemQualityLevel = intval($entryQuality['level'] ?? -1);
+            $itemWeaponModel = $resolveEntryWeaponModel($entry);
             $itemValueEach = $parseNonNegativeInt(
                 $entry['value_each'] ?? ($entry['value_single'] ?? ($entry['value'] ?? 0)),
                 0
@@ -6278,7 +6335,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $qualityKey = $itemQualityLevel >= 0
                 ? ('q:' . strval($itemQualityLevel))
                 : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
-            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
+            $weaponModelKey = 'wm:' . strtolower($itemWeaponModel !== '' ? $itemWeaponModel : 'none');
+            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey . '|' . $weaponModelKey;
             if (!array_key_exists($itemKey, $traderShopInventoryCounts)) {
                 $traderShopInventoryCounts[$itemKey] = [
                     'name' => $itemName,
@@ -6287,6 +6345,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'item_id' => $itemId,
                     'quality' => $itemQualityLabel,
                     'quality_level' => $itemQualityLevel,
+                    'weapon_model' => $itemWeaponModel,
                     'description' => $itemDescription,
                     'value_each' => $itemValueEach,
                 ];
@@ -6312,6 +6371,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 $itemQualityLevel >= 0
             ) {
                 $traderShopInventoryCounts[$itemKey]['quality_level'] = $itemQualityLevel;
+            }
+            if (
+                trim(strval($traderShopInventoryCounts[$itemKey]['weapon_model'] ?? '')) === '' &&
+                $itemWeaponModel !== ''
+            ) {
+                $traderShopInventoryCounts[$itemKey]['weapon_model'] = $itemWeaponModel;
             }
             if (
                 intval($traderShopInventoryCounts[$itemKey]['value_each'] ?? 0) <= 0 &&
@@ -6563,6 +6628,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             if ($entryQualityLevel < 0) {
                 $entryQualityLevel = -1;
             }
+            $entryWeaponModel = $resolveEntryWeaponModel($entry);
             $entryValueEach = intval($entry['value_each'] ?? 0);
             if ($entryValueEach < 0) {
                 $entryValueEach = 0;
@@ -6571,7 +6637,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $qualityKey = $entryQualityLevel >= 0
                 ? ('q:' . strval($entryQualityLevel))
                 : ('q:' . strtolower($entryQualityLabel !== '' ? $entryQualityLabel : 'none'));
-            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName)) . '|' . $qualityKey;
+            $weaponModelKey = 'wm:' . strtolower($entryWeaponModel !== '' ? $entryWeaponModel : 'none');
+            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName)) . '|' . $qualityKey . '|' . $weaponModelKey;
             if (!array_key_exists($entryKey, $bucket)) {
                 $bucket[$entryKey] = [
                     'name' => $entryName,
@@ -6580,6 +6647,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'item_id' => $entryItemId,
                     'quality' => $entryQualityLabel,
                     'quality_level' => $entryQualityLevel,
+                    'weapon_model' => $entryWeaponModel,
                     'description' => $entryDescription,
                     'value_each' => $entryValueEach,
                 ];
@@ -6603,6 +6671,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             if (intval($bucket[$entryKey]['quality_level'] ?? -1) < 0 && $entryQualityLevel >= 0) {
                 $bucket[$entryKey]['quality_level'] = $entryQualityLevel;
+            }
+            if (
+                trim(strval($bucket[$entryKey]['weapon_model'] ?? '')) === '' &&
+                $entryWeaponModel !== ''
+            ) {
+                $bucket[$entryKey]['weapon_model'] = $entryWeaponModel;
             }
             if (
                 intval($bucket[$entryKey]['value_each'] ?? 0) <= 0 &&
