@@ -5169,14 +5169,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $name = $resolvedName;
     }
     $matchedBy = strval($resolvedIdentity['matched_by'] ?? 'incoming');
-    if ($storageId !== '' && $matchedBy !== 'storage_id') {
-        stobeLogImport('Snapshot resolved without storage_id match', [
-            'incoming_name' => $incomingName,
-            'incoming_storage_id' => $storageId,
-            'resolved_name' => $name,
-            'matched_by' => $matchedBy,
-        ], 'WARN');
-    }
     if (strcasecmp($name, $incomingName) !== 0) {
         stobeLogImport('Snapshot name remapped', [
             'incoming_name' => $incomingName,
