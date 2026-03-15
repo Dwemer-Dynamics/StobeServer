@@ -3487,6 +3487,386 @@ function storeGameData(string $name, string $type, array $data): bool {
     return $result !== false;
 }
 
+function storeWorldStateEntries(array $payload): int {
+    $db = $GLOBALS["db"];
+
+    $gameTs = intval($payload['game_ts'] ?? 0);
+    if ($gameTs < 0) {
+        $gameTs = 0;
+    }
+
+    $source = trim(strval($payload['source'] ?? 'world_event_state_query'));
+    if ($source === '') {
+        $source = 'world_event_state_query';
+    }
+
+    $queries = $payload['queries'] ?? [];
+    if (!is_array($queries) && is_string($queries) && trim($queries) !== '') {
+        $decodedQueries = json_decode($queries, true);
+        if (is_array($decodedQueries)) {
+            $queries = $decodedQueries;
+        }
+    }
+    if (!is_array($queries)) {
+        $queries = [];
+    }
+
+    $parseBool = static function (mixed $value): ?bool {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return intval($value) !== 0;
+        }
+        $text = strtolower(trim(strval($value)));
+        if ($text === '') {
+            return null;
+        }
+        if (in_array($text, ['1', 'true', 'yes', 'on'], true)) {
+            return true;
+        }
+        if (in_array($text, ['0', 'false', 'no', 'off'], true)) {
+            return false;
+        }
+        return null;
+    };
+
+    $normalizeList = static function (mixed $value): array {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value) && trim($value) !== '') {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+        return [];
+    };
+
+    $entriesByKey = [];
+    $buildEntryKey = static function (
+        string $source,
+        string $queryName,
+        string $queryStringId,
+        int $queryNumericId,
+        bool $playerInvolvement,
+        string $ruleCategory,
+        string $entityName,
+        string $entityStringId,
+        int $entityNumericId
+    ): string {
+        return implode('|', [
+            strtolower(trim($source)),
+            strtolower(trim($queryName)),
+            strtolower(trim($queryStringId)),
+            strval($queryNumericId),
+            $playerInvolvement ? '1' : '0',
+            strtolower(trim($ruleCategory)),
+            strtolower(trim($entityName)),
+            strtolower(trim($entityStringId)),
+            strval($entityNumericId),
+        ]);
+    };
+    $setEntry = static function (
+        int $gameTs,
+        string $source,
+        string $queryName,
+        string $queryStringId,
+        int $queryNumericId,
+        bool $playerInvolvement,
+        string $ruleCategory,
+        string $entityName,
+        string $entityStringId,
+        int $entityNumericId,
+        string $stateValue,
+        ?bool $boolValue
+    ) use (&$entriesByKey, $buildEntryKey): void {
+        $key = $buildEntryKey(
+            $source,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement,
+            $ruleCategory,
+            $entityName,
+            $entityStringId,
+            $entityNumericId
+        );
+        $entriesByKey[$key] = [
+            'merge_key' => $key,
+            'game_ts' => $gameTs,
+            'source' => $source,
+            'query_name' => $queryName,
+            'query_string_id' => $queryStringId,
+            'query_numeric_id' => $queryNumericId,
+            'player_involvement' => $playerInvolvement,
+            'rule_category' => $ruleCategory,
+            'entity_name' => $entityName,
+            'entity_string_id' => $entityStringId,
+            'entity_numeric_id' => $entityNumericId,
+            'state_value' => $stateValue,
+            'bool_value' => $boolValue,
+        ];
+    };
+
+    foreach ($queries as $query) {
+        if (!is_array($query)) {
+            continue;
+        }
+
+        $queryName = trim(strval($query['query_name'] ?? ''));
+        $queryStringId = trim(strval($query['query_string_id'] ?? ''));
+        $queryNumericId = intval($query['query_numeric_id'] ?? 0);
+        $playerInvolvement = boolval($query['player_involvement'] ?? false);
+
+        $insertStateList = static function (
+            mixed $listValue,
+            string $ruleCategory,
+            string $source,
+            int $gameTs,
+            string $queryName,
+            string $queryStringId,
+            int $queryNumericId,
+            bool $playerInvolvement
+        ) use ($normalizeList, $setEntry): bool {
+            $list = $normalizeList($listValue);
+            foreach ($list as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $entityName = trim(strval($entry['name'] ?? ''));
+                $entityStringId = trim(strval($entry['string_id'] ?? ''));
+                $entityNumericId = intval($entry['numeric_id'] ?? 0);
+                $stateValue = strtolower(trim(strval($entry['state'] ?? '')));
+                if (!in_array($stateValue, ['dead', 'alive', 'imprisoned'], true)) {
+                    $stateValue = '';
+                }
+                if (
+                    $entityName === '' &&
+                    $entityStringId === '' &&
+                    $entityNumericId <= 0 &&
+                    $stateValue === ''
+                ) {
+                    continue;
+                }
+                $setEntry(
+                    $gameTs,
+                    $source,
+                    $queryName,
+                    $queryStringId,
+                    $queryNumericId,
+                    $playerInvolvement,
+                    $ruleCategory,
+                    $entityName,
+                    $entityStringId,
+                    $entityNumericId,
+                    $stateValue,
+                    null
+                );
+            }
+            return true;
+        };
+
+        $ok = $insertStateList(
+            $query['unique_npcs_are'] ?? [],
+            'unique_npcs_are',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+        $ok = $insertStateList(
+            $query['unique_npcs_are_not'] ?? [],
+            'unique_npcs_are_not',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+        $ok = $insertStateList(
+            $query['towns'] ?? [],
+            'towns',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+
+        $insertBoolList = static function (
+            mixed $listValue,
+            string $ruleCategory,
+            string $boolKey,
+            string $source,
+            int $gameTs,
+            string $queryName,
+            string $queryStringId,
+            int $queryNumericId,
+            bool $playerInvolvement
+        ) use ($normalizeList, $parseBool, $setEntry): bool {
+            $list = $normalizeList($listValue);
+            foreach ($list as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $entityName = trim(strval($entry['name'] ?? ''));
+                $entityStringId = trim(strval($entry['string_id'] ?? ''));
+                $entityNumericId = intval($entry['numeric_id'] ?? 0);
+                $boolValue = $parseBool($entry[$boolKey] ?? null);
+                if (
+                    $entityName === '' &&
+                    $entityStringId === '' &&
+                    $entityNumericId <= 0 &&
+                    $boolValue === null
+                ) {
+                    continue;
+                }
+                $setEntry(
+                    $gameTs,
+                    $source,
+                    $queryName,
+                    $queryStringId,
+                    $queryNumericId,
+                    $playerInvolvement,
+                    $ruleCategory,
+                    $entityName,
+                    $entityStringId,
+                    $entityNumericId,
+                    '',
+                    $boolValue
+                );
+            }
+            return true;
+        };
+
+        $ok = $insertBoolList(
+            $query['is_ally_of'] ?? [],
+            'is_ally_of',
+            'is_ally',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+        $ok = $insertBoolList(
+            $query['is_enemy_of'] ?? [],
+            'is_enemy_of',
+            'is_enemy',
+            $source,
+            $gameTs,
+            $queryName,
+            $queryStringId,
+            $queryNumericId,
+            $playerInvolvement
+        );
+        if (!$ok) {
+            return -1;
+        }
+    }
+
+    $txStarted = false;
+    try {
+        $beginOk = $db->exec("BEGIN");
+        if ($beginOk === false) {
+            return -1;
+        }
+        $txStarted = true;
+
+        foreach ($entriesByKey as $entry) {
+            $ok = $db->exec(
+                "INSERT INTO world_state (
+                    merge_key,
+                    game_ts,
+                    source,
+                    query_name,
+                    query_string_id,
+                    query_numeric_id,
+                    player_involvement,
+                    rule_category,
+                    entity_name,
+                    entity_string_id,
+                    entity_numeric_id,
+                    state_value,
+                    bool_value,
+                    created_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW()
+                )
+                ON CONFLICT (merge_key) DO UPDATE SET
+                    game_ts = EXCLUDED.game_ts,
+                    source = EXCLUDED.source,
+                    query_name = EXCLUDED.query_name,
+                    query_string_id = EXCLUDED.query_string_id,
+                    query_numeric_id = EXCLUDED.query_numeric_id,
+                    player_involvement = EXCLUDED.player_involvement,
+                    rule_category = EXCLUDED.rule_category,
+                    entity_name = EXCLUDED.entity_name,
+                    entity_string_id = EXCLUDED.entity_string_id,
+                    entity_numeric_id = EXCLUDED.entity_numeric_id,
+                    state_value = EXCLUDED.state_value,
+                    bool_value = EXCLUDED.bool_value,
+                    created_at = NOW()",
+                [
+                    strval($entry['merge_key'] ?? ''),
+                    intval($entry['game_ts'] ?? 0),
+                    strval($entry['source'] ?? ''),
+                    strval($entry['query_name'] ?? ''),
+                    strval($entry['query_string_id'] ?? ''),
+                    intval($entry['query_numeric_id'] ?? 0),
+                    boolval($entry['player_involvement'] ?? false),
+                    strval($entry['rule_category'] ?? ''),
+                    strval($entry['entity_name'] ?? ''),
+                    strval($entry['entity_string_id'] ?? ''),
+                    intval($entry['entity_numeric_id'] ?? 0),
+                    strval($entry['state_value'] ?? ''),
+                    $entry['bool_value'] ?? null,
+                ]
+            );
+            if ($ok === false) {
+                $db->exec("ROLLBACK");
+                return -1;
+            }
+        }
+
+        $commitOk = $db->exec("COMMIT");
+        if ($commitOk === false) {
+            $db->exec("ROLLBACK");
+            return -1;
+        }
+    } catch (Throwable $exception) {
+        if ($txStarted) {
+            $db->exec("ROLLBACK");
+        }
+        stobeLogException($exception, 'storeWorldStateEntries failed', [
+            'source' => $source,
+            'game_ts' => $gameTs,
+        ]);
+        return -1;
+    }
+
+    return count($entriesByKey);
+}
+
 function getNpcData(string $name): array|false {
     $db = $GLOBALS["db"];
     $normalizedName = normalizeParticipantNameToken($name);

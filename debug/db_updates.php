@@ -720,6 +720,83 @@ PROMPT;
             $importWorldKnowledgeCsv($seed);
         });
 
+        $applyPatch('world_state', 202603150001, static function () use ($db): void {
+            $db->exec("CREATE TABLE IF NOT EXISTS world_state (
+                id BIGSERIAL PRIMARY KEY,
+                game_ts BIGINT NOT NULL DEFAULT 0,
+                source VARCHAR(64) NOT NULL DEFAULT 'world_event_state_query',
+                query_name TEXT NOT NULL DEFAULT '',
+                query_string_id TEXT NOT NULL DEFAULT '',
+                query_numeric_id INT NOT NULL DEFAULT 0,
+                player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+                rule_category VARCHAR(64) NOT NULL,
+                entity_name TEXT NOT NULL DEFAULT '',
+                entity_string_id TEXT NOT NULL DEFAULT '',
+                entity_numeric_id INT NOT NULL DEFAULT 0,
+                state_value VARCHAR(32) NOT NULL DEFAULT '',
+                bool_value BOOLEAN,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_game_ts ON world_state (game_ts DESC, id DESC)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_created_at ON world_state (created_at DESC, id DESC)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_rule_category ON world_state (rule_category)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWER(query_name))");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name))");
+        });
+        $applyPatch('world_state', 202603150002, static function () use ($db): void {
+            $db->exec("DROP TABLE IF EXISTS world_state_snapshot");
+            $db->exec("DELETE FROM public.database_versioning WHERE tablename='world_state_snapshot'");
+        });
+        $applyPatch('world_state', 202603150003, static function () use ($db): void {
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_world_state_source ON world_state (source)");
+        });
+        $applyPatch('world_state', 202603150004, static function () use ($db): void {
+            $db->exec("ALTER TABLE world_state ADD COLUMN IF NOT EXISTS merge_key TEXT");
+            $db->exec("
+                UPDATE world_state
+                SET merge_key =
+                    LOWER(COALESCE(source, '')) || '|' ||
+                    LOWER(COALESCE(query_name, '')) || '|' ||
+                    LOWER(COALESCE(query_string_id, '')) || '|' ||
+                    COALESCE(query_numeric_id, 0)::text || '|' ||
+                    CASE WHEN COALESCE(player_involvement, FALSE) THEN '1' ELSE '0' END || '|' ||
+                    LOWER(COALESCE(rule_category, '')) || '|' ||
+                    LOWER(COALESCE(entity_name, '')) || '|' ||
+                    LOWER(COALESCE(entity_string_id, '')) || '|' ||
+                    COALESCE(entity_numeric_id, 0)::text
+                WHERE COALESCE(merge_key, '') = ''
+            ");
+            $db->exec("
+                WITH ranked AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(merge_key, '')
+                            ORDER BY COALESCE(game_ts, 0) DESC, id DESC
+                        ) AS rn
+                    FROM world_state
+                )
+                DELETE FROM world_state
+                WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+            ");
+            $db->exec("
+                UPDATE world_state
+                SET merge_key =
+                    LOWER(COALESCE(source, '')) || '|' ||
+                    LOWER(COALESCE(query_name, '')) || '|' ||
+                    LOWER(COALESCE(query_string_id, '')) || '|' ||
+                    COALESCE(query_numeric_id, 0)::text || '|' ||
+                    CASE WHEN COALESCE(player_involvement, FALSE) THEN '1' ELSE '0' END || '|' ||
+                    LOWER(COALESCE(rule_category, '')) || '|' ||
+                    LOWER(COALESCE(entity_name, '')) || '|' ||
+                    LOWER(COALESCE(entity_string_id, '')) || '|' ||
+                    COALESCE(entity_numeric_id, 0)::text
+                WHERE merge_key IS NULL
+            ");
+            $db->exec("ALTER TABLE world_state ALTER COLUMN merge_key SET NOT NULL");
+            $db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_world_state_merge_key ON world_state (merge_key)");
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

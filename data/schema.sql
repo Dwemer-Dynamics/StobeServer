@@ -177,6 +177,33 @@ CREATE TABLE IF NOT EXISTS location_zones (
 CREATE INDEX IF NOT EXISTS idx_location_zones_zone_name_lower ON location_zones (LOWER(zone_name));
 CREATE INDEX IF NOT EXISTS idx_location_zones_first_game_ts ON location_zones (first_game_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_location_zones_last_seen_ts ON location_zones (last_seen_ts DESC);
+-- ----------------------------------------------------------
+-- WORLD_STATE - Row-level WorldEventStateQuery entries
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state (
+    id BIGSERIAL PRIMARY KEY,
+    merge_key TEXT NOT NULL DEFAULT '',
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    source VARCHAR(64) NOT NULL DEFAULT 'world_event_state_query',
+    query_name TEXT NOT NULL DEFAULT '',
+    query_string_id TEXT NOT NULL DEFAULT '',
+    query_numeric_id INT NOT NULL DEFAULT 0,
+    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+    rule_category VARCHAR(64) NOT NULL,
+    entity_name TEXT NOT NULL DEFAULT '',
+    entity_string_id TEXT NOT NULL DEFAULT '',
+    entity_numeric_id INT NOT NULL DEFAULT 0,
+    state_value VARCHAR(32) NOT NULL DEFAULT '',
+    bool_value BOOLEAN,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_world_state_merge_key ON world_state (merge_key);
+CREATE INDEX IF NOT EXISTS idx_world_state_game_ts ON world_state (game_ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_state_created_at ON world_state (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_state_source ON world_state (source);
+CREATE INDEX IF NOT EXISTS idx_world_state_rule_category ON world_state (rule_category);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWER(query_name));
+CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
 
 -- ----------------------------------------------------------
 -- rename_global — DB-backed rename pools
