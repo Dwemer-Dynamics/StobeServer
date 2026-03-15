@@ -6520,6 +6520,11 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $isLikelyTraderContext = coerceBoolean($snapshot['is_trader'] ?? false) ||
         $traderShopSourceCount > 0 || $snapshotTraderInventoryEntryCount > 0;
 
+    $factionForOccupation = baseNameWithoutBracketSuffix($faction);
+    if ($factionForOccupation === '' && $faction !== '') {
+        $factionForOccupation = $faction;
+    }
+
     $occupationParts = [];
     if ($isLikelyTraderContext) {
         $occupationParts[] = 'Trader';
@@ -6527,8 +6532,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if (coerceBoolean($snapshot['is_leader'] ?? false)) {
         $occupationParts[] = 'Leader';
     }
-    if ($faction !== '') {
-        $occupationParts[] = 'Faction: ' . $faction;
+    if ($factionForOccupation !== '') {
+        $occupationParts[] = 'Faction: ' . $factionForOccupation;
     }
     if ($town !== '') {
         $occupationParts[] = 'Town: ' . $town;
@@ -6583,10 +6588,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($occupation === '') {
         $occupation = $occupationDefault;
     }
-    if ($faction !== '' && stripos($occupation, 'faction:') === false) {
+    if ($factionForOccupation !== '' && stripos($occupation, 'faction:') === false) {
         $occupation = trim($occupation) !== ''
-            ? ($occupation . ' | Faction: ' . $faction)
-            : ('Faction: ' . $faction);
+            ? ($occupation . ' | Faction: ' . $factionForOccupation)
+            : ('Faction: ' . $factionForOccupation);
     }
     $goals = trim(strval($resolvedTraits['goals'] ?? ''));
     if ($goals === '') {
