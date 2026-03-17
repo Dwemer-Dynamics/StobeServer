@@ -28,6 +28,7 @@ if (!is_string($distroDashboardRoot) || trim($distroDashboardRoot) === '' || $di
     $distroDashboardRoot = '/Dwemer-Dashboard';
 }
 $distroDebuggerStobeEmbedUrl = rtrim($distroDashboardRoot, '/') . '/distro_debugger.php?embed=1&tab=stobe';
+$distroDatabaseManagerUrl = rtrim($distroDashboardRoot, '/') . '/database_manager.php';
 
 function buildTabTargetSrc(array $tab, string $webRoot): string
 {
@@ -54,7 +55,7 @@ $tabs = [
     ['id' => 'response_queue', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'relationship_logs', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'playthrough_manager', 'label' => 'Playthrough Manager', 'page' => 'playthrough_manager.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'database_manager', 'label' => 'Database Manager', 'page' => 'database_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'database_manager', 'label' => 'Database Manager', 'page' => '', 'url' => $distroDatabaseManagerUrl, 'status' => 'wired', 'embed' => false],
 ];
 
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'server_logs')));
