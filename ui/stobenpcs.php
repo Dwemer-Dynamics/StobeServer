@@ -1648,6 +1648,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             <small class="hint">Voice ID for TTS.</small>
         </div>
 
+        <div class="form-item">
+            <label for="faction">Faction</label>
+            <input type="text" id="faction" name="faction" placeholder="e.g. Holy Nation, UC, Shek Kingdom" value="<?= htmlspecialchars($editItem["faction"] ?? "") ?>">
+            <small class="hint">Primary faction alignment used by prompts and rule matching.</small>
+        </div>
+
         <?php
         // Check profile-level settings for these features
         $profileDynEnabled = false;
@@ -3089,6 +3095,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       gender: 'Gender',
       race: 'Race',
       voiceid: 'Voice ID',
+      faction: 'Faction',
       npc_static_bio: 'Backstory',
       appearance: 'Appearance',
       personality: 'Personality',
@@ -3112,7 +3119,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     function renderDetail(entry, prev){
       if (!entry){ detailBox.innerHTML = '<div style="color:#9fb1c9">No data</div>'; return; }
       const f = entry.fields||{}; const prevF = (prev && prev.fields) ? prev.fields : {};
-      const order = ['npc_name','profile_id','gender','race','voiceid','npc_static_bio','appearance','personality','relationships','occupation','skills','speechstyle','goals','world_knowledge_tags','emote_moods','prompt_head','dynamic_profile','npc_favorite','lock_profile','tags'];
+      const order = ['npc_name','profile_id','gender','race','voiceid','faction','npc_static_bio','appearance','personality','relationships','occupation','skills','speechstyle','goals','world_knowledge_tags','emote_moods','prompt_head','dynamic_profile','npc_favorite','lock_profile','tags'];
       let html = '';
       html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">';
       html += '<div style="color:#cfd9ea;">'+(entry.when_tamrielic || (entry.created?('Created '+entry.created):'Unknown time'))+(entry.created?(' <span style="color:#9fb1c9">('+entry.created+')</span>'):'')+'</div>';
