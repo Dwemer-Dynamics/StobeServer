@@ -46,6 +46,19 @@ function post_int_or_null(string $key): ?int {
     $raw = trim(strval($_POST[$key] ?? ''));
     return $raw === '' ? null : intval($raw);
 }
+function normalize_imported_fk_id(string $table, mixed $raw): ?int {
+    $allowedTables = ['core_llm_connector', 'core_tts_connector'];
+    if (!in_array($table, $allowedTables, true)) {
+        return null;
+    }
+    $value = intval($raw ?? 0);
+    if ($value <= 0) {
+        return null;
+    }
+    $db = $GLOBALS['db'];
+    $row = $db->fetchOne("SELECT id FROM {$table} WHERE id = $1 LIMIT 1", [$value]);
+    return intval($row['id'] ?? 0) > 0 ? $value : null;
+}
 function apply_visual_metadata_merge(array $base, array $metaVis): array {
     $intKeys = [
         'DIARY_DAYS',
@@ -220,6 +233,144 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
+    $rawJson = '';
+    if (isset($_FILES['import_file']) && is_array($_FILES['import_file'])) {
+        $tmpPath = strval($_FILES['import_file']['tmp_name'] ?? '');
+        $err = intval($_FILES['import_file']['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($err === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
+            $rawJson = strval(file_get_contents($tmpPath) ?: '');
+        }
+    }
+    if (trim($rawJson) === '') {
+        $rawJson = trim(strval($_POST['import_data'] ?? ''));
+    }
+    if ($rawJson === '') {
+        header('Location: ' . page_url(['error' => 'Import file is required']));
+        exit;
+    }
+
+    $decoded = json_decode($rawJson, true);
+    if (!is_array($decoded)) {
+        header('Location: ' . page_url(['error' => 'Invalid JSON file']));
+        exit;
+    }
+    $profileData = $decoded['profile'] ?? $decoded;
+    if (!is_array($profileData)) {
+        header('Location: ' . page_url(['error' => 'Import payload missing profile data']));
+        exit;
+    }
+
+    $labelInput = trim(strval($_POST['import_label'] ?? ''));
+    $baseLabel = $labelInput !== '' ? $labelInput : trim(strval($profileData['label'] ?? ''));
+    if ($baseLabel === '') {
+        $baseLabel = 'Imported Profile';
+    }
+
+    $metadataRaw = $profileData['metadata'] ?? [];
+    $metadata = normalize_json_obj($metadataRaw, getDefaultCoreProfileMetadataJson());
+    $newId = saveCoreProfile([
+        'label' => unique_profile_label($baseLabel),
+        'is_default_npc' => false,
+        'prompt_head' => strval($profileData['prompt_head'] ?? ''),
+        'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
+        'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
+        'diary_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['diary_connector'] ?? null),
+        'autochat_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['autochat_connector'] ?? null),
+        'middleterm_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['middleterm_connector'] ?? null),
+        'backgroundlife_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['backgroundlife_connector'] ?? null),
+        'dynamic_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['dynamic_connector'] ?? null),
+        'relationship_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['relationship_connector'] ?? null),
+        'tts_connector_id' => normalize_imported_fk_id('core_tts_connector', $profileData['tts_connector_id'] ?? null),
+        'metadata' => $metadata,
+    ]);
+
+    if ($newId <= 0) {
+        header('Location: ' . page_url(['error' => 'Import failed']));
+        exit;
+    }
+
+    header('Location: ' . page_url(['edit' => $newId, 'notice' => 'profile_imported']));
+    exit;
+}
+
+// ============= Profile Rules AJAX Handlers =============
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['get_import_rules'])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $rules = stobeGetCoreProfileImportRules();
+        echo json_encode(['ok' => true, 'data' => $rules]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_import_rule'])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $id = stobeCreateCoreProfileImportRule([
+            'description' => trim(strval($_POST['description'] ?? 'New Profile Rule')),
+            'match_name' => trim(strval($_POST['match_name'] ?? '')),
+            'match_race' => trim(strval($_POST['match_race'] ?? '')),
+            'match_gender' => trim(strval($_POST['match_gender'] ?? '')),
+            'match_faction' => trim(strval($_POST['match_faction'] ?? '')),
+            'profile' => intval($_POST['profile'] ?? 0),
+            'priority' => intval($_POST['priority'] ?? 0),
+            'enabled' => coerceBoolean($_POST['enabled'] ?? true),
+        ]);
+        echo json_encode(['ok' => true, 'id' => $id]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_import_rule'])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $id = intval($_POST['id'] ?? 0);
+        if ($id <= 0) {
+            echo json_encode(['ok' => false, 'error' => 'Invalid rule id']);
+            exit;
+        }
+        stobeUpdateCoreProfileImportRule($id, [
+            'description' => trim(strval($_POST['description'] ?? 'Profile Rule')),
+            'match_name' => trim(strval($_POST['match_name'] ?? '')),
+            'match_race' => trim(strval($_POST['match_race'] ?? '')),
+            'match_gender' => trim(strval($_POST['match_gender'] ?? '')),
+            'match_faction' => trim(strval($_POST['match_faction'] ?? '')),
+            'profile' => intval($_POST['profile'] ?? 0),
+            'priority' => intval($_POST['priority'] ?? 0),
+            'enabled' => coerceBoolean($_POST['enabled'] ?? false),
+        ]);
+        echo json_encode(['ok' => true, 'id' => $id]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_import_rule'])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $id = intval($_POST['id'] ?? 0);
+        if ($id <= 0) {
+            echo json_encode(['ok' => false, 'error' => 'Invalid rule id']);
+            exit;
+        }
+        stobeDeleteCoreProfileImportRule($id);
+        echo json_encode(['ok' => true, 'id' => $id]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 if (isset($_GET['export_profile'])) {
     $exportId = intval($_GET['export_profile']);
     $profile = getCoreProfileById($exportId);
@@ -245,6 +396,13 @@ $profiles = getAllCoreProfiles();
 if (!is_array($profiles) || count($profiles) === 0) {
     ensureDefaultCoreProfile();
     $profiles = getAllCoreProfiles();
+}
+$profileOptions = [];
+foreach ($profiles as $profileRow) {
+    $profileOptions[] = [
+        'id' => intval($profileRow['id'] ?? 0),
+        'label' => strval($profileRow['label'] ?? ''),
+    ];
 }
 $llmRows = getAllLlmConnectors();
 $ttsRows = getAllTtsConnectors();
@@ -364,6 +522,39 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
 .top-toggle-wrap .top-toggle-title { color: #e6b76c; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
 .default-npc-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
+.modal-backdrop { display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,.65); z-index:10050; }
+.modal-backdrop.show { display:block; }
+.modal-container { width:min(920px, 95vw); margin:4vh auto; border:1px solid #3a3a3a; border-radius:10px; overflow:hidden; background:#2a2a2a; box-shadow:0 8px 28px rgba(0,0,0,.4); }
+#import_profile_modal,
+#import_rules_modal {
+    opacity: 1 !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+}
+#import_profile_modal.show,
+#import_rules_modal.show {
+    display: block !important;
+}
+#import_profile_modal .modal-container,
+#import_rules_modal .modal-container {
+    opacity: 1 !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+}
+.modal-header { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#1f1f1f; border-bottom:1px solid #3a3a3a; }
+.modal-title { margin:0; font-weight:700; color:#e6b76c; font-size:1.1em; }
+.modal-close { background:#3a3a3a; color:#fff; border:1px solid #4a4a4a; border-radius:8px; padding:6px 10px; cursor:pointer; }
+.modal-close:hover { background:#4a4a4a; }
+.modal-body { padding:14px; max-height:78vh; overflow:auto; }
+.rules-list { display:flex; flex-direction:column; gap:12px; }
+.rule-card { background:#1e1e1e; border:1px solid #3f3f3f; border-radius:8px; padding:12px; }
+.rule-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px; flex-wrap:wrap; }
+.rule-grid { display:grid; grid-template-columns: 160px 1fr; gap:8px 12px; align-items:center; }
+@media (max-width: 900px) { .rule-grid { grid-template-columns: 1fr; } }
+.rule-label { color:#9fb1c9; font-size:12px; font-weight:700; }
+.rule-input { width:100%; background:#151515; color:#f0f5ff; border:1px solid #4a4a4a; border-radius:6px; padding:7px 9px; }
+.rule-input:focus { border-color:#e6b76c; outline:none; box-shadow:0 0 0 3px rgba(230,183,108,.12); }
+.rules-help { margin-bottom:10px; color:#cdd6e2; font-size:12px; line-height:1.45; border:1px solid #3f3f3f; border-radius:8px; background:#222; padding:10px; }
 </style>
 <main class="container-fluid">
     <div class="page-header">
@@ -382,6 +573,8 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                     <input type="hidden" name="create_blank" value="1">
                     <button type="submit" class="btn-save">New Profile</button>
                 </form>
+                <button type="button" id="import_profile_btn" class="btn-secondary">Import Profile</button>
+                <button type="button" id="open_import_rules_btn" class="btn-secondary">Profile Rules</button>
             </div>
             <div class="list">
                 <?php foreach ($profiles as $row): ?>
@@ -702,9 +895,120 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             <?php endif; ?>
         </section>
     </div>
+
+    <div id="import_profile_modal" class="modal-backdrop">
+        <div class="modal-container" style="max-width:640px;">
+            <div class="modal-header">
+                <h2 class="modal-title">Import Profile</h2>
+                <button type="button" id="close_import_profile_modal" class="modal-close">Close</button>
+            </div>
+            <div class="modal-body">
+                <form method="post" action="profiles.php" id="import_profile_form" enctype="multipart/form-data" style="display:flex; flex-direction:column; gap:10px;">
+                    <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
+                    <input type="hidden" name="import_profile" value="1">
+                    <div>
+                        <label for="import_file">Profile JSON File</label>
+                        <input id="import_file" name="import_file" type="file" accept=".json,application/json" required>
+                    </div>
+                    <div>
+                        <label for="import_label">Optional New Label Override</label>
+                        <input id="import_label" name="import_label" type="text" placeholder="Leave blank to use file profile label">
+                    </div>
+                    <div class="setting-desc" style="margin-top:2px;">
+                        Imports profile prompt head/prompt, metadata, and connector assignments (when matching connector ids exist in Stobe).
+                    </div>
+                    <div class="btn-row">
+                        <button type="submit" class="btn-save">Import Profile</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="import_rules_modal" class="modal-backdrop">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2 class="modal-title">Profile Rules</h2>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" id="add_rule_btn" class="btn-save">+ New Rule</button>
+                    <button type="button" id="close_rules_modal" class="modal-close">Close</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="rules-help">
+                    Rules are evaluated top-down by <strong>priority</strong>. First matching rule assigns the selected profile when NPC data is imported.
+                    <div style="margin-top:6px;">
+                        Match fields use regex and currently support: <strong>name</strong>, <strong>race</strong>, <strong>gender</strong>, <strong>faction</strong>.
+                    </div>
+                </div>
+                <div id="rules_list" class="rules-list"></div>
+            </div>
+        </div>
+    </div>
 </main>
 <script>
-(function(){
+(function () {
+    const isEmbed = <?= $isEmbed ? 'true' : 'false' ?>;
+    const profileOptions = <?= json_encode($profileOptions, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[]' ?>;
+
+    function buildPageUrl(extraParams) {
+        const params = new URLSearchParams();
+        if (isEmbed) {
+            params.set('embed', '1');
+        }
+        if (extraParams && typeof extraParams === 'object') {
+            Object.keys(extraParams).forEach(function (key) {
+                const raw = extraParams[key];
+                if (raw === null || raw === undefined || String(raw).trim() === '') {
+                    return;
+                }
+                params.set(key, String(raw));
+            });
+        }
+        const query = params.toString();
+        return 'profiles.php' + (query !== '' ? ('?' + query) : '');
+    }
+
+    function appendEmbed(formData) {
+        if (isEmbed) {
+            formData.append('embed', '1');
+        }
+    }
+
+    function notify(message, isError) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, !!isError);
+            return;
+        }
+        alert(message);
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function (ch) {
+            if (ch === '&') return '&amp;';
+            if (ch === '<') return '&lt;';
+            if (ch === '>') return '&gt;';
+            if (ch === '"') return '&quot;';
+            return '&#39;';
+        });
+    }
+
+    function isTruthy(raw) {
+        return raw === true || raw === 1 || raw === '1' || raw === 't' || raw === 'true' || raw === 'on';
+    }
+
+    function openModal(modal) {
+        if (modal) {
+            modal.classList.add('show');
+        }
+    }
+
+    function closeModal(modal) {
+        if (modal) {
+            modal.classList.remove('show');
+        }
+    }
+
     function bindRangePair(rangeId, numberId, min, max) {
         const rangeEl = document.getElementById(rangeId);
         const numberEl = document.getElementById(numberId);
@@ -745,7 +1049,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
         ['meta_context_history_dyn_range', 'meta_context_history_dyn_num', 0, 300],
         ['meta_diary_days_range', 'meta_diary_days_num', 0, 60],
         ['meta_diary_cooldown_range', 'meta_diary_cooldown_num', 0, 3600],
-    ].forEach(function(pair){
+    ].forEach(function (pair) {
         bindRangePair(pair[0], pair[1], pair[2], pair[3]);
     });
 
@@ -786,8 +1090,8 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
     }
 
     updateRechatCalculator();
-    ['meta_rechat_responses_range','meta_rechat_responses_num','meta_rechat_probability_range','meta_rechat_probability_num']
-        .forEach(function(id){
+    ['meta_rechat_responses_range', 'meta_rechat_responses_num', 'meta_rechat_probability_range', 'meta_rechat_probability_num']
+        .forEach(function (id) {
             const el = document.getElementById(id);
             if (el) {
                 el.addEventListener('input', updateRechatCalculator);
@@ -795,18 +1099,270 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
         });
 
     const form = document.getElementById('profile_form');
-    if (!form) return;
-    form.addEventListener('submit', function(ev){
-        const meta = document.getElementById('metadata');
-        if (!meta) return;
-        try {
-            const parsed = JSON.parse(meta.value || '{}');
-            meta.value = JSON.stringify(parsed, null, 2);
-        } catch (e) {
-            ev.preventDefault();
-            alert('Metadata must be valid JSON.');
+    if (form) {
+        form.addEventListener('submit', function (ev) {
+            const meta = document.getElementById('metadata');
+            if (!meta) return;
+            try {
+                const parsed = JSON.parse(meta.value || '{}');
+                meta.value = JSON.stringify(parsed, null, 2);
+            } catch (_error) {
+                ev.preventDefault();
+                alert('Metadata must be valid JSON.');
+            }
+        });
+    }
+
+    const importModal = document.getElementById('import_profile_modal');
+    const importOpenBtn = document.getElementById('import_profile_btn');
+    const importCloseBtn = document.getElementById('close_import_profile_modal');
+    const importForm = document.getElementById('import_profile_form');
+    if (importOpenBtn) {
+        importOpenBtn.addEventListener('click', function () {
+            openModal(importModal);
+        });
+    }
+    if (importCloseBtn) {
+        importCloseBtn.addEventListener('click', function () {
+            closeModal(importModal);
+            if (importForm) {
+                importForm.reset();
+            }
+        });
+    }
+    if (importModal) {
+        importModal.addEventListener('click', function (event) {
+            if (event.target === importModal) {
+                closeModal(importModal);
+                if (importForm) {
+                    importForm.reset();
+                }
+            }
+        });
+    }
+
+    const rulesModal = document.getElementById('import_rules_modal');
+    const rulesOpenBtn = document.getElementById('open_import_rules_btn');
+    const rulesCloseBtn = document.getElementById('close_rules_modal');
+    const addRuleBtn = document.getElementById('add_rule_btn');
+    const rulesList = document.getElementById('rules_list');
+    let rulesData = [];
+
+    function renderProfileSelect(selectedValue) {
+        const selected = String(selectedValue ?? '');
+        let options = '<option value="">-- Select Profile --</option>';
+        profileOptions.forEach(function (profile) {
+            const id = String(profile.id ?? '');
+            const label = escapeHtml(profile.label || ('Profile #' + id));
+            options += '<option value="' + escapeHtml(id) + '"' + (id === selected ? ' selected' : '') + '>' + label + '</option>';
+        });
+        return options;
+    }
+
+    function renderRules() {
+        if (!rulesList) {
+            return;
         }
-    });
+        if (!Array.isArray(rulesData) || rulesData.length === 0) {
+            rulesList.innerHTML = '<div class="setting-desc">No rules yet. Click "New Rule" to create one.</div>';
+            return;
+        }
+
+        let html = '';
+        rulesData.forEach(function (rule) {
+            const id = parseInt(rule.id, 10) || 0;
+            const description = escapeHtml(rule.description || '');
+            const matchName = escapeHtml(rule.match_name || '');
+            const matchRace = escapeHtml(rule.match_race || '');
+            const matchGender = escapeHtml(rule.match_gender || '');
+            const matchFaction = escapeHtml(rule.match_faction || '');
+            const priority = parseInt(rule.priority, 10);
+            const priorityValue = Number.isNaN(priority) ? 0 : priority;
+            const enabled = isTruthy(rule.enabled);
+
+            html += '<div class="rule-card" data-id="' + id + '">';
+            html += '  <div class="rule-head">';
+            html += '      <div><strong>Rule #' + id + '</strong></div>';
+            html += '      <div class="btn-row" style="margin:0;">';
+            html += '          <button type="button" class="btn-save" data-action="save">Save</button>';
+            html += '          <button type="button" class="btn-danger" data-action="delete">Delete</button>';
+            html += '      </div>';
+            html += '  </div>';
+            html += '  <div class="rule-grid">';
+            html += '      <div class="rule-label">Description</div><div><input type="text" class="rule-input rule-description" value="' + description + '"></div>';
+            html += '      <div class="rule-label">Assign Profile</div><div><select class="rule-input rule-profile">' + renderProfileSelect(rule.profile) + '</select></div>';
+            html += '      <div class="rule-label">Priority</div><div><input type="number" class="rule-input rule-priority" value="' + priorityValue + '"></div>';
+            html += '      <div class="rule-label">Enabled</div><div><label style="display:inline-flex; align-items:center; gap:8px;"><input type="checkbox" class="rule-enabled"' + (enabled ? ' checked' : '') + '> Enabled</label></div>';
+            html += '      <div class="rule-label">Match Name (regex)</div><div><input type="text" class="rule-input rule-match-name" value="' + matchName + '" placeholder="e.g. ^Beep$"></div>';
+            html += '      <div class="rule-label">Match Race (regex)</div><div><input type="text" class="rule-input rule-match-race" value="' + matchRace + '" placeholder="e.g. sekelton"></div>';
+            html += '      <div class="rule-label">Match Gender (regex)</div><div><input type="text" class="rule-input rule-match-gender" value="' + matchGender + '" placeholder="e.g. female"></div>';
+            html += '      <div class="rule-label">Match Faction (regex)</div><div><input type="text" class="rule-input rule-match-faction" value="' + matchFaction + '" placeholder="e.g. 	Nameless [204-gamedata.base]"></div>';
+            html += '  </div>';
+            html += '</div>';
+        });
+
+        rulesList.innerHTML = html;
+    }
+
+    async function postRulesForm(formData) {
+        appendEmbed(formData);
+        const response = await fetch(buildPageUrl(), {
+            method: 'POST',
+            body: formData
+        });
+        let payload;
+        try {
+            payload = await response.json();
+        } catch (_error) {
+            throw new Error('Invalid response from rules endpoint');
+        }
+        if (!payload || payload.ok !== true) {
+            const errorMessage = payload && payload.error ? String(payload.error) : 'Request failed';
+            throw new Error(errorMessage);
+        }
+        return payload;
+    }
+
+    async function loadRules() {
+        if (!rulesList) {
+            return;
+        }
+        rulesList.innerHTML = '<div class="setting-desc">Loading rules...</div>';
+        try {
+            const response = await fetch(buildPageUrl({ get_import_rules: '1' }), { cache: 'no-store' });
+            const payload = await response.json();
+            if (!payload || payload.ok !== true || !Array.isArray(payload.data)) {
+                const errorMessage = payload && payload.error ? String(payload.error) : 'Failed to load rules';
+                throw new Error(errorMessage);
+            }
+            rulesData = payload.data;
+            renderRules();
+        } catch (error) {
+            rulesData = [];
+            const message = error && error.message ? String(error.message) : 'Failed to load rules';
+            rulesList.innerHTML = '<div class="notice err">' + escapeHtml(message) + '</div>';
+        }
+    }
+
+    async function createRule() {
+        const formData = new FormData();
+        formData.append('create_import_rule', '1');
+        formData.append('description', 'New Profile Rule');
+        formData.append('priority', '0');
+        formData.append('enabled', '1');
+        const currentProfileId = parseInt(<?= intval($editId) ?>, 10);
+        if (!Number.isNaN(currentProfileId) && currentProfileId > 0) {
+            formData.append('profile', String(currentProfileId));
+        }
+        try {
+            await postRulesForm(formData);
+            await loadRules();
+            notify('Rule created', false);
+        } catch (error) {
+            const message = error && error.message ? String(error.message) : 'Failed to create rule';
+            notify(message, true);
+        }
+    }
+
+    function getCardValue(card, selector) {
+        const el = card.querySelector(selector);
+        if (!el) {
+            return '';
+        }
+        if (el.type === 'checkbox') {
+            return el.checked ? '1' : '0';
+        }
+        return String(el.value ?? '').trim();
+    }
+
+    async function saveRule(card, id) {
+        const formData = new FormData();
+        formData.append('update_import_rule', '1');
+        formData.append('id', String(id));
+        formData.append('description', getCardValue(card, '.rule-description'));
+        formData.append('match_name', getCardValue(card, '.rule-match-name'));
+        formData.append('match_race', getCardValue(card, '.rule-match-race'));
+        formData.append('match_gender', getCardValue(card, '.rule-match-gender'));
+        formData.append('match_faction', getCardValue(card, '.rule-match-faction'));
+        formData.append('profile', getCardValue(card, '.rule-profile'));
+        formData.append('priority', getCardValue(card, '.rule-priority') || '0');
+        formData.append('enabled', getCardValue(card, '.rule-enabled'));
+
+        try {
+            await postRulesForm(formData);
+            await loadRules();
+            notify('Rule saved', false);
+        } catch (error) {
+            const message = error && error.message ? String(error.message) : 'Failed to save rule';
+            notify(message, true);
+        }
+    }
+
+    async function deleteRule(id) {
+        if (!confirm('Delete this profile rule?')) {
+            return;
+        }
+        const formData = new FormData();
+        formData.append('delete_import_rule', '1');
+        formData.append('id', String(id));
+
+        try {
+            await postRulesForm(formData);
+            await loadRules();
+            notify('Rule deleted', false);
+        } catch (error) {
+            const message = error && error.message ? String(error.message) : 'Failed to delete rule';
+            notify(message, true);
+        }
+    }
+
+    if (rulesOpenBtn) {
+        rulesOpenBtn.addEventListener('click', function () {
+            openModal(rulesModal);
+            loadRules();
+        });
+    }
+    if (rulesCloseBtn) {
+        rulesCloseBtn.addEventListener('click', function () {
+            closeModal(rulesModal);
+        });
+    }
+    if (addRuleBtn) {
+        addRuleBtn.addEventListener('click', function () {
+            createRule();
+        });
+    }
+    if (rulesList) {
+        rulesList.addEventListener('click', function (event) {
+            const btn = event.target.closest('button[data-action]');
+            if (!btn) {
+                return;
+            }
+            const card = btn.closest('.rule-card');
+            if (!card) {
+                return;
+            }
+            const id = parseInt(card.getAttribute('data-id') || '0', 10);
+            if (id <= 0) {
+                return;
+            }
+            const action = btn.getAttribute('data-action');
+            if (action === 'save') {
+                saveRule(card, id);
+                return;
+            }
+            if (action === 'delete') {
+                deleteRule(id);
+            }
+        });
+    }
+    if (rulesModal) {
+        rulesModal.addEventListener('click', function (event) {
+            if (event.target === rulesModal) {
+                closeModal(rulesModal);
+            }
+        });
+    }
 })();
 </script>
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'tmpl' . DIRECTORY_SEPARATOR . 'footer.html'); ?>

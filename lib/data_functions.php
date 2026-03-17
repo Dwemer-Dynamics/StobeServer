@@ -3450,8 +3450,9 @@ function storeGameData(string $name, string $type, array $data): bool {
     if ($tags === '') {
         $tags = '';
     }
-    $defaultProfileId = getDefaultNpcProfileId();
-    $defaultProfileIdOrNull = $defaultProfileId > 0 ? $defaultProfileId : null;
+    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, '', $faction);
+    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -3481,7 +3482,7 @@ function storeGameData(string $name, string $type, array $data): bool {
             tags = COALESCE(NULLIF(core_npc_master.tags, ''), $5),
             profile_id = COALESCE(core_npc_master.profile_id, EXCLUDED.profile_id),
             updated_at = NOW()",
-        [$safeName, $race, $faction, $metadataJson, $tags, $defaultProfileIdOrNull]
+        [$safeName, $race, $faction, $metadataJson, $tags, $selectedProfileIdOrNull]
     );
 
     return $result !== false;
@@ -4785,8 +4786,9 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
 
     $metadataJson = normalizeJsonString($metadataArray);
     $extendedDataJson = normalizeJsonString(normalizeCoreNpcExtendedData($profile['extended_data'] ?? '{}'));
-    $defaultProfileId = getDefaultNpcProfileId();
-    $defaultProfileIdOrNull = $defaultProfileId > 0 ? $defaultProfileId : null;
+    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
+    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
     $db->exec(
         "INSERT INTO core_npc_master (
@@ -4895,7 +4897,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             $race,
             $faction,
             $gender,
-            $defaultProfileIdOrNull,
+            $selectedProfileIdOrNull,
             $extendedDataJson,
             $bountyJson,
             $tags,
@@ -6771,8 +6773,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $extendedDataJson = normalizeJsonString($snapshotExtendedPayload);
     $bountyJson = stobeNormalizeBountyJsonString($bountyPayload);
     $safeGamets = max(0, $gamets);
-    $defaultProfileId = getDefaultNpcProfileId();
-    $defaultProfileIdOrNull = $defaultProfileId > 0 ? $defaultProfileId : null;
+    $ruleProfileId = stobeResolveProfileIdFromImportRules($name, $race, $gender, $faction);
+    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -6837,7 +6840,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             hunger = CASE WHEN $19 THEN $17 ELSE core_npc_master.hunger END,
             updated_at = NOW()",
         [
-            $name, $race, $faction, $gender, $defaultProfileIdOrNull, $isAnimal, $isSlave, $metadataJson, $safeGamets, $extendedDataJson, $tags, $bountyJson,
+            $name, $race, $faction, $gender, $selectedProfileIdOrNull, $isAnimal, $isSlave, $metadataJson, $safeGamets, $extendedDataJson, $tags, $bountyJson,
             $equipmentSummary, $inventorySummary, $limbsJson, $bloodValue, $hungerValue, $hasLimbs, $hasVitals, $isInventoryLiveSync
         ]
     );
@@ -7086,6 +7089,196 @@ function updateNpcById(int $id, array $fields): void {
     $db->exec($query, $params);
     $historyRowAfter = stobeFetchNpcRowForHistoryById($id);
     stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'ui_update');
+}
+
+function stobeEnsureCoreProfileImportRulesTable(): void {
+    static $ensured = false;
+    if ($ensured) {
+        return;
+    }
+
+    $db = $GLOBALS["db"];
+    $db->exec(
+        "CREATE TABLE IF NOT EXISTS core_profile_import_rules (
+            id SERIAL PRIMARY KEY,
+            description TEXT DEFAULT '' NOT NULL,
+            match_name TEXT,
+            match_race TEXT,
+            match_gender TEXT,
+            match_faction TEXT,
+            profile INT REFERENCES core_profiles(id) ON DELETE CASCADE,
+            priority INT DEFAULT 0 NOT NULL,
+            enabled BOOLEAN DEFAULT TRUE NOT NULL,
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL,
+            updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL
+        )"
+    );
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_core_profile_import_rules_enabled_priority ON core_profile_import_rules (enabled, priority DESC, id DESC)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_core_profile_import_rules_profile ON core_profile_import_rules (profile)");
+
+    $ensured = true;
+}
+
+function stobeGetCoreProfileImportRules(): array {
+    stobeEnsureCoreProfileImportRulesTable();
+    $db = $GLOBALS["db"];
+    return $db->fetchAll(
+        "SELECT id, description, match_name, match_race, match_gender, match_faction, profile, priority, enabled, created_at, updated_at
+         FROM core_profile_import_rules
+         ORDER BY priority DESC, id DESC"
+    );
+}
+
+function stobeCreateCoreProfileImportRule(array $fields): int {
+    stobeEnsureCoreProfileImportRulesTable();
+    $db = $GLOBALS["db"];
+
+    $description = trim(strval($fields['description'] ?? ''));
+    if ($description === '') {
+        $description = 'New Profile Rule';
+    }
+    $matchName = trim(strval($fields['match_name'] ?? ''));
+    $matchRace = trim(strval($fields['match_race'] ?? ''));
+    $matchGender = trim(strval($fields['match_gender'] ?? ''));
+    $matchFaction = trim(strval($fields['match_faction'] ?? ''));
+    $profile = intval($fields['profile'] ?? 0);
+    $priority = intval($fields['priority'] ?? 0);
+    $enabled = coerceBoolean($fields['enabled'] ?? true);
+
+    $row = $db->fetchOne(
+        "INSERT INTO core_profile_import_rules (
+            description,
+            match_name,
+            match_race,
+            match_gender,
+            match_faction,
+            profile,
+            priority,
+            enabled,
+            updated_at
+        ) VALUES (
+            $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, NOW()
+        )
+        RETURNING id",
+        [
+            $description,
+            $matchName,
+            $matchRace,
+            $matchGender,
+            $matchFaction,
+            $profile > 0 ? $profile : null,
+            $priority,
+            $enabled,
+        ]
+    );
+
+    return intval($row['id'] ?? 0);
+}
+
+function stobeUpdateCoreProfileImportRule(int $id, array $fields): bool {
+    stobeEnsureCoreProfileImportRulesTable();
+    if ($id <= 0) {
+        return false;
+    }
+    $db = $GLOBALS["db"];
+
+    $description = trim(strval($fields['description'] ?? ''));
+    if ($description === '') {
+        $description = 'Profile Rule';
+    }
+    $matchName = trim(strval($fields['match_name'] ?? ''));
+    $matchRace = trim(strval($fields['match_race'] ?? ''));
+    $matchGender = trim(strval($fields['match_gender'] ?? ''));
+    $matchFaction = trim(strval($fields['match_faction'] ?? ''));
+    $profile = intval($fields['profile'] ?? 0);
+    $priority = intval($fields['priority'] ?? 0);
+    $enabled = coerceBoolean($fields['enabled'] ?? false);
+
+    $db->exec(
+        "UPDATE core_profile_import_rules
+         SET description = $1,
+             match_name = NULLIF($2, ''),
+             match_race = NULLIF($3, ''),
+             match_gender = NULLIF($4, ''),
+             match_faction = NULLIF($5, ''),
+             profile = $6,
+             priority = $7,
+             enabled = $8,
+             updated_at = NOW()
+         WHERE id = $9",
+        [
+            $description,
+            $matchName,
+            $matchRace,
+            $matchGender,
+            $matchFaction,
+            $profile > 0 ? $profile : null,
+            $priority,
+            $enabled,
+            $id,
+        ]
+    );
+
+    return true;
+}
+
+function stobeDeleteCoreProfileImportRule(int $id): bool {
+    stobeEnsureCoreProfileImportRulesTable();
+    if ($id <= 0) {
+        return false;
+    }
+    $db = $GLOBALS["db"];
+    $db->exec("DELETE FROM core_profile_import_rules WHERE id = $1", [$id]);
+    return true;
+}
+
+function stobeProfileRuleRegexMatches(?string $pattern, string $value): bool {
+    $rule = trim(strval($pattern ?? ''));
+    if ($rule === '') {
+        return true;
+    }
+    $delim = '~';
+    $expr = $delim . str_replace($delim, '\\' . $delim, $rule) . $delim . 'iu';
+    $result = @preg_match($expr, $value);
+    return $result === 1;
+}
+
+function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
+    stobeEnsureCoreProfileImportRulesTable();
+
+    $nameVal = trim($npcName);
+    if ($nameVal === '') {
+        return 0;
+    }
+    $raceVal = trim($race);
+    $genderVal = trim($gender);
+    $factionVal = trim($faction);
+
+    $rules = stobeGetCoreProfileImportRules();
+    foreach ($rules as $rule) {
+        if (!coerceBoolean($rule['enabled'] ?? false)) {
+            continue;
+        }
+        $profileId = intval($rule['profile'] ?? 0);
+        if ($profileId <= 0) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_name'] ?? ''), $nameVal)) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_race'] ?? ''), $raceVal)) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_gender'] ?? ''), $genderVal)) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_faction'] ?? ''), $factionVal)) {
+            continue;
+        }
+        return $profileId;
+    }
+
+    return 0;
 }
 
 function getAllCoreProfiles(): array {
