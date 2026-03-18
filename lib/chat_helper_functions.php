@@ -920,14 +920,14 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     if ($command === 'USE_DRUGS') {
         $drugName = $sanitizeInlineText($argument, 80);
         if ($drugName === '') {
-            return '';
+            return 'USE_DRUGS@Hashish';
         }
         return 'USE_DRUGS@' . $drugName;
     }
     if ($command === 'DRINK_ITEM') {
         $drinkName = $sanitizeInlineText($argument, 80);
         if ($drinkName === '') {
-            return '';
+            return 'DRINK_ITEM@Cactus Rum';
         }
         return 'DRINK_ITEM@' . $drinkName;
     }
@@ -2560,14 +2560,14 @@ function stobeBuildActionTagFromStructuredPayload(
     if ($actionUpper === 'USE_DRUGS') {
         $drugName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
         if ($drugName === '') {
-            return '';
+            return 'USE_DRUGS@Hashish';
         }
         return 'USE_DRUGS@' . $drugName;
     }
     if ($actionUpper === 'DRINK_ITEM') {
         $drinkName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
         if ($drinkName === '') {
-            return '';
+            return 'DRINK_ITEM@Cactus Rum';
         }
         return 'DRINK_ITEM@' . $drinkName;
     }

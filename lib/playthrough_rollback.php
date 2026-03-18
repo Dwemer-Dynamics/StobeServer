@@ -201,6 +201,175 @@ function stobePlaythroughPruneFutureTimeline(int $cutoffGamets): array
     return $counts;
 }
 
+function stobePlaythroughNormalizeRollbackJsonObject(mixed $value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return [];
+        }
+        $decoded = json_decode($trimmed, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+    return [];
+}
+
+function stobePlaythroughShouldClearCharacterState(mixed $value): bool
+{
+    $state = strtolower(trim(strval($value ?? '')));
+    if ($state === '') {
+        return false;
+    }
+    return in_array(
+        $state,
+        ['unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated', 'passed_out', 'blackout'],
+        true
+    );
+}
+
+function stobePlaythroughSanitizeVolatileNpcState(array &$payload): bool
+{
+    $changed = false;
+    $volatileKeys = [
+        'is_drunk',
+        'drunk_level',
+        'drunk_status',
+        'drunk_seconds_remaining',
+        'is_high',
+        'high_status',
+        'high_seconds_remaining',
+        'high_hunger_rate_multiplier',
+    ];
+
+    foreach ($volatileKeys as $key) {
+        if (array_key_exists($key, $payload)) {
+            unset($payload[$key]);
+            $changed = true;
+        }
+    }
+
+    if (array_key_exists('character_state', $payload) && stobePlaythroughShouldClearCharacterState($payload['character_state'])) {
+        unset($payload['character_state']);
+        $changed = true;
+    }
+
+    if (isset($payload['medical']) && is_array($payload['medical'])) {
+        $medical = $payload['medical'];
+        foreach (['is_unconscious', 'is_knocked_out', 'is_knockedout'] as $medicalKey) {
+            if (array_key_exists($medicalKey, $medical)) {
+                unset($medical[$medicalKey]);
+                $changed = true;
+            }
+        }
+        if (count($medical) === 0) {
+            unset($payload['medical']);
+            $changed = true;
+        } else {
+            $payload['medical'] = $medical;
+        }
+    }
+
+    foreach ($payload as $key => $value) {
+        if (!is_array($value)) {
+            continue;
+        }
+        $child = $value;
+        if (stobePlaythroughSanitizeVolatileNpcState($child)) {
+            $payload[$key] = $child;
+            $changed = true;
+        }
+    }
+
+    return $changed;
+}
+
+function stobePlaythroughClearFutureVolatileNpcStates(int $cutoffGamets): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobePlaythroughTableExists('core_npc')) {
+        return ['scanned' => 0, 'updated' => 0, 'errors' => 0];
+    }
+
+    $cutoff = max(0, intval($cutoffGamets));
+    $rows = $db->fetchAll(
+        'SELECT id, metadata, extended_data
+         FROM core_npc
+         WHERE COALESCE(gamets_last_updated, 0) > $1
+         ORDER BY id ASC',
+        [$cutoff]
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        return ['scanned' => 0, 'updated' => 0, 'errors' => 0];
+    }
+
+    $counts = ['scanned' => 0, 'updated' => 0, 'errors' => 0];
+    foreach ($rows as $row) {
+        $npcId = intval($row['id'] ?? 0);
+        if ($npcId <= 0) {
+            continue;
+        }
+        $counts['scanned']++;
+
+        $metadata = function_exists('normalizeCoreNpcMetadata')
+            ? normalizeCoreNpcMetadata($row['metadata'] ?? '{}')
+            : stobePlaythroughNormalizeRollbackJsonObject($row['metadata'] ?? '{}');
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+
+        $extended = function_exists('normalizeCoreNpcExtendedData')
+            ? normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}')
+            : stobePlaythroughNormalizeRollbackJsonObject($row['extended_data'] ?? '{}');
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+
+        $metadataChanged = stobePlaythroughSanitizeVolatileNpcState($metadata);
+        $extendedChanged = stobePlaythroughSanitizeVolatileNpcState($extended);
+        if (!$metadataChanged && !$extendedChanged) {
+            continue;
+        }
+
+        $metadataJson = function_exists('normalizeJsonString')
+            ? normalizeJsonString($metadata)
+            : json_encode($metadata);
+        $extendedJson = function_exists('normalizeJsonString')
+            ? normalizeJsonString($extended)
+            : json_encode($extended);
+        if (!is_string($metadataJson) || trim($metadataJson) === '') {
+            $metadataJson = '{}';
+        }
+        if (!is_string($extendedJson) || trim($extendedJson) === '') {
+            $extendedJson = '{}';
+        }
+
+        $ok = $db->exec(
+            'UPDATE core_npc
+             SET metadata = $1::jsonb,
+                 extended_data = $2::jsonb,
+                 gamets_last_updated = CASE
+                    WHEN COALESCE(gamets_last_updated, 0) > $3 THEN $3
+                    ELSE COALESCE(gamets_last_updated, 0)
+                 END,
+                 updated_at = NOW()
+             WHERE id = $4',
+            [$metadataJson, $extendedJson, $cutoff, $npcId]
+        );
+        if ($ok === false) {
+            $counts['errors']++;
+        } else {
+            $counts['updated']++;
+        }
+    }
+
+    return $counts;
+}
+
 function stobePlaythroughClearRelationshipQueues(): array
 {
     $db = $GLOBALS['db'] ?? null;
@@ -1148,6 +1317,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             : stobePlaythroughZeroPruneCounts();
         $restoreCounts = stobePlaythroughRestoreUnlockedNpcs($incoming);
         $queueCounts = stobePlaythroughClearRelationshipQueues();
+        $volatileStateCounts = stobePlaythroughClearFutureVolatileNpcStates($incoming);
 
         if (!$pruneEnabled) {
             stobeLogWarn('PLAYTHROUGH: prune skipped by setting PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED=false', [
@@ -1180,6 +1350,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             'pruned' => $pruneCounts,
             'restored' => $restoreCounts,
             'queues_cleared' => $queueCounts,
+            'volatile_state_cleared' => $volatileStateCounts,
         ]);
 
         return [
