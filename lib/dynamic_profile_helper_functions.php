@@ -369,14 +369,14 @@ function stobeDynamicProfileFetchRecentContext(string $npcName, int $limit = 30)
     }
 
     return $db->fetchAll(
-        "SELECT id, type, data, gamets, localts, ts, people, location
+        "SELECT rowid AS id, type, data, gamets, localts, ts, people, location
          FROM eventlog
          WHERE type NOT IN ('setconf', 'status_msg', 'npc_snapshot', 'playerinfo')
            AND (
                 LOWER(COALESCE(people, '')) LIKE LOWER($1)
                 OR LOWER(COALESCE(data, '')) LIKE LOWER($1)
            )
-         ORDER BY id DESC
+         ORDER BY rowid DESC
          LIMIT " . intval($limit),
         ['%' . $safeNpcName . '%']
     );

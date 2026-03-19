@@ -25,6 +25,7 @@ if (!isset($GLOBALS['db']) || !($GLOBALS['db'] instanceof sql)) {
 
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'settings.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'server_logger.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'background_processor.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'utils_game_timestamp.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-pockettts.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-xtts.php');

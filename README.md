@@ -11,6 +11,21 @@ It is the Kenshi-side counterpart to HerikaServer patterns (event routing, promp
 4. LLM connectors generate responses.
 5. Responses are streamed back to the plugin and optional TTS is produced/cached.
 
+## Background Processor
+
+StobeServer now includes a Herika-style background processor:
+
+- `service/start.sh`: daemon loop with heartbeat listener (`127.0.0.1:12346`).
+- `service/manager.php`: periodic cycle tick for non-interactive workloads.
+- UI auto-start/status hooks in `ui/index.php` and `ui/home.php`.
+
+The processor is intended for periodic maintenance workloads that should not
+add latency to foreground chat responses:
+
+- Middle-term memory summarization (`stobeMaybeRunMiddleTermCycle`).
+- Regular memory packing/summarization (`stobeMaybeRunRegularMemoryCycle`).
+- Dynamic profile refresh (`stobeMaybeRunDynamicProfileCycle`).
+
 ## Key Paths
 
 - `main.php`, `stream.php`, `chat.php`, `gamedata.php`, `stt.php`: main HTTP entry points.
