@@ -2154,7 +2154,9 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval'),
 ('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
 ('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
+('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),
+('AUTO_LOCK_PROFILE',    'true',         'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
 

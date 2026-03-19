@@ -9,13 +9,13 @@ error_reporting(E_ALL);
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
 
-if (count($_GET) === 0) {
-    try {
-        require_once($path . "debug/db_updates.php");
-    } catch (Throwable $exception) {
-        stobeLogException($exception, "Dashboard db update check failed");
-    }
+try {
+    require_once($path . "debug/db_updates.php");
+} catch (Throwable $exception) {
+    stobeLogException($exception, "Dashboard db update check failed");
+}
 
+if (count($_GET) === 0) {
     if (function_exists('stobeEnsureBackgroundProcessorRunning')) {
         stobeEnsureBackgroundProcessorRunning(true);
     }

@@ -79,6 +79,29 @@ function stobeUiResolveIndividualMemoryEnabled(array $extended): bool
     return coerceBoolean($raw);
 }
 
+function stobeUiAutoLockProfileEnabled(): bool
+{
+    if (function_exists('getSettingBool')) {
+        try {
+            return getSettingBool('AUTO_LOCK_PROFILE', true);
+        } catch (Throwable $exception) {
+        }
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if ($db && method_exists($db, 'fetchOne')) {
+        try {
+            $row = $db->fetchOne("SELECT value FROM general_settings WHERE id = 'AUTO_LOCK_PROFILE' LIMIT 1");
+            if (is_array($row) && array_key_exists('value', $row)) {
+                return coerceBoolean($row['value']);
+            }
+        } catch (Throwable $exception) {
+        }
+    }
+
+    return true;
+}
+
 $TITLE = "Stobe - NPC Master";
 ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
@@ -450,6 +473,9 @@ if (!function_exists('stobe_ui_format_bounty_summary')) {
 
 // Handle Create
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
+    if (stobeUiAutoLockProfileEnabled()) {
+        $_POST['lock_profile'] = 1;
+    }
     $npc->create($_POST);
     header("Location: npc_master.php");
     exit;
@@ -457,6 +483,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
 
 // Handle Update
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
+    if (stobeUiAutoLockProfileEnabled()) {
+        $_POST['lock_profile'] = 1;
+    }
     $_POST["md5"]=md5($_POST["npc_name"]);
     $npc->update($_POST["id"], $_POST);
     header("Location: npc_master.php");
@@ -522,6 +551,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
             if (!isset($_POST['metadata']) || trim((string)$_POST['metadata']) === '') {
                 $_POST['metadata'] = '{}';
             }
+        }
+        if (stobeUiAutoLockProfileEnabled()) {
+            $_POST['lock_profile'] = 1;
         }
         if ($id <= 0) {
             $newId = $npc->create($_POST);
@@ -890,6 +922,7 @@ $profileIdFilter = isset($_GET['profile_id']) ? trim((string)$_GET['profile_id']
 $favOnly = (isset($_GET['fav']) && $_GET['fav'] === '1');
 $dynOnly = (isset($_GET['dyn']) && $_GET['dyn'] === '1');
 $mtmOnly = (isset($_GET['mtm']) && $_GET['mtm'] === '1');
+$lockOnly = (isset($_GET['lock']) && $_GET['lock'] === '1');
 
 // Preload profiles for filter dropdown
 $profileRows = $GLOBALS["db"]->fetchAll("SELECT id, label, metadata FROM core_profiles ORDER BY label ASC");
@@ -984,6 +1017,9 @@ if ($mtmOnly) {
     // Prefer metadata override key, keep legacy extended_data compatibility.
     $where .= " and ((coalesce(metadata::text,'') ~ '\"MIDDLE_TERM_MEMORY_ENABLED\"\\s*:\\s*(true|1)') or (coalesce(extended_data::text,'') ~ '\"middle_term_enabled\"\\s*:\\s*(true|1)'))";
 }
+if ($lockOnly) {
+    $where .= " and coalesce(lock_profile,0)=1";
+}
 
 // Default: The Narrator first, then favorites, then alphabetical by name
 $order = "order by (case when npc_name = 'The Narrator' then 0 else 1 end), coalesce(npc_favorite,0) desc, coalesce(gamets_last_updated,0) desc, lower(npc_name) ".$alpha.", id asc";
@@ -1014,6 +1050,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_fav" <?= $favOnly?'checked':'' ?>> Favorites</label>
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
+            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock" <?= $lockOnly?'checked':'' ?>> Locked</label>
           </div>
         </div>
         <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
@@ -2526,6 +2563,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_fav_top" <?= $favOnly?'checked':'' ?>> Favorites</label>
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn_top" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm_top" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
+        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock_top" <?= $lockOnly?'checked':'' ?>> Locked</label>
       </div>
     </div>
     <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
@@ -3607,9 +3645,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       const fav = (document.getElementById('npc_filter_fav_top')||document.getElementById('npc_filter_fav'));
       const dyn = (document.getElementById('npc_filter_dyn_top')||document.getElementById('npc_filter_dyn'));
       const mtm = (document.getElementById('npc_filter_mtm_top')||document.getElementById('npc_filter_mtm'));
+      const locked = (document.getElementById('npc_filter_lock_top')||document.getElementById('npc_filter_lock'));
       params.set('fav', fav && fav.checked ? '1' : '');
       params.set('dyn', dyn && dyn.checked ? '1' : '');
       params.set('mtm', mtm && mtm.checked ? '1' : '');
+      params.set('lock', locked && locked.checked ? '1' : '');
     } catch(_e){}
     params.set('alpha', 'asc');
     if (page) params.set('page', String(page));
