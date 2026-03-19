@@ -348,6 +348,11 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         $applyPatch('general_settings', 202603130213, static function () use ($db): void {
             $db->exec("DELETE FROM general_settings WHERE id = 'WORLD_KNOWLEDGE_HEURISTIC_ENABLED'");
         });
+        $applyPatch('general_settings', 202603190001, static function () use ($db): void {
+            $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
+                ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD','3','How many global memory summaries involving an NPC are required before creating one NPC-scoped summary',NOW())
+                ON CONFLICT (id) DO NOTHING");
+        });
         $applyPatch('prompts', 202603130214, static function () use ($db): void {
             $analysisPrompt = <<<'PROMPT'
 You are a relationship analyzer for Kenshi NPCs. Analyze relationship descriptions and output JSON.
@@ -693,6 +698,11 @@ PROMPT;
                 )
                 WHERE COALESCE(extended_data, '{}'::jsonb) ? 'relationships'
             ");
+        });
+        $applyPatch('memory_summary', 202603190001, static function () use ($db): void {
+            $db->exec("ALTER TABLE memory_summary ADD COLUMN IF NOT EXISTS scope TEXT");
+            $db->exec("UPDATE memory_summary SET scope='global' WHERE scope IS NULL OR BTRIM(scope)=''");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC)");
         });
 
         $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile): void {

@@ -807,6 +807,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_localts ON memory (localts DESC, id DESC);
 CREATE TABLE IF NOT EXISTS memory_summary (
     id SERIAL PRIMARY KEY,
     people TEXT NOT NULL DEFAULT '[]',
+    scope TEXT,
     summary TEXT NOT NULL,
     embedding vector(384),
     period_start TIMESTAMP,
@@ -822,6 +823,7 @@ CREATE TABLE IF NOT EXISTS memory_summary (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_summary_people_created ON memory_summary (LOWER(people), created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_summary_people_gamets ON memory_summary (LOWER(people), gamets_end DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC);
 
 DO $$
 BEGIN
@@ -874,10 +876,16 @@ BEGIN
         ALTER TABLE memory_summary DROP COLUMN IF EXISTS npc_name;
     END IF;
 
+    ALTER TABLE memory_summary ADD COLUMN IF NOT EXISTS scope TEXT;
+    UPDATE memory_summary
+    SET scope = 'global'
+    WHERE scope IS NULL OR BTRIM(scope) = '';
+
     DROP INDEX IF EXISTS idx_memory_summary_npc_created;
     DROP INDEX IF EXISTS idx_memory_summary_npc_gamets;
     CREATE INDEX IF NOT EXISTS idx_memory_summary_people_created ON memory_summary (LOWER(people), created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_memory_summary_people_gamets ON memory_summary (LOWER(people), gamets_end DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC);
 END $$;
 
 -- ----------------------------------------------------------
@@ -2142,6 +2150,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
 ('MEMORY_TIME_DELAY',    '12',           'Minutes before recent memories can be recalled'),
 ('MEMORY_CONTEXT_SIZE',  '1',            'Max number of memory entries injected'),
+('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
 ('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval'),
 ('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
 ('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),

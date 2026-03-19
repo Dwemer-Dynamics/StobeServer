@@ -107,7 +107,7 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'CORE_CONNECTOR_') || strpos($idUpper, 'API_KEY') !== false) {
         return 'LLM & API';
     }
-    if (str_starts_with($idUpper, 'MEMORY_')) {
+    if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_')) {
         return 'Memory';
     }
     if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_')) {
