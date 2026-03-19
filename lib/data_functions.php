@@ -1478,6 +1478,14 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         $clean
     ) ?? $clean;
 
+    // Corruption can also appear immediately before a complete "(talking to: X)" segment.
+    // Examples: "... 7 (talking to: Slowline)", "... ?? (talking to: Slowline)".
+    $clean = preg_replace(
+        '/\s+(?:\?{2,}|[0-9]{1,3})\s*(?=\(talking to:\s*[^\)]+\)\s*$)/iu',
+        ' ',
+        $clean
+    ) ?? $clean;
+
     $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
     if (in_array($normalizedType, $contextOnlyTypes, true)) {
         // Context telemetry rows are not directional dialogue.
