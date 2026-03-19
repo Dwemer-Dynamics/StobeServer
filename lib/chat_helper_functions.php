@@ -5092,6 +5092,26 @@ function buildNearbyPlayerAlliesPrompt(array $nearby, string $speakerName): stri
     return implode("\n", $lines);
 }
 
+function stobeBuildNearbyPlayerFactionPartyPrompt(array|false $npcData, string $speakerName): string {
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return '';
+    }
+    if (!npcIsInPlayerFaction($npcData)) {
+        return '';
+    }
+
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $nearby = stobeExtractSceneArray($extendedData, 'nearby_actors');
+    if (count($nearby) === 0) {
+        $nearby = stobeExtractSceneArray($extendedData, 'nearby');
+    }
+    if (count($nearby) === 0) {
+        return '';
+    }
+
+    return buildNearbyPlayerAlliesPrompt($nearby, $speakerName);
+}
+
 function stobeBuildRoleplayInstructionsText(string $npcName, string $playerName, array|false $npcData = false): string {
     $custom = '';
     if (function_exists('stobeGetNpcLayeredStringSetting')) {

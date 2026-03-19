@@ -509,6 +509,10 @@ $manualActionCannotSpeak = $manualActionActive
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
     . "\n\n"
     . buildSystemPrompt($targetNpc, $npcData, $speaker, $message, true, 'chat', intval($gamets));
+$nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $targetNpc);
+if ($nearbyPartyPrompt !== '') {
+    $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
+}
 $deliveryStyleInstruction = '';
 if ($dialogueMode === 'whisper') {
     $deliveryStyleInstruction = 'The player is whispering. Respond in a quiet, discreet tone.';

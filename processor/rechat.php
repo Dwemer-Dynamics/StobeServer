@@ -629,6 +629,10 @@ $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
         $previousTarget,
         intval($gamets)
     );
+$nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $respondingNpc);
+if ($nearbyPartyPrompt !== '') {
+    $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
+}
 $userLine = trim($previousSpeaker . ': ' . $previousMessage);
 if ($userLine === ':' || $userLine === '') {
     $userLine = "<rechat_input>\n"

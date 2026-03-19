@@ -161,6 +161,10 @@ $historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
     . "\n\n"
     . buildSystemPrompt($speakerNpc, is_array($speakerData) ? $speakerData : [], $listener, '', false, 'bored', intval($gamets));
+$nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($speakerData, $speakerNpc);
+if ($nearbyPartyPrompt !== '') {
+    $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
+}
 $systemPrompt .= "\n\n<bored_event_mode>\n"
     . "  <rule>Start a spontaneous nearby NPC conversation.</rule>\n"
     . "  <listener>" . stobePromptXmlEscape($listener) . "</listener>\n"
