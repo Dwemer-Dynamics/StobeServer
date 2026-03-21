@@ -47,7 +47,7 @@ stobeLogInfo('Root index JSON status requested');
 header('Content-Type: application/json');
 echo json_encode([
     'server' => 'StobeServer',
-    'version' => '0.5.0',
+    'version' => '0.6.5',
     'game' => 'Kenshi',
     'status' => 'ok',
 ]);
