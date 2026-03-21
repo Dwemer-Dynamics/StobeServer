@@ -16,6 +16,25 @@ function stobe_desc_trim(mixed $value): string
     return trim(strval($value));
 }
 
+function stobe_desc_ensure_image_table(sql $db): void
+{
+    $db->exec(
+        "CREATE TABLE IF NOT EXISTS description_images (
+            stringid VARCHAR(128) PRIMARY KEY,
+            image_path TEXT NOT NULL DEFAULT '',
+            image_hash VARCHAR(64) DEFAULT '',
+            format VARCHAR(16) DEFAULT '',
+            width INT DEFAULT 0,
+            height INT DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )"
+    );
+    $db->exec(
+        "CREATE INDEX IF NOT EXISTS idx_description_images_stringid_lower
+         ON description_images (LOWER(stringid))"
+    );
+}
+
 $isEmbed = isset($_GET["embed"]) && strval($_GET["embed"]) === "1";
 
 function stobe_desc_build_url(array $params = [], bool $embed = false, string $anchor = ""): string
@@ -240,16 +259,20 @@ if (count($whereParts) > 0) {
     $whereSql = "WHERE " . implode(" AND ", $whereParts);
 }
 
+stobe_desc_ensure_image_table($db);
+
 $rows = $db->fetchAll(
     "SELECT
         v.stringid,
         v.name,
         v.description,
+        COALESCE(img.image_path, '') AS image_path,
         EXISTS (SELECT 1 FROM descriptions_custom c WHERE LOWER(c.stringid) = LOWER(v.stringid)) AS is_custom
-     FROM combined_descriptions v
-     $whereSql
-     ORDER BY LOWER(COALESCE(v.name, '')), LOWER(v.stringid)
-     LIMIT 2000",
+      FROM combined_descriptions v
+      LEFT JOIN description_images img ON LOWER(img.stringid) = LOWER(v.stringid)
+      $whereSql
+      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(v.stringid)
+      LIMIT 2000",
     $params
 );
 ?>
@@ -434,6 +457,31 @@ $rows = $db->fetchAll(
             word-wrap: break-word;
             overflow-wrap: break-word;
         }
+        .item-image-cell {
+            width: 72px;
+            min-width: 72px;
+            text-align: center;
+        }
+        .item-image-thumb {
+            width: 54px;
+            height: 54px;
+            object-fit: contain;
+            border-radius: 6px;
+            border: 1px solid #4a4a4a;
+            background: rgba(20, 20, 20, 0.9);
+            padding: 3px;
+        }
+        .item-image-missing {
+            display: inline-block;
+            width: 54px;
+            height: 54px;
+            line-height: 54px;
+            border-radius: 6px;
+            border: 1px dashed #4a4a4a;
+            color: #8e9aab;
+            background: rgba(20, 20, 20, 0.7);
+            font-size: 12px;
+        }
         .table-container tr:hover {
             background: rgba(58, 58, 58, 0.5);
         }
@@ -554,17 +602,19 @@ $rows = $db->fetchAll(
                 <table>
                     <tr>
                         <th>String ID</th>
+                        <th>Image</th>
                         <th>Name</th>
                         <th>Description</th>
                         <th>Source</th>
                         <th>Actions</th>
                     </tr>
                     <?php if (count($rows) === 0): ?>
-                        <tr><td colspan="5">No descriptions found.</td></tr>
+                        <tr><td colspan="6">No descriptions found.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($rows as $row): ?>
                         <?php
                         $stringid = strval($row["stringid"] ?? "");
+                        $imagePath = trim(strval($row["image_path"] ?? ""));
                         $name = strval($row["name"] ?? "");
                         $desc = strval($row["description"] ?? "");
                         $isCustom = strval($row["is_custom"] ?? "f") === "t";
@@ -576,6 +626,13 @@ $rows = $db->fetchAll(
                         ?>
                         <tr>
                             <td><?= h($stringid) ?></td>
+                            <td class="item-image-cell">
+                                <?php if ($imagePath !== ""): ?>
+                                    <img class="item-image-thumb" src="<?= h($imagePath) ?>" alt="<?= h($name !== "" ? $name : $stringid) ?> icon" loading="lazy">
+                                <?php else: ?>
+                                    <span class="item-image-missing">N/A</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= h($name) ?></td>
                             <td style="max-width: 500px;"><?= nl2br(h(strlen($desc) > 240 ? (substr($desc, 0, 240) . "...") : $desc)) ?></td>
                             <td>

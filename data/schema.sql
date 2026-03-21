@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS descriptions_custom (
     description TEXT
 );
 
+CREATE TABLE IF NOT EXISTS description_images (
+    stringid VARCHAR(128) PRIMARY KEY,
+    image_path TEXT NOT NULL DEFAULT '',
+    image_hash VARCHAR(64) DEFAULT '',
+    format VARCHAR(16) DEFAULT '',
+    width INT DEFAULT 0,
+    height INT DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_description_images_stringid_lower ON description_images (LOWER(stringid));
+
 CREATE OR REPLACE VIEW combined_descriptions AS
 SELECT
     c.stringid,
