@@ -920,14 +920,14 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     if ($command === 'USE_DRUGS') {
         $drugName = $sanitizeInlineText($argument, 80);
         if ($drugName === '') {
-            return '';
+            return 'USE_DRUGS@Hashish';
         }
         return 'USE_DRUGS@' . $drugName;
     }
     if ($command === 'DRINK_ITEM') {
         $drinkName = $sanitizeInlineText($argument, 80);
         if ($drinkName === '') {
-            return '';
+            return 'DRINK_ITEM@Cactus Rum';
         }
         return 'DRINK_ITEM@' . $drinkName;
     }
@@ -2613,14 +2613,14 @@ function stobeBuildActionTagFromStructuredPayload(
     if ($actionUpper === 'USE_DRUGS') {
         $drugName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
         if ($drugName === '') {
-            return '';
+            return 'USE_DRUGS@Hashish';
         }
         return 'USE_DRUGS@' . $drugName;
     }
     if ($actionUpper === 'DRINK_ITEM') {
         $drinkName = trim($item !== '' ? $item : ($target !== '' ? $target : $message));
         if ($drinkName === '') {
-            return '';
+            return 'DRINK_ITEM@Cactus Rum';
         }
         return 'DRINK_ITEM@' . $drinkName;
     }
@@ -3169,20 +3169,72 @@ function stobeResolveItemQualityFromEntry(array $entry): array {
     ];
 }
 
+function stobeResolveWeaponModelFromEntry(array $entry): string {
+    $model = trim(strval(
+        $entry['weapon_model']
+            ?? ($entry['weaponModel']
+            ?? ($entry['model'] ?? ''))
+    ));
+    if ($model === '') {
+        return '';
+    }
+
+    $model = preg_replace('/\s+/u', ' ', $model) ?? $model;
+    $model = trim($model);
+    if ($model === '') {
+        return '';
+    }
+    if (preg_match('/^\[(.*)\]$/u', $model, $matches) === 1) {
+        $model = trim(strval($matches[1] ?? ''));
+    }
+    if ($model === '') {
+        return '';
+    }
+    return $model;
+}
+
 function stobeFormatInventoryItemNameWithQuality(string $itemName, array $entry): string {
     $name = trim($itemName);
     if ($name === '') {
         return '';
     }
-    if (preg_match('/\[[^\]]+\]/', $name) === 1) {
-        return $name;
-    }
+    $tags = [];
+
     $quality = stobeResolveItemQualityFromEntry($entry);
-    $label = trim(strval($quality['label'] ?? ''));
-    if ($label === '') {
+    $qualityLabel = trim(strval($quality['label'] ?? ''));
+    if ($qualityLabel !== '') {
+        $tags[] = $qualityLabel;
+    }
+
+    $weaponModel = stobeResolveWeaponModelFromEntry($entry);
+    if ($weaponModel !== '') {
+        $alreadyPresent = false;
+        foreach ($tags as $tag) {
+            if (strcasecmp($tag, $weaponModel) === 0) {
+                $alreadyPresent = true;
+                break;
+            }
+        }
+        if (!$alreadyPresent) {
+            $tags[] = $weaponModel;
+        }
+    }
+
+    if (count($tags) === 0) {
         return $name;
     }
-    return $name . ' [' . $label . ']';
+
+    $displayName = $name;
+    foreach ($tags as $tag) {
+        if ($tag === '') {
+            continue;
+        }
+        if (stripos($displayName, '[' . $tag . ']') !== false) {
+            continue;
+        }
+        $displayName .= ' [' . $tag . ']';
+    }
+    return $displayName;
 }
 
 function buildInventoryContextFromMetadata(array $metadata): array {
@@ -3268,6 +3320,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         $itemQuality = stobeResolveItemQualityFromEntry($entry);
         $itemQualityLabel = trim(strval($itemQuality['label'] ?? ''));
         $itemQualityLevel = intval($itemQuality['level'] ?? -1);
+        $itemWeaponModel = stobeResolveWeaponModelFromEntry($entry);
         $itemModel = '';
         $itemManufacturer = '';
         $itemManufacturerId = '';
@@ -3280,7 +3333,8 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         $qualityKey = $itemQualityLevel >= 0
             ? ('q:' . strval($itemQualityLevel))
             : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
-        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
+        $weaponModelKey = 'wm:' . strtolower($itemWeaponModel !== '' ? $itemWeaponModel : 'none');
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey . '|' . $weaponModelKey;
         if ($isEquipped) {
             if (!array_key_exists($entryKey, $equipmentCounts)) {
                 $equipmentCounts[$entryKey] = [
@@ -3289,6 +3343,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
                     'description' => $itemDescription,
                     'quality' => $itemQualityLabel,
                     'quality_level' => $itemQualityLevel,
+                    'weapon_model' => $itemWeaponModel,
                     'value_each' => $itemValueEach,
                     'count' => 0,
                 ];
@@ -3306,6 +3361,9 @@ function buildInventoryContextFromMetadata(array $metadata): array {
             if (intval($equipmentCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
                 $equipmentCounts[$entryKey]['quality_level'] = $itemQualityLevel;
             }
+            if (trim(strval($equipmentCounts[$entryKey]['weapon_model'] ?? '')) === '' && $itemWeaponModel !== '') {
+                $equipmentCounts[$entryKey]['weapon_model'] = $itemWeaponModel;
+            }
             if (intval($equipmentCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
                 $equipmentCounts[$entryKey]['value_each'] = $itemValueEach;
             }
@@ -3319,6 +3377,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
                 'description' => $itemDescription,
                 'quality' => $itemQualityLabel,
                 'quality_level' => $itemQualityLevel,
+                'weapon_model' => $itemWeaponModel,
                 'value_each' => $itemValueEach,
                 'count' => 0,
             ];
@@ -3335,6 +3394,9 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
         if (intval($inventoryCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
             $inventoryCounts[$entryKey]['quality_level'] = $itemQualityLevel;
+        }
+        if (trim(strval($inventoryCounts[$entryKey]['weapon_model'] ?? '')) === '' && $itemWeaponModel !== '') {
+            $inventoryCounts[$entryKey]['weapon_model'] = $itemWeaponModel;
         }
         if (intval($inventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
             $inventoryCounts[$entryKey]['value_each'] = $itemValueEach;
@@ -3370,6 +3432,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         $itemQuality = stobeResolveItemQualityFromEntry($entry);
         $itemQualityLabel = trim(strval($itemQuality['label'] ?? ''));
         $itemQualityLevel = intval($itemQuality['level'] ?? -1);
+        $itemWeaponModel = stobeResolveWeaponModelFromEntry($entry);
         $itemValueEach = intval($entry['value_each'] ?? ($entry['value_single'] ?? 0));
         if ($itemValueEach < 0) {
             $itemValueEach = 0;
@@ -3378,7 +3441,8 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         $qualityKey = $itemQualityLevel >= 0
             ? ('q:' . strval($itemQualityLevel))
             : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
-        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
+        $weaponModelKey = 'wm:' . strtolower($itemWeaponModel !== '' ? $itemWeaponModel : 'none');
+        $entryKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey . '|' . $weaponModelKey;
         if (!array_key_exists($entryKey, $traderInventoryCounts)) {
             $traderInventoryCounts[$entryKey] = [
                 'name' => $itemName,
@@ -3386,6 +3450,7 @@ function buildInventoryContextFromMetadata(array $metadata): array {
                 'description' => $itemDescription,
                 'quality' => $itemQualityLabel,
                 'quality_level' => $itemQualityLevel,
+                'weapon_model' => $itemWeaponModel,
                 'value_each' => $itemValueEach,
                 'count' => 0,
             ];
@@ -3408,6 +3473,12 @@ function buildInventoryContextFromMetadata(array $metadata): array {
         }
         if (intval($traderInventoryCounts[$entryKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
             $traderInventoryCounts[$entryKey]['quality_level'] = $itemQualityLevel;
+        }
+        if (
+            trim(strval($traderInventoryCounts[$entryKey]['weapon_model'] ?? '')) === '' &&
+            $itemWeaponModel !== ''
+        ) {
+            $traderInventoryCounts[$entryKey]['weapon_model'] = $itemWeaponModel;
         }
         if (intval($traderInventoryCounts[$entryKey]['value_each'] ?? 0) <= 0 && $itemValueEach > 0) {
             $traderInventoryCounts[$entryKey]['value_each'] = $itemValueEach;
@@ -5072,6 +5143,26 @@ function buildNearbyPlayerAlliesPrompt(array $nearby, string $speakerName): stri
     $lines[] = '</nearby_player_allies>';
 
     return implode("\n", $lines);
+}
+
+function stobeBuildNearbyPlayerFactionPartyPrompt(array|false $npcData, string $speakerName): string {
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return '';
+    }
+    if (!npcIsInPlayerFaction($npcData)) {
+        return '';
+    }
+
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $nearby = stobeExtractSceneArray($extendedData, 'nearby_actors');
+    if (count($nearby) === 0) {
+        $nearby = stobeExtractSceneArray($extendedData, 'nearby');
+    }
+    if (count($nearby) === 0) {
+        return '';
+    }
+
+    return buildNearbyPlayerAlliesPrompt($nearby, $speakerName);
 }
 
 function stobeBuildRoleplayInstructionsText(string $npcName, string $playerName, array|false $npcData = false): string {

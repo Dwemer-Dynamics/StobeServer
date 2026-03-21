@@ -2,6 +2,50 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+try {
+    require_once($path . "debug/db_updates.php");
+} catch (Throwable $exception) {
+    stobeLogException($exception, "Global settings db update check failed");
+}
+
+try {
+    $db = $GLOBALS['db'] ?? null;
+    if ($db) {
+        $requiredSettings = [
+            [
+                'id' => 'AUTO_LOCK_PROFILE',
+                'value' => 'true',
+                'description' => 'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.',
+            ],
+            [
+                'id' => 'RELATIONSHIP_SYSTEM_ENABLED',
+                'value' => 'true',
+                'description' => 'Enable relationship system analysis and updates for NPC interactions.',
+            ],
+        ];
+
+        foreach ($requiredSettings as $requiredSetting) {
+            $id = strval($requiredSetting['id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $row = $db->fetchOne(
+                "SELECT id FROM general_settings WHERE id = $1 LIMIT 1",
+                [$id]
+            );
+            if (!$row) {
+                setSetting(
+                    $id,
+                    strval($requiredSetting['value'] ?? ''),
+                    'general',
+                    strval($requiredSetting['description'] ?? '')
+                );
+            }
+        }
+    }
+} catch (Throwable $exception) {
+    stobeLogException($exception, "Failed to ensure required global settings exist");
+}
 
 function h(mixed $value): string
 {
@@ -111,7 +155,7 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'CORE_CONNECTOR_') || strpos($idUpper, 'API_KEY') !== false) {
         return 'LLM & API';
     }
-    if (str_starts_with($idUpper, 'MEMORY_')) {
+    if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_')) {
         return 'Memory';
     }
     if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_')) {
@@ -129,8 +173,10 @@ function stobeInferGroup(string $id): string
         'BRACKET_ORIGINAL_NAME',
         'SPEAKER_RECHAT',
         'PLAYER_NAME',
+        'AUTO_LOCK_PROFILE',
         'RELATIONSHIP_SYSTEM',
-        'RELATIONSHIP_SYSTEM_ENABLED'
+        'RELATIONSHIP_SYSTEM_ENABLED',
+        'RELATION_SYSTEM_ENABLED'
     ], true)) {
         return 'Core';
     }
@@ -225,6 +271,9 @@ foreach ($grouped as $groupName => $rows) {
             'BRACKET_ORIGINAL_NAME' => 0,
             'SPEAKER_RECHAT' => 1,
             'RELATIONSHIP_SYSTEM' => 2,
+            'RELATIONSHIP_SYSTEM_ENABLED' => 2,
+            'RELATION_SYSTEM_ENABLED' => 2,
+            'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
             'PLAYTHROUGH_AUTOLOAD_ENABLED' => 0,

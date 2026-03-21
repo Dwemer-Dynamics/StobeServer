@@ -9,11 +9,15 @@ error_reporting(E_ALL);
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
 
+try {
+    require_once($path . "debug/db_updates.php");
+} catch (Throwable $exception) {
+    stobeLogException($exception, "Dashboard db update check failed");
+}
+
 if (count($_GET) === 0) {
-    try {
-        require_once($path . "debug/db_updates.php");
-    } catch (Throwable $exception) {
-        stobeLogException($exception, "Dashboard db update check failed");
+    if (function_exists('stobeEnsureBackgroundProcessorRunning')) {
+        stobeEnsureBackgroundProcessorRunning(true);
     }
 }
 
@@ -221,7 +225,7 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.6.0';
+    $serverVersionDisplay = '0.6.5';
 }
 
 $pluginVersionDisplay = 'N/A';
@@ -247,6 +251,15 @@ if (trim($currentInGameTime) === '') {
     $currentInGameTime = 'N/A';
 }
 
+$backgroundProcessorRunning = false;
+try {
+    if (function_exists('stobeBackgroundProcessorIsRunning')) {
+        $backgroundProcessorRunning = stobeBackgroundProcessorIsRunning();
+    }
+} catch (Throwable $exception) {
+    $backgroundProcessorRunning = false;
+}
+
 $currentPlaythroughContent = "
 <div class='quest-list'>
     <h4>World Information</h4>
@@ -254,6 +267,7 @@ $currentPlaythroughContent = "
         <tr><th>Stats</th><th>Value</th></tr>
         <tr><td>Last Played (UTC)</td><td>" . h($lastPlayedUtc) . "</td></tr>
         <tr><td>Current In-Game Time</td><td>" . h($currentInGameTime) . "</td></tr>
+        <tr><td>Background Processor</td><td>" . ($backgroundProcessorRunning ? "Running" : "Not running") . "</td></tr>
     </table>
 </div>";
 

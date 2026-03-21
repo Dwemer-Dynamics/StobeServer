@@ -7,6 +7,10 @@
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
 
+if (count($_GET) === 0 && function_exists('stobeEnsureBackgroundProcessorRunning')) {
+    stobeEnsureBackgroundProcessorRunning(true);
+}
+
 $redirectTarget = 'home.php';
 try {
     if (function_exists('stobeShouldRedirectToQuickstart') && stobeShouldRedirectToQuickstart()) {

@@ -23,6 +23,12 @@ if ($webRoot === '/') {
     $webRoot = '';
 }
 $webRoot = rtrim($webRoot, '/');
+$distroDashboardRoot = preg_replace('#/(HerikaServer|StobeServer)$#', '/Dwemer-Dashboard', $webRoot);
+if (!is_string($distroDashboardRoot) || trim($distroDashboardRoot) === '' || $distroDashboardRoot === $webRoot) {
+    $distroDashboardRoot = '/Dwemer-Dashboard';
+}
+$distroDebuggerStobeEmbedUrl = rtrim($distroDashboardRoot, '/') . '/distro_debugger.php?embed=1&tab=stobe';
+$distroDatabaseManagerUrl = rtrim($distroDashboardRoot, '/') . '/database_manager.php';
 
 function buildTabTargetSrc(array $tab, string $webRoot): string
 {
@@ -42,14 +48,14 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 }
 
 $tabs = [
-    ['id' => 'server_logs', 'label' => 'Server Logs', 'page' => 'logs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'server_logs', 'label' => 'Server Logs', 'page' => '', 'url' => $distroDebuggerStobeEmbedUrl, 'status' => 'wired', 'embed' => false],
     ['id' => 'audio_image_cache', 'label' => 'Audio & Image Cache', 'page' => '', 'url' => ($webRoot !== '' ? $webRoot : '') . '/soundcache/', 'status' => 'wired', 'embed' => false],
     ['id' => 'request_logs', 'label' => 'Request Logs', 'page' => 'request_logs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'cost_breakdown', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'response_queue', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'relationship_logs', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'playthrough_manager', 'label' => 'Playthrough Manager', 'page' => 'playthrough_manager.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'database_manager', 'label' => 'Database Manager', 'page' => 'database_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'database_manager', 'label' => 'Database Manager', 'page' => '', 'url' => $distroDatabaseManagerUrl, 'status' => 'wired', 'embed' => false],
 ];
 
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'server_logs')));

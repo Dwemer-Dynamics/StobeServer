@@ -989,7 +989,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         return false;
     }
 
-    $url = $endpoint . '/tts_to_audio';
+    $url = $endpoint . (in_array($provider, ['xtts', 'chatterbox'], true) ? '/tts_to_audio/' : '/tts_to_audio');
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -1004,7 +1004,8 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     curl_close($ch);
 
     if (!is_string($binary) || $binary === '' || $httpCode < 200 || $httpCode >= 300) {
-        if ($provider === 'chatterbox') {
+        $responseBody = is_string($binary) ? $binary : '';
+        if (in_array($provider, ['chatterbox', 'xtts'], true)) {
             $ch = curl_init($endpoint . '/tts_to_audio/');
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -1019,6 +1020,68 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
             if (is_string($retry) && $retry !== '' && $retryCode >= 200 && $retryCode < 300) {
                 return $retry;
             }
+            if (is_string($retry) && $retry !== '') {
+                $responseBody = $retry;
+            }
+            if ($retryCode > 0) {
+                $httpCode = $retryCode;
+            }
+        }
+
+        if ($provider === 'xtts') {
+            $responseDetail = '';
+            if ($responseBody !== '') {
+                $decodedError = json_decode($responseBody, true);
+                if (is_array($decodedError)) {
+                    $responseDetail = trim(strval($decodedError['detail'] ?? $decodedError['error'] ?? ''));
+                }
+                if ($responseDetail === '') {
+                    $responseDetail = trim($responseBody);
+                }
+            }
+
+            if (
+                $responseDetail !== '' &&
+                stripos($responseDetail, 'speaker') !== false &&
+                stripos($responseDetail, 'not found') !== false
+            ) {
+                $fallbackVoiceId = (stripos($voiceId, 'female') !== false) ? 'femalenord' : 'malenord';
+                if (strcasecmp($fallbackVoiceId, $voiceId) !== 0) {
+                    $fallbackPayload = json_encode([
+                        'text' => $speechText,
+                        'speaker_wav' => $fallbackVoiceId,
+                        'language' => $language,
+                    ], JSON_UNESCAPED_UNICODE);
+
+                    if (is_string($fallbackPayload) && $fallbackPayload !== '') {
+                        stobeLogWarn('XTTS speaker missing, retrying fallback voice', [
+                            'requested_voiceid' => $voiceId,
+                            'fallback_voiceid' => $fallbackVoiceId,
+                            'endpoint' => $endpoint,
+                        ]);
+                        $ch = curl_init($endpoint . '/tts_to_audio/');
+                        curl_setopt_array($ch, [
+                            CURLOPT_RETURNTRANSFER => true,
+                            CURLOPT_POST => true,
+                            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: audio/wav'],
+                            CURLOPT_POSTFIELDS => $fallbackPayload,
+                            CURLOPT_TIMEOUT => 45,
+                        ]);
+                        $fallbackBinary = curl_exec($ch);
+                        $fallbackCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+                        curl_close($ch);
+                        if (is_string($fallbackBinary) && $fallbackBinary !== '' && $fallbackCode >= 200 && $fallbackCode < 300) {
+                            return $fallbackBinary;
+                        }
+                        if (is_string($fallbackBinary) && $fallbackBinary !== '') {
+                            $responseBody = $fallbackBinary;
+                        }
+                        if ($fallbackCode > 0) {
+                            $httpCode = $fallbackCode;
+                        }
+                    }
+                }
+            }
         }
 
         stobeLogWarn('Local TTS synthesis failed', [
@@ -1026,6 +1089,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
             'endpoint' => $endpoint,
             'http_code' => $httpCode,
             'error' => $curlError,
+            'response' => substr(strval($responseBody), 0, 220),
         ]);
         return false;
     }

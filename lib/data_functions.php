@@ -1589,6 +1589,14 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         $clean
     ) ?? $clean;
 
+    // Corruption can also appear immediately before a complete "(talking to: X)" segment.
+    // Examples: "... 7 (talking to: Slowline)", "... ?? (talking to: Slowline)".
+    $clean = preg_replace(
+        '/\s+(?:\?{2,}|[0-9]{1,3})\s*(?=\(talking to:\s*[^\)]+\)\s*$)/iu',
+        ' ',
+        $clean
+    ) ?? $clean;
+
     $speechTypes = ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored'];
     if (in_array($normalizedType, $speechTypes, true)) {
         $parsed = parseDialogueEventData($clean);
@@ -3583,8 +3591,9 @@ function storeGameData(string $name, string $type, array $data): bool {
     if ($tags === '') {
         $tags = '';
     }
-    $defaultProfileId = getDefaultNpcProfileId();
-    $defaultProfileIdOrNull = $defaultProfileId > 0 ? $defaultProfileId : null;
+    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, '', $faction);
+    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -3614,7 +3623,7 @@ function storeGameData(string $name, string $type, array $data): bool {
             tags = COALESCE(NULLIF(core_npc_master.tags, ''), $5),
             profile_id = COALESCE(core_npc_master.profile_id, EXCLUDED.profile_id),
             updated_at = NOW()",
-        [$safeName, $race, $faction, $metadataJson, $tags, $defaultProfileIdOrNull]
+        [$safeName, $race, $faction, $metadataJson, $tags, $selectedProfileIdOrNull]
     );
 
     return $result !== false;
@@ -4935,8 +4944,9 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
 
     $metadataJson = normalizeJsonString($metadataArray);
     $extendedDataJson = normalizeJsonString(normalizeCoreNpcExtendedData($profile['extended_data'] ?? '{}'));
-    $defaultProfileId = getDefaultNpcProfileId();
-    $defaultProfileIdOrNull = $defaultProfileId > 0 ? $defaultProfileId : null;
+    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
+    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
     $db->exec(
         "INSERT INTO core_npc_master (
@@ -5045,7 +5055,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             $race,
             $faction,
             $gender,
-            $defaultProfileIdOrNull,
+            $selectedProfileIdOrNull,
             $extendedDataJson,
             $bountyJson,
             $tags,
@@ -5820,19 +5830,63 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             'level' => $qualityLevel,
         ];
     };
+    $resolveEntryWeaponModel = static function (array $entry): string {
+        $weaponModel = trim(strval(
+            $entry['weapon_model']
+                ?? ($entry['weaponModel']
+                ?? ($entry['model'] ?? ''))
+        ));
+        if ($weaponModel === '') {
+            return '';
+        }
+        $weaponModel = preg_replace('/\s+/u', ' ', $weaponModel) ?? $weaponModel;
+        $weaponModel = trim($weaponModel);
+        if ($weaponModel === '') {
+            return '';
+        }
+        if (preg_match('/^\[(.*)\]$/u', $weaponModel, $matches) === 1) {
+            $weaponModel = trim(strval($matches[1] ?? ''));
+        }
+        return $weaponModel;
+    };
     $formatItemNameWithQuality = static function (string $name, array $entry): string {
         $trimmedName = trim($name);
         if ($trimmedName === '') {
             return '';
         }
-        if (preg_match('/\[[^\]]+\]/', $trimmedName) === 1) {
-            return $trimmedName;
-        }
+        $tags = [];
         $qualityLabel = trim(strval($entry['quality'] ?? ''));
-        if ($qualityLabel === '') {
+        if ($qualityLabel !== '') {
+            $tags[] = $qualityLabel;
+        }
+        $weaponModel = trim(strval($entry['weapon_model'] ?? ''));
+        if ($weaponModel !== '') {
+            $alreadyPresent = false;
+            foreach ($tags as $tag) {
+                if (strcasecmp($tag, $weaponModel) === 0) {
+                    $alreadyPresent = true;
+                    break;
+                }
+            }
+            if (!$alreadyPresent) {
+                $tags[] = $weaponModel;
+            }
+        }
+        if (count($tags) === 0) {
             return $trimmedName;
         }
-        return $trimmedName . ' [' . $qualityLabel . ']';
+        $out = $trimmedName;
+        foreach ($tags as $tag) {
+            $cleanTag = trim(strval($tag));
+            if ($cleanTag === '') {
+                continue;
+            }
+            if (stripos($out, '[' . $cleanTag . ']') !== false) {
+                continue;
+            }
+            $out .= ' [' . $cleanTag . ']';
+        }
+        return $out;
     };
     $inventoryDescriptionCount = 0;
     if (is_array($inventoryEntries)) {
@@ -5913,11 +5967,13 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $entryQuality = $resolveEntryQuality($entry);
             $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
             $itemQualityLevel = intval($entryQuality['level'] ?? -1);
+            $itemWeaponModel = $resolveEntryWeaponModel($entry);
             $itemCountKeyId = $itemId !== '' ? strtolower($itemId) : strtolower($itemName);
             $qualityKey = $itemQualityLevel >= 0
                 ? ('q:' . strval($itemQualityLevel))
                 : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
-            $itemCountKey = $itemCountKeyId . '|' . $qualityKey;
+            $weaponModelKey = 'wm:' . strtolower($itemWeaponModel !== '' ? $itemWeaponModel : 'none');
+            $itemCountKey = $itemCountKeyId . '|' . $qualityKey . '|' . $weaponModelKey;
             $isEquippedEntry = coerceBoolean($entry['equipped'] ?? ($entry['is_equipped'] ?? false));
             if ($isEquippedEntry) {
                 if (!array_key_exists($itemCountKey, $equipmentCounts)) {
@@ -5927,6 +5983,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                         'description' => $itemDescription,
                         'quality' => $itemQualityLabel,
                         'quality_level' => $itemQualityLevel,
+                        'weapon_model' => $itemWeaponModel,
                         'count' => 0,
                         'value_each' => null,
                     ];
@@ -5944,6 +6001,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 if (intval($equipmentCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
                     $equipmentCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
                 }
+                if (trim(strval($equipmentCounts[$itemCountKey]['weapon_model'] ?? '')) === '' && $itemWeaponModel !== '') {
+                    $equipmentCounts[$itemCountKey]['weapon_model'] = $itemWeaponModel;
+                }
                 if (
                     $itemValueEach > 0 &&
                     (!isset($equipmentCounts[$itemCountKey]['value_each']) || intval($equipmentCounts[$itemCountKey]['value_each']) <= 0)
@@ -5959,6 +6019,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'description' => $itemDescription,
                     'quality' => $itemQualityLabel,
                     'quality_level' => $itemQualityLevel,
+                    'weapon_model' => $itemWeaponModel,
                     'count' => 0,
                     'value_each' => null,
                 ];
@@ -5975,6 +6036,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             if (intval($inventoryCounts[$itemCountKey]['quality_level'] ?? -1) < 0 && $itemQualityLevel >= 0) {
                 $inventoryCounts[$itemCountKey]['quality_level'] = $itemQualityLevel;
+            }
+            if (trim(strval($inventoryCounts[$itemCountKey]['weapon_model'] ?? '')) === '' && $itemWeaponModel !== '') {
+                $inventoryCounts[$itemCountKey]['weapon_model'] = $itemWeaponModel;
             }
             if (
                 $itemValueEach > 0 &&
@@ -6071,6 +6135,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
                 'quality' => trim(strval($entry['quality'] ?? '')),
                 'quality_level' => intval($entry['quality_level'] ?? -1),
+                'weapon_model' => trim(strval($entry['weapon_model'] ?? '')),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -6096,6 +6161,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 'item_id' => trim(strval($entry['item_id'] ?? '')),
                 'quality' => trim(strval($entry['quality'] ?? '')),
                 'quality_level' => intval($entry['quality_level'] ?? -1),
+                'weapon_model' => trim(strval($entry['weapon_model'] ?? '')),
                 'description' => stobeNormalizeItemDescriptionText(strval($entry['description'] ?? '')),
                 'value_each' => intval($entry['value_each'] ?? 0),
             ];
@@ -6412,6 +6478,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $entryQuality = $resolveEntryQuality($entry);
             $itemQualityLabel = trim(strval($entryQuality['label'] ?? ''));
             $itemQualityLevel = intval($entryQuality['level'] ?? -1);
+            $itemWeaponModel = $resolveEntryWeaponModel($entry);
             $itemValueEach = $parseNonNegativeInt(
                 $entry['value_each'] ?? ($entry['value_single'] ?? ($entry['value'] ?? 0)),
                 0
@@ -6420,7 +6487,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $qualityKey = $itemQualityLevel >= 0
                 ? ('q:' . strval($itemQualityLevel))
                 : ('q:' . strtolower($itemQualityLabel !== '' ? $itemQualityLabel : 'none'));
-            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey;
+            $weaponModelKey = 'wm:' . strtolower($itemWeaponModel !== '' ? $itemWeaponModel : 'none');
+            $itemKey = strtolower($itemId !== '' ? ('id:' . $itemId) : ('name:' . $itemName)) . '|' . $qualityKey . '|' . $weaponModelKey;
             if (!array_key_exists($itemKey, $traderShopInventoryCounts)) {
                 $traderShopInventoryCounts[$itemKey] = [
                     'name' => $itemName,
@@ -6429,6 +6497,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'item_id' => $itemId,
                     'quality' => $itemQualityLabel,
                     'quality_level' => $itemQualityLevel,
+                    'weapon_model' => $itemWeaponModel,
                     'description' => $itemDescription,
                     'value_each' => $itemValueEach,
                 ];
@@ -6454,6 +6523,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                 $itemQualityLevel >= 0
             ) {
                 $traderShopInventoryCounts[$itemKey]['quality_level'] = $itemQualityLevel;
+            }
+            if (
+                trim(strval($traderShopInventoryCounts[$itemKey]['weapon_model'] ?? '')) === '' &&
+                $itemWeaponModel !== ''
+            ) {
+                $traderShopInventoryCounts[$itemKey]['weapon_model'] = $itemWeaponModel;
             }
             if (
                 intval($traderShopInventoryCounts[$itemKey]['value_each'] ?? 0) <= 0 &&
@@ -6710,6 +6785,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             if ($entryQualityLevel < 0) {
                 $entryQualityLevel = -1;
             }
+            $entryWeaponModel = $resolveEntryWeaponModel($entry);
             $entryValueEach = intval($entry['value_each'] ?? 0);
             if ($entryValueEach < 0) {
                 $entryValueEach = 0;
@@ -6718,7 +6794,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             $qualityKey = $entryQualityLevel >= 0
                 ? ('q:' . strval($entryQualityLevel))
                 : ('q:' . strtolower($entryQualityLabel !== '' ? $entryQualityLabel : 'none'));
-            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName)) . '|' . $qualityKey;
+            $weaponModelKey = 'wm:' . strtolower($entryWeaponModel !== '' ? $entryWeaponModel : 'none');
+            $entryKey = strtolower($entryItemId !== '' ? ('id:' . $entryItemId) : ('name:' . $entryName)) . '|' . $qualityKey . '|' . $weaponModelKey;
             if (!array_key_exists($entryKey, $bucket)) {
                 $bucket[$entryKey] = [
                     'name' => $entryName,
@@ -6727,6 +6804,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
                     'item_id' => $entryItemId,
                     'quality' => $entryQualityLabel,
                     'quality_level' => $entryQualityLevel,
+                    'weapon_model' => $entryWeaponModel,
                     'description' => $entryDescription,
                     'value_each' => $entryValueEach,
                 ];
@@ -6750,6 +6828,12 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             }
             if (intval($bucket[$entryKey]['quality_level'] ?? -1) < 0 && $entryQualityLevel >= 0) {
                 $bucket[$entryKey]['quality_level'] = $entryQualityLevel;
+            }
+            if (
+                trim(strval($bucket[$entryKey]['weapon_model'] ?? '')) === '' &&
+                $entryWeaponModel !== ''
+            ) {
+                $bucket[$entryKey]['weapon_model'] = $entryWeaponModel;
             }
             if (
                 intval($bucket[$entryKey]['value_each'] ?? 0) <= 0 &&
@@ -6844,8 +6928,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $extendedDataJson = normalizeJsonString($snapshotExtendedPayload);
     $bountyJson = stobeNormalizeBountyJsonString($bountyPayload);
     $safeGamets = max(0, $gamets);
-    $defaultProfileId = getDefaultNpcProfileId();
-    $defaultProfileIdOrNull = $defaultProfileId > 0 ? $defaultProfileId : null;
+    $ruleProfileId = stobeResolveProfileIdFromImportRules($name, $race, $gender, $faction);
+    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -6910,7 +6995,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             hunger = CASE WHEN $19 THEN $17 ELSE core_npc_master.hunger END,
             updated_at = NOW()",
         [
-            $name, $race, $faction, $gender, $defaultProfileIdOrNull, $isAnimal, $isSlave, $metadataJson, $safeGamets, $extendedDataJson, $tags, $bountyJson,
+            $name, $race, $faction, $gender, $selectedProfileIdOrNull, $isAnimal, $isSlave, $metadataJson, $safeGamets, $extendedDataJson, $tags, $bountyJson,
             $equipmentSummary, $inventorySummary, $limbsJson, $bloodValue, $hungerValue, $hasLimbs, $hasVitals, $isInventoryLiveSync
         ]
     );
@@ -7159,6 +7244,196 @@ function updateNpcById(int $id, array $fields): void {
     $db->exec($query, $params);
     $historyRowAfter = stobeFetchNpcRowForHistoryById($id);
     stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'ui_update');
+}
+
+function stobeEnsureCoreProfileImportRulesTable(): void {
+    static $ensured = false;
+    if ($ensured) {
+        return;
+    }
+
+    $db = $GLOBALS["db"];
+    $db->exec(
+        "CREATE TABLE IF NOT EXISTS core_profile_import_rules (
+            id SERIAL PRIMARY KEY,
+            description TEXT DEFAULT '' NOT NULL,
+            match_name TEXT,
+            match_race TEXT,
+            match_gender TEXT,
+            match_faction TEXT,
+            profile INT REFERENCES core_profiles(id) ON DELETE CASCADE,
+            priority INT DEFAULT 0 NOT NULL,
+            enabled BOOLEAN DEFAULT TRUE NOT NULL,
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL,
+            updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL
+        )"
+    );
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_core_profile_import_rules_enabled_priority ON core_profile_import_rules (enabled, priority DESC, id DESC)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_core_profile_import_rules_profile ON core_profile_import_rules (profile)");
+
+    $ensured = true;
+}
+
+function stobeGetCoreProfileImportRules(): array {
+    stobeEnsureCoreProfileImportRulesTable();
+    $db = $GLOBALS["db"];
+    return $db->fetchAll(
+        "SELECT id, description, match_name, match_race, match_gender, match_faction, profile, priority, enabled, created_at, updated_at
+         FROM core_profile_import_rules
+         ORDER BY priority DESC, id DESC"
+    );
+}
+
+function stobeCreateCoreProfileImportRule(array $fields): int {
+    stobeEnsureCoreProfileImportRulesTable();
+    $db = $GLOBALS["db"];
+
+    $description = trim(strval($fields['description'] ?? ''));
+    if ($description === '') {
+        $description = 'New Profile Rule';
+    }
+    $matchName = trim(strval($fields['match_name'] ?? ''));
+    $matchRace = trim(strval($fields['match_race'] ?? ''));
+    $matchGender = trim(strval($fields['match_gender'] ?? ''));
+    $matchFaction = trim(strval($fields['match_faction'] ?? ''));
+    $profile = intval($fields['profile'] ?? 0);
+    $priority = intval($fields['priority'] ?? 0);
+    $enabled = coerceBoolean($fields['enabled'] ?? true);
+
+    $row = $db->fetchOne(
+        "INSERT INTO core_profile_import_rules (
+            description,
+            match_name,
+            match_race,
+            match_gender,
+            match_faction,
+            profile,
+            priority,
+            enabled,
+            updated_at
+        ) VALUES (
+            $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, NOW()
+        )
+        RETURNING id",
+        [
+            $description,
+            $matchName,
+            $matchRace,
+            $matchGender,
+            $matchFaction,
+            $profile > 0 ? $profile : null,
+            $priority,
+            $enabled,
+        ]
+    );
+
+    return intval($row['id'] ?? 0);
+}
+
+function stobeUpdateCoreProfileImportRule(int $id, array $fields): bool {
+    stobeEnsureCoreProfileImportRulesTable();
+    if ($id <= 0) {
+        return false;
+    }
+    $db = $GLOBALS["db"];
+
+    $description = trim(strval($fields['description'] ?? ''));
+    if ($description === '') {
+        $description = 'Profile Rule';
+    }
+    $matchName = trim(strval($fields['match_name'] ?? ''));
+    $matchRace = trim(strval($fields['match_race'] ?? ''));
+    $matchGender = trim(strval($fields['match_gender'] ?? ''));
+    $matchFaction = trim(strval($fields['match_faction'] ?? ''));
+    $profile = intval($fields['profile'] ?? 0);
+    $priority = intval($fields['priority'] ?? 0);
+    $enabled = coerceBoolean($fields['enabled'] ?? false);
+
+    $db->exec(
+        "UPDATE core_profile_import_rules
+         SET description = $1,
+             match_name = NULLIF($2, ''),
+             match_race = NULLIF($3, ''),
+             match_gender = NULLIF($4, ''),
+             match_faction = NULLIF($5, ''),
+             profile = $6,
+             priority = $7,
+             enabled = $8,
+             updated_at = NOW()
+         WHERE id = $9",
+        [
+            $description,
+            $matchName,
+            $matchRace,
+            $matchGender,
+            $matchFaction,
+            $profile > 0 ? $profile : null,
+            $priority,
+            $enabled,
+            $id,
+        ]
+    );
+
+    return true;
+}
+
+function stobeDeleteCoreProfileImportRule(int $id): bool {
+    stobeEnsureCoreProfileImportRulesTable();
+    if ($id <= 0) {
+        return false;
+    }
+    $db = $GLOBALS["db"];
+    $db->exec("DELETE FROM core_profile_import_rules WHERE id = $1", [$id]);
+    return true;
+}
+
+function stobeProfileRuleRegexMatches(?string $pattern, string $value): bool {
+    $rule = trim(strval($pattern ?? ''));
+    if ($rule === '') {
+        return true;
+    }
+    $delim = '~';
+    $expr = $delim . str_replace($delim, '\\' . $delim, $rule) . $delim . 'iu';
+    $result = @preg_match($expr, $value);
+    return $result === 1;
+}
+
+function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
+    stobeEnsureCoreProfileImportRulesTable();
+
+    $nameVal = trim($npcName);
+    if ($nameVal === '') {
+        return 0;
+    }
+    $raceVal = trim($race);
+    $genderVal = trim($gender);
+    $factionVal = trim($faction);
+
+    $rules = stobeGetCoreProfileImportRules();
+    foreach ($rules as $rule) {
+        if (!coerceBoolean($rule['enabled'] ?? false)) {
+            continue;
+        }
+        $profileId = intval($rule['profile'] ?? 0);
+        if ($profileId <= 0) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_name'] ?? ''), $nameVal)) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_race'] ?? ''), $raceVal)) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_gender'] ?? ''), $genderVal)) {
+            continue;
+        }
+        if (!stobeProfileRuleRegexMatches(strval($rule['match_faction'] ?? ''), $factionVal)) {
+            continue;
+        }
+        return $profileId;
+    }
+
+    return 0;
 }
 
 function getAllCoreProfiles(): array {
