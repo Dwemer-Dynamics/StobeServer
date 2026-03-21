@@ -6702,20 +6702,44 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($storageId !== '' && !array_key_exists('storage_id', $metadataForStorage)) {
         $metadataForStorage['storage_id'] = $storageId;
     }
+    $existingMasterMetadata = [];
+    $existingMasterRow = $db->fetchOne(
+        "SELECT metadata
+         FROM core_npc_master
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1",
+        [$name]
+    );
+    if ($existingMasterRow) {
+        $existingMasterMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
+    }
+
+    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
+    $preservedMetadataApplied = [];
+    foreach ($preservedMetadataKeys as $preservedKey) {
+        if (
+            !array_key_exists($preservedKey, $metadataForStorage) &&
+            array_key_exists($preservedKey, $existingMasterMetadata)
+        ) {
+            $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            $preservedMetadataApplied[] = $preservedKey;
+        }
+    }
+    if (count($preservedMetadataApplied) > 0) {
+        stobeLogImport('Snapshot preserved portrait metadata', [
+            'name' => $name,
+            'keys' => $preservedMetadataApplied,
+            'gamets' => max(0, $gamets),
+            'source' => $snapshotSource,
+        ], 'DEBUG');
+    }
+
     $shouldPreserveTraderMetadata =
         $snapshotTraderInventoryEntryCount <= 0 &&
         $traderShopSourceCount <= 0 &&
         !array_key_exists('trader_inventory_items', $metadataForStorage) &&
         !array_key_exists('trader_shop_sources', $metadataForStorage);
     if ($shouldPreserveTraderMetadata) {
-        $existingMasterRow = $db->fetchOne(
-            "SELECT metadata
-             FROM core_npc_master
-             WHERE LOWER(name) = LOWER($1)
-             LIMIT 1",
-            [$name]
-        );
-        $existingMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
         $preservedTraderKeys = [
             'is_trader',
             'trader_inventory_items',
@@ -6729,9 +6753,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         foreach ($preservedTraderKeys as $preservedKey) {
             if (
                 !array_key_exists($preservedKey, $metadataForStorage) &&
-                array_key_exists($preservedKey, $existingMetadata)
+                array_key_exists($preservedKey, $existingMasterMetadata)
             ) {
-                $metadataForStorage[$preservedKey] = $existingMetadata[$preservedKey];
+                $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
                 $preservedApplied[] = $preservedKey;
             }
         }

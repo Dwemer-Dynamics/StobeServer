@@ -362,6 +362,71 @@ if (!function_exists('gender_icon_class')) {
     }
 }
 
+if (!function_exists('stobe_ui_resolve_portrait_url')) {
+    function stobe_ui_resolve_portrait_url(array $metadata, string $webRoot = ''): string {
+        $candidate = '';
+        if (isset($metadata['portrait']) && is_array($metadata['portrait'])) {
+            $portrait = $metadata['portrait'];
+            foreach (['web_path', 'url', 'path'] as $key) {
+                $value = trim(strval($portrait[$key] ?? ''));
+                if ($value !== '') {
+                    $candidate = $value;
+                    break;
+                }
+            }
+        }
+        if ($candidate === '') {
+            foreach (['portrait_url', 'portrait_path'] as $key) {
+                $value = trim(strval($metadata[$key] ?? ''));
+                if ($value !== '') {
+                    $candidate = $value;
+                    break;
+                }
+            }
+        }
+        if ($candidate === '') {
+            return '';
+        }
+
+        $candidate = str_replace('\\', '/', $candidate);
+        if (preg_match('/^https?:\\/\\//i', $candidate) === 1) {
+            return $candidate;
+        }
+        if (strpos($candidate, '/StobeServer/') === 0) {
+            return $candidate;
+        }
+        if (strpos($candidate, '/data/portraits/') === 0) {
+            return '/StobeServer' . $candidate;
+        }
+        if (strpos($candidate, 'data/portraits/') === 0) {
+            return '/StobeServer/' . ltrim($candidate, '/');
+        }
+
+        $prefix = rtrim($webRoot, '/');
+        if ($prefix !== '') {
+            if ($candidate[0] !== '/') {
+                $candidate = '/' . $candidate;
+            }
+            return $prefix . $candidate;
+        }
+        return ($candidate[0] === '/') ? $candidate : ('/' . $candidate);
+    }
+}
+
+if (!function_exists('stobe_ui_portrait_fallback_char')) {
+    function stobe_ui_portrait_fallback_char(string $name): string {
+        $trimmed = trim($name);
+        if ($trimmed === '') {
+            return '?';
+        }
+        $ch = strtoupper(substr($trimmed, 0, 1));
+        if ($ch === '') {
+            return '?';
+        }
+        return $ch;
+    }
+}
+
 if (!function_exists('stobe_ui_format_bounty_summary')) {
     function stobe_ui_format_bounty_summary(mixed $bountyValue, mixed $bountyPayloadValue, array $metadata): array {
         $bountyPayload = stobeNormalizeBountyPayload($bountyPayloadValue);
@@ -1136,6 +1201,9 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
         
         $tagsVal = trim((string)($row['tags'] ?? '')); 
         $tagsDisp = ($tagsVal === '') ? '' : $tagsVal; 
+        $npcNameCard = strval($row["npc_name"] ?? '');
+        $portraitUrl = stobe_ui_resolve_portrait_url($metaTmp, $webRoot);
+        $portraitInitial = stobe_ui_portrait_fallback_char($npcNameCard);
         ?>
         <div class="npc-card" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>">
             <div class="npc-title">
@@ -1145,7 +1213,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                     if (isset($metaTmp['stats']) && is_array($metaTmp['stats']) && isset($metaTmp['stats']['level'])) {
                         $levelDisp = ' ('.intval($metaTmp['stats']['level']).')';
                     }
-                ?><span class="npc-name"><?= htmlspecialchars(($row["npc_name"] ?? '').$levelDisp) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
+                ?><span class="npc-name"><?= htmlspecialchars($npcNameCard.$levelDisp) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
             <div class="npc-title-actions">
                     <?php if ($tagsDisp !== ''): ?>
                     <span class="npc-tags-top" title="<?= htmlspecialchars($tagsDisp) ?>"><?= htmlspecialchars($tagsDisp) ?></span>
@@ -1157,6 +1225,13 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
             </div>
             <div class="npc-divider"></div>
             <div class="npc-row">
+                <div class="npc-portrait-col">
+                    <?php if ($portraitUrl !== ''): ?>
+                    <img class="npc-portrait-img" src="<?= htmlspecialchars($portraitUrl) ?>" alt="<?= htmlspecialchars($npcNameCard) ?> portrait" loading="lazy">
+                    <?php else: ?>
+                    <div class="npc-portrait-fallback"><?= htmlspecialchars($portraitInitial) ?></div>
+                    <?php endif; ?>
+                </div>
                 <div class="npc-fields">
                     <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
@@ -2323,8 +2398,36 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .npc-tags-label { font-size:11px; color:#9fb1c9; margin-right:4px; }
 .npc-tags-top { font-size:11px; color:#9fb1c9; border:1px solid #4a4a4a; border-radius:999px; padding:2px 6px; max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .npc-row { display:flex; gap:10px; align-items:flex-start; }
+.npc-portrait-col { flex:0 0 74px; width:74px; display:flex; align-items:flex-start; justify-content:center; }
+.npc-portrait-img,
+.npc-portrait-fallback {
+    width:74px;
+    height:92px;
+    border-radius:8px;
+    border:1px solid #4a4a4a;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.npc-portrait-img {
+    display:block;
+    object-fit:cover;
+    background:#1d1d1d;
+}
+.npc-portrait-fallback {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:28px;
+    font-weight:800;
+    color:#d6dff0;
+    background:linear-gradient(160deg, #3a424f, #242a34);
+}
 .npc-right { margin-left:auto; flex:0 0 auto; }
-@media (max-width: 720px){ .npc-right { display:none; } }
+@media (max-width: 720px){
+    .npc-portrait-col { flex:0 0 64px; width:64px; }
+    .npc-portrait-img,
+    .npc-portrait-fallback { width:64px; height:80px; }
+    .npc-right { display:none; }
+}
 /* Dynamic profile grouping */
 .dynamic-profile-section { 
     border:1px solid #3a3a3a; 
@@ -2680,6 +2783,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     if (array_key_exists('gps_track', $metaTmp) && $metaTmp['gps_track'] !== null && $metaTmp['gps_track'] !== '') {
         $gpsEnabled = !empty($metaTmp['gps_track']);
     }
+    $npcNameCard = strval($row["npc_name"] ?? '');
+    $portraitUrl = stobe_ui_resolve_portrait_url($metaTmp, $webRoot);
+    $portraitInitial = stobe_ui_portrait_fallback_char($npcNameCard);
     
     ?>
     <div class="npc-card" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>">
@@ -2689,7 +2795,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 if (isset($metaTmp['stats']) && is_array($metaTmp['stats']) && isset($metaTmp['stats']['level'])) {
                     $levelDisp2 = ' ('.intval($metaTmp['stats']['level']).')';
                 }
-                ?><span class="npc-name"><?= htmlspecialchars(($row["npc_name"] ?? '').$levelDisp2) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
+                ?><span class="npc-name"><?= htmlspecialchars($npcNameCard.$levelDisp2) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
             <div class="npc-title-actions">
                 <?php if ($tagsDisp !== ''): ?>
                 <span class="npc-tags-label">Tags:</span>
@@ -2702,6 +2808,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         </div>
         <div class="npc-divider"></div>
         <div class="npc-row">
+            <div class="npc-portrait-col">
+                <?php if ($portraitUrl !== ''): ?>
+                <img class="npc-portrait-img" src="<?= htmlspecialchars($portraitUrl) ?>" alt="<?= htmlspecialchars($npcNameCard) ?> portrait" loading="lazy">
+                <?php else: ?>
+                <div class="npc-portrait-fallback"><?= htmlspecialchars($portraitInitial) ?></div>
+                <?php endif; ?>
+            </div>
             <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
@@ -3877,6 +3990,89 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         if (href) window.location.href = href;
     }
   });
+  function stobeParseObject(raw){
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    const txt = String(raw).trim();
+    if (!txt) return null;
+    try {
+      const parsed = JSON.parse(txt);
+      return (parsed && typeof parsed === 'object') ? parsed : null;
+    } catch(_e){
+      return null;
+    }
+  }
+  function stobePortraitInitial(name){
+    const v = String(name == null ? '' : name).trim();
+    if (!v) return '?';
+    const first = v.charAt(0).toUpperCase();
+    return first || '?';
+  }
+  function stobeResolvePortraitUrl(payload){
+    if (!payload || typeof payload !== 'object') return '';
+    const metadata = stobeParseObject(payload.metadata);
+    const candidates = [];
+    const pushCandidate = (val) => {
+      const s = String(val == null ? '' : val).trim();
+      if (s) candidates.push(s);
+    };
+
+    if (metadata && typeof metadata === 'object') {
+      if (metadata.portrait && typeof metadata.portrait === 'object') {
+        pushCandidate(metadata.portrait.web_path);
+        pushCandidate(metadata.portrait.url);
+        pushCandidate(metadata.portrait.path);
+      }
+      pushCandidate(metadata.portrait_url);
+      pushCandidate(metadata.portrait_path);
+    }
+    if (payload.portrait && typeof payload.portrait === 'object') {
+      pushCandidate(payload.portrait.web_path);
+      pushCandidate(payload.portrait.url);
+      pushCandidate(payload.portrait.path);
+    }
+    pushCandidate(payload.portrait_url);
+    pushCandidate(payload.portrait_path);
+
+    if (!candidates.length) return '';
+    let candidate = String(candidates[0] || '').replace(/\\/g, '/');
+    if (!candidate) return '';
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    if (candidate.indexOf('/StobeServer/') === 0) return candidate;
+    if (candidate.indexOf('/data/portraits/') === 0) return '/StobeServer' + candidate;
+    if (candidate.indexOf('data/portraits/') === 0) return '/StobeServer/' + candidate.replace(/^\/+/, '');
+    if (candidate.charAt(0) === '/') return candidate;
+    return '/' + candidate;
+  }
+  function stobeApplyPortraitToCard(card, payload){
+    if (!card) return;
+    const row = card.querySelector('.npc-row');
+    if (!row) return;
+    let portraitCol = row.querySelector('.npc-portrait-col');
+    if (!portraitCol){
+      portraitCol = document.createElement('div');
+      portraitCol.className = 'npc-portrait-col';
+      const fields = row.querySelector('.npc-fields');
+      if (fields) row.insertBefore(portraitCol, fields);
+      else row.prepend(portraitCol);
+    }
+    portraitCol.textContent = '';
+    const npcName = String((payload && payload.npc_name) || '');
+    const portraitUrl = stobeResolvePortraitUrl(payload || {});
+    if (portraitUrl){
+      const img = document.createElement('img');
+      img.className = 'npc-portrait-img';
+      img.loading = 'lazy';
+      img.src = portraitUrl;
+      img.alt = npcName ? (npcName + ' portrait') : 'NPC portrait';
+      portraitCol.appendChild(img);
+      return;
+    }
+    const fallback = document.createElement('div');
+    fallback.className = 'npc-portrait-fallback';
+    fallback.textContent = stobePortraitInitial(npcName);
+    portraitCol.appendChild(fallback);
+  }
   // Receive save events from iframe and update the card inline
   window.addEventListener('message', async function(e){
     const d = e.data || {};
@@ -3904,6 +4100,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             </div>
             <div class="npc-divider"></div>
             <div class="npc-row">
+              <div class="npc-portrait-col">
+                <div class="npc-portrait-fallback">?</div>
+              </div>
               <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"></span></div>
@@ -3930,6 +4129,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         setText('.npc-gender', data.gender);
         setText('.npc-race', data.race);
         setText('.npc-voiceid', data.voiceid);
+        stobeApplyPortraitToCard(card, data);
         try {
           const normalizeObj = (raw) => {
             if (!raw) return null;
