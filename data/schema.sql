@@ -2081,12 +2081,7 @@ BONDED: Absolute trust, would die for them$$,
 ),
 (
     'regular_memory_summarizer',
-    $$<regular_memory_summarizer>
-  <rule>Summarize accumulated episodic memories for a Kenshi participant group.</rule>
-  <rule>Stay factual to the provided events. Do not invent new events.</rule>
-  <rule>Keep durable continuity: relationships, conflicts, injuries, objectives, and unresolved tensions among participants.</rule>
-  <rule>Output plain text only.</rule>
-</regular_memory_summarizer>$$,
+    $$Focus on key events, tagging characters, locations, and factions accurately. Ensure memories align and maintain chronological order while foreshadowing future arcs.$$,
     $$System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.$$
 ),
 (
@@ -2156,6 +2151,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),
+('RELATIONSHIP_SYSTEM',  'true',         'Master toggle for relationship connector evaluation. When false, relationship LLM updates are skipped.'),
 ('AUTO_LOCK_PROFILE',    'true',         'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;

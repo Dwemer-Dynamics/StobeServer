@@ -140,10 +140,10 @@ if (isset($_GET["delete_memory"])) {
     }
 }
 
-if (isset($_GET["reset"]) && $_GET["reset"]) {
+if (in_array(strtolower(trim((string)($_GET["reset"] ?? ""))), ["true", "1"], true)) {
     safeExec($db, "DELETE FROM memory_summary");
     safeExec($db, "DELETE FROM conf_opts WHERE id LIKE 'MEMORY_CURSOR_ID_%'");
-    header("Location: " . memoriesUrl($page, $limit) . "&reset_done=1");
+    header("Location: " . memoriesUrl(1, $limit) . "&reset_done=1");
     exit;
 }
 
@@ -429,6 +429,7 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">Memory summary deleted successfully.</div>
             <?php endif; ?>
             <?php if (isset($_GET["reset_done"])): ?>
+            <?php if (isset($_GET["reset_done"]) || intval($_GET["reset"] ?? 0) === 1): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">All memory summaries deleted.</div>
             <?php endif; ?>
             <?php if (isset($_GET["synced"])): ?>
@@ -587,7 +588,7 @@ function deleteAllMemoriesConfirm() {
     const userInput = prompt("THIS WILL DELETE ALL SUMMARIZED MEMORIES!\n\nThis action cannot be undone.\n\nTo confirm this operation, type exactly: Delete");
     const normalized = (userInput === null) ? null : String(userInput).trim().toLowerCase();
     if (normalized === "delete") {
-        window.location.href = "<?= h(memoriesUrl($page, $limit)) ?>&reset=1";
+        window.location.href = "<?= h(memoriesUrl(1, $limit)) ?>&reset=1";
     } else if (userInput !== null) {
         alert("Operation cancelled. You must type \"Delete\" to confirm.");
     }

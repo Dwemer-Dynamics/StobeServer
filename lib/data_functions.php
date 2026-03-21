@@ -1460,6 +1460,117 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     }
 }
 
+function stobeSanitizeDialogueMessageForLog(string $message): string {
+    $clean = sanitizeForKenshi(strval($message));
+    $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
+    $clean = trim($clean);
+
+    // Strip repeated trailing question marks that are emitted as corruption tails.
+    $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
+    // Strip known Kenshi payload corruption where a solitary "7" is appended to dialogue.
+    $clean = preg_replace('/(?<=\D)7+\s*$/u', '', $clean) ?? $clean;
+    // Strip trailing numeric tails after punctuation, e.g. ")7" or "!?12".
+    $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
+    $clean = preg_replace('/\s{2,}/u', ' ', $clean) ?? $clean;
+
+    return trim($clean);
+}
+
+function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
+    $speaker = normalizeParticipantNameToken($speakerName);
+    if ($speaker === '') {
+        return '';
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return '';
+    }
+
+    $row = $db->fetchOne(
+        "SELECT data
+         FROM eventlog
+         WHERE type IN ('chat', 'rechat', 'bored', 'inputtext', 'inputtext_s')
+           AND localts >= $2
+           AND LOWER(data) LIKE LOWER($1)
+           AND data ILIKE '%(talking to:%'
+         ORDER BY rowid DESC
+         LIMIT 1",
+        [$speaker . ':%', time() - 1200]
+    );
+    if (!is_array($row)) {
+        return '';
+    }
+
+    $data = trim(strval($row['data'] ?? ''));
+    if ($data === '') {
+        return '';
+    }
+
+    $targetExtract = extractDialogueTarget($data);
+    $target = normalizeParticipantNameToken(strval($targetExtract['target'] ?? ''));
+    if ($target === '' || strcasecmp($target, $speaker) === 0) {
+        return '';
+    }
+    return $target;
+}
+
+function stobeInferDialogueTargetForLog(string $speakerName): string {
+    $speaker = normalizeParticipantNameToken($speakerName);
+    if ($speaker === '') {
+        return '';
+    }
+
+    $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
+    $profileName = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
+    if (
+        $profileName !== ''
+        && strcasecmp($profileName, $speaker) !== 0
+        && ($playerName === '' || strcasecmp($profileName, $playerName) !== 0)
+    ) {
+        return $profileName;
+    }
+
+    $peopleRaw = strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? ''));
+    $participants = extractParticipantIdentities([
+        'people' => $peopleRaw,
+        'profile' => $profileName,
+        'speaker' => $speaker,
+    ]);
+
+    $candidateByKey = [];
+    foreach ($participants as $participant) {
+        if (!is_array($participant)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($participant['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        if (strcasecmp($name, $speaker) === 0) {
+            continue;
+        }
+        if ($playerName !== '' && strcasecmp($name, $playerName) === 0) {
+            continue;
+        }
+        if (strcasecmp($name, 'The Narrator') === 0) {
+            continue;
+        }
+        $candidateByKey[strtolower($name)] = $name;
+    }
+
+    if (count($candidateByKey) === 1) {
+        return array_values($candidateByKey)[0];
+    }
+
+    $recentTarget = stobeLoadRecentDialogueTargetForSpeaker($speaker);
+    if ($recentTarget !== '') {
+        return $recentTarget;
+    }
+
+    return '';
+}
+
 function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): string {
     $clean = sanitizeForKenshi(strval($rawData));
 
@@ -1486,6 +1597,29 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         $clean
     ) ?? $clean;
 
+    $speechTypes = ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored'];
+    if (in_array($normalizedType, $speechTypes, true)) {
+        $parsed = parseDialogueEventData($clean);
+        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+        $message = stobeSanitizeDialogueMessageForLog(strval($parsed['message'] ?? ''));
+        if ($message === '') {
+            $message = stobeSanitizeDialogueMessageForLog($clean);
+        }
+        $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+        if ($target === '' && $speaker !== '') {
+            $target = stobeInferDialogueTargetForLog($speaker);
+        }
+
+        if ($speaker !== '' && $message !== '') {
+            $clean = $speaker . ': ' . $message;
+            if ($target !== '') {
+                $clean .= ' (talking to: ' . $target . ')';
+            }
+        } else {
+            $clean = stobeSanitizeDialogueMessageForLog($clean);
+        }
+    }
+
     $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
     if (in_array($normalizedType, $contextOnlyTypes, true)) {
         // Context telemetry rows are not directional dialogue.
@@ -1498,7 +1632,6 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
     $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
     $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
 
-    $speechTypes = ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored'];
     if (!in_array($normalizedType, $speechTypes, true)) {
         // Non-dialogue events should not end with repeated "??" noise.
         $clean = preg_replace('/\s*\?{2,}\s*$/u', '', $clean) ?? $clean;
@@ -4046,14 +4179,9 @@ function stobeNormalizeJsonArrayValue(mixed $value): array {
 }
 
 function stobeBuildNpcHistoryHashFromRow(array $row): string {
-    $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? '{}');
-    $extendedData = normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}');
-    $limbs = stobeNormalizeJsonArrayValue($row['limbs'] ?? '{}');
     $bounty = stobeNormalizeBountyPayload($row['bounty'] ?? '{}');
     $dynamicProfileEnabled = null;
-    if (array_key_exists('DYNAMIC_PROFILE_ENABLED', $metadata)) {
-        $dynamicProfileEnabled = coerceBoolean($metadata['DYNAMIC_PROFILE_ENABLED']);
-    } elseif (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
+    if (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
         $dynamicProfileEnabled = coerceBoolean($row['dynamic_profile']);
     }
 
@@ -4075,18 +4203,13 @@ function stobeBuildNpcHistoryHashFromRow(array $row): string {
         'goals' => strval($row['goals'] ?? ''),
         'relationships' => strval($row['relationships'] ?? ''),
         'voiceid' => strval($row['voiceid'] ?? ''),
-        'metadata' => stobeSortArrayRecursive($metadata),
         'race' => strval($row['race'] ?? ''),
         'faction' => strval($row['faction'] ?? ''),
         'gender' => strval($row['gender'] ?? ''),
         'profile_id' => intval($row['profile_id'] ?? 0),
         'dynamic_profile' => $dynamicProfileEnabled,
-        'extended_data' => stobeSortArrayRecursive($extendedData),
         'md5' => strval($row['md5'] ?? ''),
         'bounty' => stobeSortArrayRecursive($bounty),
-        'limbs' => stobeSortArrayRecursive($limbs),
-        'blood' => strval($row['blood'] ?? ''),
-        'hunger' => strval($row['hunger'] ?? ''),
         'tags' => strval($row['tags'] ?? ''),
         'is_animal' => coerceBoolean($row['is_animal'] ?? false),
         'is_slave' => coerceBoolean($row['is_slave'] ?? false),
@@ -4120,6 +4243,32 @@ function stobeFetchNpcRowForHistoryByName(string $name): array|false {
     return $db->fetchOne(
         "SELECT * FROM core_npc WHERE LOWER(name) = LOWER($1) LIMIT 1",
         [$safeName]
+    );
+}
+
+function stobePruneNpcHistorySnapshots(int $npcId, int $keep = 50): void {
+    if ($npcId <= 0) {
+        return;
+    }
+    if ($keep < 1) {
+        $keep = 1;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return;
+    }
+
+    $db->exec(
+        "DELETE FROM core_npc_master_history
+         WHERE history_id IN (
+            SELECT history_id
+            FROM core_npc_master_history
+            WHERE npc_id = $1
+            ORDER BY history_id DESC
+            OFFSET $2
+         )",
+        [$npcId, $keep]
     );
 }
 
@@ -4229,6 +4378,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
     );
 
     if ($result) {
+        stobePruneNpcHistorySnapshots($npcId, 50);
         stobeLogInfo('NPC history snapshot stored', [
             'npc_id' => $npcId,
             'name' => $name,
@@ -5179,14 +5329,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $name = $resolvedName;
     }
     $matchedBy = strval($resolvedIdentity['matched_by'] ?? 'incoming');
-    if ($storageId !== '' && $matchedBy !== 'storage_id') {
-        stobeLogImport('Snapshot resolved without storage_id match', [
-            'incoming_name' => $incomingName,
-            'incoming_storage_id' => $storageId,
-            'resolved_name' => $name,
-            'matched_by' => $matchedBy,
-        ], 'WARN');
-    }
     if (strcasecmp($name, $incomingName) !== 0) {
         stobeLogImport('Snapshot name remapped', [
             'incoming_name' => $incomingName,
@@ -6453,6 +6595,11 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $isLikelyTraderContext = coerceBoolean($snapshot['is_trader'] ?? false) ||
         $traderShopSourceCount > 0 || $snapshotTraderInventoryEntryCount > 0;
 
+    $factionForOccupation = baseNameWithoutBracketSuffix($faction);
+    if ($factionForOccupation === '' && $faction !== '') {
+        $factionForOccupation = $faction;
+    }
+
     $occupationParts = [];
     if ($isLikelyTraderContext) {
         $occupationParts[] = 'Trader';
@@ -6460,8 +6607,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if (coerceBoolean($snapshot['is_leader'] ?? false)) {
         $occupationParts[] = 'Leader';
     }
-    if ($faction !== '') {
-        $occupationParts[] = 'Faction: ' . $faction;
+    if ($factionForOccupation !== '') {
+        $occupationParts[] = 'Faction: ' . $factionForOccupation;
     }
     if ($town !== '') {
         $occupationParts[] = 'Town: ' . $town;
@@ -6516,10 +6663,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($occupation === '') {
         $occupation = $occupationDefault;
     }
-    if ($faction !== '' && stripos($occupation, 'faction:') === false) {
+    if ($factionForOccupation !== '' && stripos($occupation, 'faction:') === false) {
         $occupation = trim($occupation) !== ''
-            ? ($occupation . ' | Faction: ' . $faction)
-            : ('Faction: ' . $faction);
+            ? ($occupation . ' | Faction: ' . $factionForOccupation)
+            : ('Faction: ' . $factionForOccupation);
     }
     $goals = trim(strval($resolvedTraits['goals'] ?? ''));
     if ($goals === '') {

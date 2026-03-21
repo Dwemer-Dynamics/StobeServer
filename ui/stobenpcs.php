@@ -1872,8 +1872,32 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             if (!empty($editItem['extended_data'])){
                 $ed = json_decode((string)$editItem['extended_data'], true);
                 if (is_array($ed) && !empty($ed['middle_term_memory']) && is_array($ed['middle_term_memory'])){
-                    $arr = array_values($ed['middle_term_memory']);
-                    if (!empty($arr)) { $mtmLatest = (string)end($arr); }
+                    $mtmRaw = $ed['middle_term_memory'];
+                    if (array_keys($mtmRaw) === range(0, count($mtmRaw) - 1)) {
+                        $arr = array_values($mtmRaw);
+                        if (!empty($arr)) {
+                            $mtmLatest = (string)end($arr);
+                        }
+                    } else {
+                        $numericMap = [];
+                        foreach ($mtmRaw as $k => $v) {
+                            if (!is_scalar($v) || $v === null) {
+                                continue;
+                            }
+                            if (preg_match('/^-?\d+$/', strval($k)) === 1) {
+                                $numericMap[intval($k)] = strval($v);
+                            }
+                        }
+                        if (count($numericMap) > 0) {
+                            ksort($numericMap, SORT_NUMERIC);
+                            $mtmLatest = strval(end($numericMap));
+                        } else {
+                            $arr = array_values($mtmRaw);
+                            if (!empty($arr)) {
+                                $mtmLatest = strval(end($arr));
+                            }
+                        }
+                    }
                 }
             }
         } catch (Throwable $e) { $mtmLatest = ''; }

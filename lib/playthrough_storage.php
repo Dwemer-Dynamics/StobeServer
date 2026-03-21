@@ -156,7 +156,7 @@ SQL;
 
     $result = @pg_query($adminConn, $sql);
     if (!$result) {
-        stobeLogError('PLAYTHROUGH: Failed ensuring chim_meta tables', [
+        stobeLogError('PLAYTHROUGH: Failed ensuring playthrough metadata tables', [
             'error' => @pg_last_error($adminConn),
         ]);
         return false;

@@ -78,8 +78,8 @@ function pts_sanitize_profile_name(string $name): string {
     // Truncate to safe length (PostgreSQL allows 63, leave room for prefix)
     $name = substr($name, 0, 40);
     
-    // Prefix with chim_profile_
-    return 'chim_profile_' . $name;
+    // Prefix with stobe_profile_
+    return 'stobe_profile_' . $name;
 }
 
 /**

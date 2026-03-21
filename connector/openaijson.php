@@ -136,7 +136,7 @@ function stobeBuildLlmRequestHeaders(
     $disableBrandingHeaders = boolval($connectorConfig['disable_branding_headers'] ?? false);
     if (!$disableBrandingHeaders) {
         $headers[] = "HTTP-Referer: https://dwemerdynamics.com";
-        $headers[] = "X-Title: Stobe AI Mod";
+        $headers[] = "X-Title: Dwemer Dynamics";
     }
 
     $player2Key = trim(strval(

@@ -115,6 +115,30 @@ function stobeStringIsTruthy(string $value): bool {
     return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
 }
 
+function stobeIsRelationshipSystemEnabled(): bool {
+    static $cached = null;
+    if (is_bool($cached)) {
+        return $cached;
+    }
+
+    $missingSentinel = '__STOBE_RELATIONSHIP_SYSTEM_MISSING__';
+
+    $primary = getSetting('RELATIONSHIP_SYSTEM', $missingSentinel);
+    if ($primary !== $missingSentinel) {
+        $cached = stobeStringIsTruthy(strval($primary));
+        return $cached;
+    }
+
+    $legacy = getSetting('RELATIONSHIP_SYSTEM_ENABLED', $missingSentinel);
+    if ($legacy !== $missingSentinel) {
+        $cached = stobeStringIsTruthy(strval($legacy));
+        return $cached;
+    }
+
+    $cached = true;
+    return $cached;
+}
+
 function stobeMarkQuickstartCompleted(bool $completed = true): void {
     setSetting(
         'STOBE_QUICKSTART_COMPLETED',

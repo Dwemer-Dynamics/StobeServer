@@ -215,6 +215,78 @@ function stobeMiddleTermBuildContextHistory(array $eventRows): string
     return implode("\n", $lines);
 }
 
+function stobeMiddleTermExtractPeopleFromEventRows(array $eventRows, string $npcName): array
+{
+    $namesByKey = [];
+    $addName = static function (string $rawName) use (&$namesByKey): void {
+        $name = normalizeParticipantNameToken($rawName);
+        if ($name === '' || strcasecmp($name, 'The Narrator') === 0) {
+            return;
+        }
+        $namesByKey[strtolower($name)] = $name;
+    };
+    $extractNameToken = static function (string $rawToken): string {
+        $token = trim($rawToken);
+        if ($token === '') {
+            return '';
+        }
+        $pipePos = strpos($token, '|');
+        if ($pipePos !== false) {
+            return trim(substr($token, 0, $pipePos));
+        }
+        return $token;
+    };
+
+    $addName($npcName);
+    foreach ($eventRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $peopleRaw = trim(strval($row['people'] ?? ''));
+        if ($peopleRaw !== '') {
+            $decoded = json_decode($peopleRaw, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $entry) {
+                    if (!is_scalar($entry) || $entry === null) {
+                        continue;
+                    }
+                    $addName($extractNameToken(strval($entry)));
+                }
+            } else {
+                $pieces = explode(',', $peopleRaw);
+                foreach ($pieces as $piece) {
+                    $addName($extractNameToken($piece));
+                }
+            }
+        }
+
+        $rawData = strval($row['data'] ?? '');
+        if ($rawData !== '' && function_exists('stobeRegularMemoryParseDialogueData')) {
+            $parsed = stobeRegularMemoryParseDialogueData($rawData);
+            $speaker = strval($parsed['speaker'] ?? '');
+            $target = strval($parsed['target'] ?? '');
+            if ($speaker !== '') {
+                $addName($speaker);
+            }
+            if ($target !== '') {
+                $addName($target);
+            }
+        }
+    }
+
+    if (count($namesByKey) === 0) {
+        $fallback = normalizeParticipantNameToken($npcName);
+        if ($fallback === '') {
+            return [];
+        }
+        return [$fallback];
+    }
+
+    ksort($namesByKey);
+    return array_values($namesByKey);
+}
+
 function stobeMiddleTermGenerateSummary(string $npcName, array $npcData, array $eventRows): array
 {
     $safeNpcName = normalizeParticipantNameToken($npcName);
@@ -325,40 +397,152 @@ function stobeMiddleTermPersistSummary(string $npcName, array $npcData, array $e
         return false;
     }
 
-    $peopleKey = json_encode([$safeNpcName], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($peopleKey) || trim($peopleKey) === '') {
-        $peopleKey = '["' . addslashes($safeNpcName) . '"]';
-    }
-
-    $db->exec(
-        "INSERT INTO memory_summary (people, summary, period_start, period_end, created_at)
-         VALUES ($1, $2, $3, $4, NOW())",
-        [
-            $peopleKey,
-            $summary,
-            $periodStart,
-            $periodEnd,
-        ]
-    );
-
+    $gametsStart = max(0, intval($first['gamets'] ?? 0));
+    $gametsEnd = max($gametsStart, intval($last['gamets'] ?? $gametsStart));
     $npcId = intval($npcData['id'] ?? 0);
     if ($npcId <= 0) {
-        return true;
+        $lookup = getNpcData($safeNpcName);
+        if (is_array($lookup)) {
+            $npcId = intval($lookup['id'] ?? 0);
+            if (!is_array($npcData) || count($npcData) === 0) {
+                $npcData = $lookup;
+            }
+        }
     }
 
+    // Herika flow compatibility: middle-term output must live in NPC extended_data.
     $extended = normalizeCoreNpcExtendedData($npcData['extended_data'] ?? []);
-    $memoryList = $extended['middle_term_memory'] ?? [];
-    if (!is_array($memoryList)) {
-        $memoryList = [];
+    $existing = $extended['middle_term_memory'] ?? [];
+    $memoryMap = [];
+    if (is_array($existing)) {
+        foreach ($existing as $key => $entry) {
+            if (!is_scalar($entry) || $entry === null) {
+                continue;
+            }
+            $text = trim(sanitizeForKenshi(strval($entry)));
+            if ($text === '') {
+                continue;
+            }
+            $entryKey = strval($key);
+            if ($entryKey === '' || strtolower($entryKey) === 'null') {
+                $entryKey = strval(count($memoryMap) + 1);
+            }
+            $memoryMap[$entryKey] = truncatePromptValue($text, 3500);
+        }
     }
-    $memoryList[] = $summary;
-    if (count($memoryList) > 20) {
-        $memoryList = array_slice($memoryList, -20);
-    }
-    $extended['middle_term_memory'] = array_values($memoryList);
 
-    updateNpcById($npcId, ['extended_data' => $extended]);
-    return true;
+    $summaryText = truncatePromptValue(trim(sanitizeForKenshi($summary)), 3500);
+    $newKey = strval($gametsEnd > 0 ? $gametsEnd : max($lastLocalTs, time()));
+    $memoryMap[$newKey] = $summaryText;
+
+    // Keep only the latest 20 entries (prefer numeric key order for game-ts keyed maps).
+    if (count($memoryMap) > 20) {
+        $sortable = [];
+        foreach ($memoryMap as $key => $text) {
+            $sortKey = preg_match('/^-?\d+$/', $key) === 1 ? intval($key) : PHP_INT_MIN;
+            $sortable[] = ['k' => $key, 'v' => $text, 's' => $sortKey];
+        }
+        usort($sortable, static function (array $a, array $b): int {
+            if ($a['s'] === $b['s']) {
+                return strcmp(strval($a['k']), strval($b['k']));
+            }
+            return ($a['s'] < $b['s']) ? -1 : 1;
+        });
+        if (count($sortable) > 20) {
+            $sortable = array_slice($sortable, -20);
+        }
+        $memoryMap = [];
+        foreach ($sortable as $row) {
+            $memoryMap[strval($row['k'])] = strval($row['v']);
+        }
+    }
+    $extended['middle_term_memory'] = $memoryMap;
+
+    if ($npcId > 0) {
+        updateNpcById($npcId, ['extended_data' => $extended]);
+    } else {
+        stobeLogWarn('Middle-term summary generated but NPC id missing for extended_data update', [
+            'npc_name' => $safeNpcName,
+            'gamets_end' => $gametsEnd,
+        ]);
+    }
+
+    // Best-effort audit row in memory_summary; profile extended_data remains source of truth.
+    try {
+        $peopleNames = stobeMiddleTermExtractPeopleFromEventRows($eventRows, $safeNpcName);
+        $peopleKey = json_encode($peopleNames, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($peopleKey) || trim($peopleKey) === '') {
+            $peopleKey = '["' . addslashes($safeNpcName) . '"]';
+        }
+
+        $intMax = 2147483647;
+        $sourceFromId = max(0, min($intMax, intval($first['rowid'] ?? 0)));
+        $sourceToId = max($sourceFromId, min($intMax, intval($last['rowid'] ?? $sourceFromId)));
+        $packedMessage = truncatePromptValue(stobeMiddleTermBuildContextHistory($eventRows), 12000);
+        $summaryEmbedding = [];
+        if (function_exists('stobeRegularMemoryEmbedText')) {
+            $summaryEmbedding = stobeRegularMemoryEmbedText($summaryText);
+        }
+        $vectorLiteral = '';
+        if (function_exists('stobeRegularMemoryVectorLiteral')) {
+            $vectorLiteral = stobeRegularMemoryVectorLiteral($summaryEmbedding);
+        }
+
+        $db->exec(
+            "INSERT INTO memory_summary (
+                people,
+                summary,
+                embedding,
+                period_start,
+                period_end,
+                n,
+                packed_message,
+                source_from_memory_id,
+                source_to_memory_id,
+                localts,
+                gamets_start,
+                gamets_end,
+                created_at
+            ) VALUES (
+                $1,
+                $2,
+                CASE WHEN $3 = '' THEN NULL ELSE $3::vector END,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11,
+                $12,
+                NOW()
+            )",
+            [
+                $peopleKey,
+                $summaryText,
+                $vectorLiteral,
+                $periodStart,
+                $periodEnd,
+                count($eventRows),
+                $packedMessage,
+                $sourceFromId,
+                $sourceToId,
+                $lastLocalTs,
+                $gametsStart,
+                $gametsEnd,
+            ]
+        );
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Middle-term memory_summary audit insert failed', [
+            'npc_name' => $safeNpcName,
+            'gamets_start' => $gametsStart,
+            'gamets_end' => $gametsEnd,
+            'event_rows' => count($eventRows),
+        ]);
+    }
+
+    return $npcId > 0;
 }
 
 function stobeMaybeRunMiddleTermCycle(
