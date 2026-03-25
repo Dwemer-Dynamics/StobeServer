@@ -2,7 +2,7 @@
 /**
  * BATCH RELATIONSHIP BUILD API
  *
- * Processes NPCs with TEXT relationships that haven't been converted to JSONB yet.
+ * Processes NPCs with event history that haven't been converted to JSONB yet.
  * Called from the NPC master page for existing playthroughs.
  *
  * Endpoints:
@@ -144,21 +144,41 @@ function resolveRelationshipConnectorMeta(): array {
 }
 
 /**
+ * SQL EXISTS clause for NPCs that appear in eventlog history.
+ */
+function relEventHistoryExistsSql(string $npcAlias = 'core_npc_master'): string {
+    $excludeTypes = "'prechat','setconf','status_msg','user_input','npc_snapshot','playerinfo'";
+    return "
+        EXISTS (
+            SELECT 1
+            FROM eventlog e
+            WHERE e.type NOT IN ({$excludeTypes})
+              AND (
+                   POSITION(LOWER({$npcAlias}.name) IN LOWER(COALESCE(e.people, ''))) > 0
+                   OR POSITION(LOWER({$npcAlias}.name) IN LOWER(COALESCE(e.data, ''))) > 0
+              )
+            LIMIT 1
+        )
+    ";
+}
+
+/**
  * Get status of NPCs needing relationship processing
  */
 function getStatus() {
     $db = $GLOBALS['db'];
+    $historyExists = relEventHistoryExistsSql('core_npc_master');
 
-    // Count NPCs with TEXT relationships but no JSONB relationships
+    // Count NPCs with event history but no JSONB relationships
     $needsProcessing = $db->fetchOne("
         SELECT COUNT(*) as count
         FROM core_npc_master
-        WHERE relationships IS NOT NULL
-          AND relationships != ''
+        WHERE COALESCE(TRIM(name), '') <> ''
           AND name != 'The Narrator'
           AND (extended_data IS NULL
                OR extended_data::text NOT LIKE '%\"relationships\"%'
                OR extended_data->>'relationships' IS NULL)
+          AND {$historyExists}
     ");
 
     // Count NPCs already processed
@@ -194,6 +214,7 @@ function getStatus() {
  */
 function processBatch($batchSize = 5) {
     $db = $GLOBALS['db'];
+    $historyExists = relEventHistoryExistsSql('core_npc_master');
 
     // Check for cancel flag
     $cancelCheck = $db->fetchOne("SELECT value FROM core_player WHERE id = 'rel_batch_cancel'");
@@ -212,14 +233,14 @@ function processBatch($batchSize = 5) {
 
     // Get batch of NPCs to process
     $npcs = $db->fetchAll("
-        SELECT id, name AS npc_name, relationships
+        SELECT id, name AS npc_name
         FROM core_npc_master
-        WHERE relationships IS NOT NULL
-          AND relationships != ''
+        WHERE COALESCE(TRIM(name), '') <> ''
           AND name != 'The Narrator'
           AND (extended_data IS NULL
                OR extended_data::text NOT LIKE '%\"relationships\"%'
                OR extended_data->>'relationships' IS NULL)
+          AND {$historyExists}
         ORDER BY id
         LIMIT " . intval($batchSize)
     );
@@ -292,12 +313,12 @@ function processBatch($batchSize = 5) {
     $remaining = $db->fetchOne("
         SELECT COUNT(*) as count
         FROM core_npc_master
-        WHERE relationships IS NOT NULL
-          AND relationships != ''
+        WHERE COALESCE(TRIM(name), '') <> ''
           AND name != 'The Narrator'
           AND (extended_data IS NULL
                OR extended_data::text NOT LIKE '%\"relationships\"%'
                OR extended_data->>'relationships' IS NULL)
+          AND {$historyExists}
     ");
 
     return [
@@ -315,6 +336,7 @@ function processBatch($batchSize = 5) {
  */
 function getStats() {
     $db = $GLOBALS['db'];
+    $historyExists = relEventHistoryExistsSql('core_npc_master');
 
     $relMeta = resolveRelationshipConnectorMeta();
     $model = strval($relMeta['model'] ?? 'Not configured');
@@ -332,12 +354,12 @@ function getStats() {
     $pending = $db->fetchOne("
         SELECT COUNT(*) as count
         FROM core_npc_master
-        WHERE relationships IS NOT NULL
-          AND relationships != ''
+        WHERE COALESCE(TRIM(name), '') <> ''
           AND name != 'The Narrator'
           AND (extended_data IS NULL
                OR extended_data::text NOT LIKE '%\"relationships\"%'
                OR extended_data->>'relationships' IS NULL)
+          AND {$historyExists}
     ");
 
     return [
@@ -353,15 +375,16 @@ function getStats() {
  */
 function getNpcList($force = 0) {
     $db = $GLOBALS['db'];
+    $historyExists = relEventHistoryExistsSql('core_npc_master');
 
     if ($force) {
-        // All NPCs with TEXT relationships
+        // All NPCs with event history
         $npcs = $db->fetchAll("
             SELECT id, name as name
             FROM core_npc_master
-            WHERE relationships IS NOT NULL
-              AND relationships != ''
+            WHERE COALESCE(TRIM(name), '') <> ''
               AND name != 'The Narrator'
+              AND {$historyExists}
             ORDER BY name
         ");
     } else {
@@ -369,12 +392,12 @@ function getNpcList($force = 0) {
         $npcs = $db->fetchAll("
             SELECT id, name as name
             FROM core_npc_master
-            WHERE relationships IS NOT NULL
-              AND relationships != ''
+            WHERE COALESCE(TRIM(name), '') <> ''
               AND name != 'The Narrator'
               AND (extended_data IS NULL
                    OR extended_data::text NOT LIKE '%\"relationships\"%'
                    OR extended_data->>'relationships' IS NULL)
+              AND {$historyExists}
             ORDER BY name
         ");
     }

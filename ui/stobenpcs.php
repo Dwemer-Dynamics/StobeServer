@@ -1138,7 +1138,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
       <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
       <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
       <button id="npc_import_btn" type="button" title="Import NPC from JSON file">Import NPC</button>
-      <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from World Knowledge text data for all NPCs">Build Relationships</button>
+          <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
       <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
       <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
     </div>
@@ -2712,7 +2712,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   <span style="border:none; background:transparent; color:#e6b76c;">Page <?= $page ?> / <?= $totalPages ?></span>
   <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
   <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
-  <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from World Knowledge text data for all NPCs">Build Relationships</button>
+        <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
   <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
   <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
 </div>
@@ -2954,7 +2954,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <!-- Info Box -->
         <div style="background:#2a2a3a; border:1px solid #5a5a6a; border-radius:8px; padding:12px; margin-bottom:16px; text-align:left;">
           <div style="color:#9fb1c9; font-size:0.85em; line-height:1.4;">
-            Building runs in the background while you play. You can adjust any NPC individually by clicking their profile and editing <strong>Relationship Affinities</strong>.
+            Building runs in the background while you play, using each NPC's recent event history as baseline evidence. You can adjust any NPC individually by clicking their profile and editing <strong>Relationship Affinities</strong>.
           </div>
         </div>
 
