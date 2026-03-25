@@ -308,6 +308,7 @@ if (!function_exists('stobeRefreshNpcDataForTraderInventory')) {
 // $eventData, $eventType, $timestamp, $gamets are set by main.php.
 $parts = explode(": ", $eventData, 2);
 $speaker = $parts[0] ?? getSetting('PLAYER_NAME', 'Drifter');
+$playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
 $message = $parts[1] ?? $eventData;
 $message = trim($message);
 $targetExtract = extractDialogueTarget($message);
@@ -341,9 +342,21 @@ if (strlen($messagePreview) > 180) {
 
 $dialogueModeRaw = $_GET["mode"] ?? '';
 $dialogueMode = strtolower(trim((string)$dialogueModeRaw));
-$allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat'];
+$allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat', 'narrator'];
 if (!in_array($dialogueMode, $allowedDialogueModes, true)) {
     $dialogueMode = 'talk';
+}
+$narratorMode = ($dialogueMode === 'narrator');
+$narratorName = stobeNarratorName();
+if ($narratorMode && !stobeNarratorModeEnabled()) {
+    stobeLogWarn('Chat input rejected: narrator mode disabled', [
+        'event_type' => $eventType,
+        'speaker' => $speaker,
+        'gamets' => intval($gamets),
+    ]);
+    streamResponse($narratorName, 'ScriptQueue', 'Narrator mode is disabled in server settings.');
+    echo "ok";
+    return;
 }
 $manualActionKey = stobeNormalizeManualChatActionKey(strval($_GET['manual_action'] ?? ''));
 $manualActionActor = normalizeParticipantNameToken(strval($_GET['manual_action_actor'] ?? ''));
@@ -363,6 +376,9 @@ $extractedTargetNpc = normalizeParticipantNameToken(strval($targetExtract['targe
 if ($targetNpc === '' && $extractedTargetNpc !== '') {
     $targetNpc = $extractedTargetNpc;
 }
+if ($narratorMode) {
+    $targetNpc = $narratorName;
+}
 if ($targetNpc === '') {
     stobeLogWarn('Chat input rejected: missing target NPC', [
         'event_type' => $eventType,
@@ -375,6 +391,14 @@ if ($targetNpc === '') {
 }
 if ($manualActionTarget === '') {
     $manualActionTarget = $targetNpc;
+}
+if ($narratorMode && $manualActionActive) {
+    stobeLogWarn('Manual action ignored: narrator mode does not support manual actions', [
+        'manual_action' => $manualActionKey,
+        'speaker' => $speaker,
+    ]);
+    $manualActionKey = '';
+    $manualActionActive = false;
 }
 
 stobeLogInfo('Chat input received', [
@@ -391,34 +415,40 @@ stobeLogInfo('Chat input received', [
     'message_preview' => $messagePreview,
 ]);
 
-$npcData = getNpcData($targetNpc);
-if (!$npcData) {
-    storeNpcProfile($targetNpc, []);
+$npcData = false;
+if ($narratorMode) {
+    $npcData = stobeBuildNarratorNpcData();
+    $targetNpc = $narratorName;
+} else {
     $npcData = getNpcData($targetNpc);
-    stobeLogInfo('NPC profile JIT-created', ['target_npc' => $targetNpc]);
-} elseif (npcNeedsBootstrap($npcData)) {
-    // Backfill older sparse rows created before profile defaults were added.
-    storeNpcProfile($targetNpc, []);
-    $npcData = getNpcData($targetNpc) ?: $npcData;
-    stobeLogInfo('NPC profile baseline refreshed', ['target_npc' => $targetNpc]);
-}
+    if (!$npcData) {
+        storeNpcProfile($targetNpc, []);
+        $npcData = getNpcData($targetNpc);
+        stobeLogInfo('NPC profile JIT-created', ['target_npc' => $targetNpc]);
+    } elseif (npcNeedsBootstrap($npcData)) {
+        // Backfill older sparse rows created before profile defaults were added.
+        storeNpcProfile($targetNpc, []);
+        $npcData = getNpcData($targetNpc) ?: $npcData;
+        stobeLogInfo('NPC profile baseline refreshed', ['target_npc' => $targetNpc]);
+    }
 
-if (!$npcData) {
-    $npcData = [
-        'name' => $targetNpc,
-        'race' => 'Unknown',
-        'faction' => '',
-        'gender' => '',
-    ];
-}
+    if (!$npcData) {
+        $npcData = [
+            'name' => $targetNpc,
+            'race' => 'Unknown',
+            'faction' => '',
+            'gender' => '',
+        ];
+    }
 
-$canonicalTargetNpc = normalizeParticipantNameToken(strval($npcData['name'] ?? ''));
-if ($canonicalTargetNpc !== '' && strcasecmp($canonicalTargetNpc, $targetNpc) !== 0) {
-    stobeLogInfo('Chat target remapped to canonical NPC name', [
-        'requested_target_npc' => $targetNpc,
-        'resolved_target_npc' => $canonicalTargetNpc,
-    ]);
-    $targetNpc = $canonicalTargetNpc;
+    $canonicalTargetNpc = normalizeParticipantNameToken(strval($npcData['name'] ?? ''));
+    if ($canonicalTargetNpc !== '' && strcasecmp($canonicalTargetNpc, $targetNpc) !== 0) {
+        stobeLogInfo('Chat target remapped to canonical NPC name', [
+            'requested_target_npc' => $targetNpc,
+            'resolved_target_npc' => $canonicalTargetNpc,
+        ]);
+        $targetNpc = $canonicalTargetNpc;
+    }
 }
 if ($manualActionActive) {
     if ($manualActionTarget === '') {
@@ -458,6 +488,7 @@ $contextHistory = getNpcProfileIntegerSetting(
     250
 );
 $eventHistory = DataEventLog($contextHistory, $targetNpc);
+$eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $dialogueMode, $speaker);
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
@@ -524,13 +555,33 @@ if ($dialogueMode === 'autochat' && trim($message) !== '') {
     streamResponse($speaker, 'ScriptQueue', $message);
 }
 
+if (!$narratorMode) {
+    stobeTryTriggerRandomNarration(
+        intval($gamets),
+        $speaker,
+        $message,
+        $targetNpc,
+        'chat',
+        $playerName,
+        intval($timestamp)
+    );
+}
+
 $manualActionCannotSpeak = $manualActionActive
     ? stobeManualActionTargetCannotSpeak($npcData, $manualActionKey)
     : false;
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
     . "\n\n"
-    . buildSystemPrompt($targetNpc, $npcData, $speaker, $message, true, 'chat', intval($gamets));
+    . buildSystemPrompt(
+        $targetNpc,
+        $npcData,
+        $speaker,
+        $message,
+        !$narratorMode,
+        'chat',
+        intval($gamets)
+    );
 $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $targetNpc);
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
@@ -542,6 +593,8 @@ if ($dialogueMode === 'whisper') {
     $deliveryStyleInstruction = 'The player is shouting. Respond with urgency and stronger emotional intensity.';
 } elseif ($dialogueMode === 'autochat') {
     $deliveryStyleInstruction = 'The player triggered a bored-event automatic chat. Keep responses brief and natural for overheard conversation.';
+} elseif ($dialogueMode === 'narrator') {
+    $deliveryStyleInstruction = 'You are The Narrator in a private channel. Address only the speaker and never emit action tags.';
 }
 if ($deliveryStyleInstruction !== '') {
     $systemPrompt .= "\n\n<speech_mode>\n"
@@ -617,16 +670,22 @@ $messages[] = [
 ];
 $messages[] = [
     'role' => 'user',
-    'content' => stobeBuildOutputContractUserPrompt(
-        $targetNpc,
-        $dialogueMode === 'cheat',
-        true,
-        npcIsInPlayerFaction($npcData)
-    ),
+    'content' => $narratorMode
+        ? 'Output contract: return narrator dialogue text only. Do not include action tags.'
+        : stobeBuildOutputContractUserPrompt(
+            $targetNpc,
+            $dialogueMode === 'cheat',
+            true,
+            npcIsInPlayerFaction($npcData)
+        ),
 ];
 
 $llmConfig = getLlmConfigForNpc($npcData);
 $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
+if ($narratorMode) {
+    $actionConfig['enabled'] = false;
+    $actionConfig['max_actions'] = 1;
+}
 
 $responseText = '';
 $responseActions = [];
@@ -723,8 +782,11 @@ if ($manualActionActive && $manualActionCannotSpeak) {
     }
 }
 $responseActions = stobeDedupeActionList($responseActions, 'chat', $actionConfig);
+if ($narratorMode) {
+    $responseActions = [];
+}
 
-if (!$manualActionForcedEmoteOnly) {
+if (!$manualActionForcedEmoteOnly && !$narratorMode) {
     $relationshipEval = stobeEvaluateRelationshipsForTurn(
         $targetNpc,
         $speaker,

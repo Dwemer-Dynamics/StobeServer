@@ -2131,6 +2131,11 @@ Fields currently editable for this NPC: #ALLOWED_FIELDS#$$,
   </requirements>
 </bored_prompt_template>$$,
     $$Prompt template for bored-event generation. Supports #NPC_LIST#, #LOCATION#, #WORLD_EVENTS#. Used in lib/chat_helper_functions.php.$$
+),
+(
+    'random_narration_prompt',
+    $$Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.$$,
+    $$Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.$$
 )
 ON CONFLICT (prompt_key) DO UPDATE SET
     default_prompt = EXCLUDED.default_prompt,
@@ -2500,6 +2505,11 @@ WHERE COALESCE(
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ) IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS core_narrator (
+    id TEXT PRIMARY KEY,
+    value TEXT
+);
 
 
 

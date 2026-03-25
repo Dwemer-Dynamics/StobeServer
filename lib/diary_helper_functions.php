@@ -84,6 +84,7 @@ function stobeResolveDiaryLocationText(string $npcName): string {
 
 function stobeBuildDiaryHistoryText(string $npcName, int $historyLimit): string {
     $rows = DataEventLog($historyLimit, $npcName);
+    $rows = stobeFilterNarratorRowsForContext($rows, $npcName, 'diary');
     if (count($rows) === 0) {
         return '';
     }

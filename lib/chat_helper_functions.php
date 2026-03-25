@@ -1534,6 +1534,7 @@ function stobeWorldKnowledgeResolveLocationContext(string $npcName): string {
 
 function stobeWorldKnowledgeExtractContextKeywords(string $npcName, int $historyRows = 16, int $maxKeywords = 8): string {
     $rows = DataEventLog(max(6, min(60, $historyRows)), $npcName);
+    $rows = stobeFilterNarratorRowsForContext($rows, $npcName, 'world_knowledge');
     if (count($rows) === 0) {
         return '';
     }
@@ -6616,6 +6617,175 @@ function stobeBuildMiddleTermMemoryPromptBlock(array $npcData, string $npcName):
     return implode("\n", $lines);
 }
 
+function stobeExtractSimpleXmlTagValue(string $xml, string $tag): string {
+    $safeTag = strtolower(trim($tag));
+    if ($safeTag === '' || preg_match('/^[a-z0-9_]+$/', $safeTag) !== 1) {
+        return '';
+    }
+    if (preg_match('/<' . preg_quote($safeTag, '/') . '>(.*?)<\/' . preg_quote($safeTag, '/') . '>/isu', $xml, $matches) !== 1) {
+        return '';
+    }
+    $raw = trim(strval($matches[1] ?? ''));
+    if ($raw === '') {
+        return '';
+    }
+    return trim(html_entity_decode($raw, ENT_QUOTES | ENT_XML1, 'UTF-8'));
+}
+
+function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
+    $safeSpeaker = normalizeParticipantNameToken($speakerName);
+    if ($safeSpeaker === '') {
+        $safeSpeaker = trim($speakerName);
+    }
+    if ($safeSpeaker === '') {
+        $safeSpeaker = 'Speaker';
+    }
+
+    $speakerData = getNpcData($safeSpeaker);
+    $speakerRace = '';
+    $speakerFaction = '';
+    $stateFields = [];
+
+    if (is_array($speakerData) && count($speakerData) > 0) {
+        $speakerRace = trim(strval($speakerData['race'] ?? ''));
+        $speakerFaction = stobeFactionDisplayName(strval($speakerData['faction'] ?? ''));
+        $worldStateXml = buildWorldStateBlock($speakerData);
+        if ($worldStateXml !== '') {
+            foreach (['location', 'weather', 'current_action', 'state', 'action_flags'] as $stateTag) {
+                $stateValue = stobeExtractSimpleXmlTagValue($worldStateXml, $stateTag);
+                if ($stateValue !== '') {
+                    $stateFields[$stateTag] = $stateValue;
+                }
+            }
+        }
+    }
+
+    $geo = getEventGeoFromNpcName($safeSpeaker);
+    $hasGeo = trim(strval($geo['location'] ?? '')) !== ''
+        || trim(strval($geo['city'] ?? '')) !== ''
+        || trim(strval($geo['region'] ?? '')) !== '';
+    if (!$hasGeo) {
+        $geo = getEventGeoFromPlayerSnapshot();
+    }
+
+    $lines = ['<speaker_context>'];
+    $lines[] = '  <name>' . stobePromptXmlEscape($safeSpeaker) . '</name>';
+    if ($speakerRace !== '') {
+        $lines[] = '  <race>' . stobePromptXmlEscape($speakerRace) . '</race>';
+    }
+    if ($speakerFaction !== '') {
+        $lines[] = '  <faction>' . stobePromptXmlEscape($speakerFaction) . '</faction>';
+    }
+
+    if (count($stateFields) > 0) {
+        $lines[] = '  <world_state>';
+        foreach ($stateFields as $stateTag => $stateValue) {
+            $lines[] = '    <' . $stateTag . '>' . stobePromptXmlEscape($stateValue) . '</' . $stateTag . '>';
+        }
+        $lines[] = '  </world_state>';
+    }
+
+    $geoFields = [];
+    foreach (['location', 'city', 'region'] as $geoTag) {
+        $geoValue = trim(strval($geo[$geoTag] ?? ''));
+        if ($geoValue !== '') {
+            $geoFields[$geoTag] = $geoValue;
+        }
+    }
+    if (count($geoFields) > 0) {
+        $lines[] = '  <geo_context>';
+        foreach ($geoFields as $geoTag => $geoValue) {
+            $lines[] = '    <' . $geoTag . '>' . stobePromptXmlEscape($geoValue) . '</' . $geoTag . '>';
+        }
+        $lines[] = '  </geo_context>';
+    }
+
+    $lines[] = '</speaker_context>';
+    return implode("\n", $lines);
+}
+
+function stobeBuildNarratorSystemPrompt(
+    array $narratorData,
+    string $speakerName,
+    string $playerMessage = '',
+    int $currentGamets = 0
+): string {
+    $narratorName = function_exists('stobeNarratorName') ? stobeNarratorName() : 'The Narrator';
+    $metadata = normalizeNpcMetadataPayload($narratorData['metadata'] ?? []);
+    $safeSpeaker = normalizeParticipantNameToken($speakerName);
+    if ($safeSpeaker === '') {
+        $safeSpeaker = trim($speakerName);
+    }
+    if ($safeSpeaker === '') {
+        $safeSpeaker = 'Speaker';
+    }
+
+    $narratorSummary = trim(strval($narratorData['backstory'] ?? ''));
+    if ($narratorSummary === '') {
+        $narratorSummary = trim(strval($narratorData['core'] ?? ''));
+    }
+    if ($narratorSummary === '') {
+        $narratorSummary = "A guiding voice that describes the world, events, and transitions. This voice exists only in the speaker's mind.";
+    }
+
+    $narratorPersonality = trim(strval($narratorData['personality'] ?? ''));
+    if ($narratorPersonality === '') {
+        $narratorPersonality = 'Detached, descriptive, witty, helpful.';
+    }
+    $narratorSpeechStyle = trim(strval($narratorData['speechstyle'] ?? ''));
+    $narratorGoals = trim(strval($narratorData['goals'] ?? ''));
+
+    $roleplayInstructions = stobeBuildRoleplayInstructionsText($narratorName, $safeSpeaker, $narratorData);
+    $generalInstructions = stobeBuildGeneralInstructionsText($narratorData);
+    $promptOverrides = stobeResolveNpcPromptOverrides($narratorData, $metadata);
+    $promptHeadOverride = trim(strval($promptOverrides['prompt_head'] ?? ''));
+    $profilePromptOverride = trim(strval($promptOverrides['profile_prompt'] ?? ''));
+    if ($promptHeadOverride !== '') {
+        $roleplayInstructions = trim($promptHeadOverride . "\n\n" . $roleplayInstructions);
+    }
+    if ($profilePromptOverride !== '') {
+        $generalInstructions = trim($profilePromptOverride . "\n" . $generalInstructions);
+    }
+
+    $speakerContextBlock = stobeBuildNarratorSpeakerContextBlock($safeSpeaker);
+
+    $lines = [];
+    $lines[] = '<roleplay_instructions>';
+    $lines[] = stobePromptXmlEscape($roleplayInstructions);
+    $lines[] = '</roleplay_instructions>';
+    $lines[] = '';
+    $lines[] = '<narrator_profile>';
+    $lines[] = '  <name>' . stobePromptXmlEscape($narratorName) . '</name>';
+    $lines[] = '  <role>Private inner narrator voice for the current speaker.</role>';
+    $lines[] = '  <summary>' . stobePromptXmlEscape($narratorSummary) . '</summary>';
+    $lines[] = '  <personality>' . stobePromptXmlEscape($narratorPersonality) . '</personality>';
+    if ($narratorSpeechStyle !== '') {
+        $lines[] = '  <speech_style>' . stobePromptXmlEscape($narratorSpeechStyle) . '</speech_style>';
+    }
+    if ($narratorGoals !== '') {
+        $lines[] = '  <goals>' . stobePromptXmlEscape($narratorGoals) . '</goals>';
+    }
+    $lines[] = '</narrator_profile>';
+    if ($speakerContextBlock !== '') {
+        $lines[] = '';
+        $lines[] = $speakerContextBlock;
+    }
+    $lines[] = '';
+    $lines[] = '<conversation_target><name>' . stobePromptXmlEscape($safeSpeaker) . '</name></conversation_target>';
+    $lines[] = '';
+    $lines[] = '<general_instructions>';
+    $lines[] = stobePromptXmlEscape($generalInstructions);
+    $lines[] = '</general_instructions>';
+    $lines[] = '';
+    $lines[] = '<narration_rules>';
+    $lines[] = '  <rule>Only the narrator and the current speaker are in this conversation.</rule>';
+    $lines[] = '  <rule>Address only the current speaker directly.</rule>';
+    $lines[] = '  <rule>Do not output action tags or command syntax.</rule>';
+    $lines[] = '</narration_rules>';
+
+    return implode("\n", $lines);
+}
+
 function buildSystemPrompt(
     string $npcName,
     array $npcData,
@@ -6625,6 +6795,13 @@ function buildSystemPrompt(
     string $eventType = 'chat',
     int $currentGamets = 0
 ): string {
+    $narratorTarget = function_exists('stobeIsNarratorName')
+        ? stobeIsNarratorName($npcName)
+        : (strcasecmp(trim($npcName), 'The Narrator') === 0);
+    if ($narratorTarget) {
+        return stobeBuildNarratorSystemPrompt($npcData, $playerName, $playerMessage, $currentGamets);
+    }
+
     $template = loadPromptTemplate('prompt_chat.txt');
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
     $npcRace = trim(strval($npcData['race'] ?? ''));
@@ -7156,6 +7333,65 @@ function stobeFindFastSentencePosition(string $text): int|false {
     return false;
 }
 
+function stobeSplitLongStreamChunk(string $text, int $maxSize): array {
+    $remaining = trim(strval($text));
+    if ($remaining === '') {
+        return [];
+    }
+    if ($maxSize < 32) {
+        $maxSize = 32;
+    }
+    if (strlen($remaining) <= $maxSize) {
+        return [$remaining];
+    }
+
+    $chunks = [];
+    while (strlen($remaining) > $maxSize) {
+        $window = substr($remaining, 0, $maxSize + 1);
+        $bestCut = false;
+
+        $cutTokens = ['. ', '? ', '! ', '; ', ', ', ': ', ' '];
+        foreach ($cutTokens as $token) {
+            $tokenPos = strrpos($window, $token);
+            if ($tokenPos === false) {
+                continue;
+            }
+            $candidateCut = $tokenPos + ($token === ' ' ? 0 : 1);
+            if ($candidateCut <= 0) {
+                continue;
+            }
+            if ($bestCut === false || $candidateCut > $bestCut) {
+                $bestCut = $candidateCut;
+            }
+        }
+
+        if ($bestCut === false || $bestCut < intval($maxSize * 0.5)) {
+            $bestCut = $maxSize;
+        }
+        if ($bestCut <= 0) {
+            $bestCut = $maxSize;
+        }
+
+        $chunk = trim(substr($remaining, 0, $bestCut));
+        if ($chunk === '') {
+            $chunk = trim(substr($remaining, 0, $maxSize));
+            $bestCut = strlen($chunk);
+        }
+        if ($chunk === '') {
+            break;
+        }
+
+        $chunks[] = $chunk;
+        $remaining = ltrim(substr($remaining, $bestCut));
+    }
+
+    if ($remaining !== '') {
+        $chunks[] = trim($remaining);
+    }
+
+    return $chunks;
+}
+
 function stobeSplitSentencesStream(string $paragraph): array {
     $text = trim(strval($paragraph));
     if ($text === '') {
@@ -7170,7 +7406,7 @@ function stobeSplitSentencesStream(string $paragraph): array {
 
     $sentences = preg_split(stobeStreamSentenceSplitRegex(), $text, -1, PREG_SPLIT_NO_EMPTY);
     if (!is_array($sentences) || count($sentences) === 0) {
-        return [$text];
+        return stobeSplitLongStreamChunk($text, $maxSize);
     }
 
     $chunks = [];
@@ -7201,7 +7437,25 @@ function stobeSplitSentencesStream(string $paragraph): array {
         $chunks[] = $current;
     }
 
-    return count($chunks) > 0 ? $chunks : [$text];
+    if (count($chunks) === 0) {
+        return stobeSplitLongStreamChunk($text, $maxSize);
+    }
+
+    $normalizedChunks = [];
+    foreach ($chunks as $chunkRaw) {
+        $subChunks = stobeSplitLongStreamChunk(strval($chunkRaw), $maxSize);
+        if (count($subChunks) === 0) {
+            continue;
+        }
+        foreach ($subChunks as $subChunk) {
+            $subChunkText = trim(strval($subChunk));
+            if ($subChunkText !== '') {
+                $normalizedChunks[] = $subChunkText;
+            }
+        }
+    }
+
+    return count($normalizedChunks) > 0 ? $normalizedChunks : [$text];
 }
 
 function stobeStripParentheticalDialogueText(string $text): string {
@@ -7515,23 +7769,37 @@ function streamResponse(
         if ($line === '') {
             continue;
         }
-
-        $ttsHash = '';
-        $ttsDurationMs = 0;
-        if ($ttsEnabled && strcasecmp($action, 'ScriptQueue') === 0) {
-            $ttsResult = stobeSynthesizePocketTtsLine($actor, $line, $actorData);
-            $ttsHash = trim(strval($ttsResult['hash'] ?? ''));
-            $ttsDurationMs = intval($ttsResult['duration_ms'] ?? 0);
+        $lineChunks = [$line];
+        if (strcasecmp($action, 'ScriptQueue') === 0) {
+            $splitChunks = stobeSplitSentencesStream($line);
+            if (is_array($splitChunks) && count($splitChunks) > 0) {
+                $lineChunks = $splitChunks;
+            }
         }
 
-        $wirePayload = formatResponse($actor, $action, $line, $ttsHash, $ttsDurationMs);
-        echo $wirePayload;
-        stobeLogOutputToPlugin($actor, $action, $line, $wirePayload, $ttsHash, $ttsDurationMs);
-        if (ob_get_length()) {
-            ob_flush();
+        foreach ($lineChunks as $chunkRaw) {
+            $chunk = trim(strval($chunkRaw));
+            if ($chunk === '') {
+                continue;
+            }
+
+            $ttsHash = '';
+            $ttsDurationMs = 0;
+            if ($ttsEnabled && strcasecmp($action, 'ScriptQueue') === 0) {
+                $ttsResult = stobeSynthesizePocketTtsLine($actor, $chunk, $actorData);
+                $ttsHash = trim(strval($ttsResult['hash'] ?? ''));
+                $ttsDurationMs = intval($ttsResult['duration_ms'] ?? 0);
+            }
+
+            $wirePayload = formatResponse($actor, $action, $chunk, $ttsHash, $ttsDurationMs);
+            echo $wirePayload;
+            stobeLogOutputToPlugin($actor, $action, $chunk, $wirePayload, $ttsHash, $ttsDurationMs);
+            if (ob_get_length()) {
+                ob_flush();
+            }
+            flush();
+            $sentAny = true;
         }
-        flush();
-        $sentAny = true;
     }
 
     if (!$sentAny && $queuedActions === 0) {

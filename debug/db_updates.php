@@ -367,6 +367,70 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 SET description = EXCLUDED.description,
                     updated_at = NOW()");
         });
+        $applyPatch('core_narrator', 202603250301, static function () use ($db): void {
+            $db->exec("CREATE TABLE IF NOT EXISTS core_narrator (
+                id TEXT PRIMARY KEY,
+                value TEXT
+            )");
+
+            $defaultProfileId = 1;
+            $profileRow = $db->fetchOne(
+                "SELECT id
+                 FROM core_profiles
+                 WHERE is_default_npc = TRUE
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+            if (is_array($profileRow)) {
+                $resolved = intval($profileRow['id'] ?? 0);
+                if ($resolved > 0) {
+                    $defaultProfileId = $resolved;
+                }
+            }
+
+            $defaults = [
+                'enabled' => '1',
+                'welcome_enabled' => '0',
+                'welcome_cooldown' => '10',
+                'random_enabled' => '0',
+                'random_chance' => '15',
+                'random_cooldown' => '2',
+                'inline_narration_enabled' => '0',
+                'diary_enabled' => '0',
+                'dynamic_profile' => '0',
+                'dynamic_profile_fields' => '[]',
+                'profile_id' => strval($defaultProfileId),
+                'voiceid' => 'TheNarrator',
+                'core' => "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Tamriel. Provide unique insight and descriptions of what is going on in the world.",
+                'background' => "A guiding voice that describes the world, events, and transitions. He is not a character, but a voice within the player's mind.",
+                'personality' => 'Detached, descriptive, witty, helpful.',
+                'speechstyle' => '',
+                'goals' => '',
+                'oghma_knowledge' => 'knowall',
+                'gender' => 'male',
+                'prompt_head' => '',
+            ];
+
+            foreach ($defaults as $key => $value) {
+                $existing = $db->fetchOne(
+                    "SELECT value FROM core_narrator WHERE id = $1 LIMIT 1",
+                    [$key]
+                );
+                $currentValue = is_array($existing) && array_key_exists('value', $existing)
+                    ? trim(strval($existing['value']))
+                    : '';
+                if ($currentValue !== '') {
+                    continue;
+                }
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ($1, $2)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$key, strval($value)]
+                );
+            }
+        });
         $applyPatch('prompts', 202603130214, static function () use ($db): void {
             $analysisPrompt = <<<'PROMPT'
 You are a relationship analyzer for Kenshi NPCs. Analyze relationship descriptions and output JSON.
@@ -845,6 +909,30 @@ PROMPT;
             $db->exec(
                 "INSERT INTO prompts (prompt_key, default_prompt, description)
                  VALUES ('regular_memory_summarizer', $1, 'System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.')
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
+        $applyPatch('prompts', 202603250401, static function () use ($db): void {
+            $prompt = "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 2-3 concise sentences. Do not invent events or include action tags.";
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('random_narration_prompt', $1, 'Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.')
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
+        $applyPatch('prompts', 202603250402, static function () use ($db): void {
+            $prompt = "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.";
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('random_narration_prompt', $1, 'Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.')
                  ON CONFLICT (prompt_key) DO UPDATE
                  SET default_prompt = EXCLUDED.default_prompt,
                      description = EXCLUDED.description,

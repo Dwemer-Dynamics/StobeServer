@@ -54,6 +54,7 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 $tabs = [
     ['id' => 'npcs', 'label' => "⭐ Stobe NPCs", 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'settings', 'label' => "🌐 Global Settings", 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'narrator', 'label' => "🗣️ Narrator", 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'profiles', 'label' => "📂 Profiles", 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'llm', 'label' => "🧠 LLM Connectors", 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'tts', 'label' => "📢 TTS Connectors", 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
@@ -281,5 +282,4 @@ if (!isset($tabMap[$activeTab])) {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-
 

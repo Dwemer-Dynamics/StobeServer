@@ -45,9 +45,10 @@ if (!$storeIncomingEvent) {
 
 $campaign = 'Default';
 $requestMode = strtolower(trim(strval($_GET['mode'] ?? '')));
-if ($requestMode === 'whisper') {
-    stobeLogInfo('Rechat skipped: whisper mode', [
+if ($requestMode === 'whisper' || $requestMode === 'narrator') {
+    stobeLogInfo('Rechat skipped: private mode', [
         'event_type' => $eventType,
+        'mode' => $requestMode,
     ]);
     echo "ok";
     return;
@@ -77,6 +78,27 @@ if ($previousSpeaker === '') {
         'event_type' => $eventType,
         'data_preview' => substr($eventData, 0, 120),
     ]);
+    echo "ok";
+    return;
+}
+if (stobeIsNarratorName($previousSpeaker)) {
+    stobeLogInfo('Rechat skipped: narrator speaker', [
+        'event_type' => $eventType,
+        'speaker' => $previousSpeaker,
+    ]);
+    echo "ok";
+    return;
+}
+
+if (stobeTryTriggerRandomNarration(
+    intval($gamets),
+    $previousSpeaker,
+    $previousMessage,
+    $previousTarget,
+    'rechat',
+    $playerName,
+    intval($timestamp)
+)) {
     echo "ok";
     return;
 }
@@ -608,6 +630,7 @@ $contextHistory = getNpcProfileIntegerSetting(
     250
 );
 $eventHistory = DataEventLog($contextHistory, $respondingNpc, $campaign);
+$eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $respondingNpc, 'rechat');
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
