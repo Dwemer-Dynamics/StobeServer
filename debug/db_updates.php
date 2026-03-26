@@ -395,16 +395,14 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 'random_enabled' => '0',
                 'random_chance' => '15',
                 'random_cooldown' => '2',
-                'inline_narration_enabled' => '0',
-                'diary_enabled' => '0',
                 'dynamic_profile' => '0',
                 'dynamic_profile_fields' => '[]',
                 'profile_id' => strval($defaultProfileId),
-                'voiceid' => 'TheNarrator',
+                'voiceid' => 'stobenarrator',
                 'core' => "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Tamriel. Provide unique insight and descriptions of what is going on in the world.",
                 'background' => "A guiding voice that describes the world, events, and transitions. He is not a character, but a voice within the player's mind.",
-                'personality' => 'Detached, descriptive, witty, helpful.',
-                'speechstyle' => '',
+                'personality' => 'Laid-back, observant, and friendly; describes scenes with calm confidence.',
+                'speechstyle' => 'Relaxed and conversational, with vivid scene descriptions in one or two concise sentences.',
                 'goals' => '',
                 'oghma_knowledge' => 'knowall',
                 'gender' => 'male',
@@ -428,6 +426,91 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                      ON CONFLICT (id) DO UPDATE
                      SET value = EXCLUDED.value",
                     [$key, strval($value)]
+                );
+            }
+        });
+        $applyPatch('core_narrator', 202603250405, static function () use ($db): void {
+            $db->exec("DELETE FROM core_narrator WHERE id IN ('diary_enabled', 'diary_connector_id')");
+        });
+        $applyPatch('core_narrator', 202603250406, static function () use ($db): void {
+            $newVoiceId = 'stobenarrator';
+            $newPersonality = 'Laid-back, observant, and friendly; describes scenes with calm confidence.';
+            $newSpeechStyle = 'Relaxed and conversational, with vivid scene descriptions in one or two concise sentences.';
+            $normalize = static function (string $value): string {
+                return strtolower(trim(preg_replace('/\s+/u', ' ', $value) ?? $value));
+            };
+
+            $voiceIdRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'voiceid' LIMIT 1");
+            $currentVoiceId = is_array($voiceIdRow) && array_key_exists('value', $voiceIdRow)
+                ? trim(strval($voiceIdRow['value']))
+                : '';
+            if (
+                $currentVoiceId === ''
+                || $normalize($currentVoiceId) === $normalize('TheNarrator')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('voiceid', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newVoiceId]
+                );
+            }
+
+            $personalityRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'personality' LIMIT 1");
+            $currentPersonality = is_array($personalityRow) && array_key_exists('value', $personalityRow)
+                ? trim(strval($personalityRow['value']))
+                : '';
+            if (
+                $currentPersonality === ''
+                || $normalize($currentPersonality) === $normalize('Detached, descriptive, witty, helpful.')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('personality', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newPersonality]
+                );
+            }
+
+            $speechStyleRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'speechstyle' LIMIT 1");
+            $currentSpeechStyle = is_array($speechStyleRow) && array_key_exists('value', $speechStyleRow)
+                ? trim(strval($speechStyleRow['value']))
+                : '';
+            if (
+                $currentSpeechStyle === ''
+                || $normalize($currentSpeechStyle) === $normalize('Direct and practical.')
+                || $normalize($currentSpeechStyle) === $normalize('Detached, descriptive, witty, helpful.')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('speechstyle', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newSpeechStyle]
+                );
+            }
+        });
+        $applyPatch('core_narrator', 202603250407, static function () use ($db): void {
+            $newVoiceId = 'stobenarrator';
+            $voiceIdRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'voiceid' LIMIT 1");
+            $currentVoiceId = is_array($voiceIdRow) && array_key_exists('value', $voiceIdRow)
+                ? trim(strval($voiceIdRow['value']))
+                : '';
+            $normalize = static function (string $value): string {
+                return strtolower(trim(preg_replace('/\s+/u', ' ', $value) ?? $value));
+            };
+            if (
+                $currentVoiceId === ''
+                || $normalize($currentVoiceId) === $normalize('TheNarrator')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('voiceid', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newVoiceId]
                 );
             }
         });
@@ -936,7 +1019,7 @@ PROMPT;
                  ON CONFLICT (prompt_key) DO UPDATE
                  SET default_prompt = EXCLUDED.default_prompt,
                      description = EXCLUDED.description,
-                     updated_at = NOW()",
+                    updated_at = NOW()",
                 [$prompt]
             );
         });

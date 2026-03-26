@@ -29,11 +29,11 @@ class Narrator
         $safeProfileId = $profileId > 0 ? $profileId : 1;
         return [
             'profile_id' => strval($safeProfileId),
-            'voiceid' => 'TheNarrator',
+            'voiceid' => 'stobenarrator',
             'core' => "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Tamriel. Provide unique insight and descriptions of what is going on in the world.",
             'background' => "A guiding voice that describes the world, events, and transitions. He is not a character, but a voice within the player's mind.",
-            'personality' => 'Detached, descriptive, witty, helpful.',
-            'speechstyle' => '',
+            'personality' => 'Laid-back, observant, and friendly; describes scenes with calm confidence.',
+            'speechstyle' => 'Relaxed and conversational, with vivid scene descriptions in one or two concise sentences.',
             'goals' => '',
             'oghma_knowledge' => 'knowall',
             'gender' => 'male',
@@ -142,10 +142,7 @@ class Narrator
             'random_chance' => ['RANDOM_NARATION_CHANCE', 'int', 15],
             'random_cooldown' => ['RANDOM_NARRATION_COOLDOWN', 'int', 2],
             'dynamic_profile' => ['DYNAMIC_PROFILE', 'bool', false],
-            'inline_narration_enabled' => ['INLINE_NARRATION_ENABLED', 'bool', false],
-            'diary_enabled' => ['NARRATOR_DIARY_ENABLED', 'bool', false],
             'connector_id' => ['NARRATOR_CONNECTOR_ID', 'int', null],
-            'diary_connector_id' => ['NARRATOR_DIARY_CONNECTOR_ID', 'int', null],
         ];
 
         foreach ($keyMapping as $dbKey => $config) {

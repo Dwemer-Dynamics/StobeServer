@@ -36,10 +36,10 @@ if (!function_exists('stobeBuildNarratorNpcData')) {
             'faction' => 'Narrator',
             'gender' => 'male',
             'profile_id' => 1,
-            'voiceid' => 'TheNarrator',
-            'personality' => 'Detached, descriptive, witty, helpful.',
+            'voiceid' => 'stobenarrator',
+            'personality' => 'Laid-back, observant, and friendly; describes scenes with calm confidence.',
             'backstory' => "A guiding voice that describes the world, events, and transitions. He is not a character, but a voice within the player's mind.",
-            'speechstyle' => '',
+            'speechstyle' => 'Relaxed and conversational, with vivid scene descriptions in one or two concise sentences.',
             'goals' => '',
             'prompt_head' => '',
             'occupation' => 'Narrator',
@@ -84,7 +84,7 @@ if (!function_exists('stobeBuildNarratorNpcData')) {
         $defaults['faction'] = trim(strval($settings['faction'] ?? '')) !== '' ? trim(strval($settings['faction'])) : 'Narrator';
         $defaults['gender'] = trim(strval($narratorData['gender'] ?? 'male'));
         $defaults['profile_id'] = $profileId;
-        $defaults['voiceid'] = trim(strval($narratorData['voiceid'] ?? 'TheNarrator'));
+        $defaults['voiceid'] = trim(strval($narratorData['voiceid'] ?? 'stobenarrator'));
         $defaults['personality'] = $personality !== '' ? $personality : $defaults['personality'];
         $defaults['backstory'] = $backstory !== '' ? $backstory : $defaults['backstory'];
         $defaults['speechstyle'] = trim(strval($narratorData['speechstyle'] ?? '')) !== ''
@@ -209,6 +209,32 @@ if (!function_exists('stobeIsPrivateNarratorConversationRow')) {
     }
 }
 
+if (!function_exists('stobeIsNarratorContextExcludedType')) {
+    function stobeIsNarratorContextExcludedType(string $eventType): bool
+    {
+        $type = strtolower(trim($eventType));
+        return in_array($type, ['init'], true);
+    }
+}
+
+if (!function_exists('stobeFilterNarratorPromptContextRows')) {
+    function stobeFilterNarratorPromptContextRows(array $rows): array
+    {
+        $filtered = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $type = strval($row['type'] ?? '');
+            if (stobeIsNarratorContextExcludedType($type)) {
+                continue;
+            }
+            $filtered[] = $row;
+        }
+        return $filtered;
+    }
+}
+
 if (!function_exists('stobeFilterNarratorRowsForContext')) {
     function stobeFilterNarratorRowsForContext(
         array $rows,
@@ -217,17 +243,17 @@ if (!function_exists('stobeFilterNarratorRowsForContext')) {
         string $speakerName = ''
     ): array {
         $narratorMode = stobeIsNarratorName($targetNpc) || strcasecmp(trim($dialogueMode), 'narrator') === 0;
+        if ($narratorMode) {
+            // Narrator mode should have full recent-event context by default.
+            return stobeFilterNarratorPromptContextRows($rows);
+        }
         $filtered = [];
 
         foreach ($rows as $row) {
             if (!is_array($row)) {
                 continue;
             }
-            if ($narratorMode) {
-                if (!stobeIsPrivateNarratorConversationRow($row, $speakerName)) {
-                    continue;
-                }
-            } elseif (stobeContextRowInvolvesNarrator($row)) {
+            if (stobeContextRowInvolvesNarrator($row)) {
                 continue;
             }
             $filtered[] = $row;
@@ -337,7 +363,16 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
         $responseText = '';
         try {
             $narratorData = stobeBuildNarratorNpcData();
-            $contextHistory = DataEventLog(80);
+            $contextLimit = getNpcProfileIntegerSetting(
+                $narratorData,
+                ['CONTEXT_HISTORY'],
+                '',
+                80,
+                10,
+                250
+            );
+            $contextHistory = DataEventLog($contextLimit);
+            $contextHistory = stobeFilterNarratorPromptContextRows($contextHistory);
             $historyMessages = stobeBuildRecentContextMessages($contextHistory, intval($gamets));
 
             $randomNarrationInstruction = trim(stobeGetPromptTemplateValue(

@@ -213,7 +213,9 @@ $contextHistory = getNpcProfileIntegerSetting(
     10,
     250
 );
-$eventHistory = DataEventLog($contextHistory, $targetNpc);
+$eventHistory = $narratorMode
+    ? DataEventLog($contextHistory)
+    : DataEventLog($contextHistory, $targetNpc);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $mode, $speaker);
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
@@ -292,7 +294,7 @@ if ($mode === 'whisper') {
 } elseif ($mode === 'autochat') {
     $deliveryStyleInstruction = 'The player triggered a bored-event automatic chat. Keep responses brief and natural for overheard conversation.';
 } elseif ($mode === 'narrator') {
-    $deliveryStyleInstruction = 'You are The Narrator in a private channel. Address only the current speaker and never include action tags.';
+    $deliveryStyleInstruction = 'You are The Narrator in a private one-on-one conversation. Reply directly to the current speaker as conversation. Never narrate scenes, atmosphere, or actions in this mode. Never include action tags.';
 }
 if ($deliveryStyleInstruction !== '') {
     $systemPrompt .= "\n\n<speech_mode>\n"
@@ -349,12 +351,14 @@ $messages[] = [
 ];
 $messages[] = [
     'role' => 'user',
-    'content' => stobeBuildTurnGuidanceUserPrompt($targetNpc, $speaker),
+    'content' => $narratorMode
+        ? stobeBuildNarratorDirectReplyGuidanceUserPrompt($speaker, $message)
+        : stobeBuildTurnGuidanceUserPrompt($targetNpc, $speaker),
 ];
 $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
-        ? 'Output contract: return only narrator dialogue text. Do not emit action tags.'
+        ? 'Output contract: return only a direct conversational reply to the current speaker. Do not include scene narration, atmospheric description, third-person prose, or action tags.'
         : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat'),
 ];
 

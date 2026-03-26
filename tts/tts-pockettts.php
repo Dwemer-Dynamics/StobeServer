@@ -91,6 +91,44 @@ function stobeResolveNpcDataForTts(string $npcName, array|false $npcData = false
         return is_array($npcData) ? $npcData : false;
     }
     $db = $GLOBALS["db"];
+
+    $isNarrator = strcasecmp($safeName, 'The Narrator') === 0;
+    if (function_exists('stobeIsNarratorName')) {
+        $isNarrator = stobeIsNarratorName($safeName);
+    }
+    if ($isNarrator) {
+        $profileRow = $db->fetchOne(
+            "SELECT value
+             FROM core_narrator
+             WHERE id = 'profile_id'
+             LIMIT 1"
+        );
+        $voiceRow = $db->fetchOne(
+            "SELECT value
+             FROM core_narrator
+             WHERE id = 'voiceid'
+             LIMIT 1"
+        );
+        $profileId = intval(trim(strval($profileRow['value'] ?? '0')));
+        if ($profileId <= 0) {
+            $profileId = intval($npcData['profile_id'] ?? 0);
+        }
+        $voiceId = trim(strval($voiceRow['value'] ?? ''));
+        if ($voiceId === '') {
+            $voiceId = trim(strval($npcData['voiceid'] ?? ''));
+        }
+        $resolvedName = $safeName;
+        if (function_exists('stobeNarratorName')) {
+            $resolvedName = stobeNarratorName();
+        }
+        return [
+            'id' => 1,
+            'name' => $resolvedName,
+            'profile_id' => $profileId > 0 ? $profileId : 0,
+            'voiceid' => $voiceId,
+        ];
+    }
+
     $resolved = $db->fetchOne(
         "SELECT id, name, profile_id, voiceid
          FROM core_npc
@@ -113,6 +151,23 @@ function stobeResolveNpcVoiceIdByName(string $npcName): string {
     $db = $GLOBALS["db"] ?? null;
     if (!$db) {
         return '';
+    }
+
+    $isNarrator = strcasecmp($safeName, 'The Narrator') === 0;
+    if (function_exists('stobeIsNarratorName')) {
+        $isNarrator = stobeIsNarratorName($safeName);
+    }
+    if ($isNarrator) {
+        $narratorVoice = $db->fetchOne(
+            "SELECT value
+             FROM core_narrator
+             WHERE id = 'voiceid'
+             LIMIT 1"
+        );
+        $resolvedNarratorVoice = trim(strval($narratorVoice['value'] ?? ''));
+        if ($resolvedNarratorVoice !== '') {
+            return $resolvedNarratorVoice;
+        }
     }
 
     $direct = $db->fetchOne(
@@ -407,11 +462,15 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
 
     $voiceId = '';
     $voiceSource = 'hard_default';
+    $isNarrator = strcasecmp(trim($npcName), 'The Narrator') === 0;
+    if (function_exists('stobeIsNarratorName')) {
+        $isNarrator = stobeIsNarratorName($npcName);
+    }
 
     $dbVoiceId = stobeResolveNpcVoiceIdByName($npcName);
     if ($dbVoiceId !== '') {
         $voiceId = $dbVoiceId;
-        $voiceSource = 'npc_db';
+        $voiceSource = $isNarrator ? 'narrator_db' : 'npc_db';
     } else {
         $resolvedVoice = trim(strval($resolvedNpcData['voiceid'] ?? ''));
         if ($resolvedVoice !== '') {

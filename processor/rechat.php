@@ -780,6 +780,7 @@ $relationshipEval = stobeEvaluateRelationshipsForTurn(
 $responseText = stobeStripParentheticalDialogueText(
     sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)))
 );
+$responseText = stobeStripParentheticalDialogueText($responseText);
 
 if ($responseText === '' && count($responseActions) === 0) {
     echo "ok";

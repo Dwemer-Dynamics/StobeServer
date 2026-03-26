@@ -63,7 +63,18 @@ storeEvent('narrator_welcome', intval($timestamp), intval($gamets), $welcomeTrig
 setConfOpt('last_narrator_welcome', strval($nowTs));
 
 $narratorData = stobeBuildNarratorNpcData();
-$contextHistory = DataEventLog(80);
+$contextLimit = getNpcProfileIntegerSetting(
+    $narratorData,
+    ['CONTEXT_HISTORY'],
+    '',
+    80,
+    10,
+    250
+);
+$contextHistory = DataEventLog($contextLimit);
+if (function_exists('stobeFilterNarratorPromptContextRows')) {
+    $contextHistory = stobeFilterNarratorPromptContextRows($contextHistory);
+}
 $historyMessages = stobeBuildRecentContextMessages($contextHistory, intval($gamets));
 
 $welcomeInstruction = 'Give a brief 2-3 sentence recap of recent events and welcome the speaker back to their journey.';
