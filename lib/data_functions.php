@@ -1754,6 +1754,146 @@ function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFac
     return trim((string)preg_replace('/\s{2,}/u', ' ', $occupation));
 }
 
+function stobeNormalizeParticipantAwarenessStateToken(string $rawState): string {
+    $value = strtolower(trim($rawState));
+    if ($value === '') {
+        return '';
+    }
+
+    $value = preg_replace('/[\(\)\[\]]+/u', ' ', $value) ?? $value;
+    $value = str_replace(['_', '-', '/', '\\'], ' ', $value);
+    $value = trim((string)preg_replace('/\s{2,}/u', ' ', $value));
+    if ($value === '' || in_array($value, ['normal', 'awake', 'none', 'n/a', 'na'], true)) {
+        return '';
+    }
+
+    if (in_array($value, ['sleep', 'sleeping', 'asleep', 'sleep state'], true)) {
+        return 'sleeping';
+    }
+    if (in_array($value, ['ko', 'knocked out', 'knockout', 'knockedout'], true)) {
+        return 'knocked_out';
+    }
+    if (in_array($value, ['unconscious', 'passed out', 'passedout', 'blackout', 'incapacitated'], true)) {
+        return 'unconscious';
+    }
+    if (in_array($value, ['dead', 'deceased', 'death'], true)) {
+        return 'dead';
+    }
+
+    return '';
+}
+
+function stobeExtractParticipantAwarenessStateFromDisplayName(string $rawName): string {
+    $value = trim($rawName);
+    if ($value === '') {
+        return '';
+    }
+    if (preg_match('/\(([^()]*)\)\s*$/u', $value, $matches) !== 1) {
+        return '';
+    }
+    return stobeNormalizeParticipantAwarenessStateToken(strval($matches[1] ?? ''));
+}
+
+function stobeParticipantDisplayNameWithoutAwarenessTag(string $rawName): string {
+    $value = trim($rawName);
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^(.*)\(([^()]*)\)\s*$/u', $value, $matches) === 1) {
+        $state = stobeNormalizeParticipantAwarenessStateToken(strval($matches[2] ?? ''));
+        if ($state !== '') {
+            $value = trim(strval($matches[1] ?? ''));
+        }
+    }
+
+    return trim($value);
+}
+
+function stobeParticipantAwarenessTagLabel(string $state): string {
+    $normalized = stobeNormalizeParticipantAwarenessStateToken($state);
+    if ($normalized === 'sleeping') {
+        return 'sleeping';
+    }
+    if ($normalized === 'knocked_out') {
+        return 'knocked out';
+    }
+    if ($normalized === 'unconscious') {
+        return 'unconscious';
+    }
+    return '';
+}
+
+function stobeApplyParticipantAwarenessTag(string $name, string $state): string {
+    $baseName = stobeParticipantDisplayNameWithoutAwarenessTag($name);
+    if ($baseName === '') {
+        return '';
+    }
+
+    $label = stobeParticipantAwarenessTagLabel($state);
+    if ($label === '') {
+        return $baseName;
+    }
+    return $baseName . ' (' . $label . ')';
+}
+
+function stobeNpcArrayFieldToAssoc(mixed $raw): array {
+    if (is_array($raw)) {
+        return $raw;
+    }
+    if (is_string($raw) && trim($raw) !== '') {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+    return [];
+}
+
+function stobeResolveNpcAwarenessState(array $npcData): string {
+    $state = stobeNormalizeParticipantAwarenessStateToken(strval($npcData['character_state'] ?? ''));
+    if ($state !== '') {
+        return $state;
+    }
+
+    $metadata = stobeNpcArrayFieldToAssoc($npcData['metadata'] ?? []);
+    if (is_array($metadata)) {
+        $metaState = stobeNormalizeParticipantAwarenessStateToken(strval($metadata['character_state'] ?? ''));
+        if ($metaState !== '') {
+            return $metaState;
+        }
+        $medical = stobeNpcArrayFieldToAssoc($metadata['medical'] ?? []);
+        if (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout'])) {
+            return 'unconscious';
+        }
+        if (!empty($metadata['is_sleeping']) || !empty($metadata['sleeping'])) {
+            return 'sleeping';
+        }
+    }
+
+    $extended = stobeNpcArrayFieldToAssoc($npcData['extended_data'] ?? []);
+    if (is_array($extended)) {
+        $extState = stobeNormalizeParticipantAwarenessStateToken(strval($extended['character_state'] ?? ''));
+        if ($extState !== '') {
+            return $extState;
+        }
+        $medical = stobeNpcArrayFieldToAssoc($extended['medical'] ?? []);
+        if (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout'])) {
+            return 'unconscious';
+        }
+        if (!empty($extended['is_sleeping']) || !empty($extended['sleeping'])) {
+            return 'sleeping';
+        }
+    }
+
+    return '';
+}
+
+function stobeNpcCannotRespondInDirectChat(array $npcData): bool {
+    $state = stobeResolveNpcAwarenessState($npcData);
+    return in_array($state, ['dead', 'unconscious', 'knocked_out'], true);
+}
+
 function normalizeParticipantNameToken(string $raw): string {
     $value = trim($raw);
     if ($value === '') {
@@ -1768,6 +1908,7 @@ function normalizeParticipantNameToken(string $raw): string {
         }
     }
 
+    $value = stobeParticipantDisplayNameWithoutAwarenessTag($value);
     return trim($value);
 }
 
@@ -2069,6 +2210,250 @@ function extractParticipantIdentities(array $options): array {
     }
 
     return array_values($identitiesByKey);
+}
+
+function stobeExtractParticipantIdentityWithAwarenessState(string $raw): array {
+    $value = trim($raw);
+    if ($value === '') {
+        return ['name' => '', 'storage_id' => '', 'state' => ''];
+    }
+
+    $namePart = $value;
+    $storageId = '';
+    $pipePos = strpos($value, '|');
+    if ($pipePos !== false) {
+        $namePart = trim(substr($value, 0, $pipePos));
+        $storageId = normalizeStorageIdToken(substr($value, $pipePos + 1));
+    }
+
+    $state = stobeExtractParticipantAwarenessStateFromDisplayName($namePart);
+    $name = normalizeParticipantNameToken($namePart);
+    return [
+        'name' => $name,
+        'storage_id' => $storageId,
+        'state' => $state,
+    ];
+}
+
+function stobeFetchParticipantAwarenessStateMap(array $participantIdentities): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || count($participantIdentities) === 0) {
+        return [];
+    }
+
+    $nameParams = [];
+    $storageParams = [];
+    foreach ($participantIdentities as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $nameValue = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+        if ($nameValue !== '') {
+            $nameParams[strtolower($nameValue)] = $nameValue;
+        }
+        $storageValue = normalizeStorageIdToken(strval($entry['storage_id'] ?? ''));
+        if ($storageValue !== '') {
+            $storageParams[strtolower($storageValue)] = $storageValue;
+        }
+    }
+    if (count($nameParams) === 0 && count($storageParams) === 0) {
+        return [];
+    }
+
+    $whereParts = [];
+    $params = [];
+    $index = 1;
+    if (count($nameParams) > 0) {
+        $namePlaceholders = [];
+        foreach (array_values($nameParams) as $nameValue) {
+            $params[] = $nameValue;
+            $namePlaceholders[] = 'LOWER($' . $index . ')';
+            $index++;
+        }
+        $whereParts[] = 'LOWER(name) IN (' . implode(',', $namePlaceholders) . ')';
+        $whereParts[] = 'LOWER(COALESCE(original_name, \'\')) IN (' . implode(',', $namePlaceholders) . ')';
+    }
+    if (count($storageParams) > 0) {
+        $storagePlaceholders = [];
+        foreach (array_values($storageParams) as $storageValue) {
+            $params[] = $storageValue;
+            $storagePlaceholders[] = 'LOWER($' . $index . ')';
+            $index++;
+        }
+        $whereParts[] = 'LOWER(COALESCE(metadata->>\'storage_id\', \'\')) IN (' . implode(',', $storagePlaceholders) . ')';
+    }
+    if (count($whereParts) === 0) {
+        return [];
+    }
+
+    $rows = $db->fetchAll(
+        'SELECT name,
+                original_name,
+                character_state,
+                metadata,
+                extended_data,
+                COALESCE(metadata->>\'storage_id\', \'\') AS storage_id
+         FROM core_npc
+         WHERE ' . implode(' OR ', $whereParts) . '
+         ORDER BY gamets_last_updated DESC, updated_at DESC',
+        $params
+    );
+
+    $stateByLookup = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $state = stobeResolveNpcAwarenessState($row);
+        if (!in_array($state, ['sleeping', 'unconscious', 'knocked_out', 'dead'], true)) {
+            continue;
+        }
+
+        $rowName = normalizeParticipantNameToken(strval($row['name'] ?? ''));
+        if ($rowName !== '') {
+            $nameKey = 'name:' . strtolower($rowName);
+            if (!isset($stateByLookup[$nameKey])) {
+                $stateByLookup[$nameKey] = $state;
+            }
+        }
+
+        $rowOriginal = normalizeParticipantNameToken(strval($row['original_name'] ?? ''));
+        if ($rowOriginal !== '') {
+            $originalKey = 'original:' . strtolower($rowOriginal);
+            if (!isset($stateByLookup[$originalKey])) {
+                $stateByLookup[$originalKey] = $state;
+            }
+        }
+
+        $rowStorageId = normalizeStorageIdToken(strval($row['storage_id'] ?? ''));
+        if ($rowStorageId !== '') {
+            $storageKey = 'storage:' . strtolower($rowStorageId);
+            if (!isset($stateByLookup[$storageKey])) {
+                $stateByLookup[$storageKey] = $state;
+            }
+        }
+    }
+
+    $result = [];
+    foreach ($participantIdentities as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken(strval($entry['storage_id'] ?? ''));
+        $lookupOrder = [];
+        if ($storageId !== '') {
+            $lookupOrder[] = 'storage:' . strtolower($storageId);
+        }
+        $lookupOrder[] = 'name:' . strtolower($name);
+        $lookupOrder[] = 'original:' . strtolower($name);
+
+        $resolvedState = '';
+        foreach ($lookupOrder as $lookupKey) {
+            if (isset($stateByLookup[$lookupKey])) {
+                $resolvedState = strval($stateByLookup[$lookupKey]);
+                break;
+            }
+        }
+
+        $entryKey = $storageId !== ''
+            ? ('__sid__:' . strtolower($storageId))
+            : ('__name__:' . strtolower($name));
+        $result[$entryKey] = $resolvedState;
+    }
+
+    return $result;
+}
+
+function stobeAnnotatePeopleTokensWithNpcStates(mixed $rawPeople): string {
+    if (is_string($rawPeople)) {
+        $trimmed = trim($rawPeople);
+        if ($trimmed === '') {
+            return '[]';
+        }
+        $decoded = json_decode($trimmed, true);
+        if (!is_array($decoded)) {
+            return $trimmed;
+        }
+    } elseif (!is_array($rawPeople)) {
+        return '[]';
+    }
+
+    $identities = extractParticipantIdentities([
+        'people' => $rawPeople,
+    ]);
+    if (count($identities) === 0) {
+        return '[]';
+    }
+
+    $stateMap = stobeFetchParticipantAwarenessStateMap($identities);
+    $tokens = [];
+    foreach ($identities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken(strval($identity['storage_id'] ?? ''));
+        $key = $storageId !== ''
+            ? ('__sid__:' . strtolower($storageId))
+            : ('__name__:' . strtolower($name));
+        $state = strval($stateMap[$key] ?? '');
+        $displayName = stobeApplyParticipantAwarenessTag($name, $state);
+        if ($displayName === '') {
+            continue;
+        }
+        $tokens[] = $storageId !== '' ? ($displayName . '|' . $storageId) : $displayName;
+    }
+
+    return stobeEncodePeopleTokenList($tokens);
+}
+
+function stobeEventRowActorHasAwarenessSuppressedTag(array $row, string $actorName): bool {
+    $safeActor = normalizeParticipantNameToken($actorName);
+    if ($safeActor === '') {
+        return false;
+    }
+    $actorKey = strtolower($safeActor);
+
+    $rawPeople = $row['people'] ?? '';
+    $tokens = [];
+    if (is_array($rawPeople)) {
+        $tokens = $rawPeople;
+    } else {
+        $peopleText = trim(strval($rawPeople));
+        if ($peopleText === '') {
+            return false;
+        }
+        $decoded = json_decode($peopleText, true);
+        if (is_array($decoded)) {
+            $tokens = $decoded;
+        } else {
+            $tokens = preg_split('/[,;]+/u', $peopleText) ?: [];
+        }
+    }
+
+    foreach ($tokens as $token) {
+        if (!is_string($token)) {
+            continue;
+        }
+        $parsed = stobeExtractParticipantIdentityWithAwarenessState($token);
+        $name = strtolower(strval($parsed['name'] ?? ''));
+        if ($name === '' || $name !== $actorKey) {
+            continue;
+        }
+        $state = strval($parsed['state'] ?? '');
+        if (in_array($state, ['sleeping', 'unconscious', 'knocked_out'], true)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function stobeEncodePeopleTokenList(array $tokens): string {
@@ -3768,9 +4153,35 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
         $params[] = "%{$actorFilter}%";
     }
 
-    $query .= " ORDER BY gamets DESC, ts DESC, rowid DESC LIMIT " . intval($limit);
+    $fetchLimit = intval($limit);
+    if ($actorFilter !== '') {
+        $fetchLimit = max($fetchLimit + 24, $fetchLimit * 4);
+        if ($fetchLimit > 600) {
+            $fetchLimit = 600;
+        }
+    }
+    $query .= " ORDER BY gamets DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
 
-    return $db->fetchAll($query, $params);
+    $rows = $db->fetchAll($query, $params);
+    if ($actorFilter === '' || count($rows) === 0) {
+        return $rows;
+    }
+
+    $filtered = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if (stobeEventRowActorHasAwarenessSuppressedTag($row, $actorFilter)) {
+            continue;
+        }
+        $filtered[] = $row;
+        if (count($filtered) >= $limit) {
+            break;
+        }
+    }
+
+    return $filtered;
 }
 
 function storeGameData(string $name, string $type, array $data): bool {
@@ -9814,8 +10225,8 @@ function DataRechatHistory(string $campaignFilter = '', int $windowSeconds = 120
 }
 
 function stobeNpcIsIncapacitatedForRechat(array $npcData): bool {
-    $state = strtolower(trim(strval($npcData['character_state'] ?? '')));
-    if (in_array($state, ['dead', 'unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated'], true)) {
+    $state = stobeResolveNpcAwarenessState($npcData);
+    if (in_array($state, ['dead', 'unconscious', 'knocked_out', 'sleeping'], true)) {
         return true;
     }
 
@@ -9830,12 +10241,12 @@ function stobeNpcIsIncapacitatedForRechat(array $npcData): bool {
         }
     }
     if (is_array($metadata)) {
-        $metaState = strtolower(trim(strval($metadata['character_state'] ?? '')));
-        if (in_array($metaState, ['dead', 'unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated'], true)) {
+        $metaState = stobeNormalizeParticipantAwarenessStateToken(strval($metadata['character_state'] ?? ''));
+        if (in_array($metaState, ['dead', 'unconscious', 'knocked_out', 'sleeping'], true)) {
             return true;
         }
         $medical = $metadata['medical'] ?? null;
-        if (is_array($medical) && !empty($medical['is_unconscious'])) {
+        if (is_array($medical) && (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout']))) {
             return true;
         }
     }
@@ -9852,7 +10263,7 @@ function stobeNpcIsIncapacitatedForRechat(array $npcData): bool {
     }
     if (is_array($extended)) {
         $medical = $extended['medical'] ?? null;
-        if (is_array($medical) && !empty($medical['is_unconscious'])) {
+        if (is_array($medical) && (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout']))) {
             return true;
         }
     }

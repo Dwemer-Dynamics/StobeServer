@@ -77,6 +77,9 @@ if (function_exists('stobeRecoverSparsePeopleForCriticalEvent')) {
         strval($incomingPeople)
     );
 }
+if (function_exists('stobeAnnotatePeopleTokensWithNpcStates')) {
+    $incomingPeople = stobeAnnotatePeopleTokensWithNpcStates($incomingPeople);
+}
 
 $GLOBALS["CACHE_PEOPLE"] = $incomingPeople;
 

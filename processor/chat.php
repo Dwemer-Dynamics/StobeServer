@@ -70,7 +70,7 @@ if (!function_exists('stobeManualActionTargetCannotSpeak')) {
             return true;
         }
 
-        $cannotSpeakStates = ['dead', 'unconscious'];
+        $cannotSpeakStates = ['dead', 'unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated', 'passed_out', 'blackout'];
 
         $characterState = strtolower(trim(strval($npcData['character_state'] ?? '')));
         if (in_array($characterState, $cannotSpeakStates, true)) {
@@ -93,7 +93,7 @@ if (!function_exists('stobeManualActionTargetCannotSpeak')) {
                 return true;
             }
             $metaMedical = $metadata['medical'] ?? null;
-            if (is_array($metaMedical) && !empty($metaMedical['is_unconscious'])) {
+            if (is_array($metaMedical) && (!empty($metaMedical['is_unconscious']) || !empty($metaMedical['is_knocked_out']) || !empty($metaMedical['is_knockedout']))) {
                 return true;
             }
         }
@@ -110,7 +110,7 @@ if (!function_exists('stobeManualActionTargetCannotSpeak')) {
         }
         if (is_array($extended)) {
             $extMedical = $extended['medical'] ?? null;
-            if (is_array($extMedical) && !empty($extMedical['is_unconscious'])) {
+            if (is_array($extMedical) && (!empty($extMedical['is_unconscious']) || !empty($extMedical['is_knocked_out']) || !empty($extMedical['is_knockedout']))) {
                 return true;
             }
         }
@@ -545,6 +545,26 @@ if ($dialogueMode === 'autochat') {
 $message = $sanitizeChatMessage($message);
 $eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, $timestamp, $gamets, $eventData);
+
+if (
+    !$narratorMode &&
+    is_array($npcData) &&
+    function_exists('stobeNpcCannotRespondInDirectChat') &&
+    stobeNpcCannotRespondInDirectChat($npcData)
+) {
+    $stateLabel = function_exists('stobeResolveNpcAwarenessState')
+        ? stobeResolveNpcAwarenessState($npcData)
+        : strtolower(trim(strval($npcData['character_state'] ?? '')));
+    stobeLogInfo('Direct chat skipped: target cannot speak in current state', [
+        'target_npc' => $targetNpc,
+        'speaker' => $speaker,
+        'state' => $stateLabel,
+        'event_type' => $eventType,
+        'gamets' => intval($gamets),
+    ]);
+    echo "ok";
+    return;
+}
 
 if ($dialogueMode === 'autochat' && trim($message) !== '') {
     stobeLogInfo('Autochat streaming rewritten speaker line', [
