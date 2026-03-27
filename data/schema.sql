@@ -574,6 +574,7 @@ CREATE TABLE IF NOT EXISTS core_npc (
     faction VARCHAR(128) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     profile_id INT,
+    profile_id_before_player_faction INT,
     extended_data JSONB DEFAULT '{}',
     md5 TEXT DEFAULT '',
     gamets_last_updated BIGINT DEFAULT 0,
@@ -656,6 +657,7 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     id SERIAL PRIMARY KEY,
     label VARCHAR(128) UNIQUE NOT NULL,
     is_default_npc BOOLEAN DEFAULT FALSE,
+    is_player_faction_profile BOOLEAN DEFAULT FALSE,
     prompt_head TEXT DEFAULT '',
     profile_prompt TEXT DEFAULT '',
     response_connector INT,
@@ -692,6 +694,10 @@ CREATE TABLE IF NOT EXISTS core_profiles (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_default_npc
     ON core_profiles (is_default_npc)
     WHERE is_default_npc = TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_player_faction
+    ON core_profiles (is_player_faction_profile)
+    WHERE is_player_faction_profile = TRUE;
 
 -- ----------------------------------------------------------
 -- SPEECH — TTS audio cache

@@ -1142,6 +1142,39 @@ PROMPT;
             ");
         });
 
+        $applyPatch('core_profiles', 202603270101, static function () use ($db): void {
+            $db->exec("ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS is_player_faction_profile BOOLEAN DEFAULT FALSE");
+            $db->exec("UPDATE core_profiles SET is_player_faction_profile = FALSE WHERE is_player_faction_profile IS NULL");
+            $keeper = $db->fetchOne(
+                "SELECT id
+                 FROM core_profiles
+                 WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+            $keeperId = intval($keeper['id'] ?? 0);
+            if ($keeperId > 0) {
+                $db->exec(
+                    "UPDATE core_profiles
+                     SET is_player_faction_profile = FALSE,
+                         updated_at = NOW()
+                     WHERE id <> $1
+                       AND COALESCE(is_player_faction_profile, FALSE) = TRUE",
+                    [$keeperId]
+                );
+            }
+            $db->exec(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_player_faction
+                 ON core_profiles (is_player_faction_profile)
+                 WHERE is_player_faction_profile = TRUE"
+            );
+        });
+
+        $applyPatch('core_npc_master', 202603270102, static function () use ($db): void {
+            $db->exec("ALTER TABLE core_npc_master ADD COLUMN IF NOT EXISTS profile_id_before_player_faction INT");
+            $db->exec("CREATE OR REPLACE VIEW core_npc AS SELECT * FROM core_npc_master");
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

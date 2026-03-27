@@ -428,7 +428,6 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
             <?php if (isset($_GET["deleted"])): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">Memory summary deleted successfully.</div>
             <?php endif; ?>
-            <?php if (isset($_GET["reset_done"])): ?>
             <?php if (isset($_GET["reset_done"]) || intval($_GET["reset"] ?? 0) === 1): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">All memory summaries deleted.</div>
             <?php endif; ?>
