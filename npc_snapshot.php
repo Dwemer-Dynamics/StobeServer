@@ -190,13 +190,14 @@ if (is_array($nearbyEntries)) {
         }
 
         if (!$storedNearbySnapshot) {
+            $nearOccupation = stobeBuildFactionOccupationText($nearFaction);
             storeNpcProfile($nearName, [
                 'race' => $nearRace,
                 'faction' => $nearFaction,
                 'gender' => $nearGender,
                 'appearance' => $appearance,
                 'equipment' => $nearEquipment,
-                'occupation' => $nearFaction !== '' ? ('Faction member: ' . $nearFaction) : '',
+                'occupation' => $nearOccupation,
                 'personality' => 'Observed nearby in active gameplay context.',
                 'backstory' => 'Imported from nearby world snapshot.',
                 'tags' => '',

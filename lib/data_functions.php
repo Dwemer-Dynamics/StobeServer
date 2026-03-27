@@ -1651,6 +1651,48 @@ function baseNameWithoutBracketSuffix(string $name): string {
     return trim((string)preg_replace('/\s*\[[^\]]+\]\s*$/u', '', $trimmed));
 }
 
+function stobeBuildFactionOccupationText(string $rawFaction): string {
+    $factionName = baseNameWithoutBracketSuffix($rawFaction);
+    if ($factionName === '') {
+        $factionName = trim($rawFaction);
+    }
+    $factionName = trim((string)preg_replace('/^faction\s*:\s*/iu', '', $factionName));
+    $factionName = trim((string)preg_replace('/\s{2,}/u', ' ', $factionName));
+    if ($factionName === '') {
+        return '';
+    }
+    if (preg_match('/\bfaction$/iu', $factionName) === 1) {
+        return 'A member of the ' . $factionName;
+    }
+    return 'A member of the ' . $factionName . ' Faction';
+}
+
+function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFaction = ''): string {
+    $occupation = trim($rawOccupation);
+    if ($occupation === '') {
+        $fallbackText = stobeBuildFactionOccupationText($fallbackFaction);
+        return $fallbackText;
+    }
+
+    if (preg_match('/^\s*faction(?:\s+member)?\s*:\s*(.+)$/iu', $occupation, $match) === 1) {
+        $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+        if ($normalized !== '') {
+            return $normalized;
+        }
+    }
+
+    $occupation = preg_replace_callback(
+        '/\bFaction\s*:\s*([^|\n\r]+)/iu',
+        static function (array $match): string {
+            $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+            return $normalized !== '' ? $normalized : trim(strval($match[0] ?? ''));
+        },
+        $occupation
+    ) ?? $occupation;
+
+    return trim((string)preg_replace('/\s{2,}/u', ' ', $occupation));
+}
+
 function normalizeParticipantNameToken(string $raw): string {
     $value = trim($raw);
     if ($value === '') {
@@ -2997,7 +3039,7 @@ function buildIdentityRenameBootstrapProfile(array $entry, string $storageId): a
     }
     if ($faction !== '') {
         $profile['faction'] = $faction;
-        $profile['occupation'] = 'Faction: ' . $faction;
+        $profile['occupation'] = stobeBuildFactionOccupationText($faction);
         $profile['goals'] = 'Survive, recover, and pursue faction priorities.';
     }
     if ($gender !== '') {
@@ -4885,6 +4927,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
         $emoteMoods = stobeDefaultEmoteMoods();
     }
     $occupation = $occupationRaw !== '' ? $occupationRaw : trim(strval($resolvedTraits['occupation'] ?? ''));
+    $occupation = stobeNormalizeOccupationText($occupation, $factionCombined);
     $appearance = $appearanceRaw !== '' ? $appearanceRaw : trim(strval($resolvedTraits['appearance'] ?? ''));
     $equipment = $equipmentRaw;
     $inventory = $inventoryRaw;
@@ -4987,7 +5030,18 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             personality = COALESCE(NULLIF(core_npc_master.personality, ''), EXCLUDED.personality),
             backstory = COALESCE(NULLIF(core_npc_master.backstory, ''), EXCLUDED.backstory),
             emote_moods = COALESCE(NULLIF(core_npc_master.emote_moods, ''), EXCLUDED.emote_moods),
-            occupation = COALESCE(NULLIF(core_npc_master.occupation, ''), EXCLUDED.occupation),
+            occupation = CASE
+                WHEN core_npc_master.occupation IS NULL OR BTRIM(core_npc_master.occupation) = '' THEN EXCLUDED.occupation
+                WHEN (
+                    core_npc_master.occupation ~ '\[[^\]]+\]'
+                    AND (
+                        LOWER(core_npc_master.occupation) LIKE 'faction:%'
+                        OR LOWER(core_npc_master.occupation) LIKE 'faction member:%'
+                        OR core_npc_master.occupation ~* '\bfaction\s*:\s*[^|\n\r]*\[[^\]]+\]'
+                    )
+                ) THEN EXCLUDED.occupation
+                ELSE core_npc_master.occupation
+            END,
             appearance = COALESCE(NULLIF(core_npc_master.appearance, ''), EXCLUDED.appearance),
             equipment = CASE
                 WHEN NULLIF(EXCLUDED.equipment, '') IS NOT NULL THEN EXCLUDED.equipment
@@ -6607,8 +6661,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if (coerceBoolean($snapshot['is_leader'] ?? false)) {
         $occupationParts[] = 'Leader';
     }
+    $occupationFactionText = stobeBuildFactionOccupationText($factionForOccupation);
     if ($factionForOccupation !== '') {
-        $occupationParts[] = 'Faction: ' . $factionForOccupation;
+        $occupationParts[] = $occupationFactionText !== '' ? $occupationFactionText : ('A member of the ' . $factionForOccupation . ' Faction');
     }
     if ($town !== '') {
         $occupationParts[] = 'Town: ' . $town;
@@ -6663,11 +6718,16 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($occupation === '') {
         $occupation = $occupationDefault;
     }
-    if ($factionForOccupation !== '' && stripos($occupation, 'faction:') === false) {
+    if (
+        $factionForOccupation !== '' &&
+        $occupationFactionText !== '' &&
+        stripos($occupation, $factionForOccupation) === false
+    ) {
         $occupation = trim($occupation) !== ''
-            ? ($occupation . ' | Faction: ' . $factionForOccupation)
-            : ('Faction: ' . $factionForOccupation);
+            ? ($occupation . ' | ' . $occupationFactionText)
+            : $occupationFactionText;
     }
+    $occupation = stobeNormalizeOccupationText($occupation, $factionForOccupation);
     $goals = trim(strval($resolvedTraits['goals'] ?? ''));
     if ($goals === '') {
         $goals = $goalsDefault;

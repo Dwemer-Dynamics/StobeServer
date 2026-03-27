@@ -860,6 +860,36 @@ PROMPT;
                 WHERE COALESCE(extended_data, '{}'::jsonb) ? 'relationships'
             ");
         });
+        $applyPatch('core_npc_master', 202603260301, static function () use ($db): void {
+            $rows = $db->fetchAll("
+                SELECT id, COALESCE(occupation, '') AS occupation, COALESCE(faction, '') AS faction
+                FROM core_npc_master
+                WHERE COALESCE(occupation, '') <> ''
+                  AND occupation ~ '\\[[^\\]]+\\]'
+                  AND occupation ~* 'faction'
+            ");
+            $updated = 0;
+            foreach ($rows as $row) {
+                $id = intval($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $occupation = strval($row['occupation'] ?? '');
+                $fallbackFaction = strval($row['faction'] ?? '');
+                $normalized = stobeNormalizeOccupationText($occupation, $fallbackFaction);
+                if ($normalized === '' || $normalized === $occupation) {
+                    continue;
+                }
+                $db->exec(
+                    "UPDATE core_npc_master SET occupation=$1, updated_at=NOW() WHERE id=$2",
+                    [$normalized, $id]
+                );
+                $updated++;
+            }
+            if ($updated > 0) {
+                stobeLogInfo('core_npc_master occupation faction text normalized', ['updated' => $updated]);
+            }
+        });
         $applyPatch('memory_summary', 202603190001, static function () use ($db): void {
             $db->exec("ALTER TABLE memory_summary ADD COLUMN IF NOT EXISTS scope TEXT");
             $db->exec("UPDATE memory_summary SET scope='global' WHERE scope IS NULL OR BTRIM(scope)=''");
