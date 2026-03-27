@@ -1476,6 +1476,63 @@ function stobeSanitizeDialogueMessageForLog(string $message): string {
     return trim($clean);
 }
 
+function stobeChooseIndefiniteArticle(string $value): string {
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return 'a';
+    }
+    $first = strtolower(substr($trimmed, 0, 1));
+    return in_array($first, ['a', 'e', 'i', 'o', 'u'], true) ? 'an' : 'a';
+}
+
+function stobeNormalizeWeaponPhraseWithArticle(string $rawWeapon): string {
+    $weapon = trim($rawWeapon);
+    if ($weapon === '') {
+        return '';
+    }
+    $weapon = preg_replace('/\s{2,}/u', ' ', $weapon) ?? $weapon;
+    if (preg_match('/^(?:a|an|the)\b/iu', $weapon) === 1) {
+        return $weapon;
+    }
+    return stobeChooseIndefiniteArticle($weapon) . ' ' . $weapon;
+}
+
+function stobeNormalizeKnockoutEventData(string $rawEventData): string {
+    $source = trim($rawEventData);
+    if ($source === '') {
+        return '';
+    }
+    if (!function_exists('parseDialogueEventData')) {
+        return $source;
+    }
+
+    $parsed = parseDialogueEventData($source);
+    $attacker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    $victim = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    $message = trim(strval($parsed['message'] ?? ''));
+    if ($message === '') {
+        return $source;
+    }
+    if (preg_match('/^knocked\s+out\s+with\s+(.+)$/iu', $message, $match) !== 1) {
+        return $source;
+    }
+
+    $weapon = stobeNormalizeWeaponPhraseWithArticle(strval($match[1] ?? ''));
+    if ($weapon === '') {
+        $weapon = 'an unknown weapon';
+    }
+    if ($victim === '') {
+        $victim = $attacker !== '' ? $attacker : 'Unknown';
+    }
+
+    $rewritten = 'Knocked out by ' . $weapon;
+    if ($attacker !== '' && strcasecmp($attacker, $victim) !== 0) {
+        $rewritten .= ' from ' . $attacker;
+    }
+
+    return $victim . ': ' . $rewritten;
+}
+
 function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
     $speaker = normalizeParticipantNameToken($speakerName);
     if ($speaker === '') {
@@ -1618,6 +1675,10 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         } else {
             $clean = stobeSanitizeDialogueMessageForLog($clean);
         }
+    }
+
+    if ($normalizedType === 'knockout') {
+        $clean = stobeNormalizeKnockoutEventData($clean);
     }
 
     $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
@@ -2008,6 +2069,147 @@ function extractParticipantIdentities(array $options): array {
     }
 
     return array_values($identitiesByKey);
+}
+
+function stobeEncodePeopleTokenList(array $tokens): string {
+    $normalized = [];
+    foreach ($tokens as $token) {
+        if (!is_string($token)) {
+            continue;
+        }
+        $trimmed = trim($token);
+        if ($trimmed === '') {
+            continue;
+        }
+        $normalized[] = $trimmed;
+    }
+    $encoded = json_encode(array_values($normalized), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded) || $encoded === '') {
+        return '[]';
+    }
+    return $encoded;
+}
+
+function stobePeopleTokenListFromRaw(mixed $rawPeople): array {
+    $peopleSource = '';
+    if (is_string($rawPeople)) {
+        $peopleSource = $rawPeople;
+    } elseif (is_array($rawPeople)) {
+        $peopleSource = $rawPeople;
+    }
+
+    $identities = extractParticipantIdentities([
+        'people' => $peopleSource,
+    ]);
+
+    $tokens = [];
+    foreach ($identities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
+        $token = $storageId !== '' ? ($name . '|' . $storageId) : $name;
+        $tokens[] = $token;
+    }
+    return $tokens;
+}
+
+function stobeRecoverSparsePeopleForCriticalEvent(string $eventType, string $eventData, string $incomingPeople): string {
+    $normalizedType = strtolower(trim($eventType));
+    if ($normalizedType !== 'death') {
+        return $incomingPeople;
+    }
+
+    $currentTokens = stobePeopleTokenListFromRaw($incomingPeople);
+    if (count($currentTokens) > 1) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $speaker = '';
+    if (function_exists('parseDialogueEventData')) {
+        $parsed = parseDialogueEventData($eventData);
+        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    }
+    if ($speaker === '') {
+        $parts = explode(':', $eventData, 2);
+        if (count($parts) === 2) {
+            $speaker = normalizeParticipantNameToken(strval($parts[0] ?? ''));
+        }
+    }
+
+    $recentRow = false;
+    $recentSince = time() - 120;
+    if ($speaker !== '') {
+        $recentRow = $db->fetchOne(
+            "SELECT people
+             FROM eventlog
+             WHERE localts >= $1
+               AND COALESCE(BTRIM(people), '') <> ''
+               AND LOWER(people) LIKE LOWER($2)
+             ORDER BY rowid DESC
+             LIMIT 1",
+            [$recentSince, '%' . $speaker . '%']
+        );
+    }
+    if (!$recentRow) {
+        $fallbackSince = time() - 30;
+        $recentRow = $db->fetchOne(
+            "SELECT people
+             FROM eventlog
+             WHERE localts >= $1
+               AND COALESCE(BTRIM(people), '') <> ''
+             ORDER BY rowid DESC
+             LIMIT 1",
+            [$fallbackSince]
+        );
+    }
+    if (!$recentRow) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $recentTokens = stobePeopleTokenListFromRaw(strval($recentRow['people'] ?? ''));
+    if (count($recentTokens) === 0) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $mergedIdentities = extractParticipantIdentities([
+        'people' => array_merge($recentTokens, $currentTokens),
+    ]);
+    $mergedTokens = [];
+    foreach ($mergedIdentities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
+        $mergedTokens[] = $storageId !== '' ? ($name . '|' . $storageId) : $name;
+        if (count($mergedTokens) >= 24) {
+            break;
+        }
+    }
+
+    if (count($mergedTokens) <= count($currentTokens)) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    stobeLogInfo('Death event people recovered from recent context', [
+        'speaker' => $speaker,
+        'incoming_count' => count($currentTokens),
+        'recovered_count' => count($mergedTokens),
+    ]);
+    return stobeEncodePeopleTokenList($mergedTokens);
 }
 
 function ensureOriginalName(string $name, string $fallbackOriginal = ''): string {

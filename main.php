@@ -70,6 +70,13 @@ if ($incomingPeople === '' &&
     // Keep people IDs authoritative from client payloads; do not synthesize "|player".
     $incomingPeople = '[]';
 }
+if (function_exists('stobeRecoverSparsePeopleForCriticalEvent')) {
+    $incomingPeople = stobeRecoverSparsePeopleForCriticalEvent(
+        strval($eventType),
+        strval($eventData),
+        strval($incomingPeople)
+    );
+}
 
 $GLOBALS["CACHE_PEOPLE"] = $incomingPeople;
 
