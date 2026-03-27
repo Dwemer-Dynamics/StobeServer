@@ -304,7 +304,7 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
             return false;
         }
 
-        $cooldownTurns = max(0, intval($narrator->getInt('random_cooldown', 2)));
+        $cooldownTurns = max(0, min(30, intval($narrator->getInt('random_cooldown', 10))));
         if ($cooldownTurns > 0) {
             $cooldownRow = $db->fetchOne(
                 "SELECT COUNT(*) AS count

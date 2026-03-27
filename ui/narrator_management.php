@@ -29,7 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_narrator'])) {
     $dynamicProfile = isset($_POST['dynamic_profile']) && $_POST['dynamic_profile'] === '1' ? '1' : '0';
 
     $randomChance = max(1, min(100, intval($_POST['random_chance'] ?? 15)));
-    $randomCooldown = max(0, min(10, intval($_POST['random_cooldown'] ?? 2)));
+    $randomCooldown = max(0, min(30, intval($_POST['random_cooldown'] ?? 10)));
     $welcomeCooldown = max(1, min(1440, intval($_POST['welcome_cooldown'] ?? 10)));
 
     $dynamicProfileFields = [];
@@ -76,7 +76,7 @@ $enabled = $narrator->getBool('enabled', true);
 $welcomeEnabled = $narrator->getBool('welcome_enabled', false);
 $randomEnabled = $narrator->getBool('random_enabled', false);
 $randomChance = $narrator->getInt('random_chance', 15);
-$randomCooldown = $narrator->getInt('random_cooldown', 2);
+$randomCooldown = max(0, min(30, $narrator->getInt('random_cooldown', 10)));
 $welcomeCooldown = $narrator->getInt('welcome_cooldown', 10);
 $dynamicProfile = $narrator->getBool('dynamic_profile', false);
 $dynamicProfileFields = $narrator->getDynamicProfileFields();
@@ -507,8 +507,8 @@ if (!$isEmbed) {
                     <span class="hint">Probability (1-100) of a random narrator interjection. Default: 15%.</span>
 
                     <label for="random_cooldown">Random Narration Cooldown (events)</label>
-                    <input type="number" min="0" max="10" id="random_cooldown" name="random_cooldown" value="<?= htmlspecialchars(strval($randomCooldown), ENT_QUOTES, 'UTF-8') ?>">
-                    <span class="hint">Minimum events between random narrations. Range: 0-10, default: 2.</span>
+                    <input type="number" min="0" max="30" id="random_cooldown" name="random_cooldown" value="<?= htmlspecialchars(strval($randomCooldown), ENT_QUOTES, 'UTF-8') ?>">
+                    <span class="hint">Minimum events between random narrations. Range: 0-30, default: 10.</span>
                 </div>
             </div>
 

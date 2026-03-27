@@ -394,7 +394,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 'welcome_cooldown' => '10',
                 'random_enabled' => '0',
                 'random_chance' => '15',
-                'random_cooldown' => '2',
+                'random_cooldown' => '10',
                 'dynamic_profile' => '0',
                 'dynamic_profile_fields' => '[]',
                 'profile_id' => strval($defaultProfileId),

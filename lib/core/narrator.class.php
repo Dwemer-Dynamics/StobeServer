@@ -140,7 +140,7 @@ class Narrator
             'welcome_cooldown' => ['NARRATOR_WELCOME_COOLDOWN', 'int', 10],
             'random_enabled' => ['RANDOM_NARATION', 'bool', false],
             'random_chance' => ['RANDOM_NARATION_CHANCE', 'int', 15],
-            'random_cooldown' => ['RANDOM_NARRATION_COOLDOWN', 'int', 2],
+            'random_cooldown' => ['RANDOM_NARRATION_COOLDOWN', 'int', 10],
             'dynamic_profile' => ['DYNAMIC_PROFILE', 'bool', false],
             'connector_id' => ['NARRATOR_CONNECTOR_ID', 'int', null],
         ];
@@ -156,7 +156,11 @@ class Narrator
                         true
                     );
                 } elseif ($type === 'int') {
-                    $GLOBALS[$globalKey] = intval($raw);
+                    $value = intval($raw);
+                    if ($dbKey === 'random_cooldown') {
+                        $value = max(0, min(30, $value));
+                    }
+                    $GLOBALS[$globalKey] = $value;
                 } else {
                     $GLOBALS[$globalKey] = $raw;
                 }
