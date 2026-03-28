@@ -832,7 +832,6 @@ if (count($wordCloud) > 0) {
         <div class="server-version-info" style="color:#6c757d; font-size:0.9em; font-family: 'Exo2', Arial, sans-serif;">
             Server: <?= h($serverVersionDisplay) ?>
             Plugin: <?= h($pluginVersionDisplay) ?>
-            Updated: <?= h($serverReleaseDate) ?>
         </div>
         <div class="social-links" style="display:flex; align-items:center; gap:12px;">
             <a href="https://www.youtube.com/@DwemerDynamics" target="_blank" rel="noopener noreferrer" class="social-link" title="Checkout our Youtube Channel">
