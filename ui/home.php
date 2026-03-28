@@ -225,7 +225,11 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.6.5';
+    $serverVersionDisplay = '0.7.0';
+}
+$serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
+if ($serverReleaseDate === '') {
+    $serverReleaseDate = '2026-03-27';
 }
 
 $pluginVersionDisplay = 'N/A';
@@ -828,6 +832,7 @@ if (count($wordCloud) > 0) {
         <div class="server-version-info" style="color:#6c757d; font-size:0.9em; font-family: 'Exo2', Arial, sans-serif;">
             Server: <?= h($serverVersionDisplay) ?>
             Plugin: <?= h($pluginVersionDisplay) ?>
+            Updated: <?= h($serverReleaseDate) ?>
         </div>
         <div class="social-links" style="display:flex; align-items:center; gap:12px;">
             <a href="https://www.youtube.com/@DwemerDynamics" target="_blank" rel="noopener noreferrer" class="social-link" title="Checkout our Youtube Channel">
