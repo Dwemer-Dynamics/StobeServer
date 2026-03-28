@@ -40,6 +40,7 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 $tabs = [
     ['id' => 'adventure_log', 'label' => "📕 Adventure Log", 'page' => 'adventurelog.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'diary_log', 'label' => "📔 Stobe Diaries", 'page' => 'diarylog.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'narrator', 'label' => 'Narrator', 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
 ];
 
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'adventure_log')));

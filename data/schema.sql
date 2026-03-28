@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS descriptions_custom (
     description TEXT
 );
 
+CREATE TABLE IF NOT EXISTS description_images (
+    stringid VARCHAR(128) PRIMARY KEY,
+    image_path TEXT NOT NULL DEFAULT '',
+    image_hash VARCHAR(64) DEFAULT '',
+    format VARCHAR(16) DEFAULT '',
+    width INT DEFAULT 0,
+    height INT DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_description_images_stringid_lower ON description_images (LOWER(stringid));
+
 CREATE OR REPLACE VIEW combined_descriptions AS
 SELECT
     c.stringid,
@@ -563,6 +574,7 @@ CREATE TABLE IF NOT EXISTS core_npc (
     faction VARCHAR(128) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     profile_id INT,
+    profile_id_before_player_faction INT,
     extended_data JSONB DEFAULT '{}',
     md5 TEXT DEFAULT '',
     gamets_last_updated BIGINT DEFAULT 0,
@@ -645,6 +657,7 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     id SERIAL PRIMARY KEY,
     label VARCHAR(128) UNIQUE NOT NULL,
     is_default_npc BOOLEAN DEFAULT FALSE,
+    is_player_faction_profile BOOLEAN DEFAULT FALSE,
     prompt_head TEXT DEFAULT '',
     profile_prompt TEXT DEFAULT '',
     response_connector INT,
@@ -681,6 +694,10 @@ CREATE TABLE IF NOT EXISTS core_profiles (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_default_npc
     ON core_profiles (is_default_npc)
     WHERE is_default_npc = TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_player_faction
+    ON core_profiles (is_player_faction_profile)
+    WHERE is_player_faction_profile = TRUE;
 
 -- ----------------------------------------------------------
 -- SPEECH — TTS audio cache
@@ -2120,6 +2137,11 @@ Fields currently editable for this NPC: #ALLOWED_FIELDS#$$,
   </requirements>
 </bored_prompt_template>$$,
     $$Prompt template for bored-event generation. Supports #NPC_LIST#, #LOCATION#, #WORLD_EVENTS#. Used in lib/chat_helper_functions.php.$$
+),
+(
+    'random_narration_prompt',
+    $$Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.$$,
+    $$Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.$$
 )
 ON CONFLICT (prompt_key) DO UPDATE SET
     default_prompt = EXCLUDED.default_prompt,
@@ -2489,6 +2511,11 @@ WHERE COALESCE(
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ) IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS core_narrator (
+    id TEXT PRIMARY KEY,
+    value TEXT
+);
 
 
 

@@ -52,18 +52,19 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 }
 
 $tabs = [
-    ['id' => 'npcs', 'label' => "⭐ Stobe NPCs", 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'settings', 'label' => "🌐 Global Settings", 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'profiles', 'label' => "📂 Profiles", 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'llm', 'label' => "🧠 LLM Connectors", 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'tts', 'label' => "📢 TTS Connectors", 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'keys', 'label' => "🔑 API Keys", 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'world_knowledge', 'label' => "📖 World Knowledge", 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'bio', 'label' => "🪪 NPC Biographies", 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'desc', 'label' => "📜 Descriptions", 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'voice', 'label' => "🎙️ Voice Manager", 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'actions', 'label' => "⚔️ Action Editor", 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'prompts', 'label' => "📝 Prompts Manager", 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'npcs', 'label' => "\u{2B50} Stobe NPCs", 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'settings', 'label' => "\u{1F310} Global Settings", 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'profiles', 'label' => "\u{1F4C2} Profiles", 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'llm', 'label' => "\u{1F9E0} LLM Connectors", 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'tts', 'label' => "\u{1F4E2} TTS Connectors", 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'keys', 'label' => "\u{1F511} API Keys", 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'narrator', 'label' => "\u{1F5E3}\u{FE0F} Narrator", 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'world_knowledge', 'label' => "\u{1F4D6} World Knowledge", 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'bio', 'label' => "\u{1FAAA} NPC Biographies", 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'desc', 'label' => "\u{1F4DC} Descriptions", 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'voice', 'label' => "\u{1F399}\u{FE0F} Voice Manager", 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'actions', 'label' => "\u{2694}\u{FE0F} Action Editor", 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'prompts', 'label' => "\u{1F4DD} Prompts Manager", 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
 ];
 
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'npcs')));
@@ -281,5 +282,4 @@ if (!isset($tabMap[$activeTab])) {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-
 

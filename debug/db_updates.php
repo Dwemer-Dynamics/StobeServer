@@ -367,6 +367,153 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 SET description = EXCLUDED.description,
                     updated_at = NOW()");
         });
+        $applyPatch('core_narrator', 202603250301, static function () use ($db): void {
+            $db->exec("CREATE TABLE IF NOT EXISTS core_narrator (
+                id TEXT PRIMARY KEY,
+                value TEXT
+            )");
+
+            $defaultProfileId = 1;
+            $profileRow = $db->fetchOne(
+                "SELECT id
+                 FROM core_profiles
+                 WHERE is_default_npc = TRUE
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+            if (is_array($profileRow)) {
+                $resolved = intval($profileRow['id'] ?? 0);
+                if ($resolved > 0) {
+                    $defaultProfileId = $resolved;
+                }
+            }
+
+            $defaults = [
+                'enabled' => '1',
+                'welcome_enabled' => '0',
+                'welcome_cooldown' => '10',
+                'random_enabled' => '0',
+                'random_chance' => '15',
+                'random_cooldown' => '10',
+                'dynamic_profile' => '0',
+                'dynamic_profile_fields' => '[]',
+                'profile_id' => strval($defaultProfileId),
+                'voiceid' => 'stobenarrator',
+                'core' => "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Tamriel. Provide unique insight and descriptions of what is going on in the world.",
+                'background' => "A guiding voice that describes the world, events, and transitions. He is not a character, but a voice within the player's mind.",
+                'personality' => 'Laid-back, observant, and friendly; describes scenes with calm confidence.',
+                'speechstyle' => 'Relaxed and conversational, with vivid scene descriptions in one or two concise sentences.',
+                'goals' => '',
+                'oghma_knowledge' => 'knowall',
+                'gender' => 'male',
+                'prompt_head' => '',
+            ];
+
+            foreach ($defaults as $key => $value) {
+                $existing = $db->fetchOne(
+                    "SELECT value FROM core_narrator WHERE id = $1 LIMIT 1",
+                    [$key]
+                );
+                $currentValue = is_array($existing) && array_key_exists('value', $existing)
+                    ? trim(strval($existing['value']))
+                    : '';
+                if ($currentValue !== '') {
+                    continue;
+                }
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ($1, $2)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$key, strval($value)]
+                );
+            }
+        });
+        $applyPatch('core_narrator', 202603250405, static function () use ($db): void {
+            $db->exec("DELETE FROM core_narrator WHERE id IN ('diary_enabled', 'diary_connector_id')");
+        });
+        $applyPatch('core_narrator', 202603250406, static function () use ($db): void {
+            $newVoiceId = 'stobenarrator';
+            $newPersonality = 'Laid-back, observant, and friendly; describes scenes with calm confidence.';
+            $newSpeechStyle = 'Relaxed and conversational, with vivid scene descriptions in one or two concise sentences.';
+            $normalize = static function (string $value): string {
+                return strtolower(trim(preg_replace('/\s+/u', ' ', $value) ?? $value));
+            };
+
+            $voiceIdRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'voiceid' LIMIT 1");
+            $currentVoiceId = is_array($voiceIdRow) && array_key_exists('value', $voiceIdRow)
+                ? trim(strval($voiceIdRow['value']))
+                : '';
+            if (
+                $currentVoiceId === ''
+                || $normalize($currentVoiceId) === $normalize('TheNarrator')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('voiceid', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newVoiceId]
+                );
+            }
+
+            $personalityRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'personality' LIMIT 1");
+            $currentPersonality = is_array($personalityRow) && array_key_exists('value', $personalityRow)
+                ? trim(strval($personalityRow['value']))
+                : '';
+            if (
+                $currentPersonality === ''
+                || $normalize($currentPersonality) === $normalize('Detached, descriptive, witty, helpful.')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('personality', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newPersonality]
+                );
+            }
+
+            $speechStyleRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'speechstyle' LIMIT 1");
+            $currentSpeechStyle = is_array($speechStyleRow) && array_key_exists('value', $speechStyleRow)
+                ? trim(strval($speechStyleRow['value']))
+                : '';
+            if (
+                $currentSpeechStyle === ''
+                || $normalize($currentSpeechStyle) === $normalize('Direct and practical.')
+                || $normalize($currentSpeechStyle) === $normalize('Detached, descriptive, witty, helpful.')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('speechstyle', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newSpeechStyle]
+                );
+            }
+        });
+        $applyPatch('core_narrator', 202603250407, static function () use ($db): void {
+            $newVoiceId = 'stobenarrator';
+            $voiceIdRow = $db->fetchOne("SELECT value FROM core_narrator WHERE id = 'voiceid' LIMIT 1");
+            $currentVoiceId = is_array($voiceIdRow) && array_key_exists('value', $voiceIdRow)
+                ? trim(strval($voiceIdRow['value']))
+                : '';
+            $normalize = static function (string $value): string {
+                return strtolower(trim(preg_replace('/\s+/u', ' ', $value) ?? $value));
+            };
+            if (
+                $currentVoiceId === ''
+                || $normalize($currentVoiceId) === $normalize('TheNarrator')
+            ) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ('voiceid', $1)
+                     ON CONFLICT (id) DO UPDATE
+                     SET value = EXCLUDED.value",
+                    [$newVoiceId]
+                );
+            }
+        });
         $applyPatch('prompts', 202603130214, static function () use ($db): void {
             $analysisPrompt = <<<'PROMPT'
 You are a relationship analyzer for Kenshi NPCs. Analyze relationship descriptions and output JSON.
@@ -713,6 +860,36 @@ PROMPT;
                 WHERE COALESCE(extended_data, '{}'::jsonb) ? 'relationships'
             ");
         });
+        $applyPatch('core_npc_master', 202603260301, static function () use ($db): void {
+            $rows = $db->fetchAll("
+                SELECT id, COALESCE(occupation, '') AS occupation, COALESCE(faction, '') AS faction
+                FROM core_npc_master
+                WHERE COALESCE(occupation, '') <> ''
+                  AND occupation ~ '\\[[^\\]]+\\]'
+                  AND occupation ~* 'faction'
+            ");
+            $updated = 0;
+            foreach ($rows as $row) {
+                $id = intval($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $occupation = strval($row['occupation'] ?? '');
+                $fallbackFaction = strval($row['faction'] ?? '');
+                $normalized = stobeNormalizeOccupationText($occupation, $fallbackFaction);
+                if ($normalized === '' || $normalized === $occupation) {
+                    continue;
+                }
+                $db->exec(
+                    "UPDATE core_npc_master SET occupation=$1, updated_at=NOW() WHERE id=$2",
+                    [$normalized, $id]
+                );
+                $updated++;
+            }
+            if ($updated > 0) {
+                stobeLogInfo('core_npc_master occupation faction text normalized', ['updated' => $updated]);
+            }
+        });
         $applyPatch('memory_summary', 202603190001, static function () use ($db): void {
             $db->exec("ALTER TABLE memory_summary ADD COLUMN IF NOT EXISTS scope TEXT");
             $db->exec("UPDATE memory_summary SET scope='global' WHERE scope IS NULL OR BTRIM(scope)=''");
@@ -852,6 +1029,30 @@ PROMPT;
                 [$prompt]
             );
         });
+        $applyPatch('prompts', 202603250401, static function () use ($db): void {
+            $prompt = "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 2-3 concise sentences. Do not invent events or include action tags.";
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('random_narration_prompt', $1, 'Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.')
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
+        $applyPatch('prompts', 202603250402, static function () use ($db): void {
+            $prompt = "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.";
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('random_narration_prompt', $1, 'Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.')
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [$prompt]
+            );
+        });
         $applyPatch('core_npc_master', 202603150006, static function () use ($db): void {
             $db->exec("CREATE INDEX IF NOT EXISTS idx_core_npc_master_history_npc_history ON core_npc_master_history (npc_id, history_id DESC)");
             $db->exec("CREATE OR REPLACE FUNCTION core_npc_master_history_audit_fn()
@@ -939,6 +1140,39 @@ PROMPT;
                     WHERE rn > 50
                 )
             ");
+        });
+
+        $applyPatch('core_profiles', 202603270101, static function () use ($db): void {
+            $db->exec("ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS is_player_faction_profile BOOLEAN DEFAULT FALSE");
+            $db->exec("UPDATE core_profiles SET is_player_faction_profile = FALSE WHERE is_player_faction_profile IS NULL");
+            $keeper = $db->fetchOne(
+                "SELECT id
+                 FROM core_profiles
+                 WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+            $keeperId = intval($keeper['id'] ?? 0);
+            if ($keeperId > 0) {
+                $db->exec(
+                    "UPDATE core_profiles
+                     SET is_player_faction_profile = FALSE,
+                         updated_at = NOW()
+                     WHERE id <> $1
+                       AND COALESCE(is_player_faction_profile, FALSE) = TRUE",
+                    [$keeperId]
+                );
+            }
+            $db->exec(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_player_faction
+                 ON core_profiles (is_player_faction_profile)
+                 WHERE is_player_faction_profile = TRUE"
+            );
+        });
+
+        $applyPatch('core_npc_master', 202603270102, static function () use ($db): void {
+            $db->exec("ALTER TABLE core_npc_master ADD COLUMN IF NOT EXISTS profile_id_before_player_faction INT");
+            $db->exec("CREATE OR REPLACE VIEW core_npc AS SELECT * FROM core_npc_master");
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

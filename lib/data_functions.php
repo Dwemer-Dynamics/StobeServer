@@ -1476,6 +1476,63 @@ function stobeSanitizeDialogueMessageForLog(string $message): string {
     return trim($clean);
 }
 
+function stobeChooseIndefiniteArticle(string $value): string {
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return 'a';
+    }
+    $first = strtolower(substr($trimmed, 0, 1));
+    return in_array($first, ['a', 'e', 'i', 'o', 'u'], true) ? 'an' : 'a';
+}
+
+function stobeNormalizeWeaponPhraseWithArticle(string $rawWeapon): string {
+    $weapon = trim($rawWeapon);
+    if ($weapon === '') {
+        return '';
+    }
+    $weapon = preg_replace('/\s{2,}/u', ' ', $weapon) ?? $weapon;
+    if (preg_match('/^(?:a|an|the)\b/iu', $weapon) === 1) {
+        return $weapon;
+    }
+    return stobeChooseIndefiniteArticle($weapon) . ' ' . $weapon;
+}
+
+function stobeNormalizeKnockoutEventData(string $rawEventData): string {
+    $source = trim($rawEventData);
+    if ($source === '') {
+        return '';
+    }
+    if (!function_exists('parseDialogueEventData')) {
+        return $source;
+    }
+
+    $parsed = parseDialogueEventData($source);
+    $attacker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    $victim = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    $message = trim(strval($parsed['message'] ?? ''));
+    if ($message === '') {
+        return $source;
+    }
+    if (preg_match('/^knocked\s+out\s+with\s+(.+)$/iu', $message, $match) !== 1) {
+        return $source;
+    }
+
+    $weapon = stobeNormalizeWeaponPhraseWithArticle(strval($match[1] ?? ''));
+    if ($weapon === '') {
+        $weapon = 'an unknown weapon';
+    }
+    if ($victim === '') {
+        $victim = $attacker !== '' ? $attacker : 'Unknown';
+    }
+
+    $rewritten = 'Knocked out by ' . $weapon;
+    if ($attacker !== '' && strcasecmp($attacker, $victim) !== 0) {
+        $rewritten .= ' from ' . $attacker;
+    }
+
+    return $victim . ': ' . $rewritten;
+}
+
 function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
     $speaker = normalizeParticipantNameToken($speakerName);
     if ($speaker === '') {
@@ -1620,6 +1677,10 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         }
     }
 
+    if ($normalizedType === 'knockout') {
+        $clean = stobeNormalizeKnockoutEventData($clean);
+    }
+
     $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
     if (in_array($normalizedType, $contextOnlyTypes, true)) {
         // Context telemetry rows are not directional dialogue.
@@ -1651,6 +1712,188 @@ function baseNameWithoutBracketSuffix(string $name): string {
     return trim((string)preg_replace('/\s*\[[^\]]+\]\s*$/u', '', $trimmed));
 }
 
+function stobeBuildFactionOccupationText(string $rawFaction): string {
+    $factionName = baseNameWithoutBracketSuffix($rawFaction);
+    if ($factionName === '') {
+        $factionName = trim($rawFaction);
+    }
+    $factionName = trim((string)preg_replace('/^faction\s*:\s*/iu', '', $factionName));
+    $factionName = trim((string)preg_replace('/\s{2,}/u', ' ', $factionName));
+    if ($factionName === '') {
+        return '';
+    }
+    if (preg_match('/\bfaction$/iu', $factionName) === 1) {
+        return 'A member of the ' . $factionName;
+    }
+    return 'A member of the ' . $factionName . ' Faction';
+}
+
+function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFaction = ''): string {
+    $occupation = trim($rawOccupation);
+    if ($occupation === '') {
+        $fallbackText = stobeBuildFactionOccupationText($fallbackFaction);
+        return $fallbackText;
+    }
+
+    if (preg_match('/^\s*faction(?:\s+member)?\s*:\s*(.+)$/iu', $occupation, $match) === 1) {
+        $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+        if ($normalized !== '') {
+            return $normalized;
+        }
+    }
+
+    $occupation = preg_replace_callback(
+        '/\bFaction\s*:\s*([^|\n\r]+)/iu',
+        static function (array $match): string {
+            $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+            return $normalized !== '' ? $normalized : trim(strval($match[0] ?? ''));
+        },
+        $occupation
+    ) ?? $occupation;
+
+    return trim((string)preg_replace('/\s{2,}/u', ' ', $occupation));
+}
+
+function stobeNormalizeParticipantAwarenessStateToken(string $rawState): string {
+    $value = strtolower(trim($rawState));
+    if ($value === '') {
+        return '';
+    }
+
+    $value = preg_replace('/[\(\)\[\]]+/u', ' ', $value) ?? $value;
+    $value = str_replace(['_', '-', '/', '\\'], ' ', $value);
+    $value = trim((string)preg_replace('/\s{2,}/u', ' ', $value));
+    if ($value === '' || in_array($value, ['normal', 'awake', 'none', 'n/a', 'na'], true)) {
+        return '';
+    }
+
+    if (in_array($value, ['sleep', 'sleeping', 'asleep', 'sleep state'], true)) {
+        return 'sleeping';
+    }
+    if (in_array($value, ['ko', 'knocked out', 'knockout', 'knockedout'], true)) {
+        return 'knocked_out';
+    }
+    if (in_array($value, ['unconscious', 'passed out', 'passedout', 'blackout', 'incapacitated'], true)) {
+        return 'unconscious';
+    }
+    if (in_array($value, ['dead', 'deceased', 'death'], true)) {
+        return 'dead';
+    }
+
+    return '';
+}
+
+function stobeExtractParticipantAwarenessStateFromDisplayName(string $rawName): string {
+    $value = trim($rawName);
+    if ($value === '') {
+        return '';
+    }
+    if (preg_match('/\(([^()]*)\)\s*$/u', $value, $matches) !== 1) {
+        return '';
+    }
+    return stobeNormalizeParticipantAwarenessStateToken(strval($matches[1] ?? ''));
+}
+
+function stobeParticipantDisplayNameWithoutAwarenessTag(string $rawName): string {
+    $value = trim($rawName);
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^(.*)\(([^()]*)\)\s*$/u', $value, $matches) === 1) {
+        $state = stobeNormalizeParticipantAwarenessStateToken(strval($matches[2] ?? ''));
+        if ($state !== '') {
+            $value = trim(strval($matches[1] ?? ''));
+        }
+    }
+
+    return trim($value);
+}
+
+function stobeParticipantAwarenessTagLabel(string $state): string {
+    $normalized = stobeNormalizeParticipantAwarenessStateToken($state);
+    if ($normalized === 'sleeping') {
+        return 'sleeping';
+    }
+    if ($normalized === 'knocked_out') {
+        return 'knocked out';
+    }
+    if ($normalized === 'unconscious') {
+        return 'unconscious';
+    }
+    return '';
+}
+
+function stobeApplyParticipantAwarenessTag(string $name, string $state): string {
+    $baseName = stobeParticipantDisplayNameWithoutAwarenessTag($name);
+    if ($baseName === '') {
+        return '';
+    }
+
+    $label = stobeParticipantAwarenessTagLabel($state);
+    if ($label === '') {
+        return $baseName;
+    }
+    return $baseName . ' (' . $label . ')';
+}
+
+function stobeNpcArrayFieldToAssoc(mixed $raw): array {
+    if (is_array($raw)) {
+        return $raw;
+    }
+    if (is_string($raw) && trim($raw) !== '') {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+    return [];
+}
+
+function stobeResolveNpcAwarenessState(array $npcData): string {
+    $state = stobeNormalizeParticipantAwarenessStateToken(strval($npcData['character_state'] ?? ''));
+    if ($state !== '') {
+        return $state;
+    }
+
+    $metadata = stobeNpcArrayFieldToAssoc($npcData['metadata'] ?? []);
+    if (is_array($metadata)) {
+        $metaState = stobeNormalizeParticipantAwarenessStateToken(strval($metadata['character_state'] ?? ''));
+        if ($metaState !== '') {
+            return $metaState;
+        }
+        $medical = stobeNpcArrayFieldToAssoc($metadata['medical'] ?? []);
+        if (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout'])) {
+            return 'unconscious';
+        }
+        if (!empty($metadata['is_sleeping']) || !empty($metadata['sleeping'])) {
+            return 'sleeping';
+        }
+    }
+
+    $extended = stobeNpcArrayFieldToAssoc($npcData['extended_data'] ?? []);
+    if (is_array($extended)) {
+        $extState = stobeNormalizeParticipantAwarenessStateToken(strval($extended['character_state'] ?? ''));
+        if ($extState !== '') {
+            return $extState;
+        }
+        $medical = stobeNpcArrayFieldToAssoc($extended['medical'] ?? []);
+        if (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout'])) {
+            return 'unconscious';
+        }
+        if (!empty($extended['is_sleeping']) || !empty($extended['sleeping'])) {
+            return 'sleeping';
+        }
+    }
+
+    return '';
+}
+
+function stobeNpcCannotRespondInDirectChat(array $npcData): bool {
+    $state = stobeResolveNpcAwarenessState($npcData);
+    return in_array($state, ['dead', 'unconscious', 'knocked_out'], true);
+}
+
 function normalizeParticipantNameToken(string $raw): string {
     $value = trim($raw);
     if ($value === '') {
@@ -1665,6 +1908,7 @@ function normalizeParticipantNameToken(string $raw): string {
         }
     }
 
+    $value = stobeParticipantDisplayNameWithoutAwarenessTag($value);
     return trim($value);
 }
 
@@ -1966,6 +2210,391 @@ function extractParticipantIdentities(array $options): array {
     }
 
     return array_values($identitiesByKey);
+}
+
+function stobeExtractParticipantIdentityWithAwarenessState(string $raw): array {
+    $value = trim($raw);
+    if ($value === '') {
+        return ['name' => '', 'storage_id' => '', 'state' => ''];
+    }
+
+    $namePart = $value;
+    $storageId = '';
+    $pipePos = strpos($value, '|');
+    if ($pipePos !== false) {
+        $namePart = trim(substr($value, 0, $pipePos));
+        $storageId = normalizeStorageIdToken(substr($value, $pipePos + 1));
+    }
+
+    $state = stobeExtractParticipantAwarenessStateFromDisplayName($namePart);
+    $name = normalizeParticipantNameToken($namePart);
+    return [
+        'name' => $name,
+        'storage_id' => $storageId,
+        'state' => $state,
+    ];
+}
+
+function stobeFetchParticipantAwarenessStateMap(array $participantIdentities): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || count($participantIdentities) === 0) {
+        return [];
+    }
+
+    $nameParams = [];
+    $storageParams = [];
+    foreach ($participantIdentities as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $nameValue = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+        if ($nameValue !== '') {
+            $nameParams[strtolower($nameValue)] = $nameValue;
+        }
+        $storageValue = normalizeStorageIdToken(strval($entry['storage_id'] ?? ''));
+        if ($storageValue !== '') {
+            $storageParams[strtolower($storageValue)] = $storageValue;
+        }
+    }
+    if (count($nameParams) === 0 && count($storageParams) === 0) {
+        return [];
+    }
+
+    $whereParts = [];
+    $params = [];
+    $index = 1;
+    if (count($nameParams) > 0) {
+        $namePlaceholders = [];
+        foreach (array_values($nameParams) as $nameValue) {
+            $params[] = $nameValue;
+            $namePlaceholders[] = 'LOWER($' . $index . ')';
+            $index++;
+        }
+        $whereParts[] = 'LOWER(name) IN (' . implode(',', $namePlaceholders) . ')';
+        $whereParts[] = 'LOWER(COALESCE(original_name, \'\')) IN (' . implode(',', $namePlaceholders) . ')';
+    }
+    if (count($storageParams) > 0) {
+        $storagePlaceholders = [];
+        foreach (array_values($storageParams) as $storageValue) {
+            $params[] = $storageValue;
+            $storagePlaceholders[] = 'LOWER($' . $index . ')';
+            $index++;
+        }
+        $whereParts[] = 'LOWER(COALESCE(metadata->>\'storage_id\', \'\')) IN (' . implode(',', $storagePlaceholders) . ')';
+    }
+    if (count($whereParts) === 0) {
+        return [];
+    }
+
+    $rows = $db->fetchAll(
+        'SELECT name,
+                original_name,
+                character_state,
+                metadata,
+                extended_data,
+                COALESCE(metadata->>\'storage_id\', \'\') AS storage_id
+         FROM core_npc
+         WHERE ' . implode(' OR ', $whereParts) . '
+         ORDER BY gamets_last_updated DESC, updated_at DESC',
+        $params
+    );
+
+    $stateByLookup = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $state = stobeResolveNpcAwarenessState($row);
+        if (!in_array($state, ['sleeping', 'unconscious', 'knocked_out', 'dead'], true)) {
+            continue;
+        }
+
+        $rowName = normalizeParticipantNameToken(strval($row['name'] ?? ''));
+        if ($rowName !== '') {
+            $nameKey = 'name:' . strtolower($rowName);
+            if (!isset($stateByLookup[$nameKey])) {
+                $stateByLookup[$nameKey] = $state;
+            }
+        }
+
+        $rowOriginal = normalizeParticipantNameToken(strval($row['original_name'] ?? ''));
+        if ($rowOriginal !== '') {
+            $originalKey = 'original:' . strtolower($rowOriginal);
+            if (!isset($stateByLookup[$originalKey])) {
+                $stateByLookup[$originalKey] = $state;
+            }
+        }
+
+        $rowStorageId = normalizeStorageIdToken(strval($row['storage_id'] ?? ''));
+        if ($rowStorageId !== '') {
+            $storageKey = 'storage:' . strtolower($rowStorageId);
+            if (!isset($stateByLookup[$storageKey])) {
+                $stateByLookup[$storageKey] = $state;
+            }
+        }
+    }
+
+    $result = [];
+    foreach ($participantIdentities as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken(strval($entry['storage_id'] ?? ''));
+        $lookupOrder = [];
+        if ($storageId !== '') {
+            $lookupOrder[] = 'storage:' . strtolower($storageId);
+        }
+        $lookupOrder[] = 'name:' . strtolower($name);
+        $lookupOrder[] = 'original:' . strtolower($name);
+
+        $resolvedState = '';
+        foreach ($lookupOrder as $lookupKey) {
+            if (isset($stateByLookup[$lookupKey])) {
+                $resolvedState = strval($stateByLookup[$lookupKey]);
+                break;
+            }
+        }
+
+        $entryKey = $storageId !== ''
+            ? ('__sid__:' . strtolower($storageId))
+            : ('__name__:' . strtolower($name));
+        $result[$entryKey] = $resolvedState;
+    }
+
+    return $result;
+}
+
+function stobeAnnotatePeopleTokensWithNpcStates(mixed $rawPeople): string {
+    if (is_string($rawPeople)) {
+        $trimmed = trim($rawPeople);
+        if ($trimmed === '') {
+            return '[]';
+        }
+        $decoded = json_decode($trimmed, true);
+        if (!is_array($decoded)) {
+            return $trimmed;
+        }
+    } elseif (!is_array($rawPeople)) {
+        return '[]';
+    }
+
+    $identities = extractParticipantIdentities([
+        'people' => $rawPeople,
+    ]);
+    if (count($identities) === 0) {
+        return '[]';
+    }
+
+    $stateMap = stobeFetchParticipantAwarenessStateMap($identities);
+    $tokens = [];
+    foreach ($identities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken(strval($identity['storage_id'] ?? ''));
+        $key = $storageId !== ''
+            ? ('__sid__:' . strtolower($storageId))
+            : ('__name__:' . strtolower($name));
+        $state = strval($stateMap[$key] ?? '');
+        $displayName = stobeApplyParticipantAwarenessTag($name, $state);
+        if ($displayName === '') {
+            continue;
+        }
+        $tokens[] = $storageId !== '' ? ($displayName . '|' . $storageId) : $displayName;
+    }
+
+    return stobeEncodePeopleTokenList($tokens);
+}
+
+function stobeEventRowActorHasAwarenessSuppressedTag(array $row, string $actorName): bool {
+    $safeActor = normalizeParticipantNameToken($actorName);
+    if ($safeActor === '') {
+        return false;
+    }
+    $actorKey = strtolower($safeActor);
+
+    $rawPeople = $row['people'] ?? '';
+    $tokens = [];
+    if (is_array($rawPeople)) {
+        $tokens = $rawPeople;
+    } else {
+        $peopleText = trim(strval($rawPeople));
+        if ($peopleText === '') {
+            return false;
+        }
+        $decoded = json_decode($peopleText, true);
+        if (is_array($decoded)) {
+            $tokens = $decoded;
+        } else {
+            $tokens = preg_split('/[,;]+/u', $peopleText) ?: [];
+        }
+    }
+
+    foreach ($tokens as $token) {
+        if (!is_string($token)) {
+            continue;
+        }
+        $parsed = stobeExtractParticipantIdentityWithAwarenessState($token);
+        $name = strtolower(strval($parsed['name'] ?? ''));
+        if ($name === '' || $name !== $actorKey) {
+            continue;
+        }
+        $state = strval($parsed['state'] ?? '');
+        if (in_array($state, ['sleeping', 'unconscious', 'knocked_out'], true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function stobeEncodePeopleTokenList(array $tokens): string {
+    $normalized = [];
+    foreach ($tokens as $token) {
+        if (!is_string($token)) {
+            continue;
+        }
+        $trimmed = trim($token);
+        if ($trimmed === '') {
+            continue;
+        }
+        $normalized[] = $trimmed;
+    }
+    $encoded = json_encode(array_values($normalized), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded) || $encoded === '') {
+        return '[]';
+    }
+    return $encoded;
+}
+
+function stobePeopleTokenListFromRaw(mixed $rawPeople): array {
+    $peopleSource = '';
+    if (is_string($rawPeople)) {
+        $peopleSource = $rawPeople;
+    } elseif (is_array($rawPeople)) {
+        $peopleSource = $rawPeople;
+    }
+
+    $identities = extractParticipantIdentities([
+        'people' => $peopleSource,
+    ]);
+
+    $tokens = [];
+    foreach ($identities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
+        $token = $storageId !== '' ? ($name . '|' . $storageId) : $name;
+        $tokens[] = $token;
+    }
+    return $tokens;
+}
+
+function stobeRecoverSparsePeopleForCriticalEvent(string $eventType, string $eventData, string $incomingPeople): string {
+    $normalizedType = strtolower(trim($eventType));
+    if ($normalizedType !== 'death') {
+        return $incomingPeople;
+    }
+
+    $currentTokens = stobePeopleTokenListFromRaw($incomingPeople);
+    if (count($currentTokens) > 1) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $speaker = '';
+    if (function_exists('parseDialogueEventData')) {
+        $parsed = parseDialogueEventData($eventData);
+        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    }
+    if ($speaker === '') {
+        $parts = explode(':', $eventData, 2);
+        if (count($parts) === 2) {
+            $speaker = normalizeParticipantNameToken(strval($parts[0] ?? ''));
+        }
+    }
+
+    $recentRow = false;
+    $recentSince = time() - 120;
+    if ($speaker !== '') {
+        $recentRow = $db->fetchOne(
+            "SELECT people
+             FROM eventlog
+             WHERE localts >= $1
+               AND COALESCE(BTRIM(people), '') <> ''
+               AND LOWER(people) LIKE LOWER($2)
+             ORDER BY rowid DESC
+             LIMIT 1",
+            [$recentSince, '%' . $speaker . '%']
+        );
+    }
+    if (!$recentRow) {
+        $fallbackSince = time() - 30;
+        $recentRow = $db->fetchOne(
+            "SELECT people
+             FROM eventlog
+             WHERE localts >= $1
+               AND COALESCE(BTRIM(people), '') <> ''
+             ORDER BY rowid DESC
+             LIMIT 1",
+            [$fallbackSince]
+        );
+    }
+    if (!$recentRow) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $recentTokens = stobePeopleTokenListFromRaw(strval($recentRow['people'] ?? ''));
+    if (count($recentTokens) === 0) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    $mergedIdentities = extractParticipantIdentities([
+        'people' => array_merge($recentTokens, $currentTokens),
+    ]);
+    $mergedTokens = [];
+    foreach ($mergedIdentities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
+        $mergedTokens[] = $storageId !== '' ? ($name . '|' . $storageId) : $name;
+        if (count($mergedTokens) >= 24) {
+            break;
+        }
+    }
+
+    if (count($mergedTokens) <= count($currentTokens)) {
+        return stobeEncodePeopleTokenList($currentTokens);
+    }
+
+    stobeLogInfo('Death event people recovered from recent context', [
+        'speaker' => $speaker,
+        'incoming_count' => count($currentTokens),
+        'recovered_count' => count($mergedTokens),
+    ]);
+    return stobeEncodePeopleTokenList($mergedTokens);
 }
 
 function ensureOriginalName(string $name, string $fallbackOriginal = ''): string {
@@ -2997,7 +3626,7 @@ function buildIdentityRenameBootstrapProfile(array $entry, string $storageId): a
     }
     if ($faction !== '') {
         $profile['faction'] = $faction;
-        $profile['occupation'] = 'Faction: ' . $faction;
+        $profile['occupation'] = stobeBuildFactionOccupationText($faction);
         $profile['goals'] = 'Survive, recover, and pursue faction priorities.';
     }
     if ($gender !== '') {
@@ -3524,9 +4153,35 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
         $params[] = "%{$actorFilter}%";
     }
 
-    $query .= " ORDER BY gamets DESC, ts DESC, rowid DESC LIMIT " . intval($limit);
+    $fetchLimit = intval($limit);
+    if ($actorFilter !== '') {
+        $fetchLimit = max($fetchLimit + 24, $fetchLimit * 4);
+        if ($fetchLimit > 600) {
+            $fetchLimit = 600;
+        }
+    }
+    $query .= " ORDER BY gamets DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
 
-    return $db->fetchAll($query, $params);
+    $rows = $db->fetchAll($query, $params);
+    if ($actorFilter === '' || count($rows) === 0) {
+        return $rows;
+    }
+
+    $filtered = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if (stobeEventRowActorHasAwarenessSuppressedTag($row, $actorFilter)) {
+            continue;
+        }
+        $filtered[] = $row;
+        if (count($filtered) >= $limit) {
+            break;
+        }
+    }
+
+    return $filtered;
 }
 
 function storeGameData(string $name, string $type, array $data): bool {
@@ -3625,6 +4280,10 @@ function storeGameData(string $name, string $type, array $data): bool {
             updated_at = NOW()",
         [$safeName, $race, $faction, $metadataJson, $tags, $selectedProfileIdOrNull]
     );
+
+    if ($result !== false) {
+        stobeApplyPlayerFactionProfileForNpcName($safeName, $faction);
+    }
 
     return $result !== false;
 }
@@ -4885,6 +5544,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
         $emoteMoods = stobeDefaultEmoteMoods();
     }
     $occupation = $occupationRaw !== '' ? $occupationRaw : trim(strval($resolvedTraits['occupation'] ?? ''));
+    $occupation = stobeNormalizeOccupationText($occupation, $factionCombined);
     $appearance = $appearanceRaw !== '' ? $appearanceRaw : trim(strval($resolvedTraits['appearance'] ?? ''));
     $equipment = $equipmentRaw;
     $inventory = $inventoryRaw;
@@ -4987,7 +5647,18 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             personality = COALESCE(NULLIF(core_npc_master.personality, ''), EXCLUDED.personality),
             backstory = COALESCE(NULLIF(core_npc_master.backstory, ''), EXCLUDED.backstory),
             emote_moods = COALESCE(NULLIF(core_npc_master.emote_moods, ''), EXCLUDED.emote_moods),
-            occupation = COALESCE(NULLIF(core_npc_master.occupation, ''), EXCLUDED.occupation),
+            occupation = CASE
+                WHEN core_npc_master.occupation IS NULL OR BTRIM(core_npc_master.occupation) = '' THEN EXCLUDED.occupation
+                WHEN (
+                    core_npc_master.occupation ~ '\[[^\]]+\]'
+                    AND (
+                        LOWER(core_npc_master.occupation) LIKE 'faction:%'
+                        OR LOWER(core_npc_master.occupation) LIKE 'faction member:%'
+                        OR core_npc_master.occupation ~* '\bfaction\s*:\s*[^|\n\r]*\[[^\]]+\]'
+                    )
+                ) THEN EXCLUDED.occupation
+                ELSE core_npc_master.occupation
+            END,
             appearance = COALESCE(NULLIF(core_npc_master.appearance, ''), EXCLUDED.appearance),
             equipment = CASE
                 WHEN NULLIF(EXCLUDED.equipment, '') IS NOT NULL THEN EXCLUDED.equipment
@@ -5067,6 +5738,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
         $historyAfterRow = stobeFetchNpcRowForHistoryByName($safeName);
         stobeMaybeSnapshotNpcHistoryBeforeAfter($historyBeforeRow, $historyAfterRow, $historyReason);
     }
+    stobeApplyPlayerFactionProfileForNpcName($safeName, $faction);
 
     if ($isBracketName) {
         $rowAfter = $db->fetchOne(
@@ -6607,8 +7279,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if (coerceBoolean($snapshot['is_leader'] ?? false)) {
         $occupationParts[] = 'Leader';
     }
+    $occupationFactionText = stobeBuildFactionOccupationText($factionForOccupation);
     if ($factionForOccupation !== '') {
-        $occupationParts[] = 'Faction: ' . $factionForOccupation;
+        $occupationParts[] = $occupationFactionText !== '' ? $occupationFactionText : ('A member of the ' . $factionForOccupation . ' Faction');
     }
     if ($town !== '') {
         $occupationParts[] = 'Town: ' . $town;
@@ -6663,11 +7336,16 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($occupation === '') {
         $occupation = $occupationDefault;
     }
-    if ($factionForOccupation !== '' && stripos($occupation, 'faction:') === false) {
+    if (
+        $factionForOccupation !== '' &&
+        $occupationFactionText !== '' &&
+        stripos($occupation, $factionForOccupation) === false
+    ) {
         $occupation = trim($occupation) !== ''
-            ? ($occupation . ' | Faction: ' . $factionForOccupation)
-            : ('Faction: ' . $factionForOccupation);
+            ? ($occupation . ' | ' . $occupationFactionText)
+            : $occupationFactionText;
     }
+    $occupation = stobeNormalizeOccupationText($occupation, $factionForOccupation);
     $goals = trim(strval($resolvedTraits['goals'] ?? ''));
     if ($goals === '') {
         $goals = $goalsDefault;
@@ -6702,20 +7380,44 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($storageId !== '' && !array_key_exists('storage_id', $metadataForStorage)) {
         $metadataForStorage['storage_id'] = $storageId;
     }
+    $existingMasterMetadata = [];
+    $existingMasterRow = $db->fetchOne(
+        "SELECT metadata
+         FROM core_npc_master
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1",
+        [$name]
+    );
+    if ($existingMasterRow) {
+        $existingMasterMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
+    }
+
+    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
+    $preservedMetadataApplied = [];
+    foreach ($preservedMetadataKeys as $preservedKey) {
+        if (
+            !array_key_exists($preservedKey, $metadataForStorage) &&
+            array_key_exists($preservedKey, $existingMasterMetadata)
+        ) {
+            $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            $preservedMetadataApplied[] = $preservedKey;
+        }
+    }
+    if (count($preservedMetadataApplied) > 0) {
+        stobeLogImport('Snapshot preserved portrait metadata', [
+            'name' => $name,
+            'keys' => $preservedMetadataApplied,
+            'gamets' => max(0, $gamets),
+            'source' => $snapshotSource,
+        ], 'DEBUG');
+    }
+
     $shouldPreserveTraderMetadata =
         $snapshotTraderInventoryEntryCount <= 0 &&
         $traderShopSourceCount <= 0 &&
         !array_key_exists('trader_inventory_items', $metadataForStorage) &&
         !array_key_exists('trader_shop_sources', $metadataForStorage);
     if ($shouldPreserveTraderMetadata) {
-        $existingMasterRow = $db->fetchOne(
-            "SELECT metadata
-             FROM core_npc_master
-             WHERE LOWER(name) = LOWER($1)
-             LIMIT 1",
-            [$name]
-        );
-        $existingMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
         $preservedTraderKeys = [
             'is_trader',
             'trader_inventory_items',
@@ -6729,9 +7431,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         foreach ($preservedTraderKeys as $preservedKey) {
             if (
                 !array_key_exists($preservedKey, $metadataForStorage) &&
-                array_key_exists($preservedKey, $existingMetadata)
+                array_key_exists($preservedKey, $existingMasterMetadata)
             ) {
-                $metadataForStorage[$preservedKey] = $existingMetadata[$preservedKey];
+                $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
                 $preservedApplied[] = $preservedKey;
             }
         }
@@ -7244,6 +7946,13 @@ function updateNpcById(int $id, array $fields): void {
     $db->exec($query, $params);
     $historyRowAfter = stobeFetchNpcRowForHistoryById($id);
     stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'ui_update');
+    if ($historyRowAfter) {
+        $incomingFaction = array_key_exists('faction', $fields) ? strval($fields['faction']) : '';
+        $npcName = strval($historyRowAfter['name'] ?? '');
+        if ($npcName !== '') {
+            stobeApplyPlayerFactionProfileForNpcName($npcName, $incomingFaction);
+        }
+    }
 }
 
 function stobeEnsureCoreProfileImportRulesTable(): void {
@@ -7451,7 +8160,7 @@ function getAllCoreProfiles(): array {
          LEFT JOIN core_llm_connector ac ON ac.id = p.autochat_connector
          LEFT JOIN core_llm_connector mc ON mc.id = p.middleterm_connector
          LEFT JOIN core_tts_connector tc ON tc.id = p.tts_connector_id
-         ORDER BY p.is_default_npc DESC, p.label ASC"
+         ORDER BY p.is_default_npc DESC, p.is_player_faction_profile DESC, p.label ASC"
     );
 }
 
@@ -7485,6 +8194,7 @@ function saveCoreProfile(array $fields): int {
     }
 
     $isDefaultNpc = coerceBoolean($fields['is_default_npc'] ?? false);
+    $isPlayerFactionProfile = coerceBoolean($fields['is_player_faction_profile'] ?? false);
     $promptHead = trim(strval($fields['prompt_head'] ?? ''));
     $profilePrompt = trim(strval($fields['profile_prompt'] ?? ''));
     $responseConnector = ($fields['response_connector'] ?? '') === '' ? null : intval($fields['response_connector']);
@@ -7496,6 +8206,17 @@ function saveCoreProfile(array $fields): int {
     $relationshipConnector = ($fields['relationship_connector'] ?? '') === '' ? null : intval($fields['relationship_connector']);
     $ttsConnector = ($fields['tts_connector_id'] ?? '') === '' ? null : intval($fields['tts_connector_id']);
     $metadataJson = normalizeJsonString($fields['metadata'] ?? '{}');
+    $wasPlayerFactionProfile = false;
+    if ($id > 0) {
+        $existingFlags = $db->fetchOne(
+            "SELECT is_player_faction_profile
+             FROM core_profiles
+             WHERE id = $1
+             LIMIT 1",
+            [$id]
+        );
+        $wasPlayerFactionProfile = coerceBoolean($existingFlags['is_player_faction_profile'] ?? false);
+    }
 
     $savedId = 0;
     if ($id > 0) {
@@ -7510,27 +8231,40 @@ function saveCoreProfile(array $fields): int {
                 [$id]
             );
         }
+        if ($isPlayerFactionProfile) {
+            // Ensure only one player-faction profile by clearing others before assigning this one.
+            $db->exec(
+                "UPDATE core_profiles
+                 SET is_player_faction_profile = FALSE,
+                     updated_at = NOW()
+                 WHERE id <> $1
+                   AND is_player_faction_profile = TRUE",
+                [$id]
+            );
+        }
         $row = $db->fetchOne(
             "UPDATE core_profiles
              SET label = $1,
                  is_default_npc = $2,
-                 prompt_head = $3,
-                 profile_prompt = $4,
-                 response_connector = $5,
-                 diary_connector = $6,
-                 autochat_connector = $7,
-                 middleterm_connector = $8,
-                 backgroundlife_connector = $9,
-                 dynamic_connector = $10,
-                 relationship_connector = $11,
-                 tts_connector_id = $12,
-                 metadata = $13::jsonb,
+                 is_player_faction_profile = $3,
+                 prompt_head = $4,
+                 profile_prompt = $5,
+                 response_connector = $6,
+                 diary_connector = $7,
+                 autochat_connector = $8,
+                 middleterm_connector = $9,
+                 backgroundlife_connector = $10,
+                 dynamic_connector = $11,
+                 relationship_connector = $12,
+                 tts_connector_id = $13,
+                 metadata = $14::jsonb,
                  updated_at = NOW()
-             WHERE id = $14
+             WHERE id = $15
              RETURNING id",
             [
                 $label,
                 $isDefaultNpc,
+                $isPlayerFactionProfile,
                 $promptHead,
                 $profilePrompt,
                 $responseConnector,
@@ -7556,10 +8290,20 @@ function saveCoreProfile(array $fields): int {
                  WHERE is_default_npc = TRUE"
             );
         }
+        if ($isPlayerFactionProfile) {
+            // For new profiles marked player-faction, unset any previous one first.
+            $db->exec(
+                "UPDATE core_profiles
+                 SET is_player_faction_profile = FALSE,
+                     updated_at = NOW()
+                 WHERE is_player_faction_profile = TRUE"
+            );
+        }
         $row = $db->fetchOne(
             "INSERT INTO core_profiles (
                 label,
                 is_default_npc,
+                is_player_faction_profile,
                 prompt_head,
                 profile_prompt,
                 response_connector,
@@ -7572,12 +8316,13 @@ function saveCoreProfile(array $fields): int {
                 tts_connector_id,
                 metadata
              ) VALUES (
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb
              )
              RETURNING id",
             [
                 $label,
                 $isDefaultNpc,
+                $isPlayerFactionProfile,
                 $promptHead,
                 $profilePrompt,
                 $responseConnector,
@@ -7603,6 +8348,19 @@ function saveCoreProfile(array $fields): int {
             [$savedId]
         );
     }
+    if ($savedId > 0 && $isPlayerFactionProfile) {
+        $db->exec(
+            "UPDATE core_profiles
+             SET is_player_faction_profile = FALSE, updated_at = NOW()
+             WHERE id <> $1
+               AND is_player_faction_profile = TRUE",
+            [$savedId]
+        );
+    }
+    if ($savedId > 0 && ($isPlayerFactionProfile || $wasPlayerFactionProfile)) {
+        getPlayerFactionProfileId(true);
+        stobeSyncPlayerFactionProfileAssignments();
+    }
 
     return $savedId;
 }
@@ -7612,18 +8370,38 @@ function deleteCoreProfile(int $id): void {
     if ($id <= 0) {
         return;
     }
+    $profileRow = $db->fetchOne(
+        "SELECT id, COALESCE(is_player_faction_profile, FALSE) AS is_player_faction_profile
+         FROM core_profiles
+         WHERE id = $1
+         LIMIT 1",
+        [$id]
+    );
+    $wasPlayerFactionProfile = coerceBoolean($profileRow['is_player_faction_profile'] ?? false);
 
     $defaultProfileId = getDefaultNpcProfileId();
     if ($defaultProfileId > 0) {
         $db->exec(
             "UPDATE core_npc
-             SET profile_id = $1,
+             SET profile_id = CASE
+                    WHEN profile_id = $2 THEN $1
+                    ELSE profile_id
+                 END,
+                 profile_id_before_player_faction = CASE
+                    WHEN profile_id_before_player_faction = $2 THEN $1
+                    ELSE profile_id_before_player_faction
+                 END,
                  updated_at = NOW()
-             WHERE profile_id = $2",
+             WHERE profile_id = $2
+                OR profile_id_before_player_faction = $2",
             [$defaultProfileId, $id]
         );
     }
     $db->exec("DELETE FROM core_profiles WHERE id = $1", [$id]);
+    if ($wasPlayerFactionProfile) {
+        getPlayerFactionProfileId(true);
+        stobeSyncPlayerFactionProfileAssignments();
+    }
 }
 
 function getAllLlmConnectors(): array {
@@ -8156,6 +8934,334 @@ function getDefaultNpcProfileId(): int {
 
     $cachedProfileId = $profileId;
     return $cachedProfileId;
+}
+
+function getPlayerFactionProfileId(bool $refresh = false): int {
+    static $cachedProfileId = null;
+
+    if (!$refresh && is_int($cachedProfileId)) {
+        return max(0, $cachedProfileId);
+    }
+
+    $db = $GLOBALS["db"];
+    $row = $db->fetchOne(
+        "SELECT id
+         FROM core_profiles
+         WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE
+         ORDER BY id ASC
+         LIMIT 1"
+    );
+    $cachedProfileId = intval($row['id'] ?? 0);
+    return max(0, $cachedProfileId);
+}
+
+function stobeProfileIdExists(int $profileId): bool {
+    if ($profileId <= 0) {
+        return false;
+    }
+
+    static $cache = [];
+    $cacheKey = strval($profileId);
+    if (array_key_exists($cacheKey, $cache)) {
+        return boolval($cache[$cacheKey]);
+    }
+
+    $db = $GLOBALS["db"];
+    $row = $db->fetchOne("SELECT 1 AS ok FROM core_profiles WHERE id = $1 LIMIT 1", [$profileId]);
+    $exists = boolval($row && intval($row['ok'] ?? 0) === 1);
+    $cache[$cacheKey] = $exists;
+    return $exists;
+}
+
+function stobeParseFactionIdentityForProfileOverride(string $rawFaction): array {
+    if (function_exists('parseFactionIdentityToken')) {
+        $parsed = parseFactionIdentityToken($rawFaction);
+        return [
+            'name' => trim(strval($parsed['name'] ?? '')),
+            'id' => trim(strval($parsed['id'] ?? '')),
+        ];
+    }
+
+    $raw = trim($rawFaction);
+    if ($raw === '') {
+        return ['name' => '', 'id' => ''];
+    }
+
+    $name = $raw;
+    $id = '';
+    if (preg_match('/^(.*?)\s*\[\[([^\]]+)\]\]\s*$/u', $raw, $matches) === 1) {
+        $name = trim(strval($matches[1] ?? ''));
+        $id = trim(strval($matches[2] ?? ''));
+    } elseif (preg_match('/^(.*?)\s*\[([^\]]+)\]\s*$/u', $raw, $matches) === 1) {
+        $name = trim(strval($matches[1] ?? ''));
+        $id = trim(strval($matches[2] ?? ''));
+    }
+    $name = trim(strval(preg_replace('/\s*\[\[[^\]]+\]\]\s*$/u', '', $name)));
+    $name = trim(strval(preg_replace('/\s*\[[^\]]+\]\s*$/u', '', $name)));
+
+    return ['name' => $name, 'id' => $id];
+}
+
+function stobeExtractNpcFactionIdentityForProfileOverride(array $npcRow, string $incomingFaction = ''): array {
+    $rawFaction = trim($incomingFaction);
+    if ($rawFaction === '') {
+        $rawFaction = trim(strval($npcRow['faction'] ?? ''));
+    }
+
+    $identity = stobeParseFactionIdentityForProfileOverride($rawFaction);
+    $metadata = normalizeCoreNpcMetadata($npcRow['metadata'] ?? []);
+    $metadataFactionId = trim(strval($metadata['faction_id'] ?? ($metadata['factionID'] ?? '')));
+    if ($identity['id'] === '' && $metadataFactionId !== '') {
+        $identity['id'] = $metadataFactionId;
+    }
+    if ($identity['name'] === '') {
+        $metadataFaction = trim(strval($metadata['faction'] ?? ''));
+        if ($metadataFaction !== '') {
+            $metaIdentity = stobeParseFactionIdentityForProfileOverride($metadataFaction);
+            if ($metaIdentity['name'] !== '') {
+                $identity['name'] = $metaIdentity['name'];
+            }
+            if ($identity['id'] === '' && $metaIdentity['id'] !== '') {
+                $identity['id'] = $metaIdentity['id'];
+            }
+        }
+    }
+
+    return [
+        'name' => trim(strval($identity['name'] ?? '')),
+        'id' => trim(strval($identity['id'] ?? '')),
+    ];
+}
+
+function stobeResolveCurrentPlayerFactionIdentityForProfileOverride(): array {
+    static $cached = null;
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    $identity = ['name' => '', 'id' => ''];
+    if (function_exists('getCurrentPlayerFactionIdentity')) {
+        try {
+            $candidate = getCurrentPlayerFactionIdentity();
+            if (is_array($candidate)) {
+                $identity = [
+                    'name' => trim(strval($candidate['name'] ?? '')),
+                    'id' => trim(strval($candidate['id'] ?? '')),
+                ];
+            }
+        } catch (Throwable $exception) {
+        }
+    }
+
+    if ($identity['name'] === '' && $identity['id'] === '') {
+        $identity = ['name' => 'Nameless', 'id' => '204-gamedata.base'];
+    }
+
+    $cached = $identity;
+    return $cached;
+}
+
+function stobeNpcNameInPlayerFactionSquadForProfileOverride(string $npcName): bool {
+    $normalized = normalizeParticipantNameToken($npcName);
+    if ($normalized === '') {
+        return false;
+    }
+
+    static $memberSet = null;
+    if (!is_array($memberSet)) {
+        $memberSet = [];
+        if (function_exists('getPlayerSquadMembershipSnapshot')) {
+            try {
+                $snapshot = getPlayerSquadMembershipSnapshot();
+                $squadMembers = is_array($snapshot['squad_members'] ?? null) ? $snapshot['squad_members'] : [];
+                foreach ($squadMembers as $members) {
+                    if (!is_array($members)) {
+                        continue;
+                    }
+                    foreach ($members as $memberName) {
+                        $cleanName = normalizeParticipantNameToken(strval($memberName));
+                        if ($cleanName !== '') {
+                            $memberSet[strtolower($cleanName)] = true;
+                        }
+                    }
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+    }
+
+    return boolval($memberSet[strtolower($normalized)] ?? false);
+}
+
+function stobeNpcIsInPlayerFactionForProfileOverride(array $npcRow, string $incomingFaction = ''): bool {
+    $rowForCheck = $npcRow;
+    if (trim($incomingFaction) !== '') {
+        $rowForCheck['faction'] = $incomingFaction;
+    }
+
+    if (function_exists('npcIsInPlayerFaction')) {
+        try {
+            if (npcIsInPlayerFaction($rowForCheck)) {
+                return true;
+            }
+        } catch (Throwable $exception) {
+        }
+    }
+
+    $playerFaction = stobeResolveCurrentPlayerFactionIdentityForProfileOverride();
+    $npcFaction = stobeExtractNpcFactionIdentityForProfileOverride($rowForCheck, $incomingFaction);
+
+    $playerFactionId = strtolower(trim(strval($playerFaction['id'] ?? '')));
+    $npcFactionId = strtolower(trim(strval($npcFaction['id'] ?? '')));
+    if ($playerFactionId !== '' && $npcFactionId !== '' && $playerFactionId === $npcFactionId) {
+        return true;
+    }
+
+    $playerFactionName = strtolower(trim(strval($playerFaction['name'] ?? '')));
+    $npcFactionName = strtolower(trim(strval($npcFaction['name'] ?? '')));
+    if ($playerFactionName !== '' && $npcFactionName !== '' && $playerFactionName === $npcFactionName) {
+        return true;
+    }
+
+    if ($npcFactionId === '204-gamedata.base') {
+        return true;
+    }
+    if ($npcFactionName === 'nameless') {
+        return true;
+    }
+
+    $npcName = strval($rowForCheck['name'] ?? ($rowForCheck['npc_name'] ?? ''));
+    return stobeNpcNameInPlayerFactionSquadForProfileOverride($npcName);
+}
+
+function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incomingFaction = ''): bool {
+    $safeName = normalizeParticipantNameToken($npcName);
+    if ($safeName === '') {
+        return false;
+    }
+    if (strcasecmp($safeName, 'The Narrator') === 0) {
+        return false;
+    }
+
+    $db = $GLOBALS["db"];
+    $row = $db->fetchOne(
+        "SELECT id, name, faction, metadata, profile_id, profile_id_before_player_faction
+         FROM core_npc
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1",
+        [$safeName]
+    );
+    if (!$row) {
+        return false;
+    }
+
+    $npcId = intval($row['id'] ?? 0);
+    if ($npcId <= 0) {
+        return false;
+    }
+
+    $playerFactionProfileId = getPlayerFactionProfileId();
+    $currentProfileId = intval($row['profile_id'] ?? 0);
+    $backupProfileId = intval($row['profile_id_before_player_faction'] ?? 0);
+    $isInPlayerFaction = stobeNpcIsInPlayerFactionForProfileOverride($row, $incomingFaction);
+
+    if ($isInPlayerFaction && $playerFactionProfileId > 0) {
+        $backupToStore = $backupProfileId;
+        if ($backupToStore <= 0 && $currentProfileId > 0 && $currentProfileId !== $playerFactionProfileId) {
+            $backupToStore = $currentProfileId;
+        }
+        if ($backupToStore <= 0) {
+            $defaultProfileId = getDefaultNpcProfileId();
+            if ($defaultProfileId > 0 && $defaultProfileId !== $playerFactionProfileId) {
+                $backupToStore = $defaultProfileId;
+            }
+        }
+        if ($backupToStore > 0 && !stobeProfileIdExists($backupToStore)) {
+            $backupToStore = 0;
+        }
+
+        if ($currentProfileId === $playerFactionProfileId) {
+            if ($backupProfileId <= 0 && $backupToStore > 0) {
+                $db->exec(
+                    "UPDATE core_npc
+                     SET profile_id_before_player_faction = $1,
+                         updated_at = NOW()
+                     WHERE id = $2",
+                    [$backupToStore, $npcId]
+                );
+                return true;
+            }
+            return false;
+        }
+
+        $db->exec(
+            "UPDATE core_npc
+             SET profile_id = $1,
+                 profile_id_before_player_faction = $2,
+                 updated_at = NOW()
+             WHERE id = $3",
+            [$playerFactionProfileId, $backupToStore > 0 ? $backupToStore : null, $npcId]
+        );
+        return true;
+    }
+
+    $shouldRestore = false;
+    $restoreProfileId = 0;
+    if ($backupProfileId > 0) {
+        $shouldRestore = true;
+        $restoreProfileId = $backupProfileId;
+    } elseif ($playerFactionProfileId > 0 && $currentProfileId === $playerFactionProfileId) {
+        $shouldRestore = true;
+        $restoreProfileId = getDefaultNpcProfileId();
+    }
+
+    if (!$shouldRestore) {
+        return false;
+    }
+
+    if ($restoreProfileId > 0 && !stobeProfileIdExists($restoreProfileId)) {
+        $restoreProfileId = getDefaultNpcProfileId();
+    }
+    if ($restoreProfileId > 0 && !stobeProfileIdExists($restoreProfileId)) {
+        $restoreProfileId = 0;
+    }
+
+    if ($currentProfileId === $restoreProfileId && $backupProfileId <= 0) {
+        return false;
+    }
+
+    $db->exec(
+        "UPDATE core_npc
+         SET profile_id = $1,
+             profile_id_before_player_faction = NULL,
+             updated_at = NOW()
+         WHERE id = $2",
+        [$restoreProfileId > 0 ? $restoreProfileId : null, $npcId]
+    );
+    return true;
+}
+
+function stobeSyncPlayerFactionProfileAssignments(): int {
+    $db = $GLOBALS["db"];
+    $rows = $db->fetchAll(
+        "SELECT name
+         FROM core_npc
+         WHERE LOWER(name) <> LOWER('The Narrator')
+         ORDER BY id ASC"
+    );
+
+    $updatedCount = 0;
+    foreach ($rows as $row) {
+        $name = strval($row['name'] ?? '');
+        if ($name === '') {
+            continue;
+        }
+        if (stobeApplyPlayerFactionProfileForNpcName($name)) {
+            $updatedCount++;
+        }
+    }
+
+    return $updatedCount;
 }
 
 function stobeBuildLlmConfigFromConnector(array|false $connector): array {
@@ -9119,8 +10225,8 @@ function DataRechatHistory(string $campaignFilter = '', int $windowSeconds = 120
 }
 
 function stobeNpcIsIncapacitatedForRechat(array $npcData): bool {
-    $state = strtolower(trim(strval($npcData['character_state'] ?? '')));
-    if (in_array($state, ['dead', 'unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated'], true)) {
+    $state = stobeResolveNpcAwarenessState($npcData);
+    if (in_array($state, ['dead', 'unconscious', 'knocked_out', 'sleeping'], true)) {
         return true;
     }
 
@@ -9135,12 +10241,12 @@ function stobeNpcIsIncapacitatedForRechat(array $npcData): bool {
         }
     }
     if (is_array($metadata)) {
-        $metaState = strtolower(trim(strval($metadata['character_state'] ?? '')));
-        if (in_array($metaState, ['dead', 'unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated'], true)) {
+        $metaState = stobeNormalizeParticipantAwarenessStateToken(strval($metadata['character_state'] ?? ''));
+        if (in_array($metaState, ['dead', 'unconscious', 'knocked_out', 'sleeping'], true)) {
             return true;
         }
         $medical = $metadata['medical'] ?? null;
-        if (is_array($medical) && !empty($medical['is_unconscious'])) {
+        if (is_array($medical) && (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout']))) {
             return true;
         }
     }
@@ -9157,7 +10263,7 @@ function stobeNpcIsIncapacitatedForRechat(array $npcData): bool {
     }
     if (is_array($extended)) {
         $medical = $extended['medical'] ?? null;
-        if (is_array($medical) && !empty($medical['is_unconscious'])) {
+        if (is_array($medical) && (!empty($medical['is_unconscious']) || !empty($medical['is_knocked_out']) || !empty($medical['is_knockedout']))) {
             return true;
         }
     }

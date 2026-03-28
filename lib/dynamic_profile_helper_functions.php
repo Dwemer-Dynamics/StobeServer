@@ -182,6 +182,107 @@ function stobeDynamicProfileFetchCandidates(int $limit = 64): array
     );
 }
 
+function stobeDynamicProfileProcessNarrator(
+    int $intervalMinutes,
+    string $eventType,
+    int $gamets
+): bool {
+    if (!function_exists('stobeGetNarrator')) {
+        return false;
+    }
+
+    $narrator = stobeGetNarrator();
+    if (!$narrator) {
+        return false;
+    }
+    if (!$narrator->getBool('dynamic_profile', false)) {
+        return false;
+    }
+
+    $narratorFields = $narrator->getDynamicProfileFields();
+    if (count($narratorFields) === 0) {
+        return false;
+    }
+
+    $narratorName = function_exists('stobeNarratorName') ? stobeNarratorName() : 'The Narrator';
+    if (!stobeDynamicProfileNpcDue($narratorName, $gamets, $intervalMinutes)) {
+        return false;
+    }
+
+    $narratorData = function_exists('stobeBuildNarratorNpcData')
+        ? stobeBuildNarratorNpcData()
+        : [];
+    if (!is_array($narratorData)) {
+        $narratorData = [];
+    }
+
+    $metadata = normalizeCoreNpcMetadata($narratorData['metadata'] ?? []);
+    $metadata['DYNAMIC_PROFILE_ENABLED'] = true;
+    $metadata['DYNAMIC_PROFILE_FIELDS'] = array_values($narratorFields);
+    $narratorData['metadata'] = $metadata;
+    $narratorData['dynamic_profile'] = 1;
+    $narratorData['profile_id'] = max(1, intval($narratorData['profile_id'] ?? 1));
+
+    $rows = stobeDynamicProfileFetchRecentContext($narratorName, 30);
+    $contextText = stobeDynamicProfileBuildContextText($rows);
+    if ($contextText === '(none)') {
+        return false;
+    }
+
+    $gen = stobeDynamicProfileGenerateUpdates($narratorName, $narratorData, $contextText);
+    if (!boolval($gen['ok'] ?? false)) {
+        stobeLogWarn('Dynamic profile generation skipped', [
+            'npc_name' => $narratorName,
+            'reason' => strval($gen['reason'] ?? 'unknown'),
+        ]);
+        return false;
+    }
+
+    $updates = is_array($gen['updates'] ?? null) ? $gen['updates'] : [];
+    if (count($updates) === 0) {
+        return false;
+    }
+
+    $payload = [];
+    foreach ($updates as $field => $value) {
+        if (!is_string($value)) {
+            continue;
+        }
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            continue;
+        }
+        if ($field === 'personality' || $field === 'speechstyle' || $field === 'goals') {
+            $payload[$field] = $trimmed;
+        } elseif ($field === 'backstory') {
+            $payload['background'] = $trimmed;
+        }
+    }
+    if (count($payload) === 0) {
+        return false;
+    }
+
+    $payload['gamets_last_updated'] = strval($gamets > 0 ? $gamets : time());
+    $narrator->setMultiple($payload);
+
+    $npcGametsKey = stobeDynamicProfileLastGametsKey($narratorName);
+    if ($gamets > 0) {
+        setConfOpt($npcGametsKey, strval($gamets), true);
+    }
+
+    stobeLogInfo('Dynamic profile updated', [
+        'npc_name' => $narratorName,
+        'npc_id' => 'core_narrator',
+        'fields_updated' => array_keys($payload),
+        'allowed_fields' => $gen['allowed_fields'] ?? [],
+        'interval_minutes' => $intervalMinutes,
+        'event_type' => $eventType,
+        'gamets' => $gamets,
+    ]);
+
+    return true;
+}
+
 function stobeDynamicProfileNpcEnabled(array $npcData): bool
 {
     return getNpcProfileBoolSetting(
@@ -521,9 +622,15 @@ function stobeMaybeRunDynamicProfileCycle(
     try {
         $intervalMinutes = stobeDynamicProfileIntervalMinutes();
         $processed = false;
+        if (stobeDynamicProfileProcessNarrator($intervalMinutes, $eventType, $gamets)) {
+            $processed = true;
+        }
         $candidates = stobeDynamicProfileFetchCandidates(64);
 
         foreach ($candidates as $candidate) {
+            if ($processed) {
+                break;
+            }
             if (!is_array($candidate)) {
                 continue;
             }

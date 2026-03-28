@@ -362,6 +362,71 @@ if (!function_exists('gender_icon_class')) {
     }
 }
 
+if (!function_exists('stobe_ui_resolve_portrait_url')) {
+    function stobe_ui_resolve_portrait_url(array $metadata, string $webRoot = ''): string {
+        $candidate = '';
+        if (isset($metadata['portrait']) && is_array($metadata['portrait'])) {
+            $portrait = $metadata['portrait'];
+            foreach (['web_path', 'url', 'path'] as $key) {
+                $value = trim(strval($portrait[$key] ?? ''));
+                if ($value !== '') {
+                    $candidate = $value;
+                    break;
+                }
+            }
+        }
+        if ($candidate === '') {
+            foreach (['portrait_url', 'portrait_path'] as $key) {
+                $value = trim(strval($metadata[$key] ?? ''));
+                if ($value !== '') {
+                    $candidate = $value;
+                    break;
+                }
+            }
+        }
+        if ($candidate === '') {
+            return '';
+        }
+
+        $candidate = str_replace('\\', '/', $candidate);
+        if (preg_match('/^https?:\\/\\//i', $candidate) === 1) {
+            return $candidate;
+        }
+        if (strpos($candidate, '/StobeServer/') === 0) {
+            return $candidate;
+        }
+        if (strpos($candidate, '/data/portraits/') === 0) {
+            return '/StobeServer' . $candidate;
+        }
+        if (strpos($candidate, 'data/portraits/') === 0) {
+            return '/StobeServer/' . ltrim($candidate, '/');
+        }
+
+        $prefix = rtrim($webRoot, '/');
+        if ($prefix !== '') {
+            if ($candidate[0] !== '/') {
+                $candidate = '/' . $candidate;
+            }
+            return $prefix . $candidate;
+        }
+        return ($candidate[0] === '/') ? $candidate : ('/' . $candidate);
+    }
+}
+
+if (!function_exists('stobe_ui_portrait_fallback_char')) {
+    function stobe_ui_portrait_fallback_char(string $name): string {
+        $trimmed = trim($name);
+        if ($trimmed === '') {
+            return '?';
+        }
+        $ch = strtoupper(substr($trimmed, 0, 1));
+        if ($ch === '') {
+            return '?';
+        }
+        return $ch;
+    }
+}
+
 if (!function_exists('stobe_ui_format_bounty_summary')) {
     function stobe_ui_format_bounty_summary(mixed $bountyValue, mixed $bountyPayloadValue, array $metadata): array {
         $bountyPayload = stobeNormalizeBountyPayload($bountyPayloadValue);
@@ -468,6 +533,258 @@ if (!function_exists('stobe_ui_format_bounty_summary')) {
             'breakdown_extra' => $breakdownExtra,
             'legacy_details' => $legacyDetails,
         ];
+    }
+}
+
+if (!function_exists('stobeUiNpcIsInPlayerFaction')) {
+    function stobeUiParseFactionIdentity(string $rawFaction): array {
+        if (function_exists('parseFactionIdentityToken')) {
+            return parseFactionIdentityToken($rawFaction);
+        }
+        $raw = trim($rawFaction);
+        if ($raw === '') {
+            return ['name' => '', 'id' => ''];
+        }
+
+        $name = $raw;
+        $id = '';
+        if (preg_match('/^(.*?)\s*\[([^\]]+)\]\s*$/u', $raw, $matches) === 1) {
+            $parsedName = trim(strval($matches[1] ?? ''));
+            $parsedId = trim(strval($matches[2] ?? ''));
+            if ($parsedId !== '') {
+                $id = $parsedId;
+                $name = $parsedName !== '' ? $parsedName : $raw;
+            }
+        }
+        $name = trim(strval(preg_replace('/\s*\[[^\]]+\]\s*$/u', '', $name)));
+        return ['name' => $name, 'id' => $id];
+    }
+
+    function stobeUiExtractFactionIdentityFromRow(array $npcRow): array {
+        $identity = stobeUiParseFactionIdentity(strval($npcRow['faction'] ?? ''));
+
+        $metadata = $npcRow['metadata'] ?? [];
+        if (!is_array($metadata) && function_exists('normalizeNpcMetadataPayload')) {
+            $metadata = normalizeNpcMetadataPayload($metadata);
+        }
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+
+        $metadataFactionId = trim(strval($metadata['faction_id'] ?? ($metadata['factionID'] ?? '')));
+        if ($identity['id'] === '' && $metadataFactionId !== '') {
+            $identity['id'] = $metadataFactionId;
+        }
+
+        if ($identity['name'] === '') {
+            $metadataFaction = trim(strval($metadata['faction'] ?? ''));
+            if ($metadataFaction !== '') {
+                $metaIdentity = stobeUiParseFactionIdentity($metadataFaction);
+                if ($metaIdentity['name'] !== '') {
+                    $identity['name'] = $metaIdentity['name'];
+                }
+                if ($identity['id'] === '' && $metaIdentity['id'] !== '') {
+                    $identity['id'] = $metaIdentity['id'];
+                }
+            }
+        }
+
+        return $identity;
+    }
+
+    function stobeUiGetPlayerFactionMemberSet(): array {
+        static $cached = null;
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $members = [];
+        $addMember = static function (string $rawName) use (&$members): void {
+            $name = function_exists('normalizeParticipantNameToken')
+                ? normalizeParticipantNameToken($rawName)
+                : trim($rawName);
+            if ($name === '') {
+                return;
+            }
+            $key = strtolower($name);
+            if (!isset($members[$key])) {
+                $members[$key] = $name;
+            }
+        };
+
+        if (function_exists('getPlayerSquadMembershipSnapshot')) {
+            try {
+                $snapshot = getPlayerSquadMembershipSnapshot();
+                $squads = is_array($snapshot['squad_members'] ?? null) ? $snapshot['squad_members'] : [];
+                foreach ($squads as $squadMembers) {
+                    if (!is_array($squadMembers)) {
+                        continue;
+                    }
+                    foreach ($squadMembers as $memberName) {
+                        $addMember(strval($memberName));
+                    }
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+
+        $playerName = trim(strval(getSetting('PLAYER_NAME', '')));
+        if ($playerName !== '') {
+            $addMember($playerName);
+        }
+
+        $cached = $members;
+        return $cached;
+    }
+
+    function stobeUiResolvePlayerFactionIdentity(): array {
+        static $cached = null;
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $identity = ['name' => '', 'id' => ''];
+        if (function_exists('getCurrentPlayerFactionIdentity')) {
+            try {
+                $candidate = getCurrentPlayerFactionIdentity();
+                if (is_array($candidate)) {
+                    $identity = [
+                        'name' => trim(strval($candidate['name'] ?? '')),
+                        'id' => trim(strval($candidate['id'] ?? '')),
+                    ];
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+        if ($identity['name'] !== '' || $identity['id'] !== '') {
+            $cached = $identity;
+            return $cached;
+        }
+
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || !method_exists($db, 'fetchOne')) {
+            $cached = $identity;
+            return $cached;
+        }
+
+        $members = stobeUiGetPlayerFactionMemberSet();
+        if (count($members) === 0) {
+            $cached = $identity;
+            return $cached;
+        }
+
+        $bestGamets = -1;
+        foreach ($members as $memberName) {
+            $safeMember = trim(strval($memberName));
+            if ($safeMember === '') {
+                continue;
+            }
+            $row = $db->fetchOne(
+                "SELECT faction, metadata, gamets_last_updated
+                 FROM core_npc
+                 WHERE LOWER(name) = LOWER($1)
+                 ORDER BY gamets_last_updated DESC, updated_at DESC
+                 LIMIT 1",
+                [$safeMember]
+            );
+            if (!$row) {
+                continue;
+            }
+
+            $candidateIdentity = stobeUiExtractFactionIdentityFromRow($row);
+            if ($candidateIdentity['name'] === '' && $candidateIdentity['id'] === '') {
+                continue;
+            }
+
+            $rowGamets = intval($row['gamets_last_updated'] ?? 0);
+            if ($rowGamets >= $bestGamets) {
+                $identity = $candidateIdentity;
+                $bestGamets = $rowGamets;
+            }
+        }
+
+        $cached = $identity;
+        return $cached;
+    }
+
+    function stobeUiNpcIsInPlayerFaction(array $npcRow): bool {
+        if (function_exists('npcIsInPlayerFaction')) {
+            try {
+                if (npcIsInPlayerFaction($npcRow)) {
+                    return true;
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+
+        $playerFaction = stobeUiResolvePlayerFactionIdentity();
+        $npcFaction = stobeUiExtractFactionIdentityFromRow($npcRow);
+        $playerFactionId = trim(strval($playerFaction['id'] ?? ''));
+        $npcFactionId = trim(strval($npcFaction['id'] ?? ''));
+        if ($playerFactionId !== '' && $npcFactionId !== '') {
+            if (strcasecmp($playerFactionId, $npcFactionId) === 0) {
+                return true;
+            }
+        }
+
+        $playerFactionName = trim(strval($playerFaction['name'] ?? ''));
+        $npcFactionName = trim(strval($npcFaction['name'] ?? ''));
+        if ($playerFactionName !== '' && $npcFactionName !== '') {
+            if (strcasecmp($playerFactionName, $npcFactionName) === 0) {
+                return true;
+            }
+        }
+
+        $npcName = strval($npcRow['npc_name'] ?? ($npcRow['name'] ?? ''));
+        $npcName = function_exists('normalizeParticipantNameToken')
+            ? normalizeParticipantNameToken($npcName)
+            : trim($npcName);
+        if ($npcName === '') {
+            return false;
+        }
+        $members = stobeUiGetPlayerFactionMemberSet();
+        return isset($members[strtolower($npcName)]);
+    }
+}
+
+if (!function_exists('stobeUiSortNpcRows')) {
+    function stobeUiSortNpcRows(array $rows, string $alpha = 'asc'): array {
+        $direction = strtolower(trim($alpha)) === 'desc' ? 'desc' : 'asc';
+        usort($rows, static function (array $a, array $b) use ($direction): int {
+            $aLocked = coerceBoolean($a['lock_profile'] ?? false) ? 1 : 0;
+            $bLocked = coerceBoolean($b['lock_profile'] ?? false) ? 1 : 0;
+            if ($aLocked !== $bLocked) {
+                return $bLocked <=> $aLocked;
+            }
+
+            $aFavorite = coerceBoolean($a['npc_favorite'] ?? false) ? 1 : 0;
+            $bFavorite = coerceBoolean($b['npc_favorite'] ?? false) ? 1 : 0;
+            if ($aFavorite !== $bFavorite) {
+                return $bFavorite <=> $aFavorite;
+            }
+
+            $aPlayerFaction = stobeUiNpcIsInPlayerFaction($a) ? 1 : 0;
+            $bPlayerFaction = stobeUiNpcIsInPlayerFaction($b) ? 1 : 0;
+            if ($aPlayerFaction !== $bPlayerFaction) {
+                return $bPlayerFaction <=> $aPlayerFaction;
+            }
+
+            $aGamets = intval($a['gamets_last_updated'] ?? 0);
+            $bGamets = intval($b['gamets_last_updated'] ?? 0);
+            if ($aGamets !== $bGamets) {
+                return $bGamets <=> $aGamets;
+            }
+
+            $aName = strtolower(trim(strval($a['npc_name'] ?? ($a['name'] ?? ''))));
+            $bName = strtolower(trim(strval($b['npc_name'] ?? ($b['name'] ?? ''))));
+            $nameCmp = strcmp($aName, $bName);
+            if ($nameCmp !== 0) {
+                return $direction === 'desc' ? (0 - $nameCmp) : $nameCmp;
+            }
+
+            return intval($a['id'] ?? 0) <=> intval($b['id'] ?? 0);
+        });
+        return $rows;
     }
 }
 
@@ -923,6 +1240,15 @@ $favOnly = (isset($_GET['fav']) && $_GET['fav'] === '1');
 $dynOnly = (isset($_GET['dyn']) && $_GET['dyn'] === '1');
 $mtmOnly = (isset($_GET['mtm']) && $_GET['mtm'] === '1');
 $lockOnly = (isset($_GET['lock']) && $_GET['lock'] === '1');
+$playerFactionOnly = (isset($_GET['pf']) && $_GET['pf'] === '1');
+
+$playerFactionIdentity = stobeUiResolvePlayerFactionIdentity();
+$playerFactionName = trim(strval($playerFactionIdentity['name'] ?? ''));
+$playerFactionId = trim(strval($playerFactionIdentity['id'] ?? ''));
+$hasPlayerFactionIdentity = ($playerFactionName !== '' || $playerFactionId !== '');
+$playerFactionMembers = stobeUiGetPlayerFactionMemberSet();
+$hasPlayerFactionMembers = count($playerFactionMembers) > 0;
+$hasPlayerFactionSignal = ($hasPlayerFactionIdentity || $hasPlayerFactionMembers);
 
 // Preload profiles for filter dropdown
 $profileRows = $GLOBALS["db"]->fetchAll("SELECT id, label, metadata FROM core_profiles ORDER BY label ASC");
@@ -998,6 +1324,8 @@ foreach (($llmRows ?? []) as $lr) {
 }
 
 $where = "1=1";
+// Narrator is managed in the dedicated Narrator menu and should not appear as a regular NPC card.
+$where .= " and lower(npc_name) <> lower('The Narrator')";
 if ($q !== ''){
     $qEsc = "%".$GLOBALS['db']->escape($q)."%";
     // Match by name primarily; include a few related fields
@@ -1021,16 +1349,27 @@ if ($lockOnly) {
     $where .= " and coalesce(lock_profile,0)=1";
 }
 
-// Default: The Narrator first, then favorites, then alphabetical by name
-$order = "order by (case when npc_name = 'The Narrator' then 0 else 1 end), coalesce(npc_favorite,0) desc, coalesce(gamets_last_updated,0) desc, lower(npc_name) ".$alpha.", id asc";
+$fetchOrder = "order by lower(npc_name) " . $alpha . ", id asc";
+$allFilteredRows = $npc->getAll("{$where} {$fetchOrder}");
 
-// Count with filters
-$totalRows = $npc->countAll($where);
+if ($playerFactionOnly) {
+    if (!$hasPlayerFactionSignal) {
+        $allFilteredRows = [];
+    } else {
+        $allFilteredRows = array_values(array_filter(
+            $allFilteredRows,
+            static fn(array $row): bool => stobeUiNpcIsInPlayerFaction($row)
+        ));
+    }
+}
+$allFilteredRows = stobeUiSortNpcRows($allFilteredRows, $alpha);
+$totalRows = count($allFilteredRows);
 $totalPages = max(1, (int)ceil($totalRows / max(1, $perPage)));
-if ($page > $totalPages) $page = $totalPages;
+if ($page > $totalPages) {
+    $page = $totalPages;
+}
 $offset = ($page - 1) * $perPage;
-error_log("{$where} {$order} limit {$perPage} offset {$offset}");
-$data = $npc->getAll("{$where} {$order} limit {$perPage} offset {$offset}");
+$data = array_slice($allFilteredRows, $offset, $perPage);
 $editItem = null;
 
 if (isset($_GET["edit"])) {
@@ -1051,6 +1390,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock" <?= $lockOnly?'checked':'' ?>> Locked</label>
+            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_pf" <?= $playerFactionOnly?'checked':'' ?>> Player faction only</label>
           </div>
         </div>
         <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
@@ -1073,7 +1413,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
       <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
       <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
       <button id="npc_import_btn" type="button" title="Import NPC from JSON file">Import NPC</button>
-      <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from World Knowledge text data for all NPCs">Build Relationships</button>
+          <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
       <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
       <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
     </div>
@@ -1136,8 +1476,12 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
         
         $tagsVal = trim((string)($row['tags'] ?? '')); 
         $tagsDisp = ($tagsVal === '') ? '' : $tagsVal; 
+        $npcNameCard = strval($row["npc_name"] ?? '');
+        $portraitUrl = stobe_ui_resolve_portrait_url($metaTmp, $webRoot);
+        $portraitInitial = stobe_ui_portrait_fallback_char($npcNameCard);
+        $isPlayerFactionNpc = stobeUiNpcIsInPlayerFaction($row);
         ?>
-        <div class="npc-card" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>">
+        <div class="npc-card<?= $isPlayerFactionNpc ? ' npc-card-player-faction' : '' ?>" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>" data-player-faction="<?= $isPlayerFactionNpc ? '1' : '0' ?>">
             <div class="npc-title">
                 <div class="npc-title-left"><?php 
                     // Use already-parsed $metaTmp to avoid re-decoding
@@ -1145,8 +1489,11 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                     if (isset($metaTmp['stats']) && is_array($metaTmp['stats']) && isset($metaTmp['stats']['level'])) {
                         $levelDisp = ' ('.intval($metaTmp['stats']['level']).')';
                     }
-                ?><span class="npc-name"><?= htmlspecialchars(($row["npc_name"] ?? '').$levelDisp) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
+                ?><span class="npc-name"><?= htmlspecialchars($npcNameCard.$levelDisp) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
             <div class="npc-title-actions">
+                    <?php if ($isPlayerFactionNpc): ?>
+                    <span class="npc-player-faction-badge" title="Aligned with the player faction">Player Faction</span>
+                    <?php endif; ?>
                     <?php if ($tagsDisp !== ''): ?>
                     <span class="npc-tags-top" title="<?= htmlspecialchars($tagsDisp) ?>"><?= htmlspecialchars($tagsDisp) ?></span>
                     <?php endif; ?>
@@ -1157,6 +1504,13 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
             </div>
             <div class="npc-divider"></div>
             <div class="npc-row">
+                <div class="npc-portrait-col">
+                    <?php if ($portraitUrl !== ''): ?>
+                    <img class="npc-portrait-img" src="<?= htmlspecialchars($portraitUrl) ?>" alt="<?= htmlspecialchars($npcNameCard) ?> portrait" loading="lazy">
+                    <?php else: ?>
+                    <div class="npc-portrait-fallback"><?= htmlspecialchars($portraitInitial) ?></div>
+                    <?php endif; ?>
+                </div>
                 <div class="npc-fields">
                     <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
@@ -2256,12 +2610,24 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     transition: all 0.2s ease; 
     cursor: pointer; 
 }
+.npc-card.npc-card-player-faction {
+    border-color: rgba(230, 183, 108, 0.95);
+    box-shadow: 0 0 0 1px rgba(230, 183, 108, 0.28),
+                0 4px 14px rgba(230, 183, 108, 0.18),
+                inset 0 1px rgba(255, 255, 255, 0.05);
+}
 .npc-card:hover { 
     transform: translateY(-2px); 
     background: linear-gradient(180deg, rgba(48, 48, 48, 0.95), rgba(40, 40, 40, 0.98)); 
     border-color: #4a4a4a;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25),
                 inset 0 1px rgba(255, 255, 255, 0.05);
+}
+.npc-card.npc-card-player-faction:hover {
+    border-color: #ffd277;
+    box-shadow: 0 0 0 1px rgba(255, 210, 119, 0.45),
+                0 6px 18px rgba(230, 183, 108, 0.3),
+                inset 0 1px rgba(255, 255, 255, 0.08);
 }
 .npc-title { font-weight:800; color:#e9efff; font-size:18px; text-align:center; letter-spacing:0.3px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .npc-title-left { flex:1 1 auto; text-align:left; }
@@ -2320,11 +2686,52 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .btn-toggle.active[data-favorite-id] { color:#ffd700; }
 .btn-trash { background:transparent; border:none; padding:6px; color:#e9efff; font-size:20px; line-height:1; text-decoration:none; transition: color .15s ease, text-shadow .15s ease; }
 .btn-trash:hover, .btn-trash:focus-visible { color:#ff6b6b; text-shadow: 0 0 6px rgba(255, 107, 107, 0.7), 0 0 12px rgba(255, 107, 107, 0.45); }
+.npc-player-faction-badge {
+    display:inline-flex;
+    align-items:center;
+    font-size:11px;
+    font-weight:700;
+    color:#2b2000;
+    background:linear-gradient(180deg, #ffd77f, #e6b76c);
+    border:1px solid rgba(255, 225, 150, 0.95);
+    border-radius:999px;
+    padding:2px 8px;
+    box-shadow:0 0 8px rgba(230, 183, 108, 0.35);
+    white-space:nowrap;
+}
 .npc-tags-label { font-size:11px; color:#9fb1c9; margin-right:4px; }
 .npc-tags-top { font-size:11px; color:#9fb1c9; border:1px solid #4a4a4a; border-radius:999px; padding:2px 6px; max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .npc-row { display:flex; gap:10px; align-items:flex-start; }
+.npc-portrait-col { flex:0 0 74px; width:74px; display:flex; align-items:flex-start; justify-content:center; }
+.npc-portrait-img,
+.npc-portrait-fallback {
+    width:74px;
+    height:92px;
+    border-radius:8px;
+    border:1px solid #4a4a4a;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.npc-portrait-img {
+    display:block;
+    object-fit:cover;
+    background:#1d1d1d;
+}
+.npc-portrait-fallback {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:28px;
+    font-weight:800;
+    color:#d6dff0;
+    background:linear-gradient(160deg, #3a424f, #242a34);
+}
 .npc-right { margin-left:auto; flex:0 0 auto; }
-@media (max-width: 720px){ .npc-right { display:none; } }
+@media (max-width: 720px){
+    .npc-portrait-col { flex:0 0 64px; width:64px; }
+    .npc-portrait-img,
+    .npc-portrait-fallback { width:64px; height:80px; }
+    .npc-right { display:none; }
+}
 /* Dynamic profile grouping */
 .dynamic-profile-section { 
     border:1px solid #3a3a3a; 
@@ -2588,6 +2995,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn_top" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm_top" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock_top" <?= $lockOnly?'checked':'' ?>> Locked</label>
+        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_pf_top" <?= $playerFactionOnly?'checked':'' ?>> Player faction only</label>
       </div>
     </div>
     <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
@@ -2609,7 +3017,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   <span style="border:none; background:transparent; color:#e6b76c;">Page <?= $page ?> / <?= $totalPages ?></span>
   <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
   <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
-  <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from World Knowledge text data for all NPCs">Build Relationships</button>
+        <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
   <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
   <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
 </div>
@@ -2680,17 +3088,24 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     if (array_key_exists('gps_track', $metaTmp) && $metaTmp['gps_track'] !== null && $metaTmp['gps_track'] !== '') {
         $gpsEnabled = !empty($metaTmp['gps_track']);
     }
+    $npcNameCard = strval($row["npc_name"] ?? '');
+    $portraitUrl = stobe_ui_resolve_portrait_url($metaTmp, $webRoot);
+    $portraitInitial = stobe_ui_portrait_fallback_char($npcNameCard);
+    $isPlayerFactionNpc = stobeUiNpcIsInPlayerFaction($row);
     
     ?>
-    <div class="npc-card" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>">
+    <div class="npc-card<?= $isPlayerFactionNpc ? ' npc-card-player-faction' : '' ?>" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>" data-player-faction="<?= $isPlayerFactionNpc ? '1' : '0' ?>">
             <div class="npc-title">
             <div class="npc-title-left"><?php 
                 $levelDisp2 = '';
                 if (isset($metaTmp['stats']) && is_array($metaTmp['stats']) && isset($metaTmp['stats']['level'])) {
                     $levelDisp2 = ' ('.intval($metaTmp['stats']['level']).')';
                 }
-                ?><span class="npc-name"><?= htmlspecialchars(($row["npc_name"] ?? '').$levelDisp2) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
+                ?><span class="npc-name"><?= htmlspecialchars($npcNameCard.$levelDisp2) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
             <div class="npc-title-actions">
+                <?php if ($isPlayerFactionNpc): ?>
+                <span class="npc-player-faction-badge" title="Aligned with the player faction">Player Faction</span>
+                <?php endif; ?>
                 <?php if ($tagsDisp !== ''): ?>
                 <span class="npc-tags-label">Tags:</span>
                 <span class="npc-tags-top" title="Use Search to filter by these tags: <?= htmlspecialchars($tagsDisp) ?>"><?= htmlspecialchars($tagsDisp) ?></span>
@@ -2702,6 +3117,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         </div>
         <div class="npc-divider"></div>
         <div class="npc-row">
+            <div class="npc-portrait-col">
+                <?php if ($portraitUrl !== ''): ?>
+                <img class="npc-portrait-img" src="<?= htmlspecialchars($portraitUrl) ?>" alt="<?= htmlspecialchars($npcNameCard) ?> portrait" loading="lazy">
+                <?php else: ?>
+                <div class="npc-portrait-fallback"><?= htmlspecialchars($portraitInitial) ?></div>
+                <?php endif; ?>
+            </div>
             <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
@@ -2841,7 +3263,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <!-- Info Box -->
         <div style="background:#2a2a3a; border:1px solid #5a5a6a; border-radius:8px; padding:12px; margin-bottom:16px; text-align:left;">
           <div style="color:#9fb1c9; font-size:0.85em; line-height:1.4;">
-            Building runs in the background while you play. You can adjust any NPC individually by clicking their profile and editing <strong>Relationship Affinities</strong>.
+            Building runs in the background while you play, using each NPC's recent event history as baseline evidence. You can adjust any NPC individually by clicking their profile and editing <strong>Relationship Affinities</strong>.
           </div>
         </div>
 
@@ -2919,8 +3341,131 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 (function(){
   const PROFILES_BY_ID = <?= json_encode($profilesById ?? [], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
   const PROFILE_OPTIONS = <?= json_encode($profileOptions ?? [], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_NAME = <?= json_encode(strtolower($playerFactionName), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_ID = <?= json_encode(strtolower($playerFactionId), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_MEMBERS = <?= json_encode(array_values(stobeUiGetPlayerFactionMemberSet()), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_MEMBER_SET = (() => {
+    const set = Object.create(null);
+    (PLAYER_FACTION_MEMBERS || []).forEach((name) => {
+      const key = String(name || '').trim().toLowerCase();
+      if (key) {
+        set[key] = true;
+      }
+    });
+    return set;
+  })();
   const modal = document.getElementById('npc_modal');
   const iframe = document.getElementById('npc_modal_iframe');
+  function stobeParseFactionIdentity(rawFaction){
+    const raw = String(rawFaction || '').trim();
+    if (!raw) {
+      return { name: '', id: '' };
+    }
+
+    let name = raw;
+    let id = '';
+    let match = raw.match(/^(.*?)\s*\[\[([^\]]+)\]\]\s*$/u);
+    if (!match) {
+      match = raw.match(/^(.*?)\s*\[([^\]]+)\]\s*$/u);
+    }
+    if (match) {
+      const parsedName = String(match[1] || '').trim();
+      const parsedId = String(match[2] || '').trim();
+      if (parsedId) {
+        id = parsedId;
+        name = parsedName || raw;
+      }
+    }
+
+    name = String(name)
+      .replace(/\s*\[\[[^\]]+\]\]\s*$/u, '')
+      .replace(/\s*\[[^\]]+\]\s*$/u, '')
+      .trim();
+
+    const nameLower = name.toLowerCase();
+    if (nameLower === 'unknown' || nameLower === 'neutral' || nameLower === 'none' || nameLower === 'n/a') {
+      name = '';
+    }
+
+    return { name, id };
+  }
+  function stobeExtractFactionIdentityFromPayload(payload){
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    const directIdentity = stobeParseFactionIdentity(data.faction || '');
+    const meta = (function(){
+      const rawMeta = data.metadata;
+      if (rawMeta && typeof rawMeta === 'object') {
+        return rawMeta;
+      }
+      if (typeof rawMeta === 'string' && rawMeta.trim() !== '') {
+        try {
+          const parsed = JSON.parse(rawMeta);
+          if (parsed && typeof parsed === 'object') {
+            return parsed;
+          }
+        } catch (_e) {}
+      }
+      return {};
+    })();
+
+    let factionName = String(directIdentity.name || '').trim();
+    let factionId = String(directIdentity.id || '').trim();
+
+    if (!factionName) {
+      const metaFaction = String(meta.faction || '').trim();
+      if (metaFaction) {
+        factionName = stobeParseFactionIdentity(metaFaction).name;
+      }
+    }
+    if (!factionId) {
+      factionId = String(meta.faction_id || meta.factionID || '').trim();
+    }
+
+    return { name: factionName, id: factionId };
+  }
+  function stobePayloadIsPlayerFaction(payload){
+    const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
+    const playerFactionId = String(PLAYER_FACTION_ID || '').trim();
+    const npcFaction = stobeExtractFactionIdentityFromPayload(payload);
+    const npcFactionName = String(npcFaction.name || '').trim().toLowerCase();
+    const npcFactionId = String(npcFaction.id || '').trim().toLowerCase();
+
+    if (playerFactionId && npcFactionId) {
+      return playerFactionId === npcFactionId;
+    }
+    if (playerFactionName && npcFactionName) {
+      return playerFactionName === npcFactionName;
+    }
+    const npcName = String((payload && (payload.npc_name || payload.name)) || '').trim().toLowerCase();
+    if (npcName && PLAYER_FACTION_MEMBER_SET[npcName]) {
+      return true;
+    }
+    return false;
+  }
+  function stobeApplyPlayerFactionCardState(card, payload){
+    if (!card) {
+      return;
+    }
+    const isPlayerFaction = stobePayloadIsPlayerFaction(payload);
+    card.classList.toggle('npc-card-player-faction', !!isPlayerFaction);
+    card.setAttribute('data-player-faction', isPlayerFaction ? '1' : '0');
+    const actions = card.querySelector('.npc-title-actions');
+    if (!actions) {
+      return;
+    }
+    let badge = actions.querySelector('.npc-player-faction-badge');
+    if (isPlayerFaction) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'npc-player-faction-badge';
+        badge.title = 'Aligned with the player faction';
+        badge.textContent = 'Player Faction';
+        actions.prepend(badge);
+      }
+    } else if (badge) {
+      badge.remove();
+    }
+  }
   function openModal(url){
     iframe.src = url;
     modal.style.display = 'flex';
@@ -3670,10 +4215,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       const dyn = (document.getElementById('npc_filter_dyn_top')||document.getElementById('npc_filter_dyn'));
       const mtm = (document.getElementById('npc_filter_mtm_top')||document.getElementById('npc_filter_mtm'));
       const locked = (document.getElementById('npc_filter_lock_top')||document.getElementById('npc_filter_lock'));
+      const playerFaction = (document.getElementById('npc_filter_pf_top')||document.getElementById('npc_filter_pf'));
       params.set('fav', fav && fav.checked ? '1' : '');
       params.set('dyn', dyn && dyn.checked ? '1' : '');
       params.set('mtm', mtm && mtm.checked ? '1' : '');
       params.set('lock', locked && locked.checked ? '1' : '');
+      params.set('pf', playerFaction && playerFaction.checked ? '1' : '');
     } catch(_e){}
     params.set('alpha', 'asc');
     if (page) params.set('page', String(page));
@@ -3877,6 +4424,89 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         if (href) window.location.href = href;
     }
   });
+  function stobeParseObject(raw){
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    const txt = String(raw).trim();
+    if (!txt) return null;
+    try {
+      const parsed = JSON.parse(txt);
+      return (parsed && typeof parsed === 'object') ? parsed : null;
+    } catch(_e){
+      return null;
+    }
+  }
+  function stobePortraitInitial(name){
+    const v = String(name == null ? '' : name).trim();
+    if (!v) return '?';
+    const first = v.charAt(0).toUpperCase();
+    return first || '?';
+  }
+  function stobeResolvePortraitUrl(payload){
+    if (!payload || typeof payload !== 'object') return '';
+    const metadata = stobeParseObject(payload.metadata);
+    const candidates = [];
+    const pushCandidate = (val) => {
+      const s = String(val == null ? '' : val).trim();
+      if (s) candidates.push(s);
+    };
+
+    if (metadata && typeof metadata === 'object') {
+      if (metadata.portrait && typeof metadata.portrait === 'object') {
+        pushCandidate(metadata.portrait.web_path);
+        pushCandidate(metadata.portrait.url);
+        pushCandidate(metadata.portrait.path);
+      }
+      pushCandidate(metadata.portrait_url);
+      pushCandidate(metadata.portrait_path);
+    }
+    if (payload.portrait && typeof payload.portrait === 'object') {
+      pushCandidate(payload.portrait.web_path);
+      pushCandidate(payload.portrait.url);
+      pushCandidate(payload.portrait.path);
+    }
+    pushCandidate(payload.portrait_url);
+    pushCandidate(payload.portrait_path);
+
+    if (!candidates.length) return '';
+    let candidate = String(candidates[0] || '').replace(/\\/g, '/');
+    if (!candidate) return '';
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    if (candidate.indexOf('/StobeServer/') === 0) return candidate;
+    if (candidate.indexOf('/data/portraits/') === 0) return '/StobeServer' + candidate;
+    if (candidate.indexOf('data/portraits/') === 0) return '/StobeServer/' + candidate.replace(/^\/+/, '');
+    if (candidate.charAt(0) === '/') return candidate;
+    return '/' + candidate;
+  }
+  function stobeApplyPortraitToCard(card, payload){
+    if (!card) return;
+    const row = card.querySelector('.npc-row');
+    if (!row) return;
+    let portraitCol = row.querySelector('.npc-portrait-col');
+    if (!portraitCol){
+      portraitCol = document.createElement('div');
+      portraitCol.className = 'npc-portrait-col';
+      const fields = row.querySelector('.npc-fields');
+      if (fields) row.insertBefore(portraitCol, fields);
+      else row.prepend(portraitCol);
+    }
+    portraitCol.textContent = '';
+    const npcName = String((payload && payload.npc_name) || '');
+    const portraitUrl = stobeResolvePortraitUrl(payload || {});
+    if (portraitUrl){
+      const img = document.createElement('img');
+      img.className = 'npc-portrait-img';
+      img.loading = 'lazy';
+      img.src = portraitUrl;
+      img.alt = npcName ? (npcName + ' portrait') : 'NPC portrait';
+      portraitCol.appendChild(img);
+      return;
+    }
+    const fallback = document.createElement('div');
+    fallback.className = 'npc-portrait-fallback';
+    fallback.textContent = stobePortraitInitial(npcName);
+    portraitCol.appendChild(fallback);
+  }
   // Receive save events from iframe and update the card inline
   window.addEventListener('message', async function(e){
     const d = e.data || {};
@@ -3892,6 +4522,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
           div.className = 'npc-card';
           div.id = 'npc_card_'+id;
           div.setAttribute('data-id', id);
+          div.setAttribute('data-player-faction', '0');
           div.innerHTML = `
             <div class="npc-title">
               <div class="npc-title-left"><span class="npc-name"></span></div>
@@ -3904,6 +4535,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             </div>
             <div class="npc-divider"></div>
             <div class="npc-row">
+              <div class="npc-portrait-col">
+                <div class="npc-portrait-fallback">?</div>
+              </div>
               <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"></span></div>
@@ -3930,6 +4564,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         setText('.npc-gender', data.gender);
         setText('.npc-race', data.race);
         setText('.npc-voiceid', data.voiceid);
+        stobeApplyPlayerFactionCardState(card, data);
+        stobeApplyPortraitToCard(card, data);
         try {
           const normalizeObj = (raw) => {
             if (!raw) return null;

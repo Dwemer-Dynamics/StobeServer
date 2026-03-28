@@ -147,6 +147,7 @@ $contextHistory = getNpcProfileIntegerSetting(
     120
 );
 $eventHistory = DataEventLog($contextHistory, $speakerNpc, $campaign);
+$eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $speakerNpc, 'bored');
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);

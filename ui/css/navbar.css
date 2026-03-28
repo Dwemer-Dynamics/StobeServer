@@ -264,12 +264,12 @@ body.auto-refresh .chim-status-nav {
 }
 .brand-menu,
 .brand-menu * {
-    font-family: 'Exo2', Arial, sans-serif !important;
+    font-family: var(--stobe-title-font) !important;
     font-weight: 700 !important;
 }
 .chim-navbar-wrapper .brand-menu .dropdown-item,
 .dropdown-menu.brand-menu .dropdown-item {
-    font-family: 'Exo2', Arial, sans-serif !important;
+    font-family: var(--stobe-title-font) !important;
     font-weight: 700 !important;
 }
 .brand-menu .dropdown-item:hover {

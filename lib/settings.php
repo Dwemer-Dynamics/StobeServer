@@ -93,7 +93,7 @@ function normalizeDialogueMode(string $mode): string {
         return 'talk';
     }
 
-    $allowed = ['talk', 'shout', 'whisper', 'autochat', 'cheat'];
+    $allowed = ['talk', 'shout', 'whisper', 'autochat', 'cheat', 'narrator'];
     if (!in_array($normalized, $allowed, true)) {
         return 'talk';
     }

@@ -18,6 +18,7 @@
 
 // Ensure Logger is available
 require_once $GLOBALS["ENGINE_PATH"] . "lib/logger.php";
+require_once __DIR__ . "/event_baseline.php";
 
 class RelationshipLLM {
 
@@ -298,11 +299,6 @@ class RelationshipLLM {
             return ['ok' => true, 'skipped' => true, 'reason' => 'Already has relationships'];
         }
 
-        // Check if has TEXT relationships to analyze
-        if (empty($npc['relationships'])) {
-            return ['ok' => true, 'skipped' => true, 'reason' => 'No text relationships'];
-        }
-
         // Build the analysis
         return $this->runAnalysis($npc);
     }
@@ -315,11 +311,23 @@ class RelationshipLLM {
             return ['ok' => false, 'error' => 'LLM not available'];
         }
 
-        $npcName = $npc['npc_name'];
-        $relationshipsText = $npc['relationships'];
+        $npcName = stobeRelBaselineNormalizeName(strval($npc['npc_name'] ?? ''));
+        if ($npcName === '') {
+            return ['ok' => false, 'error' => 'NPC name missing'];
+        }
 
-        // Strip legacy player placeholder tokens from imported text.
-        $relationshipsText = str_ireplace('#PLAYER_NAME#', '', $relationshipsText);
+        $baseline = stobeRelBuildEventBaseline($npcName, 200);
+        if (empty($baseline['ok'])) {
+            return [
+                'ok' => true,
+                'skipped' => true,
+                'reason' => strval($baseline['error'] ?? 'No event history'),
+            ];
+        }
+
+        $eventHistory = strval($baseline['history'] ?? '');
+        $eventCount = intval($baseline['event_count'] ?? 0);
+        $counterparts = is_array($baseline['counterparts'] ?? null) ? $baseline['counterparts'] : [];
 
         // Build NPC context
         $npcContext = "";
@@ -343,15 +351,18 @@ class RelationshipLLM {
         if (!empty($npcContext)) {
             $userPrompt .= "NPC Context:\n{$npcContext}\n";
         }
-        $userPrompt .= "Relationship Descriptions:\n{$relationshipsText}\n\n";
-        $userPrompt .= "Analyze these relationships and infer any faction/group biases from context. Return JSON.";
+        if (!empty($counterparts)) {
+            $userPrompt .= "Observed Counterparts: " . implode(', ', $counterparts) . "\n\n";
+        }
+        $userPrompt .= "Recent Event History (oldest to newest, {$eventCount} entries):\n{$eventHistory}\n\n";
+        $userPrompt .= "Analyze this history and infer any faction/group biases from context. Return JSON.";
 
         $contextData = [
             ['role' => 'system', 'content' => $systemPrompt],
             ['role' => 'user', 'content' => $userPrompt]
         ];
 
-        Logger::info("[REL-LLM] Analyzing {$npcName} using {$this->modelName}");
+        Logger::info("[REL-LLM] Analyzing {$npcName} using {$this->modelName} (events={$eventCount})");
 
         // Make LLM request with scoped global swapping
         // This prevents corrupting the main chat connector's globals
@@ -382,6 +393,7 @@ class RelationshipLLM {
             'npc_name' => $npcName,
             'relationships' => $relationships,
             'count' => count($relationships),
+            'event_count' => $eventCount,
             'model' => $this->modelName
         ];
     }
@@ -392,7 +404,7 @@ class RelationshipLLM {
      */
     private function getAnalysisPrompt() {
         $fallback = <<<'PROMPT'
-You are a relationship analyzer for Skyrim NPCs. Analyze relationship descriptions and output JSON.
+You are a relationship analyzer for Skyrim NPCs. Analyze recent event history and output JSON relationships.
 
 AFFINITY SCALE (-100 to +100, bell curve - extremes are RARE):
 +91 to +100: Bonded (soulmates, unbreakable)
@@ -542,10 +554,22 @@ PROMPT;
             'details' => []
         ];
 
-        // Get NPCs with TEXT relationships
-        $query = "SELECT id, name AS npc_name, relationships, extended_data
+        // Get NPCs with event history that can be baseline-analyzed
+        $excludeTypes = "'prechat','setconf','status_msg','user_input','npc_snapshot','playerinfo'";
+        $query = "SELECT id, name AS npc_name, extended_data
                   FROM core_npc_master
-                  WHERE relationships IS NOT NULL AND relationships != ''
+                  WHERE COALESCE(TRIM(name), '') <> ''
+                    AND LOWER(name) <> 'the narrator'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM eventlog e
+                        WHERE e.type NOT IN ({$excludeTypes})
+                          AND (
+                               POSITION(LOWER(core_npc_master.name) IN LOWER(COALESCE(e.people, ''))) > 0
+                               OR POSITION(LOWER(core_npc_master.name) IN LOWER(COALESCE(e.data, ''))) > 0
+                          )
+                        LIMIT 1
+                    )
                   ORDER BY id
                   LIMIT " . intval($limit);
 

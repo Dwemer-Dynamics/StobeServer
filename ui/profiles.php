@@ -151,6 +151,7 @@ if (isset($_GET['create_blank']) && $_SERVER['REQUEST_METHOD'] === 'GET') {
     $id = saveCoreProfile([
         'label' => unique_profile_label('New Profile'),
         'is_default_npc' => false,
+        'is_player_faction_profile' => false,
         'prompt_head' => '',
         'profile_prompt' => '',
         'metadata' => getDefaultCoreProfileMetadata(),
@@ -182,10 +183,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
     } else {
         $isDefaultNpcPost = coerceBoolean($defaultRaw);
     }
+    $playerFactionRaw = $_POST['is_player_faction_profile'] ?? null;
+    $isPlayerFactionProfilePost = false;
+    if (is_array($playerFactionRaw)) {
+        foreach ($playerFactionRaw as $candidate) {
+            if (coerceBoolean($candidate)) {
+                $isPlayerFactionProfilePost = true;
+                break;
+            }
+        }
+    } else {
+        $isPlayerFactionProfilePost = coerceBoolean($playerFactionRaw);
+    }
     $savedId = saveCoreProfile([
         'id' => $id,
         'label' => $id > 0 ? unique_profile_label($label, $id) : unique_profile_label($label),
         'is_default_npc' => $isDefaultNpcPost,
+        'is_player_faction_profile' => $isPlayerFactionProfilePost,
         'prompt_head' => strval($_POST['prompt_head'] ?? ''),
         'profile_prompt' => strval($_POST['profile_prompt'] ?? ''),
         'response_connector' => post_int_or_null('response_connector'),
@@ -216,6 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
         $newId = saveCoreProfile([
             'label' => unique_profile_label(trim(strval($source['label'] ?? 'Profile')) . ' (Copy)'),
             'is_default_npc' => false,
+            'is_player_faction_profile' => false,
             'prompt_head' => strval($source['prompt_head'] ?? ''),
             'profile_prompt' => strval($source['profile_prompt'] ?? ''),
             'response_connector' => $source['response_connector'] ?? null,
@@ -272,6 +287,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     $newId = saveCoreProfile([
         'label' => unique_profile_label($baseLabel),
         'is_default_npc' => false,
+        'is_player_faction_profile' => false,
         'prompt_head' => strval($profileData['prompt_head'] ?? ''),
         'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
         'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
@@ -472,6 +488,8 @@ h1.api-title { margin: 0 0 20px 0; font-family: 'MagicCards', serif; word-spacin
 .item-title .item-label { color: #e7edf7; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; pointer-events: none; }
 .default-icon { font-size: 12px; color: #e6b76c; line-height: 1; }
 .badge-default { border: 1px solid rgba(109,209,156,.45); color: #9be29b; border-radius: 999px; padding: 2px 8px; font-size: 11px; }
+.player-faction-icon { font-size: 12px; color: #f6d26b; line-height: 1; }
+.badge-player-faction { border: 1px solid rgba(246,210,107,.5); color: #f6d26b; border-radius: 999px; padding: 2px 8px; font-size: 11px; }
 .item-sub { color: #9fb1c9; font-size: 12px; margin-top: 4px; }
 .item-actions { display: flex; gap: 6px; margin-top: 8px; position: relative; z-index: 5; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
@@ -521,7 +539,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
 .top-toggle-wrap .top-toggle-title { color: #e6b76c; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
-.default-npc-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
+.profile-role-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
 .modal-backdrop { display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,.65); z-index:10050; }
 .modal-backdrop.show { display:block; }
 .modal-container { width:min(920px, 95vw); margin:4vh auto; border:1px solid #3a3a3a; border-radius:10px; overflow:hidden; background:#2a2a2a; box-shadow:0 8px 28px rgba(0,0,0,.4); }
@@ -592,9 +610,13 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 <div class="item-title">
                                     <span class="item-label">
                                         <?php if (coerceBoolean($row['is_default_npc'] ?? false)): ?><span class="default-icon" title="Default profile">&#x2605;</span><?php endif; ?>
+                                        <?php if (coerceBoolean($row['is_player_faction_profile'] ?? false)): ?><span class="player-faction-icon" title="Player faction profile">&#x2694;</span><?php endif; ?>
                                         <span><?= h($row['label'] ?? ('Profile #' . $rowId)) ?></span>
                                     </span>
-                                    <?php if (coerceBoolean($row['is_default_npc'] ?? false)): ?><span class="badge-default">Default</span><?php endif; ?>
+                                    <span style="display:flex; gap:6px; align-items:center;">
+                                        <?php if (coerceBoolean($row['is_default_npc'] ?? false)): ?><span class="badge-default">Default</span><?php endif; ?>
+                                        <?php if (coerceBoolean($row['is_player_faction_profile'] ?? false)): ?><span class="badge-player-faction">Player Faction</span><?php endif; ?>
+                                    </span>
                                 </div>
                                 <div class="item-sub">Response: <?= h($response) ?> | TTS: <?= h($tts) ?></div>
                                 <div class="item-sub">NPCs using profile: <?= h(intval($usageById[strval($rowId)] ?? 0)) ?></div>
@@ -640,10 +662,14 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <label for="label">Label</label>
                             <input type="text" id="label" name="label" value="<?= h($editItem['label'] ?? '') ?>" required>
                         </div>
-                        <div style="display:flex; align-items:flex-end;">
-                            <label class="default-npc-toggle" style="display:flex; align-items:center; gap:8px; margin:0;">
+                        <div style="display:flex; flex-direction:column; justify-content:flex-end; gap:8px;">
+                            <label class="profile-role-toggle" style="display:flex; align-items:center; gap:8px; margin:0;">
                                 <input type="checkbox" name="is_default_npc" value="1" <?= coerceBoolean($editItem['is_default_npc'] ?? false) ? 'checked' : '' ?>>
                                 Default NPC profile
+                            </label>
+                            <label class="profile-role-toggle" style="display:flex; align-items:center; gap:8px; margin:0;">
+                                <input type="checkbox" name="is_player_faction_profile" value="1" <?= coerceBoolean($editItem['is_player_faction_profile'] ?? false) ? 'checked' : '' ?>>
+                                Player faction profile
                             </label>
                         </div>
                         <div class="top-toggle-wrap">

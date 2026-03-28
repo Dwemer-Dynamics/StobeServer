@@ -70,6 +70,16 @@ if ($incomingPeople === '' &&
     // Keep people IDs authoritative from client payloads; do not synthesize "|player".
     $incomingPeople = '[]';
 }
+if (function_exists('stobeRecoverSparsePeopleForCriticalEvent')) {
+    $incomingPeople = stobeRecoverSparsePeopleForCriticalEvent(
+        strval($eventType),
+        strval($eventData),
+        strval($incomingPeople)
+    );
+}
+if (function_exists('stobeAnnotatePeopleTokensWithNpcStates')) {
+    $incomingPeople = stobeAnnotatePeopleTokensWithNpcStates($incomingPeople);
+}
 
 $GLOBALS["CACHE_PEOPLE"] = $incomingPeople;
 
@@ -184,6 +194,10 @@ try {
 
         case 'diary':
             require_once($path . "processor/diary.php");
+            break;
+
+        case 'init':
+            require_once($path . "processor/init.php");
             break;
 
         case 'combat_start':

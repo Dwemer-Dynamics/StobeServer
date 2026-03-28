@@ -66,7 +66,7 @@ Ruka: +55 (Attached, Professional)
 ## RelationshipLLM Features
 
 ### 1. Static Analysis (`analyzeNpc`)
-Parses TEXT relationships field and generates JSONB scores.
+Analyzes recent event history and generates JSONB scores.
 - Called by "Build with AI" button in NPC modal
 - Called by "Build Relationships" bulk button on NPC Master page
 - Infers faction biases from occupation (Imperial soldier -> Stormcloak=-50)
@@ -100,7 +100,7 @@ Or use the "Build Relationships" button in the NPC Master UI for existing playth
 ## UI Features
 
 ### NPC Master Page
-- **Build Relationships Button**: Bulk process existing NPCs with TEXT relationships into structured format
+- **Build Relationships Button**: Bulk process NPCs from event-history baseline into structured format
 - **Per-NPC Modal**: Edit individual relationships, affinity scores, and types
 
 ### Relationship Editor (in NPC Modal)
