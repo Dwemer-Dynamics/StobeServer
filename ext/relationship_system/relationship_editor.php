@@ -49,6 +49,34 @@ if (!class_exists('RelationshipManager')) {
 // Get existing JSONB relationships
 $extendedData = json_decode($editItem['extended_data'] ?? '{}', true) ?: [];
 $jsonbRelationships = $extendedData['relationships'] ?? [];
+if ((!is_array($jsonbRelationships) || count($jsonbRelationships) === 0) && !empty($editItem['relationships'])) {
+    $legacyRelationships = json_decode(strval($editItem['relationships']), true);
+    if (is_array($legacyRelationships)) {
+        $jsonbRelationships = $legacyRelationships;
+    }
+}
+if (!is_array($jsonbRelationships)) {
+    $jsonbRelationships = [];
+}
+$playerNameToken = '';
+if (function_exists('getSetting')) {
+    $playerNameToken = strtolower(trim(strval(getSetting('PLAYER_NAME', 'Drifter'))));
+}
+$filteredRelationships = [];
+foreach ($jsonbRelationships as $target => $payload) {
+    $targetToken = strtolower(trim(strval($target)));
+    if ($targetToken === '') {
+        continue;
+    }
+    if (in_array($targetToken, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) {
+        continue;
+    }
+    if ($playerNameToken !== '' && $targetToken === $playerNameToken) {
+        continue;
+    }
+    $filteredRelationships[$target] = $payload;
+}
+$jsonbRelationships = $filteredRelationships;
 
 // NPC name for AI analysis
 $npcName = $editItem['npc_name'] ?? 'Unknown';

@@ -5644,6 +5644,30 @@ function stobeNormalizeRelationshipTypeToken(string $rawType): string {
     return $type;
 }
 
+function stobeIsIgnoredRelationshipTarget(string $rawTarget): bool {
+    $rawLower = strtolower(trim($rawTarget));
+    if (in_array($rawLower, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) {
+        return true;
+    }
+
+    $target = normalizeParticipantNameToken($rawTarget);
+    if ($target === '') {
+        return true;
+    }
+
+    $targetLower = strtolower($target);
+    if (in_array($targetLower, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) {
+        return true;
+    }
+
+    $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
+    if ($playerName !== '' && $targetLower === strtolower($playerName)) {
+        return true;
+    }
+
+    return false;
+}
+
 function stobeNormalizeRelationshipMap(mixed $rawMap): array {
     $source = [];
     if (is_array($rawMap)) {
@@ -5718,6 +5742,9 @@ function stobeNormalizeRelationshipMap(mixed $rawMap): array {
         if ($target === '') {
             return;
         }
+        if (stobeIsIgnoredRelationshipTarget($target)) {
+            return;
+        }
 
         $affRaw = 0;
         $typeRaw = 'neutral';
@@ -5790,17 +5817,6 @@ function stobeFindRelationshipEntryKey(array $relationshipMap, string $targetNam
         }
     }
 
-    $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
-    $playerLower = strtolower($playerName);
-    if ($playerLower !== '' && ($targetLower === 'player' || $targetLower === $playerLower)) {
-        foreach ($relationshipMap as $existingName => $_entry) {
-            $existingLower = strtolower(strval($existingName));
-            if ($existingLower === 'player' || ($playerLower !== '' && $existingLower === $playerLower)) {
-                return strval($existingName);
-            }
-        }
-    }
-
     return '';
 }
 
@@ -5810,6 +5826,9 @@ function stobeCollectRelationshipContextTargets(array|false $npcData, string $sp
     $add = static function (string $rawName) use (&$targets, &$seen, $speakerName): void {
         $name = normalizeParticipantNameToken($rawName);
         if ($name === '') {
+            return;
+        }
+        if (stobeIsIgnoredRelationshipTarget($name)) {
             return;
         }
         if (strcasecmp($name, $speakerName) === 0) {
@@ -5824,8 +5843,6 @@ function stobeCollectRelationshipContextTargets(array|false $npcData, string $sp
     };
 
     $add($conversationTarget);
-    $add(getSetting('PLAYER_NAME', 'Drifter'));
-    $add('Player');
 
     $participants = extractParticipantNames([
         'people' => strval($GLOBALS["CACHE_PEOPLE"] ?? ''),
@@ -5865,15 +5882,43 @@ function stobeShouldUseTierOnlyRelationshipContext(array|false $npcData): bool {
     return $apiKey !== '';
 }
 
+function stobeGetNpcRelationshipMap(array|false $npcData): array {
+    if (!is_array($npcData)) {
+        return [];
+    }
+
+    $columnMap = stobeNormalizeRelationshipMap(strval($npcData['relationships'] ?? ''));
+
+    $extended = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $extendedRaw = $extended['relationships'] ?? [];
+    $extendedMap = stobeNormalizeRelationshipMap($extendedRaw);
+
+    if (count($extendedMap) === 0) {
+        return $columnMap;
+    }
+    if (count($columnMap) === 0) {
+        return $extendedMap;
+    }
+
+    $merged = $columnMap;
+    foreach ($extendedMap as $targetName => $entry) {
+        $key = stobeFindRelationshipEntryKey($merged, strval($targetName));
+        if ($key === '') {
+            $key = strval($targetName);
+        }
+        $merged[$key] = $entry;
+    }
+
+    return $merged;
+}
+
 function stobeBuildNpcRelationshipsText(string $speakerName, string $conversationTarget, array|false $npcData = false): string {
     $speaker = normalizeParticipantNameToken($speakerName);
     if (!is_array($npcData)) {
         $npcData = getNpcData($speaker);
     }
 
-    $relationshipMap = is_array($npcData)
-        ? stobeNormalizeRelationshipMap(strval($npcData['relationships'] ?? ''))
-        : [];
+    $relationshipMap = stobeGetNpcRelationshipMap($npcData);
     $targetNames = stobeCollectRelationshipContextTargets($npcData, $speaker, $conversationTarget);
 
     foreach (array_keys($relationshipMap) as $mapTarget) {
@@ -5953,6 +5998,7 @@ function stobeStripRelationshipCommandTags(string $text): string {
     if (!is_string($cleaned)) {
         $cleaned = $text;
     }
+    $cleaned = preg_replace('/<relationships>[\s\S]*?<\/relationships>/i', '', $cleaned) ?? $cleaned;
     $cleaned = preg_replace('/[ \t]{2,}/', ' ', $cleaned) ?? $cleaned;
     $cleaned = preg_replace('/\n{3,}/', "\n\n", $cleaned) ?? $cleaned;
     return trim($cleaned);
@@ -5960,19 +6006,14 @@ function stobeStripRelationshipCommandTags(string $text): string {
 
 function stobeParseRelationshipCommandTags(string $text): array {
     $updatesByKey = [];
-    $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
-    if ($playerName === '') {
-        $playerName = 'Player';
-    }
 
-    $normalizeTarget = static function (string $rawTarget) use ($playerName): string {
+    $normalizeTarget = static function (string $rawTarget): string {
+        if (stobeIsIgnoredRelationshipTarget($rawTarget)) {
+            return '';
+        }
         $target = normalizeParticipantNameToken($rawTarget);
         if ($target === '') {
             return '';
-        }
-        $targetLower = strtolower($target);
-        if ($targetLower === 'player' || $targetLower === 'the player') {
-            return $playerName;
         }
         return $target;
     };
@@ -6021,10 +6062,122 @@ function stobeParseRelationshipCommandTags(string $text): array {
     ];
 }
 
+function stobeRelationshipTierRepresentativeAffinity(string $tier): ?int {
+    $normalized = strtolower(trim($tier));
+    return match ($normalized) {
+        'bonded' => 95,
+        'devoted' => 83,
+        'fond' => 66,
+        'friendly' => 43,
+        'acquaintance' => 12,
+        'neutral' => 0,
+        'wary' => -18,
+        'cold' => -42,
+        'resentful' => -65,
+        'hateful' => -83,
+        'hostile' => -96,
+        default => null,
+    };
+}
+
+function stobeParseRelationshipBulletBlockUpdates(string $rawResponse): array {
+    $source = trim($rawResponse);
+    if ($source === '') {
+        return [];
+    }
+
+    if (preg_match('/<relationships\b[^>]*>([\s\S]*?)<\/relationships>/i', $source, $m) === 1) {
+        $source = trim(strval($m[1] ?? ''));
+    }
+    if ($source === '') {
+        return [];
+    }
+
+    $lines = preg_split('/\r\n|\r|\n/', $source) ?: [];
+    $updates = [];
+
+    foreach ($lines as $rawLine) {
+        $line = trim(strval($rawLine));
+        if ($line === '') {
+            continue;
+        }
+
+        $line = ltrim($line, " \t*-");
+        if ($line === '' || preg_match('/^<\/?[a-z0-9_:-]+/i', $line) === 1) {
+            continue;
+        }
+
+        $target = '';
+        $delta = 0;
+        $affSet = null;
+        $type = '';
+        $note = '';
+
+        if (preg_match('/^(.+?)\s*:\s*[A-Za-z][A-Za-z ]{0,31}\s*\(\s*([a-zA-Z][a-zA-Z0-9_-]{0,31})\s*,\s*aff\s*([+-]?[0-9]{1,3})\s*\)(?:\s*\|\s*(.+))?$/', $line, $m) === 1) {
+            $target = strval($m[1] ?? '');
+            $type = strval($m[2] ?? '');
+            $affSet = intval($m[3] ?? 0);
+            $note = trim(strval($m[4] ?? ''));
+        } elseif (preg_match('/^(.+?)\s*-\s*([+-]?[0-9]{1,3})\s*\(\s*[A-Za-z][A-Za-z ]{0,31}\s*,\s*([a-zA-Z][a-zA-Z0-9_-]{0,31})\s*\)(?:\s*\|\s*(.+))?$/', $line, $m) === 1) {
+            $target = strval($m[1] ?? '');
+            $affSet = intval($m[2] ?? 0);
+            $type = strval($m[3] ?? '');
+            $note = trim(strval($m[4] ?? ''));
+        } elseif (preg_match('/^(.+?)\s*-\s*([A-Za-z][A-Za-z ]{0,31})\s*\(\s*([a-zA-Z][a-zA-Z0-9_-]{0,31})\s*\)(?:\s*\|\s*(.+))?$/', $line, $m) === 1) {
+            $target = strval($m[1] ?? '');
+            $type = strval($m[3] ?? '');
+            $affSet = stobeRelationshipTierRepresentativeAffinity(strval($m[2] ?? ''));
+            $note = trim(strval($m[4] ?? ''));
+        } elseif (preg_match('/^(.+?)\s*-\s*([A-Za-z][A-Za-z ]{0,31})\s*\(([^)]*)\)(?:\s*\|\s*(.+))?$/', $line, $m) === 1) {
+            $target = strval($m[1] ?? '');
+            $affSet = stobeRelationshipTierRepresentativeAffinity(strval($m[2] ?? ''));
+            $inside = strval($m[3] ?? '');
+            $tokens = preg_split('/\s*,\s*/', $inside) ?: [];
+            foreach ($tokens as $token) {
+                $candidate = trim(strval($token));
+                if (preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,31}$/', $candidate) === 1) {
+                    $type = $candidate;
+                    break;
+                }
+            }
+            $note = trim(strval($m[4] ?? ''));
+        } elseif (preg_match('/^\s*([^:]+)\s*:\s*([+-]?[0-9]{1,3})(?:\s*:\s*([a-zA-Z][a-zA-Z0-9_-]{0,31}))?\s*$/', $line, $m) === 1) {
+            $target = strval($m[1] ?? '');
+            $delta = intval($m[2] ?? 0);
+            $type = strval($m[3] ?? '');
+        }
+
+        $target = normalizeParticipantNameToken($target);
+        if ($target === '') {
+            continue;
+        }
+        if (stobeIsIgnoredRelationshipTarget($target)) {
+            continue;
+        }
+
+        $entry = [
+            'target' => $target,
+            'aff_delta' => intval($delta),
+            'type' => strval($type),
+            'note' => $note,
+        ];
+        if (is_int($affSet)) {
+            $entry['aff_set'] = $affSet;
+        }
+        $updates[] = $entry;
+
+        if (count($updates) >= 24) {
+            break;
+        }
+    }
+
+    return $updates;
+}
+
 function stobeParseRelationshipEvalUpdates(string $rawResponse): array {
     $decoded = stobeDecodeStructuredDialoguePayload($rawResponse);
     if (!is_array($decoded) || count($decoded) === 0) {
-        return [];
+        return stobeParseRelationshipBulletBlockUpdates($rawResponse);
     }
 
     $rawUpdates = [];
@@ -6037,7 +6190,7 @@ function stobeParseRelationshipEvalUpdates(string $rawResponse): array {
     }
 
     if (!is_array($rawUpdates)) {
-        return [];
+        return stobeParseRelationshipBulletBlockUpdates($rawResponse);
     }
 
     $isList = array_keys($rawUpdates) === range(0, count($rawUpdates) - 1);
@@ -6089,12 +6242,28 @@ function stobeParseRelationshipEvalUpdates(string $rawResponse): array {
         }
         $delta = intval($deltaRaw);
 
-        $updates[] = [
+        $affSet = null;
+        $affSetRaw = $entry['aff_set'] ?? ($entry['affinity'] ?? ($entry['aff_score'] ?? null));
+        if (is_int($affSetRaw) || is_float($affSetRaw)) {
+            $affSet = intval($affSetRaw);
+        } elseif (is_string($affSetRaw) && preg_match('/[+-]?[0-9]{1,3}/', $affSetRaw, $m) === 1) {
+            $affSet = intval($m[0]);
+        }
+
+        $parsed = [
             'target' => $target,
             'aff_delta' => $delta,
             'type' => strval($entry['type'] ?? ($entry['relationship_type'] ?? ($entry['relation_type'] ?? ''))),
             'note' => strval($entry['note'] ?? ($entry['reason'] ?? ($entry['summary'] ?? ''))),
         ];
+        if (is_int($affSet)) {
+            $parsed['aff_set'] = $affSet;
+        }
+        $updates[] = $parsed;
+    }
+
+    if (count($updates) === 0) {
+        return stobeParseRelationshipBulletBlockUpdates($rawResponse);
     }
 
     return $updates;
@@ -6107,17 +6276,11 @@ function stobeApplyRelationshipUpdatesMap(array $relationshipMap, array $updates
         if ($normalized === '') {
             continue;
         }
+        if (stobeIsIgnoredRelationshipTarget($normalized)) {
+            continue;
+        }
         $allowedLookup[strtolower($normalized)] = true;
     }
-
-    $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
-    if ($playerName === '') {
-        $playerName = 'Player';
-    }
-    if (!isset($allowedLookup[strtolower($playerName)])) {
-        $allowedLookup[strtolower($playerName)] = true;
-    }
-    $allowedLookup['player'] = true;
 
     $applied = [];
     foreach ($updates as $update) {
@@ -6125,25 +6288,18 @@ function stobeApplyRelationshipUpdatesMap(array $relationshipMap, array $updates
             continue;
         }
         $targetRaw = strval($update['target'] ?? '');
+        if (stobeIsIgnoredRelationshipTarget($targetRaw)) {
+            continue;
+        }
         $target = normalizeParticipantNameToken($targetRaw);
         if ($target === '') {
             continue;
         }
         $targetLower = strtolower($target);
-        if ($targetLower === 'player' || $targetLower === 'the player') {
-            $target = $playerName;
-            $targetLower = strtolower($target);
-        }
         if (count($allowedLookup) > 0 && !isset($allowedLookup[$targetLower])) {
             continue;
         }
 
-        $delta = intval($update['aff_delta'] ?? 0);
-        if ($delta > 80) {
-            $delta = 80;
-        } elseif ($delta < -80) {
-            $delta = -80;
-        }
         $typeCandidate = trim(strval($update['type'] ?? ''));
         $noteCandidate = trim(strval($update['note'] ?? ''));
         if (strlen($noteCandidate) > 180) {
@@ -6156,7 +6312,30 @@ function stobeApplyRelationshipUpdatesMap(array $relationshipMap, array $updates
         }
         $existing = is_array($relationshipMap[$existingKey] ?? null) ? $relationshipMap[$existingKey] : [];
         $oldAff = intval($existing['aff'] ?? 0);
-        $newAff = $oldAff + $delta;
+
+        $hasAffSet = false;
+        $affSet = 0;
+        $affSetRaw = $update['aff_set'] ?? null;
+        if (is_int($affSetRaw) || is_float($affSetRaw)) {
+            $hasAffSet = true;
+            $affSet = intval($affSetRaw);
+        } elseif (is_string($affSetRaw) && preg_match('/[+-]?[0-9]{1,3}/', $affSetRaw, $m) === 1) {
+            $hasAffSet = true;
+            $affSet = intval($m[0]);
+        }
+
+        $delta = intval($update['aff_delta'] ?? 0);
+        if ($delta > 80) {
+            $delta = 80;
+        } elseif ($delta < -80) {
+            $delta = -80;
+        }
+
+        if ($hasAffSet) {
+            $newAff = $affSet;
+        } else {
+            $newAff = $oldAff + $delta;
+        }
         if ($newAff > 100) {
             $newAff = 100;
         } elseif ($newAff < -100) {
@@ -6220,14 +6399,21 @@ function stobePersistNpcRelationshipMap(string $speakerName, array $relationship
 
     $normalizedMap = stobeNormalizeRelationshipMap($relationshipMap);
     $serializedMap = count($normalizedMap) > 0 ? normalizeJsonString($normalizedMap) : '';
+    $serializedJsonbMap = count($normalizedMap) > 0 ? normalizeJsonString($normalizedMap) : '{}';
 
     $db = $GLOBALS["db"];
     $db->exec(
         "UPDATE core_npc
          SET relationships = $1,
+             extended_data = jsonb_set(
+                 COALESCE(extended_data, '{}'::jsonb),
+                 '{relationships}',
+                 $2::jsonb,
+                 true
+             ),
              updated_at = NOW()
-         WHERE id = $2",
-        [$serializedMap, $npcId]
+         WHERE id = $3",
+        [$serializedMap, $serializedJsonbMap, $npcId]
     );
 
     return true;
@@ -6254,7 +6440,8 @@ function stobeEvaluateRelationshipsForTurn(
         $result['error'] = 'invalid_speaker';
         return $result;
     }
-    $hasInlineCommands = preg_match('/#(?:REL|TYPE)\s*:/i', $responseText) === 1;
+    $hasInlineCommands = (preg_match('/#(?:REL|TYPE)\s*:/i', $responseText) === 1)
+        || (preg_match('/<relationships\b[^>]*>[\s\S]*<\/relationships>/i', $responseText) === 1);
     if (trim($result['clean_response']) === '' && !$hasInlineCommands) {
         $result['error'] = 'empty_response';
         return $result;
@@ -6289,7 +6476,7 @@ function stobeEvaluateRelationshipsForTurn(
         $listener = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
     }
 
-    $relationshipMap = stobeNormalizeRelationshipMap(strval($speakerNpcData['relationships'] ?? ''));
+    $relationshipMap = stobeGetNpcRelationshipMap($speakerNpcData);
     $contextTargets = stobeCollectRelationshipContextTargets($speakerNpcData, $speaker, $listener);
     foreach (array_keys($relationshipMap) as $mapTarget) {
         $contextTargets[] = $mapTarget;
@@ -6367,6 +6554,13 @@ function stobeEvaluateRelationshipsForTurn(
         $updates = is_array($parsedTags['updates'] ?? null) ? $parsedTags['updates'] : [];
         if (count($updates) > 0) {
             $method = 'command_tags';
+        }
+    }
+
+    if (count($updates) === 0) {
+        $updates = stobeParseRelationshipBulletBlockUpdates($responseText);
+        if (count($updates) > 0) {
+            $method = 'response_relationship_block';
         }
     }
 
@@ -7085,7 +7279,8 @@ function buildSystemPrompt(
             . "</player_faction_funds>";
     }
 
-    $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, 3, $npcData, $eventType);
+    $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
+    $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
     if (count($loreHints) > 0) {
         $prompt .= "\n\n<knowledge>";
         foreach ($loreHints as $hint) {

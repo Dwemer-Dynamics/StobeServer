@@ -273,6 +273,10 @@ PROMPT;
     if (!empty($customTypes) && is_array($customTypes)) {
         $validTypes = array_merge($validTypes, $customTypes);
     }
+    $playerNameToken = '';
+    if (function_exists('getSetting')) {
+        $playerNameToken = strtolower(trim(strval(getSetting('PLAYER_NAME', 'Drifter'))));
+    }
 
     foreach ($parsed['relationships'] as $target => $data) {
         $aff = isset($data['aff']) ? intval($data['aff']) : 0;
@@ -291,7 +295,8 @@ PROMPT;
             $targetLower === 'player' ||
             $targetLower === 'the player' ||
             $targetLower === 'dragonborn' ||
-            $targetLower === 'the dragonborn') {
+            $targetLower === 'the dragonborn' ||
+            ($playerNameToken !== '' && $targetLower === $playerNameToken)) {
             continue;
         }
 

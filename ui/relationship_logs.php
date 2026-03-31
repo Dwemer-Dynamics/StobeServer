@@ -142,6 +142,47 @@ function extractChanges(string $resultRaw, string $speakerName = "", string $lis
     }
 
     $changes = [];
+    $appendUpdate = static function (array $entry) use (&$changes): void {
+        $target = trim(strval($entry["target"] ?? ($entry["name"] ?? ($entry["listener"] ?? ($entry["npc"] ?? "")))));
+        if ($target === "") {
+            return;
+        }
+
+        $delta = 0;
+        if (isset($entry["delta"])) {
+            $delta = intval($entry["delta"]);
+        } elseif (isset($entry["aff_delta"])) {
+            $delta = intval($entry["aff_delta"]);
+        } elseif (isset($entry["change"])) {
+            $delta = intval($entry["change"]);
+        } elseif (isset($entry["new_aff"]) && isset($entry["old_aff"])) {
+            $delta = intval($entry["new_aff"]) - intval($entry["old_aff"]);
+        }
+
+        $reason = trim(strval($entry["reason"] ?? ($entry["note"] ?? ($entry["summary"] ?? ""))));
+        $changes[$target] = [
+            "delta" => $delta,
+            "reason" => $reason,
+        ];
+    };
+
+    if (isset($parsed["updates"]) && is_array($parsed["updates"])) {
+        foreach ($parsed["updates"] as $update) {
+            if (is_array($update)) {
+                $appendUpdate($update);
+            }
+        }
+    } elseif (array_keys($parsed) === range(0, count($parsed) - 1)) {
+        foreach ($parsed as $entry) {
+            if (is_array($entry)) {
+                $appendUpdate($entry);
+            }
+        }
+    }
+    if (count($changes) > 0) {
+        return $changes;
+    }
+
     if (isset($parsed["speaker"]) && is_array($parsed["speaker"]) && isset($parsed["speaker"]["delta"])) {
         $name = $speakerName !== "" ? $speakerName : "speaker";
         $changes[$name] = $parsed["speaker"];
