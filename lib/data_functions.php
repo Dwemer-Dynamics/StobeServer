@@ -1473,6 +1473,10 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     $peopleCache = $GLOBALS["CACHE_PEOPLE"] ?? '';
     $locationCache = $GLOBALS["CACHE_LOCATION"] ?? '';
 
+    if ($normalizedType === 'chat' && stobeShouldSkipMirroredPlayerChatRow($db, $data, $eventLocalTs)) {
+        return;
+    }
+
     $inserted = $db->fetchOne(
         "INSERT INTO eventlog (type, ts, gamets, data, sess, localts, people, location)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -1512,6 +1516,84 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
             $eventLocalTs
         );
     }
+}
+
+function stobeNormalizeDialogueForMirrorDedupe(string $rawMessage): string {
+    $normalized = strtolower(trim(stobeSanitizeDialogueMessageForLog($rawMessage)));
+    // Common corruption tail: stray trailing digits (for example "...join us6").
+    $normalized = preg_replace('/(?<=\p{L})\d{1,2}\s*$/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/[[:space:][:punct:]]+$/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/\s{2,}/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventLocalTs): bool {
+    if (!$db) {
+        return false;
+    }
+
+    $parsedChat = parseDialogueEventData($chatData);
+    $chatSpeaker = normalizeParticipantNameToken(strval($parsedChat['speaker'] ?? ''));
+    $chatTarget = normalizeParticipantNameToken(strval($parsedChat['target'] ?? ''));
+    $chatMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedChat['message'] ?? ''));
+    if ($chatSpeaker === '' || $chatMessageNorm === '') {
+        return false;
+    }
+
+    $recentRows = $db->fetchAll(
+        "SELECT rowid, data, localts
+         FROM eventlog
+         WHERE type IN ('inputtext', 'inputtext_s')
+           AND localts >= $1
+           AND LOWER(data) LIKE LOWER($2)
+         ORDER BY rowid DESC
+         LIMIT 8",
+        [
+            $eventLocalTs - 4,
+            $chatSpeaker . ':%',
+        ]
+    );
+
+    if (!is_array($recentRows) || count($recentRows) === 0) {
+        return false;
+    }
+
+    foreach ($recentRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $inputData = strval($row['data'] ?? '');
+        if ($inputData === '') {
+            continue;
+        }
+        $parsedInput = parseDialogueEventData($inputData);
+        $inputSpeaker = normalizeParticipantNameToken(strval($parsedInput['speaker'] ?? ''));
+        if ($inputSpeaker === '' || strcasecmp($inputSpeaker, $chatSpeaker) !== 0) {
+            continue;
+        }
+        $inputTarget = normalizeParticipantNameToken(strval($parsedInput['target'] ?? ''));
+        if ($chatTarget !== '' && $inputTarget !== '' && strcasecmp($chatTarget, $inputTarget) !== 0) {
+            continue;
+        }
+        $inputMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedInput['message'] ?? ''));
+        if ($inputMessageNorm === '') {
+            continue;
+        }
+        if ($inputMessageNorm !== $chatMessageNorm) {
+            continue;
+        }
+
+        stobeLogDebug('Skipped mirrored player chat row', [
+            'speaker' => $chatSpeaker,
+            'target' => $chatTarget,
+            'message' => $chatMessageNorm,
+            'matched_input_rowid' => intval($row['rowid'] ?? 0),
+            'matched_input_localts' => intval($row['localts'] ?? 0),
+        ]);
+        return true;
+    }
+
+    return false;
 }
 
 function stobeSanitizeDialogueMessageForLog(string $message): string {
