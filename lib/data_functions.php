@@ -938,6 +938,52 @@ function extractEventGeoFromString(string $eventData): array {
     return stobeNormalizeGeoContext(['location' => $text, 'city' => '', 'region' => '']);
 }
 
+function extractEventGeoFromLocationUpdateMessage(string $eventData): array {
+    $text = trim($eventData);
+    if ($text === '') {
+        return ['location' => '', 'city' => '', 'region' => ''];
+    }
+
+    if (preg_match('/location\s*update\s*:\s*(.+)$/iu', $text, $matches) !== 1) {
+        return ['location' => '', 'city' => '', 'region' => ''];
+    }
+
+    $locationText = trim(strval($matches[1] ?? ''));
+    if ($locationText === '') {
+        return ['location' => '', 'city' => '', 'region' => ''];
+    }
+
+    if ($locationText[0] === '{') {
+        return extractEventGeoFromString($locationText);
+    }
+
+    $parts = preg_split('/\s*,\s*/u', $locationText) ?: [];
+    $parts = array_values(array_filter(array_map(static function ($part): string {
+        return trim(strval($part));
+    }, $parts), static function ($part): bool {
+        return $part !== '';
+    }));
+
+    $city = '';
+    $region = '';
+    if (count($parts) >= 3) {
+        $city = strval($parts[count($parts) - 2]);
+        $region = strval($parts[count($parts) - 1]);
+    } elseif (count($parts) === 2) {
+        $city = strval($parts[1]);
+        $region = stobeResolveKenshiZoneFromTown($city);
+    } elseif (count($parts) === 1) {
+        $city = strval($parts[0]);
+        $region = stobeResolveKenshiZoneFromTown($city);
+    }
+
+    return stobeNormalizeGeoContext([
+        'location' => $locationText,
+        'city' => $city,
+        'region' => $region,
+    ]);
+}
+
 function getEventGeoFromNpcName(string $name): array {
     $normalizedName = normalizeParticipantNameToken($name);
     if ($normalizedName === '') {
@@ -1094,8 +1140,16 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     ];
     $resolved = mergeEventGeoContext($resolved, $fromQuery);
 
-    if ($normalizedType === 'location') {
-        $resolved = mergeEventGeoContext($resolved, extractEventGeoFromString($eventData));
+    if (in_array($normalizedType, ['location', 'infoloc'], true)) {
+        $parsedEventGeo = extractEventGeoFromLocationUpdateMessage($eventData);
+        if (
+            $parsedEventGeo['location'] === '' &&
+            $parsedEventGeo['city'] === '' &&
+            $parsedEventGeo['region'] === ''
+        ) {
+            $parsedEventGeo = extractEventGeoFromString($eventData);
+        }
+        $resolved = mergeEventGeoContext($resolved, $parsedEventGeo);
     }
 
     $profileName = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));

@@ -1939,7 +1939,7 @@ VALUES
 ON CONFLICT (name, type) DO NOTHING;
 
 INSERT INTO core_action (command, action_name, description, is_activated) VALUES
-('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name.', TRUE),
+('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.', TRUE),
 ('SUICIDE', 'Suicide', 'Die immediately on the spot.', TRUE),
 ('FOLLOW', 'Follow', 'Move to and follow the specified target actor.', TRUE),
 ('STOP_FOLLOW', 'StopFollow', 'Stop following and return to normal behavior.', TRUE),
