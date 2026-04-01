@@ -398,7 +398,7 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
                     . ' Never use second-person pronouns like "you" or "your".';
             }
 
-            $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets))
+            $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets), $speaker)
                 . "\n\n"
                 . buildSystemPrompt(
                     $narratorName,

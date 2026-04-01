@@ -770,7 +770,7 @@ if (
     ];
 }
 
-$systemPrompt = stobeBuildGameTimePromptBlock($gamets)
+$systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($npcData) ? $npcData : [])
     . "\n\n"
     . buildRechatSystemPrompt(
         $respondingNpc,

@@ -2196,14 +2196,630 @@ function stobePromptXmlEscape(mixed $value): string {
     return htmlspecialchars($text, ENT_COMPAT | ENT_XML1, 'UTF-8');
 }
 
-function stobeBuildGameTimePromptBlock(mixed $gamets): string {
+function stobeNormalizeWorldEnvironmentPayload(mixed $rawEnvironment): array {
+    if (is_array($rawEnvironment)) {
+        return $rawEnvironment;
+    }
+    if (is_string($rawEnvironment)) {
+        $trimmed = trim($rawEnvironment);
+        if ($trimmed !== '') {
+            $decoded = json_decode($trimmed, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+    }
+    return [];
+}
+
+function stobeNormalizeWorldPromptToken(mixed $value): string {
+    if (is_array($value) || is_object($value) || $value === null) {
+        return '';
+    }
+
+    $text = trim(strval($value));
+    if ($text === '') {
+        return '';
+    }
+
+    $lower = strtolower($text);
+    if (in_array($lower, ['unknown', 'none', 'n/a', 'null', 'unset'], true)) {
+        return '';
+    }
+
+    return preg_replace('/\s+/u', ' ', $text) ?? $text;
+}
+
+function stobeNormalizeWorldFloorToken(mixed $value): string {
+    if (is_int($value) || is_float($value)) {
+        $normalized = intval(round(floatval($value)));
+        if ($normalized === 0) {
+            return 'ground floor';
+        }
+        return strval($normalized);
+    }
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return '';
+        }
+        if (preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $trimmed) === 1) {
+            $normalized = intval(round(floatval($trimmed)));
+            if ($normalized === 0) {
+                return 'ground floor';
+            }
+            return strval($normalized);
+        }
+        $token = stobeNormalizeWorldPromptToken($trimmed);
+        if ($token === '') {
+            return '';
+        }
+        $lowerToken = strtolower($token);
+        if (in_array($lowerToken, ['ground', 'ground floor', 'outdoors'], true)) {
+            return 'ground floor';
+        }
+        return truncatePromptValue($token, 64);
+    }
+    return '';
+}
+
+function stobeResolveWorldWeatherLabel(array $environment, array $metadata = []): string {
+    $parseWeatherCode = static function (mixed $value): ?int {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_float($value)) {
+            return intval(round($value));
+        }
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            if ($trimmed !== '' && preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $trimmed) === 1) {
+                return intval(round(floatval($trimmed)));
+            }
+        }
+        return null;
+    };
+
+    $weatherCode = $parseWeatherCode($environment['weather'] ?? ($metadata['weather'] ?? null));
+    if ($weatherCode !== null) {
+        $weatherLabelMap = [
+            0 => 'Clear',
+            1 => 'Duststorm',
+            2 => 'Acid Rain',
+            3 => 'Burning',
+            4 => 'Gas',
+            5 => 'Rain',
+        ];
+        if (array_key_exists($weatherCode, $weatherLabelMap)) {
+            return $weatherLabelMap[$weatherCode];
+        }
+        return 'Weather ' . strval($weatherCode);
+    }
+
+    foreach (['weather_name', 'weather_state', 'weather_type', 'weather'] as $key) {
+        if (!array_key_exists($key, $environment)) {
+            continue;
+        }
+        $candidate = stobeNormalizeWorldPromptToken($environment[$key]);
+        if ($candidate === '') {
+            continue;
+        }
+        $lowerCandidate = strtolower($candidate);
+        if (preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $lowerCandidate) === 1) {
+            continue;
+        }
+        if (in_array($lowerCandidate, ['none', 'no weather', 'normal', 'clear'], true)) {
+            return 'Clear';
+        }
+        $normalized = preg_replace('/\s+/u', ' ', $candidate) ?? $candidate;
+        return truncatePromptValue(ucwords(strtolower($normalized)), 120);
+    }
+
+    $indoorsFlag = stobeParseFlexibleBool($environment['indoors'] ?? ($metadata['indoors'] ?? null));
+    $outdoorsFlag = stobeParseFlexibleBool($environment['outdoors'] ?? ($metadata['outdoors'] ?? null));
+    if ($indoorsFlag === true) {
+        return 'None (indoors)';
+    }
+    if ($outdoorsFlag === true) {
+        return 'Clear';
+    }
+
+    return '';
+}
+
+function stobeBuildWorldPromptContextFromNpcData(array $npcData): array {
+    $resolved = [
+        'location' => '',
+        'weather' => '',
+        'floor' => '',
+    ];
+
+    $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+
+    $environment = [];
+    $environmentCandidates = [
+        $extendedData['environment'] ?? null,
+        $metadata['environment'] ?? null,
+    ];
+    foreach (['nearby_snapshot', 'entry', 'context'] as $nestedKey) {
+        $nestedExtended = $extendedData[$nestedKey] ?? null;
+        if (is_array($nestedExtended)) {
+            $environmentCandidates[] = $nestedExtended['environment'] ?? $nestedExtended;
+        }
+        $nestedMetadata = $metadata[$nestedKey] ?? null;
+        if (is_array($nestedMetadata)) {
+            $environmentCandidates[] = $nestedMetadata['environment'] ?? $nestedMetadata;
+        }
+    }
+    foreach ($environmentCandidates as $candidate) {
+        $normalizedEnvironment = stobeNormalizeWorldEnvironmentPayload($candidate);
+        if (count($normalizedEnvironment) > 0) {
+            $environment = $normalizedEnvironment;
+            break;
+        }
+    }
+
+    $pickToken = static function (array $source, array $keys): string {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $source)) {
+                continue;
+            }
+            $token = stobeNormalizeWorldPromptToken($source[$key]);
+            if ($token !== '') {
+                return $token;
+            }
+        }
+        return '';
+    };
+
+    $locationCandidates = [
+        $pickToken($environment, ['building_name', 'indoors_name', 'location', 'location_name', 'cell', 'area_name', 'area']),
+        $pickToken($environment, ['town_name', 'town', 'city', 'settlement']),
+        $pickToken($environment, ['zone_name', 'zone']),
+        $pickToken($environment, ['region', 'region_name']),
+        $pickToken($extendedData, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region']),
+        $pickToken($metadata, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region', 'region_name', 'building_name', 'cell']),
+        stobeNormalizeWorldPromptToken($npcData['town'] ?? ''),
+        stobeNormalizeWorldPromptToken($npcData['zone'] ?? ''),
+        stobeNormalizeWorldPromptToken($npcData['region'] ?? ''),
+    ];
+
+    $locationParts = [];
+    $seenLocationParts = [];
+    foreach ($locationCandidates as $candidate) {
+        if ($candidate === '') {
+            continue;
+        }
+        $dedupeKey = strtolower($candidate);
+        if (isset($seenLocationParts[$dedupeKey])) {
+            continue;
+        }
+        $seenLocationParts[$dedupeKey] = true;
+        $locationParts[] = $candidate;
+    }
+    if (count($locationParts) > 0) {
+        $resolved['location'] = truncatePromptValue(implode(', ', $locationParts), 260);
+    }
+
+    $floorSources = [$environment, $extendedData, $metadata, $npcData];
+    foreach (['environment', 'nearby_snapshot', 'entry', 'context'] as $nestedKey) {
+        if (isset($extendedData[$nestedKey]) && is_array($extendedData[$nestedKey])) {
+            $nested = $extendedData[$nestedKey];
+            $floorSources[] = $nested;
+            if (isset($nested['environment']) && is_array($nested['environment'])) {
+                $floorSources[] = $nested['environment'];
+            }
+        }
+        if (isset($metadata[$nestedKey]) && is_array($metadata[$nestedKey])) {
+            $nested = $metadata[$nestedKey];
+            $floorSources[] = $nested;
+            if (isset($nested['environment']) && is_array($nested['environment'])) {
+                $floorSources[] = $nested['environment'];
+            }
+        }
+    }
+    foreach ($floorSources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+        foreach (['floor', 'current_floor', 'floor_num', 'level', 'story', 'story_level', 'story_num'] as $floorKey) {
+            if (!array_key_exists($floorKey, $source)) {
+                continue;
+            }
+            $floorToken = stobeNormalizeWorldFloorToken($source[$floorKey]);
+            if ($floorToken !== '') {
+                $resolved['floor'] = $floorToken;
+                break 2;
+            }
+        }
+    }
+
+    $weatherEnvironment = $environment;
+    foreach (['weather', 'weather_name', 'weather_state', 'weather_type', 'indoors', 'outdoors'] as $weatherKey) {
+        if (!array_key_exists($weatherKey, $weatherEnvironment) && array_key_exists($weatherKey, $extendedData)) {
+            $weatherEnvironment[$weatherKey] = $extendedData[$weatherKey];
+        }
+        if (!array_key_exists($weatherKey, $weatherEnvironment) && array_key_exists($weatherKey, $metadata)) {
+            $weatherEnvironment[$weatherKey] = $metadata[$weatherKey];
+        }
+    }
+    $resolved['weather'] = stobeResolveWorldWeatherLabel($weatherEnvironment, $metadata);
+    if ($resolved['floor'] === '') {
+        $indoorsFlag = stobeParseFlexibleBool($weatherEnvironment['indoors'] ?? ($metadata['indoors'] ?? null));
+        $outdoorsFlag = stobeParseFlexibleBool($weatherEnvironment['outdoors'] ?? ($metadata['outdoors'] ?? null));
+        if ($indoorsFlag === true || $outdoorsFlag === true) {
+            $resolved['floor'] = 'ground floor';
+        }
+    }
+
+    if ($resolved['location'] === '') {
+        $npcName = normalizeParticipantNameToken(strval($npcData['name'] ?? ''));
+        if ($npcName !== '') {
+            $resolvedGeo = getEventGeoFromNpcName($npcName);
+            $resolved['location'] = truncatePromptValue(composeEventLocationText($resolvedGeo), 260);
+        }
+    }
+
+    return $resolved;
+}
+
+function stobeMergeWorldPromptContext(array &$resolved, array $candidate): void {
+    foreach (['location', 'weather', 'floor'] as $key) {
+        $current = $key === 'floor'
+            ? stobeNormalizeWorldFloorToken($resolved[$key] ?? '')
+            : stobeNormalizeWorldPromptToken($resolved[$key] ?? '');
+        if ($current !== '') {
+            $resolved[$key] = $current;
+            continue;
+        }
+        $incoming = $key === 'floor'
+            ? stobeNormalizeWorldFloorToken($candidate[$key] ?? '')
+            : stobeNormalizeWorldPromptToken($candidate[$key] ?? '');
+        if ($incoming !== '') {
+            $resolved[$key] = $incoming;
+        }
+    }
+}
+
+function stobeCollectWorldContextCandidateNames(mixed $context = null): array {
+    $names = [];
+    $seen = [];
+    $addName = static function (mixed $value) use (&$names, &$seen): void {
+        $normalized = normalizeParticipantNameToken(strval($value));
+        if ($normalized === '') {
+            return;
+        }
+        $key = strtolower($normalized);
+        if (isset($seen[$key])) {
+            return;
+        }
+        $seen[$key] = true;
+        $names[] = $normalized;
+    };
+
+    if (is_string($context)) {
+        $addName($context);
+    } elseif (is_array($context)) {
+        foreach ([
+            'name',
+            'speaker_name',
+            'speaker',
+            'target_name',
+            'target',
+            'profile',
+            'npc',
+            'npc_name',
+            'responding_npc',
+            'previous_speaker',
+            'previous_target',
+        ] as $field) {
+            if (array_key_exists($field, $context)) {
+                $addName($context[$field]);
+            }
+        }
+        $contextPeople = $context['people'] ?? null;
+        if (is_array($contextPeople)) {
+            foreach ($contextPeople as $person) {
+                $addName($person);
+            }
+        }
+    }
+
+    $peopleRaw = trim(strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? '')));
+    if ($peopleRaw !== '') {
+        $decodedPeople = json_decode($peopleRaw, true);
+        if (is_array($decodedPeople)) {
+            foreach ($decodedPeople as $personToken) {
+                $addName($personToken);
+            }
+        }
+    }
+
+    $addName(strval($_GET['profile'] ?? ''));
+
+    return $names;
+}
+
+function stobeResolveWorldContextFromRecentNpcRows(string $npcName, int $limit = 8): array {
+    $empty = [
+        'location' => '',
+        'weather' => '',
+        'floor' => '',
+    ];
+
+    $safeName = normalizeParticipantNameToken($npcName);
+    if ($safeName === '') {
+        return $empty;
+    }
+
+    static $cache = [];
+    $safeLimit = max(1, min(20, $limit));
+    $cacheKey = strtolower($safeName) . '|' . strval($safeLimit);
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !is_object($db) || !method_exists($db, 'fetchAll')) {
+        $cache[$cacheKey] = $empty;
+        return $cache[$cacheKey];
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT *
+         FROM core_npc
+         WHERE LOWER(name) = LOWER($1)
+         ORDER BY gamets_last_updated DESC, updated_at DESC
+         LIMIT " . strval($safeLimit),
+        [$safeName]
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        $rows = $db->fetchAll(
+            "SELECT *
+             FROM core_npc
+             WHERE LOWER(COALESCE(original_name, '')) = LOWER($1)
+             ORDER BY
+                CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+                gamets_last_updated DESC,
+                updated_at DESC
+             LIMIT " . strval($safeLimit),
+            [$safeName]
+        );
+    }
+
+    $resolved = $empty;
+    if (is_array($rows)) {
+        foreach ($rows as $row) {
+            if (!is_array($row) || count($row) === 0) {
+                continue;
+            }
+            stobeMergeWorldPromptContext($resolved, stobeBuildWorldPromptContextFromNpcData($row));
+            if ($resolved['location'] !== '' && $resolved['weather'] !== '' && $resolved['floor'] !== '') {
+                break;
+            }
+        }
+    }
+
+    $cache[$cacheKey] = $resolved;
+    return $cache[$cacheKey];
+}
+
+function stobeResolveWorldContextFromRecentEventData(int $windowSeconds = 1800, int $limit = 64): array {
+    $empty = [
+        'location' => '',
+        'weather' => '',
+        'floor' => '',
+    ];
+
+    static $cache = [];
+    $safeWindow = max(60, min(86400, $windowSeconds));
+    $safeLimit = max(1, min(256, $limit));
+    $cacheKey = strval($safeWindow) . '|' . strval($safeLimit);
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !is_object($db) || !method_exists($db, 'fetchAll')) {
+        $cache[$cacheKey] = $empty;
+        return $cache[$cacheKey];
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT type, data, location
+         FROM eventlog
+         WHERE localts > $1
+         ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+         LIMIT " . strval($safeLimit),
+        [time() - $safeWindow]
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        $cache[$cacheKey] = $empty;
+        return $cache[$cacheKey];
+    }
+
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $locationToken = trim(strval($row['location'] ?? ''));
+        if ($locationToken !== '') {
+            $fromLocationColumn = composeEventLocationText(extractEventGeoFromString($locationToken));
+            if ($fromLocationColumn !== '') {
+                $cache[$cacheKey] = [
+                    'location' => truncatePromptValue($fromLocationColumn, 260),
+                    'weather' => '',
+                    'floor' => '',
+                ];
+                return $cache[$cacheKey];
+            }
+        }
+
+        $eventType = strtolower(trim(strval($row['type'] ?? '')));
+        $eventData = trim(strval($row['data'] ?? ''));
+        if ($eventData === '') {
+            continue;
+        }
+
+        $geo = ['location' => '', 'city' => '', 'region' => ''];
+        if (in_array($eventType, ['location', 'infoloc'], true)) {
+            $geo = extractEventGeoFromLocationUpdateMessage($eventData);
+            if (
+                trim(strval($geo['location'] ?? '')) === '' &&
+                trim(strval($geo['city'] ?? '')) === '' &&
+                trim(strval($geo['region'] ?? '')) === ''
+            ) {
+                $geo = extractEventGeoFromString($eventData);
+            }
+        } else {
+            $geo = extractEventGeoFromString($eventData);
+        }
+
+        $fromEventData = composeEventLocationText($geo);
+        if ($fromEventData !== '') {
+            $cache[$cacheKey] = [
+                'location' => truncatePromptValue($fromEventData, 260),
+                'weather' => '',
+                'floor' => '',
+            ];
+            return $cache[$cacheKey];
+        }
+    }
+
+    $cache[$cacheKey] = $empty;
+    return $cache[$cacheKey];
+}
+
+function stobeResolveWorldPromptContext(mixed $context = null): array {
+    $resolved = [
+        'location' => '',
+        'weather' => '',
+        'floor' => '',
+    ];
+
+    if (is_array($context)) {
+        if (
+            array_key_exists('metadata', $context)
+            || array_key_exists('extended_data', $context)
+            || array_key_exists('name', $context)
+        ) {
+            stobeMergeWorldPromptContext($resolved, stobeBuildWorldPromptContextFromNpcData($context));
+        }
+
+        foreach (['speaker_data', 'target_data', 'npc_data', 'context_data'] as $nestedDataKey) {
+            $nested = $context[$nestedDataKey] ?? null;
+            if (is_array($nested) && count($nested) > 0) {
+                stobeMergeWorldPromptContext($resolved, stobeBuildWorldPromptContextFromNpcData($nested));
+            }
+        }
+
+        if ($resolved['location'] === '' && array_key_exists('location', $context)) {
+            $resolved['location'] = truncatePromptValue(stobeNormalizeWorldPromptToken($context['location']), 260);
+        }
+        if ($resolved['weather'] === '') {
+            $resolved['weather'] = stobeResolveWorldWeatherLabel($context, $context);
+        }
+        if ($resolved['floor'] === '') {
+            foreach (['floor', 'current_floor', 'floor_num', 'level', 'story', 'story_level', 'story_num'] as $floorKey) {
+                if (!array_key_exists($floorKey, $context)) {
+                    continue;
+                }
+                $floorToken = stobeNormalizeWorldFloorToken($context[$floorKey]);
+                if ($floorToken !== '') {
+                    $resolved['floor'] = $floorToken;
+                    break;
+                }
+            }
+        }
+    }
+
+    $candidateNames = stobeCollectWorldContextCandidateNames($context);
+    foreach ($candidateNames as $candidateName) {
+        $candidateNpcData = getNpcData($candidateName);
+        if (is_array($candidateNpcData) && count($candidateNpcData) > 0) {
+            stobeMergeWorldPromptContext($resolved, stobeBuildWorldPromptContextFromNpcData($candidateNpcData));
+        }
+        if ($resolved['location'] === '' || $resolved['weather'] === '' || $resolved['floor'] === '') {
+            stobeMergeWorldPromptContext($resolved, stobeResolveWorldContextFromRecentNpcRows($candidateName, 10));
+        }
+        if ($resolved['location'] === '') {
+            $candidateGeo = getEventGeoFromNpcName($candidateName);
+            $candidateLocation = truncatePromptValue(composeEventLocationText($candidateGeo), 260);
+            if ($candidateLocation !== '') {
+                $resolved['location'] = $candidateLocation;
+            }
+        }
+        if ($resolved['location'] !== '' && $resolved['weather'] !== '' && $resolved['floor'] !== '') {
+            break;
+        }
+    }
+
+    if ($resolved['location'] === '') {
+        $queryLocation = trim(strval($_GET['location'] ?? ''));
+        $queryCity = trim(strval($_GET['city'] ?? ''));
+        $queryRegion = trim(strval($_GET['region'] ?? ''));
+        $queryLocationText = '';
+        if ($queryLocation !== '' || $queryCity !== '' || $queryRegion !== '') {
+            $queryLocationText = composeEventLocationText([
+                'location' => $queryLocation,
+                'city' => $queryCity,
+                'region' => $queryRegion,
+            ]);
+        }
+        if ($queryLocationText !== '') {
+            $resolved['location'] = truncatePromptValue($queryLocationText, 260);
+        }
+    }
+
+    if ($resolved['location'] === '') {
+        $cachedLocation = trim(strval($GLOBALS['CACHE_LOCATION'] ?? ''));
+        if ($cachedLocation !== '') {
+            $resolved['location'] = truncatePromptValue($cachedLocation, 260);
+        }
+    }
+
+    if ($resolved['location'] === '') {
+        $recentGeo = getRecentEventGeoFallback('', 86400);
+        $resolved['location'] = truncatePromptValue(composeEventLocationText($recentGeo), 260);
+    }
+
+    if ($resolved['location'] === '') {
+        stobeMergeWorldPromptContext($resolved, stobeResolveWorldContextFromRecentEventData(3600, 96));
+    }
+
+    return $resolved;
+}
+
+function stobeBuildGameTimePromptBlock(mixed $gamets, mixed $worldContext = null): string {
     $safeGamets = stobeGametsNormalize($gamets);
     $dateLabel = stobeGametsDateLabel($safeGamets);
+    $world = stobeResolveWorldPromptContext($worldContext);
+    $location = stobeNormalizeWorldPromptToken($world['location'] ?? '');
+    $weather = stobeNormalizeWorldPromptToken($world['weather'] ?? '');
+    $floor = stobeNormalizeWorldFloorToken($world['floor'] ?? '');
 
-    return "<game_time>\n"
-        . "  <date_label>" . stobePromptXmlEscape($dateLabel) . "</date_label>\n"
-        . "  <gamets>" . strval($safeGamets) . "</gamets>\n"
-        . "</game_time>";
+    if ($location === '') {
+        $location = 'Unknown';
+    }
+    if ($weather === '') {
+        $weather = 'Unknown';
+    }
+    if ($floor === '') {
+        $floor = 'Unknown';
+    }
+
+    $xml = [
+        "<world>",
+        "  <date_label>" . stobePromptXmlEscape($dateLabel) . "</date_label>",
+        "  <location>" . stobePromptXmlEscape($location) . "</location>",
+        "  <weather>" . stobePromptXmlEscape($weather) . "</weather>",
+        "  <floor>" . stobePromptXmlEscape($floor) . "</floor>",
+    ];
+    $xml[] = "</world>";
+
+    return "\n" . implode("\n", $xml);
 }
 
 function stobeBuildRecentContextPromptBlock(string $historyText, string $tag = 'recent_context'): string {

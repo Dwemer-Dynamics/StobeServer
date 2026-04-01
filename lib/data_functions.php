@@ -1211,7 +1211,10 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
 
     if ($resolved['location'] === '' || $resolved['city'] === '' || $resolved['region'] === '') {
         $fallbackParticipant = $speakerHint !== '' ? $speakerHint : $targetHint;
-        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 1800));
+        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 86400));
+    }
+    if ($resolved['location'] === '' || $resolved['city'] === '' || $resolved['region'] === '') {
+        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback('', 86400));
     }
 
     return stobeNormalizeGeoContext($resolved);

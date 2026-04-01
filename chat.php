@@ -271,7 +271,7 @@ $message = $sanitizeChatMessage($message);
 $eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, time(), $gamets, $eventData);
 
-$systemPrompt = stobeBuildGameTimePromptBlock($gamets)
+$systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
         $targetNpc,

@@ -164,7 +164,7 @@ foreach (array_reverse($eventHistory) as $row) {
 $historyText = implode("\n", $historyLines);
 $historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
 
-$systemPrompt = stobeBuildGameTimePromptBlock($gamets)
+$systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($speakerData) ? $speakerData : [])
     . "\n\n"
     . buildSystemPrompt($speakerNpc, is_array($speakerData) ? $speakerData : [], $listener, '', false, 'bored', intval($gamets));
 $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($speakerData, $speakerNpc);

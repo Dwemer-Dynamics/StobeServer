@@ -593,7 +593,7 @@ $manualActionCannotSpeak = $manualActionActive
     ? stobeManualActionTargetCannotSpeak($npcData, $manualActionKey)
     : false;
 
-$systemPrompt = stobeBuildGameTimePromptBlock($gamets)
+$systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
         $targetNpc,
