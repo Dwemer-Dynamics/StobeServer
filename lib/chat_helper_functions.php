@@ -129,6 +129,7 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
     $hasDrinkItem = false;
     $hasKill = false;
     $hasForceDrink = false;
+    $hasPickupNpc = false;
     foreach ($rows as $row) {
         $command = stobeCanonicalizeActionCommand(strval($row['command'] ?? ''));
         if ($command === 'TRAVEL_LOCATION') {
@@ -143,6 +144,8 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             $hasKill = true;
         } elseif ($command === 'FORCE_DRINK') {
             $hasForceDrink = true;
+        } elseif ($command === 'PICKUP_NPC') {
+            $hasPickupNpc = true;
         }
     }
 
@@ -228,6 +231,13 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             'Force a helpless target to drink Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment.'
         );
     }
+    if (!$hasPickupNpc) {
+        $appendFallbackAction(
+            'PICKUP_NPC',
+            'PickupNpc',
+            'Pick up a nearby helpless target and carry them.'
+        );
+    }
 
     return $rows;
 }
@@ -246,6 +256,8 @@ function buildActionGuidanceFromRows(array $rows, array $npcData = []): string {
         $actionName = trim(strval($row['action_name'] ?? ''));
         if ($command === 'STOP_CARRYING') {
             $actionName = 'StopCarrying';
+        } elseif ($command === 'PICKUP_NPC') {
+            $actionName = 'PickupNpc';
         }
         if ($actionName === '') {
             continue;
@@ -253,6 +265,8 @@ function buildActionGuidanceFromRows(array $rows, array $npcData = []): string {
         $description = trim(strval($row['description'] ?? ''));
         if ($command === 'STOP_CARRYING') {
             $description = 'Put down what you are currently carrying.';
+        } elseif ($command === 'PICKUP_NPC') {
+            $description = 'Pick up a nearby helpless target and carry them. Not available while already carrying someone.';
         }
         if ($command === 'FACTION_RELATIONS') {
             $inlineRules = stobeBuildFactionRelationsActionInlineGuidance($npcData);
@@ -334,6 +348,7 @@ function getActionRuntimeConfig(string $eventType): array {
         'disallow_follow_for_player_faction' => false,
         'disallow_give_cats' => false,
         'disallow_take_cats' => false,
+        'disallow_pickup_npc' => false,
         'allow_travel_location' => true,
     ];
 }
@@ -341,6 +356,7 @@ function getActionRuntimeConfig(string $eventType): array {
 function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = false): array {
     $config = getActionRuntimeConfig($eventType);
     $config['disallow_stop_carrying'] = false;
+    $config['disallow_pickup_npc'] = false;
     $config['disallow_remove_limb'] = true;
     $config['disallow_use_drugs'] = true;
     $config['disallow_drink_item'] = true;
@@ -355,6 +371,8 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     }
     if (is_array($npcData) && count($npcData) > 0 && !stobeNpcIsCarryingTarget($npcData)) {
         $config['disallow_stop_carrying'] = true;
+    } else {
+        $config['disallow_pickup_npc'] = true;
     }
     if (is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData)) {
         $config['disallow_remove_limb'] = false;
@@ -425,6 +443,9 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
                 continue;
             }
             if ($command === 'STOP_CARRYING' && boolval($config['disallow_stop_carrying'] ?? false)) {
+                continue;
+            }
+            if ($command === 'PICKUP_NPC' && boolval($config['disallow_pickup_npc'] ?? false)) {
                 continue;
             }
             if ($command === 'REMOVE_LIMB' && boolval($config['disallow_remove_limb'] ?? false)) {
@@ -517,8 +538,16 @@ function stobeCanonicalizeActionCommand(string $command): string {
     if (in_array($upper, ['TRAVELLOCATION', 'TRAVEL-LOCATION'], true)) {
         return 'TRAVEL_LOCATION';
     }
-    if (in_array($upper, ['STOPCARRYING'], true)) {
+    if (in_array($upper, [
+        'STOPCARRYING',
+        'DROPNPC', 'DROP_NPC', 'DROP-NPC',
+        'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC',
+        'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC',
+    ], true)) {
         return 'STOP_CARRYING';
+    }
+    if (in_array($upper, ['PICKUPNPC', 'PICKUP-NPC', 'KIDNAP'], true)) {
+        return 'PICKUP_NPC';
     }
     if (in_array($upper, ['REMOVELIMB'], true)) {
         return 'REMOVE_LIMB';
@@ -566,6 +595,203 @@ function stobeParseFlexibleBool(mixed $value): ?bool {
     return null;
 }
 
+function stobeResolveNpcCarryStateFromRecentEvents(string $npcName, int $maxAgeSeconds = 3600): array {
+    $resolved = [
+        'known' => false,
+        'is_carrying' => false,
+        'target_name' => '',
+    ];
+
+    $safeNpcName = normalizeParticipantNameToken($npcName);
+    if ($safeNpcName === '') {
+        return $resolved;
+    }
+    if ($maxAgeSeconds < 0) {
+        $maxAgeSeconds = 0;
+    }
+
+    static $cache = [];
+    $cacheKey = strtolower($safeNpcName) . '|' . strval($maxAgeSeconds);
+    if (array_key_exists($cacheKey, $cache) && is_array($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !is_object($db) || !method_exists($db, 'fetchAll')) {
+        $cache[$cacheKey] = $resolved;
+        return $resolved;
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT type, data, ts, localts
+         FROM eventlog
+         WHERE type IN ('carry', 'action', 'infoaction')
+           AND data ILIKE $1
+         ORDER BY gamets DESC, ts DESC, rowid DESC
+         LIMIT 180",
+        [$safeNpcName . ':%']
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        $cache[$cacheKey] = $resolved;
+        return $resolved;
+    }
+
+    $nowTs = time();
+    $extractCarryStateFromActionBody = static function (string $body): array {
+        $result = [
+            'known' => false,
+            'is_carrying' => false,
+            'target_name' => '',
+        ];
+        if ($body === '') {
+            return $result;
+        }
+
+        if (
+            preg_match(
+                '/\b(PICKUP_NPC|PICKUPNPC|PICKUP-NPC|KIDNAP|STOP_CARRYING|STOPCARRYING|DROPNPC|DROP_NPC|DROP-NPC|PUTDOWNNPC|PUT_DOWN_NPC|PUT-DOWN-NPC|RELEASENPC|RELEASE_NPC|RELEASE-NPC|RELEASE_PLAYER|RELEASE_PRISONER|RELEASEPLAYER)\s*@\s*([^\r\n]*)/iu',
+                $body,
+                $match
+            ) !== 1
+        ) {
+            return $result;
+        }
+
+        $commandRaw = strtoupper(trim(strval($match[1] ?? '')));
+        if ($commandRaw === '') {
+            return $result;
+        }
+        $command = stobeCanonicalizeActionCommand($commandRaw);
+
+        $targetRaw = trim(strval($match[2] ?? ''));
+        if ($targetRaw !== '') {
+            $targetRaw = preg_replace('/\s*\[source:[^\]]+\]\s*$/iu', '', $targetRaw) ?? $targetRaw;
+            $targetRaw = preg_replace('/\s*\(source:[^)]+\)\s*$/iu', '', $targetRaw) ?? $targetRaw;
+            $targetRaw = preg_replace('/\s*\(talking to:[^)]+\)\s*$/iu', '', $targetRaw) ?? $targetRaw;
+            $targetRaw = trim($targetRaw);
+        }
+        $targetName = normalizeParticipantNameToken($targetRaw);
+        if (in_array(strtolower($targetName), ['someone', 'their carried target'], true)) {
+            $targetName = '';
+        }
+
+        if ($command === 'PICKUP_NPC') {
+            return [
+                'known' => true,
+                'is_carrying' => true,
+                'target_name' => $targetName,
+            ];
+        }
+        if ($command === 'STOP_CARRYING') {
+            return [
+                'known' => true,
+                'is_carrying' => false,
+                'target_name' => '',
+            ];
+        }
+
+        return $result;
+    };
+
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $eventTs = intval($row['ts'] ?? 0);
+        if ($eventTs <= 0) {
+            $eventTs = intval($row['localts'] ?? 0);
+        }
+        if ($maxAgeSeconds > 0 && $eventTs > 0 && $eventTs < ($nowTs - $maxAgeSeconds)) {
+            continue;
+        }
+
+        $eventType = strtolower(trim(strval($row['type'] ?? '')));
+        $line = trim(strval($row['data'] ?? ''));
+        if ($line === '') {
+            continue;
+        }
+        $line = preg_replace('/^\[[^\]]+\]\s*/u', '', $line) ?? $line;
+
+        if (preg_match('/^([^:]+):\s*(.+)$/u', $line, $parts) !== 1) {
+            continue;
+        }
+        $eventActor = normalizeParticipantNameToken(strval($parts[1] ?? ''));
+        if ($eventActor === '' || strcasecmp($eventActor, $safeNpcName) !== 0) {
+            continue;
+        }
+
+        $body = trim(strval($parts[2] ?? ''));
+        if ($body === '') {
+            continue;
+        }
+
+        $listenerTarget = '';
+        if (preg_match('/\(\s*talking to:\s*([^)]+)\)\s*$/iu', $body, $listenerMatch) === 1) {
+            $listenerTarget = normalizeParticipantNameToken(strval($listenerMatch[1] ?? ''));
+        }
+        $bodySansListener = trim(preg_replace('/\s*\(\s*talking to:[^)]+\)\s*$/iu', '', $body) ?? $body);
+        if ($bodySansListener === '') {
+            $bodySansListener = $body;
+        }
+
+        $isCarryEvent = ($eventType === 'carry');
+        $isCarrying = false;
+        $targetName = '';
+        $resolvedByAction = false;
+        if ($isCarryEvent) {
+            if (preg_match('/^picked\s+up(?:\s+(.+))?$/iu', $bodySansListener, $pickupMatch) === 1) {
+                $isCarrying = true;
+                $targetName = normalizeParticipantNameToken(strval($pickupMatch[1] ?? ''));
+            } elseif (
+                preg_match('/^(?:put\s+down|set\s+down|dropped|let\s+go)(?:\s+(.+))?$/iu', $bodySansListener, $dropMatch) === 1
+            ) {
+                $isCarrying = false;
+                $targetName = normalizeParticipantNameToken(strval($dropMatch[1] ?? ''));
+            } else {
+                continue;
+            }
+        } else {
+            $actionState = $extractCarryStateFromActionBody($bodySansListener);
+            if (!boolval($actionState['known'] ?? false)) {
+                continue;
+            }
+            $resolvedByAction = true;
+            $isCarrying = boolval($actionState['is_carrying'] ?? false);
+            $targetName = normalizeParticipantNameToken(strval($actionState['target_name'] ?? ''));
+        }
+
+        if (!$isCarryEvent && !$resolvedByAction) {
+            continue;
+        }
+
+        $genericTargetTokens = ['someone', 'their carried target'];
+        if ($targetName === '' && $listenerTarget !== '') {
+            $targetName = $listenerTarget;
+        }
+        if ($targetName !== '') {
+            $targetLower = strtolower($targetName);
+            if (in_array($targetLower, $genericTargetTokens, true)) {
+                $targetName = '';
+            }
+        }
+        if (!$isCarrying) {
+            $targetName = '';
+        }
+
+        $resolved = [
+            'known' => true,
+            'is_carrying' => $isCarrying,
+            'target_name' => $targetName,
+        ];
+        $cache[$cacheKey] = $resolved;
+        return $resolved;
+    }
+
+    $cache[$cacheKey] = $resolved;
+    return $resolved;
+}
+
 function stobeResolveNpcCarryState(array $npcData): array {
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
     $carryFlag = stobeParseFlexibleBool($npcData['is_carrying'] ?? null);
@@ -573,21 +799,9 @@ function stobeResolveNpcCarryState(array $npcData): array {
         $carryFlag = stobeParseFlexibleBool($metadata['is_carrying'] ?? null);
     }
 
-    $carryingTargetName = trim(strval($npcData['carrying_target_name'] ?? ''));
+    $carryingTargetName = normalizeParticipantNameToken(strval($npcData['carrying_target_name'] ?? ''));
     if ($carryingTargetName === '') {
-        $carryingTargetName = trim(strval($metadata['carrying_target_name'] ?? ''));
-    }
-
-    if (!is_bool($carryFlag)) {
-        $currentAction = trim(strval($npcData['current_action'] ?? ''));
-        if ($currentAction === '') {
-            $currentAction = trim(strval($metadata['current_action'] ?? ''));
-        }
-        $actionLower = strtolower($currentAction);
-        if ($actionLower !== '' &&
-            preg_match('/\b(carry|carrying|hauling|haul|kidnap|kidnapping)\b/', $actionLower) === 1) {
-            $carryFlag = true;
-        }
+        $carryingTargetName = normalizeParticipantNameToken(strval($metadata['carrying_target_name'] ?? ''));
     }
 
     $isCarrying = false;
@@ -595,6 +809,10 @@ function stobeResolveNpcCarryState(array $npcData): array {
         $isCarrying = true;
     } elseif ($carryFlag === null && $carryingTargetName !== '') {
         $isCarrying = true;
+    }
+
+    if ($carryFlag === false) {
+        $carryingTargetName = '';
     }
 
     return [
@@ -746,6 +964,18 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'KILLSELF' => 'SUICIDE',
         'SELFDESTRUCT' => 'SUICIDE',
         'STOPCARRYING' => 'STOP_CARRYING',
+        'DROPNPC' => 'STOP_CARRYING',
+        'DROP_NPC' => 'STOP_CARRYING',
+        'DROP-NPC' => 'STOP_CARRYING',
+        'PUTDOWNNPC' => 'STOP_CARRYING',
+        'PUT_DOWN_NPC' => 'STOP_CARRYING',
+        'PUT-DOWN-NPC' => 'STOP_CARRYING',
+        'RELEASENPC' => 'STOP_CARRYING',
+        'RELEASE_NPC' => 'STOP_CARRYING',
+        'RELEASE-NPC' => 'STOP_CARRYING',
+        'PICKUPNPC' => 'PICKUP_NPC',
+        'PICKUP-NPC' => 'PICKUP_NPC',
+        'KIDNAP' => 'PICKUP_NPC',
         'GIVECATS' => 'GIVE_CATS',
         'TAKECATS' => 'TAKE_CATS',
         'TAKEITEM' => 'TAKE_ITEM',
@@ -802,6 +1032,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     }
     if (boolval($config['disallow_stop_carrying'] ?? false) &&
         $command === 'STOP_CARRYING') {
+        return '';
+    }
+    if (boolval($config['disallow_pickup_npc'] ?? false) &&
+        $command === 'PICKUP_NPC') {
         return '';
     }
     if (boolval($config['disallow_remove_limb'] ?? false) &&
@@ -933,6 +1167,13 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return '';
         }
         return 'KILL@' . $targetName;
+    }
+    if ($command === 'PICKUP_NPC') {
+        $targetName = $sanitizeInlineText($argument, 120);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'PICKUP_NPC@' . $targetName;
     }
     if ($command === 'USE_OBJECT') {
         $objectToken = $sanitizeInlineText($argument, 160);
@@ -1222,13 +1463,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
 
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
-        'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
+        'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
         'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
-        'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
+        'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'DROPNPC', 'DROP_NPC', 'DROP-NPC', 'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC', 'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC', 'PICKUPNPC', 'PICKUP-NPC', 'KIDNAP', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
         'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
@@ -2191,7 +2432,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         $inlineTypes = [
             'inputtext', 'inputtext_s', 'chat', 'rechat', 'bored',
             'action', 'death', 'limb_loss', 'knockout',
-            'enslaved', 'freed_slave', 'item_pickup', 'trade',
+            'enslaved', 'freed_slave', 'item_pickup', 'carry', 'trade',
         ];
         if (!in_array($historyType, $inlineTypes, true)) {
             $historyData = '[' . $historyType . '] ' . $historyData;
@@ -2351,6 +2592,7 @@ function stobeBuildOutputContractUserPrompt(
     $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
     $allowGiveCats = !boolval($actionConfig['disallow_give_cats'] ?? false);
     $allowTakeCats = !boolval($actionConfig['disallow_take_cats'] ?? false);
+    $canPickupNpc = !boolval($actionConfig['disallow_pickup_npc'] ?? false);
 
     $actionLine = $preferAction
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
@@ -2358,6 +2600,7 @@ function stobeBuildOutputContractUserPrompt(
     $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
+    $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
 
     $actions = [
         'Talk',
@@ -2389,6 +2632,9 @@ function stobeBuildOutputContractUserPrompt(
     }
     if ($canStopCarrying) {
         $actions[] = 'StopCarrying';
+    }
+    if ($canPickupNpc) {
+        $actions[] = 'PickupNpc';
     }
     if ($canRemoveLimb) {
         $actions[] = 'RemoveLimb';
@@ -2469,7 +2715,8 @@ function stobeBuildOutputContractUserPrompt(
 
     if ($streamTextMode) {
         $exampleFollow = $inPlayerFaction === true ? '' : 'FOLLOW@TargetName, STOP_FOLLOW@, ';
-        $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@TargetName, ' : '';
+        $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@, ' : '';
+        $examplePickupNpc = $canPickupNpc ? 'PICKUP_NPC@TargetName, ' : '';
         $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
         $exampleKill = 'KILL@TargetName, ';
         $exampleUseObject = 'USE_OBJECT@ChairName, ';
@@ -2488,7 +2735,7 @@ function stobeBuildOutputContractUserPrompt(
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -2695,6 +2942,18 @@ function stobeBuildActionTagFromStructuredPayload(
         'STOPFOLLOW' => 'STOP_FOLLOW',
         'UNFOLLOW' => 'STOP_FOLLOW',
         'STOPCARRYING' => 'STOP_CARRYING',
+        'DROPNPC' => 'STOP_CARRYING',
+        'DROP_NPC' => 'STOP_CARRYING',
+        'DROP-NPC' => 'STOP_CARRYING',
+        'PUTDOWNNPC' => 'STOP_CARRYING',
+        'PUT_DOWN_NPC' => 'STOP_CARRYING',
+        'PUT-DOWN-NPC' => 'STOP_CARRYING',
+        'RELEASENPC' => 'STOP_CARRYING',
+        'RELEASE_NPC' => 'STOP_CARRYING',
+        'RELEASE-NPC' => 'STOP_CARRYING',
+        'PICKUPNPC' => 'PICKUP_NPC',
+        'PICKUP-NPC' => 'PICKUP_NPC',
+        'KIDNAP' => 'PICKUP_NPC',
         'KILLSELF' => 'SUICIDE',
         'SELFDESTRUCT' => 'SUICIDE',
         'JOINPARTY' => 'JOIN_PARTY',
@@ -2850,6 +3109,13 @@ function stobeBuildActionTagFromStructuredPayload(
             return '';
         }
         return 'KILL@' . $targetName;
+    }
+    if ($actionUpper === 'PICKUP_NPC') {
+        $pickupTarget = trim($target !== '' ? $target : $item);
+        if ($pickupTarget === '') {
+            return '';
+        }
+        return 'PICKUP_NPC@' . $pickupTarget;
     }
     if ($actionUpper === 'ROLEPLAY_ACTION') {
         $notice = trim($target !== '' ? $target : $message);
@@ -4964,6 +5230,22 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         $action = trim(strval($entry['current_action'] ?? ''));
         if ($action !== '' && !in_array(strtolower($action), ['unknown', 'none', 'n/a'], true)) {
             $detailParts[] = 'Action: ' . $action;
+        }
+        $isCarrying = stobeParseFlexibleBool($entry['is_carrying'] ?? null);
+        $carryingTargetName = trim(strval($entry['carrying_target_name'] ?? ''));
+        if (!is_bool($isCarrying) && $carryingTargetName !== '') {
+            $isCarrying = true;
+        }
+        if ($isCarrying === true) {
+            $detailParts[] = 'Carrying: ' . ($carryingTargetName !== '' ? $carryingTargetName : 'someone');
+        }
+        $isBeingCarried = stobeParseFlexibleBool($entry['is_being_carried'] ?? null);
+        $carriedByName = trim(strval($entry['carried_by_name'] ?? ''));
+        if (!is_bool($isBeingCarried) && $carriedByName !== '') {
+            $isBeingCarried = true;
+        }
+        if ($isBeingCarried === true) {
+            $detailParts[] = 'Carried by: ' . ($carriedByName !== '' ? $carriedByName : 'someone');
         }
         $hungerState = stobeDescribeNearbyEntryHunger($entry);
         if ($hungerState !== '') {
@@ -8144,12 +8426,12 @@ function stobeStripParentheticalDialogueText(string $text): string {
     // Remove leaked inline action tags (e.g. FACTION_RELATIONS@Target@100).
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
-        'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
+        'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
         'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
-        'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
+        'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'DROPNPC', 'DROP_NPC', 'DROP-NPC', 'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC', 'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC', 'PICKUPNPC', 'PICKUP-NPC', 'KIDNAP', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
         'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',

@@ -1751,6 +1751,254 @@ function stobeParseLimbLossEventData(string $rawEventData): array {
     ];
 }
 
+function stobeCanonicalizeCarryActionCommand(string $rawCommand): string {
+    $upper = strtoupper(trim($rawCommand));
+    if ($upper === '') {
+        return '';
+    }
+
+    $aliases = [
+        'STOPCARRYING' => 'STOP_CARRYING',
+        'DROPNPC' => 'STOP_CARRYING',
+        'DROP_NPC' => 'STOP_CARRYING',
+        'DROP-NPC' => 'STOP_CARRYING',
+        'PUTDOWNNPC' => 'STOP_CARRYING',
+        'PUT_DOWN_NPC' => 'STOP_CARRYING',
+        'PUT-DOWN-NPC' => 'STOP_CARRYING',
+        'RELEASENPC' => 'STOP_CARRYING',
+        'RELEASE_NPC' => 'STOP_CARRYING',
+        'RELEASE-NPC' => 'STOP_CARRYING',
+        'PICKUPNPC' => 'PICKUP_NPC',
+        'PICKUP-NPC' => 'PICKUP_NPC',
+        'KIDNAP' => 'PICKUP_NPC',
+    ];
+    if (array_key_exists($upper, $aliases)) {
+        return $aliases[$upper];
+    }
+
+    $upper = str_replace('-', '_', $upper);
+    return preg_replace('/\s+/', '_', $upper) ?? $upper;
+}
+
+function stobeParseCarryActionEventData(string $rawEventData): array {
+    $result = [
+        'ok' => false,
+        'actor' => '',
+        'command' => '',
+        'target' => '',
+        'raw_action' => '',
+    ];
+
+    $line = trim($rawEventData);
+    if ($line === '') {
+        return $result;
+    }
+    $line = preg_replace('/^\[[^\]]+\]\s*/u', '', $line) ?? $line;
+
+    $actor = '';
+    $body = $line;
+    if (preg_match('/^([^:]+):\s*(.+)$/u', $line, $parts) === 1) {
+        $actor = normalizeParticipantNameToken(strval($parts[1] ?? ''));
+        $body = trim(strval($parts[2] ?? ''));
+    }
+    if ($body === '') {
+        return $result;
+    }
+
+    $body = preg_replace('/^\s*action\s+command\s+received\s*:\s*/iu', '', $body) ?? $body;
+    $body = preg_replace('/\s*\[source:[^\]]+\]\s*$/iu', '', $body) ?? $body;
+    $body = preg_replace('/\s*\(source:[^)]+\)\s*$/iu', '', $body) ?? $body;
+    $body = preg_replace('/\s*\(\s*talking to:[^)]+\)\s*$/iu', '', $body) ?? $body;
+    $body = trim($body);
+    if ($body === '') {
+        return $result;
+    }
+
+    if (preg_match('/^([A-Za-z_\-]+)\s*@\s*(.*)$/u', $body, $match) !== 1) {
+        return $result;
+    }
+
+    $command = stobeCanonicalizeCarryActionCommand(strval($match[1] ?? ''));
+    if (!in_array($command, ['PICKUP_NPC', 'STOP_CARRYING'], true)) {
+        return $result;
+    }
+
+    $target = normalizeParticipantNameToken(strval($match[2] ?? ''));
+    if (in_array(strtolower($target), ['someone', 'their carried target'], true)) {
+        $target = '';
+    }
+
+    $result['ok'] = true;
+    $result['actor'] = $actor;
+    $result['command'] = $command;
+    $result['target'] = $target;
+    $result['raw_action'] = $body;
+    return $result;
+}
+
+function stobeFetchNpcMetadataByName(string $npcName): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return [];
+    }
+    $safeName = normalizeParticipantNameToken($npcName);
+    if ($safeName === '') {
+        return [];
+    }
+
+    $row = $db->fetchOne(
+        "SELECT metadata
+         FROM core_npc_master
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1",
+        [$safeName]
+    );
+    if (!$row) {
+        return [];
+    }
+    return normalizeCoreNpcMetadata($row['metadata'] ?? []);
+}
+
+function stobePatchNpcMetadataByName(string $npcName, array $patch): bool {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return false;
+    }
+    $safeName = normalizeParticipantNameToken($npcName);
+    if ($safeName === '') {
+        return false;
+    }
+
+    $row = $db->fetchOne(
+        "SELECT metadata
+         FROM core_npc_master
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1",
+        [$safeName]
+    );
+    if (!$row) {
+        return false;
+    }
+
+    $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+    $changed = false;
+    foreach ($patch as $key => $value) {
+        $metaKey = trim(strval($key));
+        if ($metaKey === '') {
+            continue;
+        }
+
+        if ($value === null || (is_string($value) && trim($value) === '')) {
+            if (array_key_exists($metaKey, $metadata)) {
+                unset($metadata[$metaKey]);
+                $changed = true;
+            }
+            continue;
+        }
+
+        if (is_string($value)) {
+            $value = trim($value);
+        }
+
+        if (!array_key_exists($metaKey, $metadata) || $metadata[$metaKey] !== $value) {
+            $metadata[$metaKey] = $value;
+            $changed = true;
+        }
+    }
+
+    if (!$changed) {
+        return true;
+    }
+
+    $metadataJson = normalizeJsonString($metadata);
+    $result = $db->exec(
+        "UPDATE core_npc_master
+         SET metadata = $2::jsonb,
+             updated_at = NOW()
+         WHERE LOWER(name) = LOWER($1)",
+        [$safeName, $metadataJson]
+    );
+    return $result !== false;
+}
+
+function stobeApplyCarryMetadataFromActionEvent(string $eventData, int $gamets = 0, string $eventType = ''): bool {
+    $parsed = stobeParseCarryActionEventData($eventData);
+    if (!boolval($parsed['ok'] ?? false)) {
+        return false;
+    }
+
+    $actorName = normalizeParticipantNameToken(strval($parsed['actor'] ?? ''));
+    $command = trim(strval($parsed['command'] ?? ''));
+    $targetName = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    if ($actorName === '' || $command === '') {
+        return false;
+    }
+
+    $actorMetadata = stobeFetchNpcMetadataByName($actorName);
+    $priorTarget = normalizeParticipantNameToken(strval($actorMetadata['carrying_target_name'] ?? ''));
+    $eventTypeLabel = trim(strtolower($eventType));
+
+    if ($command === 'PICKUP_NPC') {
+        $actorPatch = [
+            'is_carrying' => true,
+        ];
+        if ($targetName !== '') {
+            $actorPatch['carrying_target_name'] = $targetName;
+        } else {
+            $actorPatch['carrying_target_name'] = null;
+        }
+        stobePatchNpcMetadataByName($actorName, $actorPatch);
+
+        if ($targetName !== '') {
+            if ($priorTarget !== '' && strcasecmp($priorTarget, $targetName) !== 0) {
+                stobePatchNpcMetadataByName($priorTarget, [
+                    'is_being_carried' => false,
+                    'carried_by_name' => null,
+                ]);
+            }
+            stobePatchNpcMetadataByName($targetName, [
+                'is_being_carried' => true,
+                'carried_by_name' => $actorName,
+            ]);
+        }
+
+        stobeLogImport('Carry metadata updated from action event', [
+            'event_type' => $eventTypeLabel,
+            'command' => $command,
+            'actor' => $actorName,
+            'target' => $targetName,
+            'gamets' => max(0, intval($gamets)),
+        ], 'DEBUG');
+        return true;
+    }
+
+    if ($command === 'STOP_CARRYING') {
+        $resolvedTarget = $targetName !== '' ? $targetName : $priorTarget;
+        stobePatchNpcMetadataByName($actorName, [
+            'is_carrying' => false,
+            'carrying_target_name' => null,
+        ]);
+
+        if ($resolvedTarget !== '') {
+            stobePatchNpcMetadataByName($resolvedTarget, [
+                'is_being_carried' => false,
+                'carried_by_name' => null,
+            ]);
+        }
+
+        stobeLogImport('Carry metadata updated from action event', [
+            'event_type' => $eventTypeLabel,
+            'command' => $command,
+            'actor' => $actorName,
+            'target' => $resolvedTarget,
+            'gamets' => max(0, intval($gamets)),
+        ], 'DEBUG');
+        return true;
+    }
+
+    return false;
+}
+
 function stobeLimbLossHasNearbyRemoveLimbAction(int $limbLossRowId, string $victimName = ''): bool {
     if ($limbLossRowId <= 0) {
         return false;
@@ -6376,6 +6624,75 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         return max(0, $fallback);
     };
 
+    $carryFlagPick = $pickMixed($snapshot, ['is_carrying']);
+    $carryFlag = null;
+    if ($carryFlagPick['source'] !== '') {
+        $carryFlag = $parseToggleValue($carryFlagPick['value']);
+    }
+
+    $carryingTargetPick = $pickText($snapshot, ['carrying_target_name']);
+    $carryingTargetName = normalizeParticipantNameToken(strval($carryingTargetPick['value']));
+    if (in_array(strtolower($carryingTargetName), ['someone', 'their carried target'], true)) {
+        $carryingTargetName = '';
+    }
+
+    $beingCarriedPick = $pickMixed($snapshot, ['is_being_carried']);
+    $isBeingCarried = null;
+    if ($beingCarriedPick['source'] !== '') {
+        $isBeingCarried = $parseToggleValue($beingCarriedPick['value']);
+    }
+
+    $carriedByPick = $pickText($snapshot, ['carried_by_name']);
+    $carriedByName = normalizeParticipantNameToken(strval($carriedByPick['value']));
+    if (in_array(strtolower($carriedByName), ['someone', 'their carrier'], true)) {
+        $carriedByName = '';
+    }
+
+    if ($carryFlag === null && $carryingTargetName !== '') {
+        $carryFlag = true;
+    }
+    if ($isBeingCarried === null && $carriedByName !== '') {
+        $isBeingCarried = true;
+    }
+
+    if ($carryFlag === true) {
+        $snapshot['is_carrying'] = true;
+        if ($carryingTargetName !== '') {
+            $snapshot['carrying_target_name'] = $carryingTargetName;
+        } else {
+            unset($snapshot['carrying_target_name']);
+        }
+    } elseif ($carryFlag === false) {
+        $snapshot['is_carrying'] = false;
+        unset($snapshot['carrying_target_name']);
+    } else {
+        unset($snapshot['is_carrying']);
+        if ($carryingTargetName !== '') {
+            $snapshot['carrying_target_name'] = $carryingTargetName;
+        } else {
+            unset($snapshot['carrying_target_name']);
+        }
+    }
+
+    if ($isBeingCarried === true) {
+        $snapshot['is_being_carried'] = true;
+        if ($carriedByName !== '') {
+            $snapshot['carried_by_name'] = $carriedByName;
+        } else {
+            unset($snapshot['carried_by_name']);
+        }
+    } elseif ($isBeingCarried === false) {
+        $snapshot['is_being_carried'] = false;
+        unset($snapshot['carried_by_name']);
+    } else {
+        unset($snapshot['is_being_carried']);
+        if ($carriedByName !== '') {
+            $snapshot['carried_by_name'] = $carriedByName;
+        } else {
+            unset($snapshot['carried_by_name']);
+        }
+    }
+
     $racePick = $pickText($snapshot, ['race', 'race_name']);
     $race = strval($racePick['value']);
     if (strtolower($race) === 'unknown') {
@@ -7815,6 +8132,26 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         stobeLogImport('Snapshot preserved portrait metadata', [
             'name' => $name,
             'keys' => $preservedMetadataApplied,
+            'gamets' => max(0, $gamets),
+            'source' => $snapshotSource,
+        ], 'DEBUG');
+    }
+
+    $preservedCarryKeys = ['is_carrying', 'carrying_target_name', 'is_being_carried', 'carried_by_name'];
+    $preservedCarryApplied = [];
+    foreach ($preservedCarryKeys as $preservedKey) {
+        if (
+            !array_key_exists($preservedKey, $metadataForStorage) &&
+            array_key_exists($preservedKey, $existingMasterMetadata)
+        ) {
+            $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            $preservedCarryApplied[] = $preservedKey;
+        }
+    }
+    if (count($preservedCarryApplied) > 0) {
+        stobeLogImport('Snapshot preserved carry metadata', [
+            'name' => $name,
+            'keys' => $preservedCarryApplied,
             'gamets' => max(0, $gamets),
             'source' => $snapshotSource,
         ], 'DEBUG');
@@ -10376,6 +10713,10 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
             'faction',
             'equipment',
             'current_action',
+            'is_carrying',
+            'carrying_target_name',
+            'is_being_carried',
+            'carried_by_name',
             'drunk_level',
             'is_drunk',
             'drunk_status',

@@ -162,6 +162,10 @@ if (is_array($nearbyEntries)) {
             'is_attacking' => $entry['is_attacking'] ?? null,
             'movement_speed' => $entry['movement_speed'] ?? null,
             'attack_target' => $entry['attack_target'] ?? '',
+            'is_carrying' => $entry['is_carrying'] ?? null,
+            'carrying_target_name' => $entry['carrying_target_name'] ?? '',
+            'is_being_carried' => $entry['is_being_carried'] ?? null,
+            'carried_by_name' => $entry['carried_by_name'] ?? '',
             'metadata' => [],
             'extended_data' => [
                 'environment' => (isset($entry['environment']) && is_array($entry['environment']))

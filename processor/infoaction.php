@@ -6,5 +6,8 @@
  */
 
 storeEvent($eventType, $timestamp, $gamets, $eventData);
+if (function_exists('stobeApplyCarryMetadataFromActionEvent')) {
+    stobeApplyCarryMetadataFromActionEvent(strval($eventData), intval($gamets), strval($eventType));
+}
 
 echo "ok";

@@ -1947,6 +1947,7 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('LEAVE', 'Leave', 'Leave the target''s squad.', TRUE),
 ('IDLE', 'Idle', 'Stop current action and idle.', TRUE),
 ('STOP_CARRYING', 'StopCarrying', 'Put down what you are currently carrying.', TRUE),
+('PICKUP_NPC', 'PickupNpc', 'Pick up a nearby helpless target and carry them. Use target as the actor name. Only valid when you are not already carrying someone.', TRUE),
 ('GIVE_CATS', 'GiveCats', 'Give cats to the target. Put amount in item field.', TRUE),
 ('TAKE_CATS', 'TakeCats', 'Take cats from the target. Put amount in item field.', TRUE),
 ('TAKE_ITEM', 'TakeItem', 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Item supports quantities and lists like GiveItem, plus equipment/all loot queries.', TRUE),

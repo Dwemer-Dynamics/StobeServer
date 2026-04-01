@@ -175,6 +175,7 @@ try {
             require_once($path . "processor/infonpc.php");
             break;
 
+        case 'action':
         case 'infoaction':
             require_once($path . "processor/infoaction.php");
             break;

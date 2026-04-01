@@ -640,6 +640,12 @@ PROMPT;
                     OR description ILIKE '%Take one or more items.%'
                   )", [$desc]);
         });
+        $applyPatch('core_action', 202604010002, static function () use ($db): void {
+            $desc = 'Pick up a nearby helpless target and carry them. Use target as the actor name. Only valid when you are not already carrying someone.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('PICKUP_NPC','PickupNpc',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
         $applyPatch('core_action', 202603140208, static function () use ($db): void {
             $desc = 'Kill a helpless target immediately.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
