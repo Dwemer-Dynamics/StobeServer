@@ -123,7 +123,12 @@ if ($listener === '') {
     }
 }
 if ($listener === '') {
-    $listener = $playerName !== '' ? $playerName : 'Nearby Wanderer';
+    stobeLogInfo('Bored event skipped: no eligible NPC listener', [
+        'speaker' => $speakerNpc,
+        'candidate_count' => count($candidateNames),
+    ]);
+    echo "ok";
+    return;
 }
 
 $cuePool = [
