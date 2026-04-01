@@ -3974,24 +3974,136 @@ function stobeDescribeHungerStatus(mixed $hungerRaw): string {
     return 'Near starvation';
 }
 
-function stobeDescribeLimbStatus(mixed $limbsRaw): string {
-    $limbs = [];
-    if (is_array($limbsRaw)) {
-        $limbs = $limbsRaw;
-    } else {
-        $text = trim(strval($limbsRaw));
-        if ($text !== '') {
-            $decoded = json_decode($text, true);
-            if (is_array($decoded)) {
-                $limbs = $decoded;
-            }
-        }
-    }
-    if (count($limbs) === 0) {
+function stobeNormalizeLimbToken(string $rawLimb): string {
+    $normalized = strtolower(trim($rawLimb));
+    if ($normalized === '') {
         return '';
     }
+    $normalized = str_replace(['-', ' '], '_', $normalized);
+    $normalized = preg_replace('/_+/', '_', $normalized) ?? $normalized;
+    $normalized = trim($normalized, '_');
+    if ($normalized === '') {
+        return '';
+    }
+    $compact = str_replace('_', '', $normalized);
+    if ($compact === 'leftarm' || $compact === 'larm') {
+        return 'left_arm';
+    }
+    if ($compact === 'rightarm' || $compact === 'rarm') {
+        return 'right_arm';
+    }
+    if ($compact === 'leftleg' || $compact === 'lleg') {
+        return 'left_leg';
+    }
+    if ($compact === 'rightleg' || $compact === 'rleg') {
+        return 'right_leg';
+    }
+    return $normalized;
+}
 
-    $tracked = ['head', 'stomach', 'left_arm', 'right_arm', 'left_leg', 'right_leg', 'torso_extra_1'];
+function stobeBaseLimbToken(string $rawLimb): string {
+    $normalized = stobeNormalizeLimbToken($rawLimb);
+    if ($normalized === '') {
+        return '';
+    }
+    if (strpos($normalized, 'left_arm') === 0) {
+        return 'left_arm';
+    }
+    if (strpos($normalized, 'right_arm') === 0) {
+        return 'right_arm';
+    }
+    if (strpos($normalized, 'left_leg') === 0) {
+        return 'left_leg';
+    }
+    if (strpos($normalized, 'right_leg') === 0) {
+        return 'right_leg';
+    }
+    if (strpos($normalized, 'head') === 0) {
+        return 'head';
+    }
+    if ($normalized === 'stomach' || strpos($normalized, 'torso') === 0) {
+        return 'stomach';
+    }
+    return $normalized;
+}
+
+function stobeParseLimbPayload(mixed $limbsRaw): array {
+    if (is_array($limbsRaw)) {
+        return $limbsRaw;
+    }
+    $text = trim(strval($limbsRaw));
+    if ($text === '') {
+        return [];
+    }
+    $decoded = json_decode($text, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function stobeParseRoboticLimbList(mixed $roboticLimbRaw): array {
+    $roboticLimbList = [];
+    if (is_array($roboticLimbRaw)) {
+        $roboticLimbList = $roboticLimbRaw;
+    } elseif (is_string($roboticLimbRaw) && trim($roboticLimbRaw) !== '') {
+        $decodedRobotLimbs = json_decode($roboticLimbRaw, true);
+        if (is_array($decodedRobotLimbs)) {
+            $roboticLimbList = $decodedRobotLimbs;
+        }
+    }
+
+    $normalizedList = [];
+    $seen = [];
+    foreach ($roboticLimbList as $limbNameRaw) {
+        $baseToken = stobeBaseLimbToken(strval($limbNameRaw));
+        if ($baseToken === '' || isset($seen[$baseToken])) {
+            continue;
+        }
+        $seen[$baseToken] = true;
+        $normalizedList[] = $baseToken;
+        if (count($normalizedList) >= 8) {
+            break;
+        }
+    }
+    return $normalizedList;
+}
+
+function stobeFormatRoboticLimbLabels(array $roboticLimbList, int $maxLabels = 6): array {
+    $labels = [];
+    foreach ($roboticLimbList as $limbNameRaw) {
+        $normalized = stobeBaseLimbToken(strval($limbNameRaw));
+        if ($normalized === '') {
+            continue;
+        }
+        if ($normalized === 'left_arm') {
+            $labels[] = 'left arm prosthetic';
+        } elseif ($normalized === 'right_arm') {
+            $labels[] = 'right arm prosthetic';
+        } elseif ($normalized === 'left_leg') {
+            $labels[] = 'left leg prosthetic';
+        } elseif ($normalized === 'right_leg') {
+            $labels[] = 'right leg prosthetic';
+        } elseif ($normalized === 'head') {
+            $labels[] = 'robotic head';
+        } elseif ($normalized === 'stomach') {
+            $labels[] = 'robotic torso';
+        } else {
+            $labels[] = str_replace('_', ' ', $normalized);
+        }
+        if (count($labels) >= max(1, $maxLabels)) {
+            break;
+        }
+    }
+    return $labels;
+}
+
+function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null): string {
+    $limbs = stobeParseLimbPayload($limbsRaw);
+    $roboticLimbList = stobeParseRoboticLimbList($roboticLimbRaw);
+    $roboticLabels = stobeFormatRoboticLimbLabels($roboticLimbList, 6);
+    $roboticLookup = [];
+    foreach ($roboticLimbList as $roboticLimb) {
+        $roboticLookup[$roboticLimb] = true;
+    }
+
     $readNumeric = static function (mixed $value): ?float {
         if (is_int($value) || is_float($value)) {
             return floatval($value);
@@ -4002,8 +4114,18 @@ function stobeDescribeLimbStatus(mixed $limbsRaw): string {
         return null;
     };
 
+    $tracked = ['head', 'stomach', 'left_arm', 'right_arm', 'left_leg', 'right_leg', 'torso_extra_1'];
+    $missingTracked = ['left_arm', 'right_arm', 'left_leg', 'right_leg'];
+    $missingLabelMap = [
+        'left_arm' => 'left arm',
+        'right_arm' => 'right arm',
+        'left_leg' => 'left leg',
+        'right_leg' => 'right leg',
+    ];
+    $missingLabels = [];
+    $missingSeen = [];
     $ratios = [];
-    $severed = 0;
+
     foreach ($tracked as $base) {
         $current = null;
         $max = null;
@@ -4025,33 +4147,48 @@ function stobeDescribeLimbStatus(mixed $limbsRaw): string {
 
         $current = max(0.0, min($current, $max));
         $pct = ($current / $max) * 100.0;
-        if ($pct <= 1.0) {
-            $severed++;
+        $baseToken = stobeBaseLimbToken($base);
+        $isRobotic = ($baseToken !== '' && isset($roboticLookup[$baseToken]));
+        if ($pct <= 1.0 && !$isRobotic && in_array($baseToken, $missingTracked, true) && !isset($missingSeen[$baseToken])) {
+            $missingSeen[$baseToken] = true;
+            $missingLabels[] = $missingLabelMap[$baseToken] ?? str_replace('_', ' ', $baseToken);
+        }
+
+        if ($pct <= 1.0 && $isRobotic) {
+            continue;
         }
         $ratios[] = $pct;
     }
 
-    if ($severed > 0) {
-        return 'Maimed';
-    }
-    if (count($ratios) === 0) {
-        return '';
+    $statusParts = [];
+    if (count($missingLabels) > 0) {
+        $statusParts[] = 'Missing: ' . implode(', ', $missingLabels);
     }
 
-    $worst = min($ratios);
-    if ($worst >= 92.0) {
-        return 'Limbs intact';
+    $baseStatus = '';
+    if (count($ratios) > 0) {
+        $worst = min($ratios);
+        if ($worst >= 92.0) {
+            $baseStatus = 'Limbs intact';
+        } elseif ($worst >= 70.0) {
+            $baseStatus = 'Minor limb injuries';
+        } elseif ($worst >= 40.0) {
+            $baseStatus = 'Injured limbs';
+        } elseif ($worst >= 10.0) {
+            $baseStatus = 'Crippled';
+        } else {
+            $baseStatus = 'Maimed';
+        }
     }
-    if ($worst >= 70.0) {
-        return 'Minor limb injuries';
+
+    if ($baseStatus !== '' && count($missingLabels) === 0) {
+        $statusParts[] = $baseStatus;
     }
-    if ($worst >= 40.0) {
-        return 'Injured limbs';
+    if (count($roboticLabels) > 0) {
+        $statusParts[] = 'Robotic: ' . implode(', ', $roboticLabels);
     }
-    if ($worst >= 10.0) {
-        return 'Crippled';
-    }
-    return 'Maimed';
+
+    return implode('; ', $statusParts);
 }
 
 function buildWorldStateBlock(array $npcData): string {
@@ -4316,47 +4453,13 @@ function buildWorldStateBlock(array $npcData): string {
         $fields['merchant_inventory'] = $merchantInventory;
     }
 
-    $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '');
+    $roboticLimbList = stobeParseRoboticLimbList($metadata['robotic_limbs'] ?? []);
+    $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '', $roboticLimbList);
     if ($limbState !== '') {
         $fields['limb_status'] = $limbState;
     }
 
-    $roboticLimbRaw = $metadata['robotic_limbs'] ?? [];
-    $roboticLimbList = [];
-    if (is_array($roboticLimbRaw)) {
-        $roboticLimbList = $roboticLimbRaw;
-    } elseif (is_string($roboticLimbRaw) && trim($roboticLimbRaw) !== '') {
-        $decodedRobotLimbs = json_decode($roboticLimbRaw, true);
-        if (is_array($decodedRobotLimbs)) {
-            $roboticLimbList = $decodedRobotLimbs;
-        }
-    }
-    $roboticLabels = [];
-    foreach ($roboticLimbList as $limbNameRaw) {
-        $limbName = trim(strval($limbNameRaw));
-        if ($limbName === '') {
-            continue;
-        }
-        $normalized = strtolower(str_replace(['-', ' '], '_', $limbName));
-        if ($normalized === 'left_arm') {
-            $roboticLabels[] = 'left arm prosthetic';
-        } elseif ($normalized === 'right_arm') {
-            $roboticLabels[] = 'right arm prosthetic';
-        } elseif ($normalized === 'left_leg') {
-            $roboticLabels[] = 'left leg prosthetic';
-        } elseif ($normalized === 'right_leg') {
-            $roboticLabels[] = 'right leg prosthetic';
-        } elseif ($normalized === 'head') {
-            $roboticLabels[] = 'robotic head';
-        } elseif ($normalized === 'stomach') {
-            $roboticLabels[] = 'robotic torso';
-        } else {
-            $roboticLabels[] = str_replace('_', ' ', $limbName);
-        }
-        if (count($roboticLabels) >= 6) {
-            break;
-        }
-    }
+    $roboticLabels = stobeFormatRoboticLimbLabels($roboticLimbList, 6);
     if (count($roboticLabels) > 0) {
         $fields['robotic_limbs'] = implode(', ', $roboticLabels);
     } else {
@@ -5415,7 +5518,10 @@ function stobeBuildNpcConditionText(array $npcData, array $metadata): string {
         $parts[] = 'Hunger: ' . $hungerState;
     }
 
-    $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '');
+    $limbState = stobeDescribeLimbStatus(
+        $npcData['limbs'] ?? '',
+        $metadata['robotic_limbs'] ?? []
+    );
     if ($limbState !== '') {
         $parts[] = 'Limbs: ' . $limbState;
     }
