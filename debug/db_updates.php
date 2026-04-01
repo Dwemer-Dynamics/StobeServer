@@ -620,6 +620,12 @@ PROMPT;
                 VALUES ('DRINK','Drink',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
+        $applyPatch('core_action', 202603310001, static function () use ($db): void {
+            $desc = 'Force a helpless target to drink Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Use target as the victim and item/message as the drink name. Defaults to Cactus Rum.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('FORCE_DRINK','ForceDrink',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
         $applyPatch('core_action', 202603140208, static function () use ($db): void {
             $desc = 'Kill a helpless target immediately.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)

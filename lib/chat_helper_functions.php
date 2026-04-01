@@ -128,6 +128,7 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
     $hasUseDrugs = false;
     $hasDrinkItem = false;
     $hasKill = false;
+    $hasForceDrink = false;
     foreach ($rows as $row) {
         $command = stobeCanonicalizeActionCommand(strval($row['command'] ?? ''));
         if ($command === 'TRAVEL_LOCATION') {
@@ -140,6 +141,8 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             $hasDrinkItem = true;
         } elseif ($command === 'KILL') {
             $hasKill = true;
+        } elseif ($command === 'FORCE_DRINK') {
+            $hasForceDrink = true;
         }
     }
 
@@ -216,6 +219,13 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             'KILL',
             'Kill',
             'Kill a helpless target immediately.'
+        );
+    }
+    if (!$hasForceDrink) {
+        $appendFallbackAction(
+            'FORCE_DRINK',
+            'ForceDrink',
+            'Force a helpless target to drink Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment.'
         );
     }
 
@@ -334,6 +344,7 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config['disallow_remove_limb'] = true;
     $config['disallow_use_drugs'] = true;
     $config['disallow_drink_item'] = true;
+    $config['disallow_force_drink'] = true;
     // AI-generated money transfers are currently too error-prone in trade dialog.
     // Keep cats transfer as manual-action only from the chatbox.
     $config['disallow_give_cats'] = true;
@@ -354,6 +365,7 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
         }
         if (stobeNpcHasDrinkItem($npcData)) {
             $config['disallow_drink_item'] = false;
+            $config['disallow_force_drink'] = false;
         }
     }
     return $config;
@@ -422,6 +434,9 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
                 continue;
             }
             if ($command === 'DRINK_ITEM' && boolval($config['disallow_drink_item'] ?? false)) {
+                continue;
+            }
+            if ($command === 'FORCE_DRINK' && boolval($config['disallow_force_drink'] ?? false)) {
                 continue;
             }
             if ($command === 'TRAVEL_LOCATION' && !boolval($config['allow_travel_location'] ?? false)) {
@@ -516,6 +531,9 @@ function stobeCanonicalizeActionCommand(string $command): string {
     }
     if (in_array($upper, ['USEDRUGS', 'USE-DRUGS'], true)) {
         return 'USE_DRUGS';
+    }
+    if (in_array($upper, ['FORCEDRINK', 'FORCE-DRINK'], true)) {
+        return 'FORCE_DRINK';
     }
     if (in_array($upper, ['DRINK', 'DRINKITEM', 'DRINK_ITEM', 'DRINK-ITEM'], true)) {
         return 'DRINK_ITEM';
@@ -751,6 +769,8 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'USE-OBJECT' => 'USE_OBJECT',
         'USEDRUGS' => 'USE_DRUGS',
         'USE-DRUGS' => 'USE_DRUGS',
+        'FORCEDRINK' => 'FORCE_DRINK',
+        'FORCE-DRINK' => 'FORCE_DRINK',
         'DRINK' => 'DRINK_ITEM',
         'DRINKITEM' => 'DRINK_ITEM',
         'DRINK_ITEM' => 'DRINK_ITEM',
@@ -794,6 +814,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     }
     if (boolval($config['disallow_drink_item'] ?? false) &&
         $command === 'DRINK_ITEM') {
+        return '';
+    }
+    if (boolval($config['disallow_force_drink'] ?? false) &&
+        $command === 'FORCE_DRINK') {
         return '';
     }
     if ($command === 'TRAVEL_LOCATION' && !boolval($config['allow_travel_location'] ?? false)) {
@@ -930,6 +954,28 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return 'DRINK_ITEM@Cactus Rum';
         }
         return 'DRINK_ITEM@' . $drinkName;
+    }
+    if ($command === 'FORCE_DRINK') {
+        $payload = trim($argument);
+        if ($payload === '') {
+            return '';
+        }
+        $targetName = '';
+        $drinkName = '';
+        $payloadParts = explode('@', $payload, 2);
+        if (count($payloadParts) === 2) {
+            $targetName = $sanitizeInlineText(strval($payloadParts[0]), 120);
+            $drinkName = $sanitizeInlineText(strval($payloadParts[1]), 80);
+        } else {
+            $targetName = $sanitizeInlineText($payload, 120);
+        }
+        if ($targetName === '') {
+            return '';
+        }
+        if ($drinkName === '') {
+            $drinkName = 'Cactus Rum';
+        }
+        return 'FORCE_DRINK@' . $targetName . '@' . $drinkName;
     }
 
     if ($command === 'ATTACK') {
@@ -1177,13 +1223,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -2219,6 +2265,7 @@ function stobeBuildOutputContractUserPrompt(
     $npcIsSkeleton = is_array($npcData) && count($npcData) > 0 && stobeNpcIsSkeletonRace($npcData);
     $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
     $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
+    $canForceDrink = $canDrinkItem;
     $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
     $allowGiveCats = !boolval($actionConfig['disallow_give_cats'] ?? false);
     $allowTakeCats = !boolval($actionConfig['disallow_take_cats'] ?? false);
@@ -2228,6 +2275,7 @@ function stobeBuildOutputContractUserPrompt(
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
     $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
+    $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
 
     $actions = [
         'Talk',
@@ -2268,6 +2316,9 @@ function stobeBuildOutputContractUserPrompt(
     }
     if ($canDrinkItem) {
         $actions[] = 'Drink';
+    }
+    if ($canForceDrink) {
+        $actions[] = 'ForceDrink';
     }
     if ($inPlayerFaction !== true) {
         $actions[] = 'Follow';
@@ -2342,6 +2393,7 @@ function stobeBuildOutputContractUserPrompt(
         $exampleUseObject = 'USE_OBJECT@ChairName, ';
         $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
         $exampleDrink = $canDrinkItem ? 'DRINK@Sake, ' : '';
+        $exampleForceDrink = $canForceDrink ? 'FORCE_DRINK@TargetName@Cactus Rum, ' : '';
         $exampleTravel = 'TRAVEL_LOCATION@LocationName, ';
         $exampleCats = '';
         if ($allowTakeCats) {
@@ -2354,7 +2406,7 @@ function stobeBuildOutputContractUserPrompt(
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -2364,7 +2416,7 @@ function stobeBuildOutputContractUserPrompt(
         'mood' => implode('|', $moods),
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
-        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS',
+        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
         'message' => 'lines of dialogue',
     ];
 
@@ -2588,6 +2640,8 @@ function stobeBuildActionTagFromStructuredPayload(
         'USE-OBJECT' => 'USE_OBJECT',
         'USEDRUGS' => 'USE_DRUGS',
         'USE-DRUGS' => 'USE_DRUGS',
+        'FORCEDRINK' => 'FORCE_DRINK',
+        'FORCE-DRINK' => 'FORCE_DRINK',
         'DRINK' => 'DRINK_ITEM',
         'DRINKITEM' => 'DRINK_ITEM',
         'DRINK_ITEM' => 'DRINK_ITEM',
@@ -2647,6 +2701,17 @@ function stobeBuildActionTagFromStructuredPayload(
             return 'DRINK_ITEM@Cactus Rum';
         }
         return 'DRINK_ITEM@' . $drinkName;
+    }
+    if ($actionUpper === 'FORCE_DRINK') {
+        $forcedTarget = trim($target);
+        if ($forcedTarget === '') {
+            return '';
+        }
+        $drinkName = trim($item !== '' ? $item : $message);
+        if ($drinkName === '') {
+            $drinkName = 'Cactus Rum';
+        }
+        return 'FORCE_DRINK@' . $forcedTarget . '@' . $drinkName;
     }
     if (in_array($actionUpper, ['STOP_FOLLOW', 'STOP_CARRYING', 'JOIN_PARTY', 'LEAVE', 'IDLE', 'SUICIDE'], true)) {
         return $actionUpper . '@';
@@ -7904,12 +7969,12 @@ function stobeStripParentheticalDialogueText(string $text): string {
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',

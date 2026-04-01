@@ -1968,6 +1968,7 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('USE_OBJECT', 'UseObject', 'Use a nearby point of interest such as a chair, turret, bed, throne, or work spot. Use target or item as an object name/refid, or leave blank to use the nearest usable free slot.', TRUE),
 ('USE_DRUGS', 'UseDrugs', 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time.', TRUE),
 ('DRINK', 'Drink', 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout.', TRUE),
+('FORCE_DRINK', 'ForceDrink', 'Force a helpless target to drink Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Use target as the victim and item/message as the drink name. Defaults to Cactus Rum.', TRUE),
 ('TRAVEL_LOCATION', 'TravelLocation', 'Travel to a previously visited location by name.', TRUE),
 ('TALK', 'Talk', 'Speak normally without issuing an in-world action.', TRUE)
 ON CONFLICT (command) DO UPDATE SET
