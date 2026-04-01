@@ -626,6 +626,20 @@ PROMPT;
                 VALUES ('FORCE_DRINK','ForceDrink',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
+        $applyPatch('core_action', 202604010001, static function () use ($db): void {
+            $desc = 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Item supports quantities and lists like GiveItem, plus equipment/all loot queries.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('TAKE_ITEM','TakeItem',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+            $db->exec("UPDATE core_action_custom
+                SET action_name='TakeItem', description=$1, updated_at=NOW()
+                WHERE UPPER(COALESCE(command,''))='TAKE_ITEM'
+                  AND (
+                    COALESCE(description,'') = ''
+                    OR description ILIKE '%Take a specific item from the player.%'
+                    OR description ILIKE '%Take one or more items.%'
+                  )", [$desc]);
+        });
         $applyPatch('core_action', 202603140208, static function () use ($db): void {
             $desc = 'Kill a helpless target immediately.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
