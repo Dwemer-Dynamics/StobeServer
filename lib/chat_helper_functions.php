@@ -2125,6 +2125,9 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         }
 
         $historyType = strtolower(trim(strval($row['type'] ?? 'event')));
+        if ($historyType === 'infoaction') {
+            continue;
+        }
         $historyData = stobeNormalizeContextHistoryDataLine(strval($row['data'] ?? ''));
         if ($historyData === '') {
             continue;
@@ -2183,6 +2186,9 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
         $clean = trim(strval($line));
         $clean = stobeSanitizePromptContextLine($clean);
         if ($clean === '') {
+            continue;
+        }
+        if (preg_match('/^\[\s*infoaction\b/i', $clean) === 1) {
             continue;
         }
         $messages[] = [
@@ -7693,19 +7699,7 @@ function buildActionEventData(string $actor, string $actionToken, string $target
     }
 
     $safeAction = trim(strval($actionToken));
-    $line = $safeActor . ': ' . $safeAction;
-
-    $safeTarget = normalizeParticipantNameToken($target);
-    if ($safeTarget !== '') {
-        $line .= ' (talking to: ' . $safeTarget . ')';
-    }
-
-    $safeSource = trim(strval($source));
-    if ($safeSource !== '') {
-        $line .= ' [source: ' . strtolower($safeSource) . ']';
-    }
-
-    return $line;
+    return $safeActor . ': ' . $safeAction;
 }
 
 function storeActionEvents(
