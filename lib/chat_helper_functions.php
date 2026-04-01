@@ -2098,10 +2098,64 @@ function stobeBuildRecentContextDedupeKey(string $historyType, string $historyDa
     return $normalizedType . '|' . $normalizedData;
 }
 
+function stobeIsRecentContextSpeechType(string $historyType): bool {
+    return in_array($historyType, ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored'], true);
+}
+
+function stobeBuildRecentContextDialogueMeta(string $historyType, string $historyData): array {
+    if (!stobeIsRecentContextSpeechType($historyType)) {
+        return [];
+    }
+
+    $parsed = parseDialogueEventData($historyData);
+    $speaker = strtolower(trim(strval($parsed['speaker'] ?? '')));
+    $message = trim(strval($parsed['message'] ?? ''));
+    if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $message = stobeSanitizeDialogueMessageForLog($message);
+    }
+    $message = strtolower(trim(preg_replace('/\s+/u', ' ', $message) ?? $message));
+    if ($speaker === '' || $message === '') {
+        return [];
+    }
+
+    $target = strtolower(trim(strval($parsed['target'] ?? '')));
+    return [
+        'speaker' => $speaker,
+        'message' => $message,
+        'target' => $target,
+        'has_target' => $target !== '',
+    ];
+}
+
+function stobeResolveRecentContextDialogueVariantDecision(array $previousMeta, array $currentMeta): string {
+    if (count($previousMeta) === 0 || count($currentMeta) === 0) {
+        return '';
+    }
+
+    if (
+        strval($previousMeta['speaker'] ?? '') !== strval($currentMeta['speaker'] ?? '')
+        || strval($previousMeta['message'] ?? '') !== strval($currentMeta['message'] ?? '')
+    ) {
+        return '';
+    }
+
+    $previousTarget = strval($previousMeta['target'] ?? '');
+    $currentTarget = strval($currentMeta['target'] ?? '');
+    if ($previousTarget !== '' && $currentTarget !== '' && $previousTarget !== $currentTarget) {
+        return '';
+    }
+
+    if ($previousTarget === '' && $currentTarget !== '') {
+        return 'replace_prior';
+    }
+    return 'skip_current';
+}
+
 function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets = 0, int $maxMessages = 64): array {
     $messages = [];
     $messageTypes = [];
     $messageKeys = [];
+    $messageDialogueMeta = [];
     $lastLocation = '';
     $safeCurrentGamets = max(0, intval($currentGamets));
 
@@ -2121,6 +2175,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
             ];
             $messageTypes[] = 'location';
             $messageKeys[] = stobeBuildRecentContextDedupeKey('location', $line);
+            $messageDialogueMeta[] = [];
             $lastLocation = $location;
         }
 
@@ -2147,6 +2202,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
             'content' => " (...\n" . $historyData . "\n...)",
         ];
         $dedupeKey = stobeBuildRecentContextDedupeKey($historyType, $historyData);
+        $dialogueMeta = stobeBuildRecentContextDialogueMeta($historyType, $historyData);
         $lastIndex = count($messages) - 1;
         $priorIndex = $lastIndex - 1;
 
@@ -2157,12 +2213,31 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
                 continue;
             }
 
+            $previousDialogueMeta = [];
+            if (isset($messageDialogueMeta[$priorIndex]) && is_array($messageDialogueMeta[$priorIndex])) {
+                $previousDialogueMeta = $messageDialogueMeta[$priorIndex];
+            }
+            $dialogueVariantDecision = stobeResolveRecentContextDialogueVariantDecision($previousDialogueMeta, $dialogueMeta);
+            if ($dialogueVariantDecision === 'replace_prior') {
+                $messages[$priorIndex] = $messages[$lastIndex];
+                $messageTypes[$priorIndex] = $historyType;
+                $messageKeys[$priorIndex] = $dedupeKey;
+                $messageDialogueMeta[$priorIndex] = $dialogueMeta;
+                array_pop($messages);
+                continue;
+            }
+            if ($dialogueVariantDecision === 'skip_current') {
+                array_pop($messages);
+                continue;
+            }
+
             if (
                 stobeIsMergeableRecentContextType($historyType) &&
                 strval($messageTypes[$priorIndex] ?? '') === $historyType
             ) {
                 $messages[$priorIndex] = $messages[$lastIndex];
                 $messageKeys[$priorIndex] = $dedupeKey;
+                $messageDialogueMeta[$priorIndex] = $dialogueMeta;
                 array_pop($messages);
                 continue;
             }
@@ -2170,6 +2245,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
 
         $messageTypes[] = $historyType;
         $messageKeys[] = $dedupeKey;
+        $messageDialogueMeta[] = $dialogueMeta;
     }
 
     $safeMax = max(8, min(120, $maxMessages));
