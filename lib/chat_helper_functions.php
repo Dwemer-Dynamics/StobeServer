@@ -7063,6 +7063,7 @@ function stobeBuildNarratorSystemPrompt(
         $normalizedEventType = 'chat';
     }
     $isNarrationEvent = in_array($normalizedEventType, ['narration', 'narrator_welcome'], true);
+    $isRandomNarrationEvent = ($normalizedEventType === 'narration');
     if ($safeSpeaker === '') {
         $safeSpeaker = trim($speakerName);
     }
@@ -7083,7 +7084,11 @@ function stobeBuildNarratorSystemPrompt(
         $narratorPersonality = 'Laid-back, observant, and friendly; describes scenes with calm confidence.';
     }
     $narratorSpeechStyle = trim(strval($narratorData['speechstyle'] ?? ''));
-    if ($isNarrationEvent) {
+    if ($isRandomNarrationEvent) {
+        if ($narratorSpeechStyle === '') {
+            $narratorSpeechStyle = 'Vivid third-person scene framing in one or two concise sentences.';
+        }
+    } elseif ($isNarrationEvent) {
         if ($narratorSpeechStyle === '') {
             $narratorSpeechStyle = 'Relaxed and descriptive, with vivid scene framing in one or two concise sentences.';
         }
@@ -7134,7 +7139,17 @@ function stobeBuildNarratorSystemPrompt(
     $lines[] = stobePromptXmlEscape($generalInstructions);
     $lines[] = '</general_instructions>';
     $lines[] = '';
-    if ($isNarrationEvent) {
+    if ($isRandomNarrationEvent) {
+        $lines[] = '<narration_rules>';
+        $lines[] = '  <rule>Focus on concise scene narration in third-person storytelling style.</rule>';
+        $lines[] = '  <rule>Treat the current speaker as the focal subject when relevant, but do not address them directly.</rule>';
+        $lines[] = '  <rule>Never use second-person pronouns like "you" or "your".</rule>';
+        $lines[] = '  <rule>Prefer explicit character names and clear third-person pronouns.</rule>';
+        $lines[] = '  <rule>Keep the narration tightly grounded in recent context and avoid invented events.</rule>';
+        $lines[] = '  <rule>Keep output to one or two concise sentences.</rule>';
+        $lines[] = '  <rule>Do not output action tags or command syntax.</rule>';
+        $lines[] = '</narration_rules>';
+    } elseif ($isNarrationEvent) {
         $lines[] = '<narration_rules>';
         $lines[] = '  <rule>Only the narrator and the current speaker are in this conversation.</rule>';
         $lines[] = '  <rule>Address only the current speaker directly.</rule>';

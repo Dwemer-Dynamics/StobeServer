@@ -377,14 +377,25 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
 
             $randomNarrationInstruction = trim(stobeGetPromptTemplateValue(
                 'random_narration_prompt',
-                "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags."
+                "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Write in third person, use character names when relevant, and do not use second-person phrasing. Do not invent events or include action tags."
             ));
             if ($randomNarrationInstruction === '') {
-                $randomNarrationInstruction = "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.";
+                $randomNarrationInstruction = "Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Write in third person, use character names when relevant, and do not use second-person phrasing. Do not invent events or include action tags.";
             }
             if (stripos($randomNarrationInstruction, '1-2') === false && stripos($randomNarrationInstruction, 'one or two') === false) {
                 $randomNarrationInstruction = rtrim($randomNarrationInstruction, " \t\r\n.")
                     . '. Keep output to 1-2 sentences maximum.';
+            }
+            if (stripos($randomNarrationInstruction, 'third person') === false) {
+                $randomNarrationInstruction = rtrim($randomNarrationInstruction, " \t\r\n.")
+                    . ' Write strictly in third person.';
+            }
+            if (
+                stripos($randomNarrationInstruction, 'second-person') === false
+                && stripos($randomNarrationInstruction, 'you or your') === false
+            ) {
+                $randomNarrationInstruction = rtrim($randomNarrationInstruction, " \t\r\n.")
+                    . ' Never use second-person pronouns like "you" or "your".';
             }
 
             $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets))
@@ -400,12 +411,13 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
                 )
                 . "\n\n<speech_mode>\n"
                 . "  <mode>narrator</mode>\n"
-                . "  <instruction>You are The Narrator delivering a brief private scene interjection. Address only the speaker and do not emit action tags.</instruction>\n"
+                . "  <instruction>You are The Narrator delivering a brief scene interjection in third-person storytelling style. The speaker is the focal subject, not a direct addressee. Do not emit action tags.</instruction>\n"
                 . "</speech_mode>";
 
             $userContent = "<random_narration_event>\n"
                 . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
                 . "  <target>" . stobePromptXmlEscape($narratorName) . "</target>\n"
+                . "  <focus_subject>" . stobePromptXmlEscape($speaker) . "</focus_subject>\n"
                 . "  <trigger>" . stobePromptXmlEscape($trigger) . "</trigger>\n"
                 . "  <previous_speaker>" . stobePromptXmlEscape($previousSpeaker) . "</previous_speaker>\n"
                 . "  <previous_target>" . stobePromptXmlEscape($previousTarget) . "</previous_target>\n"
@@ -428,11 +440,13 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
             ];
             $messages[] = [
                 'role' => 'user',
-                'content' => stobeBuildTurnGuidanceUserPrompt($narratorName, $speaker),
+                'content' => 'Narration turn for ' . $narratorName
+                    . '. The focus subject is ' . $speaker
+                    . '. Write scene prose in third person only, using names and clear third-person pronouns. Never address anyone as "you".',
             ];
             $messages[] = [
                 'role' => 'user',
-                'content' => 'Output contract: return narrator dialogue text only, 1-2 sentences max. Do not include action tags.',
+                'content' => 'Output contract: return narrator scene text only in third person, 1-2 sentences max, with no second-person pronouns and no action tags.',
             ];
 
             $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
