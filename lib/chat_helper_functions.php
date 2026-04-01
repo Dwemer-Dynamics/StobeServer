@@ -7580,7 +7580,8 @@ function buildRechatSystemPrompt(
     string $previousSpeaker,
     string $previousMessage,
     string $previousTarget = '',
-    int $currentGamets = 0
+    int $currentGamets = 0,
+    array $specialContext = []
 ): string {
     $speakerForBasePrompt = $previousSpeaker !== '' ? $previousSpeaker : getSetting('PLAYER_NAME', 'Drifter');
     $prompt = buildSystemPrompt($npcName, $npcData, $speakerForBasePrompt, $previousMessage, true, 'rechat', $currentGamets);
@@ -7600,6 +7601,40 @@ function buildRechatSystemPrompt(
         $xml[] = '  <rule>' . stobePromptXmlEscape($rule) . '</rule>';
     }
     $xml[] = '</rechat_mode>';
+
+    $specialMode = strtolower(trim(strval($specialContext['mode'] ?? '')));
+    if ($specialMode === 'limb_loss_reaction') {
+        $victim = normalizeParticipantNameToken(strval($specialContext['victim'] ?? $npcName));
+        if ($victim === '') {
+            $victim = $npcName;
+        }
+        $limb = stobeNormalizeLimbLossLabel(strval($specialContext['limb'] ?? ''));
+        if ($limb === '') {
+            $limb = 'a limb';
+        }
+        $attacker = normalizeParticipantNameToken(strval($specialContext['attacker'] ?? ''));
+        $hacksawContext = boolval($specialContext['hacksaw'] ?? false);
+
+        $injuryRule = $hacksawContext
+            ? "State clearly that {$limb} is cut off by a hacksaw."
+            : "State clearly that {$limb} has just been severed.";
+
+        $xml[] = '<limb_loss_reaction>';
+        $xml[] = '  <rule>This is an immediate one-turn trauma reaction after limb loss.</rule>';
+        $xml[] = '  <rule>You are the injured victim and must react before normal dialogue resumes.</rule>';
+        $xml[] = '  <rule>Speak in screams, broken words, and gargled pain sounds.</rule>';
+        $xml[] = '  <rule>' . stobePromptXmlEscape($injuryRule) . '</rule>';
+        if ($attacker !== '') {
+            $xml[] = '  <rule>Mention that ' . stobePromptXmlEscape($attacker) . ' caused it.</rule>';
+        }
+        $xml[] = '  <rule>Keep it concise and fully in-character for Kenshi.</rule>';
+        $xml[] = '</limb_loss_reaction>';
+        $xml[] = '<limb_loss_meta>';
+        $xml[] = '  <victim>' . stobePromptXmlEscape($victim) . '</victim>';
+        $xml[] = '  <limb>' . stobePromptXmlEscape($limb) . '</limb>';
+        $xml[] = '  <hacksaw>' . ($hacksawContext ? 'true' : 'false') . '</hacksaw>';
+        $xml[] = '</limb_loss_meta>';
+    }
 
     return $prompt . "\n\n" . implode("\n", $xml);
 }

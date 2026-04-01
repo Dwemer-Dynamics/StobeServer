@@ -1669,6 +1669,278 @@ function stobeNormalizeKnockoutEventData(string $rawEventData): string {
     return $victim . ': ' . $rewritten;
 }
 
+function stobeNormalizeLimbLossLabel(string $rawLimb): string {
+    $limb = strtolower(trim($rawLimb));
+    if ($limb === '') {
+        return '';
+    }
+
+    $limb = preg_replace('/\s{2,}/u', ' ', $limb) ?? $limb;
+    $limb = preg_replace('/^(?:the|a|an|their)\s+/iu', '', $limb) ?? $limb;
+    $token = strtoupper(str_replace(' ', '_', $limb));
+
+    $map = [
+        'LEFT_ARM' => 'left arm',
+        'RIGHT_ARM' => 'right arm',
+        'LEFT_LEG' => 'left leg',
+        'RIGHT_LEG' => 'right leg',
+        'LEFT_HAND' => 'left hand',
+        'RIGHT_HAND' => 'right hand',
+        'LEFT_FOOT' => 'left foot',
+        'RIGHT_FOOT' => 'right foot',
+        'HEAD' => 'head',
+        'TORSO' => 'torso',
+        'CHEST' => 'chest',
+        'STOMACH' => 'stomach',
+    ];
+    if (isset($map[$token])) {
+        return $map[$token];
+    }
+
+    $normalized = strtolower(str_replace('_', ' ', $token));
+    $normalized = preg_replace('/\s{2,}/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function stobeParseLimbLossEventData(string $rawEventData): array {
+    $source = trim($rawEventData);
+    if ($source === '') {
+        return [
+            'attacker' => '',
+            'victim' => '',
+            'limb' => '',
+            'weapon' => '',
+            'message' => '',
+        ];
+    }
+
+    $parsed = function_exists('parseDialogueEventData')
+        ? parseDialogueEventData($source)
+        : ['speaker' => '', 'target' => '', 'message' => $source];
+    $attacker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    $victim = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    $message = trim(strval($parsed['message'] ?? $source));
+    if ($message === '') {
+        $message = $source;
+    }
+
+    $limb = '';
+    $weapon = '';
+
+    if (preg_match('/\b(?:severed|cuts?\s+off|chopped\s+off)\s+(?:the\s+)?(.+?)\s+from\s+(.+?)(?:\s+with\s+(.+))?$/iu', $message, $match) === 1) {
+        $limb = stobeNormalizeLimbLossLabel(strval($match[1] ?? ''));
+        $victimFromMessage = normalizeParticipantNameToken(strval($match[2] ?? ''));
+        if ($victim === '' && $victimFromMessage !== '') {
+            $victim = $victimFromMessage;
+        }
+        $weapon = trim(strval($match[3] ?? ''));
+    } elseif (preg_match('/\b(?:lost|loses|has\s+lost)\s+(?:the\s+|their\s+)?(.+?)(?:\s+to\s+(.+))?$/iu', $message, $match) === 1) {
+        $limb = stobeNormalizeLimbLossLabel(strval($match[1] ?? ''));
+        if ($victim === '' && $attacker !== '') {
+            $victim = $attacker;
+        }
+        $weapon = trim(strval($match[2] ?? ''));
+    }
+
+    return [
+        'attacker' => $attacker,
+        'victim' => $victim,
+        'limb' => $limb,
+        'weapon' => $weapon,
+        'message' => $message,
+    ];
+}
+
+function stobeLimbLossHasNearbyRemoveLimbAction(int $limbLossRowId, string $victimName = ''): bool {
+    if ($limbLossRowId <= 0) {
+        return false;
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    $windowStart = max(1, $limbLossRowId - 24);
+    $windowEnd = $limbLossRowId + 4;
+    $rows = $db->fetchAll(
+        "SELECT data
+         FROM eventlog
+         WHERE rowid >= $1
+           AND rowid <= $2
+           AND type IN ('action', 'infoaction')
+         ORDER BY rowid DESC
+         LIMIT 24",
+        [$windowStart, $windowEnd]
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        return false;
+    }
+
+    $victim = normalizeParticipantNameToken($victimName);
+    $victimNeedle = strtolower($victim);
+    foreach ($rows as $row) {
+        $data = strval($row['data'] ?? '');
+        if ($data === '') {
+            continue;
+        }
+        $dataLower = strtolower($data);
+        if (strpos($dataLower, 'remove_limb@') === false) {
+            continue;
+        }
+        if ($victimNeedle !== '' && strpos($dataLower, 'remove_limb@' . strtolower($victim) . '@') === false) {
+            continue;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+function stobeGetLimbLossRechatCursorKey(): string {
+    return 'RECHAT_LIMB_LOSS_LAST_ROWID';
+}
+
+function stobeGetLimbLossRechatCooldownKey(): string {
+    return 'RECHAT_LIMB_LOSS_COOLDOWN_UNTIL_TS';
+}
+
+function stobeGetLimbLossRechatCooldownSeconds(): int {
+    return 30;
+}
+
+function stobeArmLimbLossRechatCooldown(int $seconds = 0): void {
+    if ($seconds <= 0) {
+        $seconds = stobeGetLimbLossRechatCooldownSeconds();
+    }
+    if ($seconds <= 0) {
+        return;
+    }
+    setConfOpt(stobeGetLimbLossRechatCooldownKey(), strval(time() + $seconds), true);
+}
+
+function stobeConsumeLimbLossRechatReaction(int $rowId, bool $applyCooldown = true): void {
+    if ($rowId <= 0) {
+        return;
+    }
+
+    $cursorKey = stobeGetLimbLossRechatCursorKey();
+    $cursor = max(0, intval(getConfOpt($cursorKey, '0')));
+    if ($rowId <= $cursor) {
+        return;
+    }
+    setConfOpt($cursorKey, strval($rowId), true);
+    if ($applyCooldown) {
+        stobeArmLimbLossRechatCooldown();
+    }
+}
+
+function stobeResolvePendingLimbLossRechatReaction(array $conversationParticipants = [], int $windowSeconds = 240): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return [];
+    }
+
+    $window = $windowSeconds;
+    if ($window < 30) {
+        $window = 30;
+    } elseif ($window > 1800) {
+        $window = 1800;
+    }
+
+    $participantSet = [];
+    foreach ($conversationParticipants as $rawName) {
+        $name = normalizeParticipantNameToken(strval($rawName));
+        if ($name === '') {
+            continue;
+        }
+        $participantSet[strtolower($name)] = $name;
+    }
+    $scopeByParticipants = count($participantSet) > 0;
+
+    $cursorKey = stobeGetLimbLossRechatCursorKey();
+    $cursor = max(0, intval(getConfOpt($cursorKey, '0')));
+    $cooldownUntil = max(0, intval(getConfOpt(stobeGetLimbLossRechatCooldownKey(), '0')));
+    $rows = $db->fetchAll(
+        "SELECT rowid, ts, gamets, localts, data
+         FROM eventlog
+         WHERE type = 'limb_loss'
+           AND rowid > $1
+         ORDER BY rowid DESC
+         LIMIT 32",
+        [$cursor]
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        return [];
+    }
+
+    $nowTs = time();
+    if ($cooldownUntil > $nowTs) {
+        $newestRowId = intval($rows[0]['rowid'] ?? 0);
+        if ($newestRowId > $cursor) {
+            // Drop limb-loss triggers that happen during cooldown.
+            setConfOpt($cursorKey, strval($newestRowId), true);
+        }
+        stobeLogDebug('Limb-loss rechat suppressed by cooldown', [
+            'cooldown_until' => $cooldownUntil,
+            'seconds_remaining' => $cooldownUntil - $nowTs,
+            'dropped_up_to_rowid' => $newestRowId,
+        ]);
+        return [];
+    }
+
+    $highestStaleRowId = 0;
+    foreach ($rows as $row) {
+        $rowId = intval($row['rowid'] ?? 0);
+        if ($rowId <= 0) {
+            continue;
+        }
+
+        $localTs = intval($row['localts'] ?? 0);
+        if ($localTs > 0 && $localTs < ($nowTs - $window)) {
+            if ($rowId > $highestStaleRowId) {
+                $highestStaleRowId = $rowId;
+            }
+            continue;
+        }
+
+        $parsed = stobeParseLimbLossEventData(strval($row['data'] ?? ''));
+        $victim = normalizeParticipantNameToken(strval($parsed['victim'] ?? ''));
+        if ($victim === '') {
+            continue;
+        }
+
+        if ($scopeByParticipants && !isset($participantSet[strtolower($victim)])) {
+            continue;
+        }
+
+        $weapon = trim(strval($parsed['weapon'] ?? ''));
+        $hacksawContext = stripos($weapon, 'hacksaw') !== false;
+        if (!$hacksawContext) {
+            $hacksawContext = stobeLimbLossHasNearbyRemoveLimbAction($rowId, $victim);
+        }
+
+        return [
+            'rowid' => $rowId,
+            'gamets' => intval($row['gamets'] ?? 0),
+            'localts' => $localTs,
+            'data' => strval($row['data'] ?? ''),
+            'attacker' => normalizeParticipantNameToken(strval($parsed['attacker'] ?? '')),
+            'victim' => $victim,
+            'limb' => stobeNormalizeLimbLossLabel(strval($parsed['limb'] ?? '')),
+            'weapon' => $weapon,
+            'hacksaw' => $hacksawContext,
+        ];
+    }
+
+    // Advance past stale rows so old unmatched sever events do not linger forever.
+    if ($highestStaleRowId > $cursor) {
+        setConfOpt($cursorKey, strval($highestStaleRowId), true);
+    }
+
+    return [];
+}
+
 function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
     $speaker = normalizeParticipantNameToken($speakerName);
     if ($speaker === '') {
