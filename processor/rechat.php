@@ -441,134 +441,57 @@ if ($requestedDepth > 0 && $requestedDepth > $maxRoundsForDepth) {
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/llm_dispatcher.php');
 
-$candidateMap = [];
-foreach ($candidateNames as $candidateName) {
-    $candidateMap[strtolower($candidateName)] = $candidateName;
-}
-
 $fallbackOrder = $candidateNames;
 if (count($fallbackOrder) > 1) {
     shuffle($fallbackOrder);
 }
 $fallbackPair = array_slice($fallbackOrder, 0, min(2, count($fallbackOrder)));
 
-$selectionSource = 'fallback_random';
-$selectedPair = $fallbackPair;
-$selectorRaw = '';
-$selectorError = '';
-
-$selectorNpcData = getNpcData($previousSpeaker);
-if (!$selectorNpcData && count($candidateNames) > 0) {
-    $selectorNpcData = getNpcData($candidateNames[0]);
-}
-
-if (is_array($selectorNpcData)) {
-    $selectorConfig = getLlmConfigForNpc($selectorNpcData);
-    $selectorApiKey = trim(strval($selectorConfig['api_key'] ?? ''));
-
-    if ($selectorApiKey !== '') {
-        $selectorSystemPrompt = "<rechat_target_selector>\n"
-            . "  <rule>Select the next rechat responders in a Kenshi NPC conversation.</rule>\n"
-            . "  <rule>Choose exactly two names from the candidate list.</rule>\n"
-            . "  <rule>Return strict JSON only in this shape: {\"targets\":[\"Name A\",\"Name B\"]}.</rule>\n"
-            . "  <rule>Do not add extra keys or prose.</rule>\n"
-            . "</rechat_target_selector>";
-
-        $selectorUserPrompt = "<rechat_target_selector_input>\n"
-            . "  <previous_speaker>" . stobePromptXmlEscape($previousSpeaker) . "</previous_speaker>\n"
-            . "  <previous_message>" . stobePromptXmlEscape($previousMessage) . "</previous_message>\n"
-            . "  <previous_target>" . stobePromptXmlEscape($previousTarget !== '' ? $previousTarget : '(none)') . "</previous_target>\n"
-            . "  <candidates>" . stobePromptXmlEscape(implode(', ', $candidateNames)) . "</candidates>\n"
-            . "</rechat_target_selector_input>";
-
-        $selectorMessages = [
-            [
-                'role' => 'system',
-                'content' => $selectorSystemPrompt,
-            ],
-            [
-                'role' => 'user',
-                'content' => $selectorUserPrompt,
-            ],
-        ];
-
-        $selectorRawResponse = stobeCallLLM($selectorMessages, $selectorConfig, [
-            'npc_name' => $previousSpeaker !== '' ? $previousSpeaker : (strval($selectorNpcData['name'] ?? 'selector')),
-            'event_type' => 'rechat_target_picker',
-        ]);
-
-        if ($selectorRawResponse !== false && trim($selectorRawResponse) !== '') {
-            $selectorRaw = trim(strval($selectorRawResponse));
-            $pickedNames = [];
-            $pickedSet = [];
-
-            $pushPicked = static function (string $name) use (&$pickedNames, &$pickedSet, $candidateMap): void {
-                if (count($pickedNames) >= 2) {
-                    return;
-                }
-                $normalized = normalizeParticipantNameToken($name);
-                if ($normalized === '') {
-                    return;
-                }
-                $key = strtolower($normalized);
-                if (!isset($candidateMap[$key])) {
-                    return;
-                }
-                if (isset($pickedSet[$key])) {
-                    return;
-                }
-                $pickedSet[$key] = true;
-                $pickedNames[] = $candidateMap[$key];
-            };
-
-            $decoded = json_decode($selectorRaw, true);
-            if (is_array($decoded)) {
-                $rawTargets = [];
-                if (isset($decoded['targets'])) {
-                    $rawTargets = $decoded['targets'];
-                } elseif (isset($decoded['target'])) {
-                    $rawTargets = $decoded['target'];
-                }
-
-                if (is_string($rawTargets)) {
-                    $rawTargets = preg_split('/[,;\n]+/', $rawTargets);
-                }
-
-                if (is_array($rawTargets)) {
-                    foreach ($rawTargets as $rawTarget) {
-                        $pushPicked(strval($rawTarget));
-                    }
-                }
-            }
-
-            if (count($pickedNames) < 2) {
-                foreach ($candidateNames as $candidateName) {
-                    $pattern = '/\b' . preg_quote($candidateName, '/') . '\b/i';
-                    if (preg_match($pattern, $selectorRaw) === 1) {
-                        $pushPicked($candidateName);
-                    }
-                }
-            }
-
-            if (count($pickedNames) > 0) {
-                if (count($pickedNames) < 2) {
-                    foreach ($fallbackPair as $fallbackName) {
-                        $pushPicked($fallbackName);
-                    }
-                }
-                $selectedPair = array_slice($pickedNames, 0, min(2, count($pickedNames)));
-                $selectionSource = 'ai';
-            } else {
-                $selectorError = 'unparsed_selector_output';
-            }
-        } else {
-            $selectorError = 'empty_selector_output';
-        }
-    } else {
-        $selectorError = 'missing_selector_api_key';
+$selectedPair = [];
+$selectedSeen = [];
+$pushSelected = static function (string $rawName) use (&$selectedPair, &$selectedSeen, $candidateNames): void {
+    if (count($selectedPair) >= 2) {
+        return;
     }
-} else {
-    $selectorError = 'missing_selector_profile';
+    $normalized = normalizeParticipantNameToken($rawName);
+    if ($normalized === '') {
+        return;
+    }
+    $candidateKey = '';
+    foreach ($candidateNames as $candidateName) {
+        if (strcasecmp($candidateName, $normalized) === 0) {
+            $candidateKey = strtolower($candidateName);
+            $normalized = $candidateName;
+            break;
+        }
+    }
+    if ($candidateKey === '') {
+        return;
+    }
+    if (isset($selectedSeen[$candidateKey])) {
+        return;
+    }
+    $selectedSeen[$candidateKey] = true;
+    $selectedPair[] = $normalized;
+};
+
+$selectionSource = 'fallback_random';
+if ($previousTarget !== '') {
+    $pushSelected($previousTarget);
+}
+foreach ($fallbackOrder as $fallbackName) {
+    $pushSelected($fallbackName);
+}
+if (count($selectedPair) === 0) {
+    $selectedPair = $fallbackPair;
+}
+if (count($selectedPair) > 0) {
+    $selectionSource = ($previousTarget !== '' && strcasecmp($selectedPair[0], $previousTarget) === 0)
+        ? 'rule_based_target_then_random'
+        : 'fallback_random';
+}
+if (count($selectedPair) > 2) {
+    $selectedPair = array_slice($selectedPair, 0, 2);
 }
 
 $normalSelectedPair = $selectedPair;
@@ -586,7 +509,6 @@ stobeLogInfo('Rechat target pair selected', [
     'candidate_count' => count($candidateNames),
     'previous_speaker' => $previousSpeaker,
     'speaker_environment' => $speakerEnvironment,
-    'selector_error' => $selectorError,
     'forced_limb_loss_rowid' => intval($forcedLimbLossReaction['rowid'] ?? 0),
     'forced_limb_loss_victim' => strval($forcedResponder),
 ]);
