@@ -3008,11 +3008,190 @@ function stobeResolveRecentContextDialogueVariantDecision(array $previousMeta, a
     return 'skip_current';
 }
 
+function stobeNormalizeRecentContextTradeItemKey(string $value): string {
+    $normalized = strtolower(trim($value));
+    if ($normalized === '') {
+        return '';
+    }
+    $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function stobeParseRecentContextTransferTradeMeta(string $historyType, string $historyData): array {
+    if (strtolower(trim($historyType)) !== 'trade') {
+        return [];
+    }
+
+    $parsed = parseDialogueEventData($historyData);
+    $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    if ($speaker === '') {
+        return [];
+    }
+    $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    $message = trim(strval($parsed['message'] ?? ''));
+    if ($message === '') {
+        return [];
+    }
+
+    $matches = [];
+    if (preg_match('/^transferred\s+(.+)$/iu', $message, $matches) !== 1) {
+        return [];
+    }
+    $itemsBlob = trim(strval($matches[1] ?? ''));
+    if ($itemsBlob === '') {
+        return [];
+    }
+
+    $rawParts = preg_split('/\s*,\s*/u', $itemsBlob) ?: [];
+    $items = [];
+    foreach ($rawParts as $rawPart) {
+        $part = trim(strval($rawPart));
+        if ($part === '') {
+            continue;
+        }
+        $partMatches = [];
+        if (preg_match('/^(\d+)\s*x\s+(.+)$/iu', $part, $partMatches) !== 1
+            && preg_match('/^(\d+)x\s+(.+)$/iu', $part, $partMatches) !== 1) {
+            continue;
+        }
+        $qty = intval($partMatches[1] ?? 0);
+        $name = trim(strval($partMatches[2] ?? ''));
+        $name = preg_replace('/\s+/u', ' ', $name) ?? $name;
+        if ($qty <= 0 || $name === '') {
+            continue;
+        }
+        $key = stobeNormalizeRecentContextTradeItemKey($name);
+        if ($key === '') {
+            continue;
+        }
+        $items[] = [
+            'key' => $key,
+            'name' => $name,
+            'qty' => $qty,
+        ];
+    }
+    if (count($items) === 0) {
+        return [];
+    }
+
+    return [
+        'speaker' => $speaker,
+        'target' => $target,
+        'speaker_display' => $speaker,
+        'target_display' => $target,
+        'items' => $items,
+    ];
+}
+
+function stobeMergeRecentContextTransferTradeMeta(array $previousMeta, array $currentMeta): array {
+    if (count($previousMeta) === 0 || count($currentMeta) === 0) {
+        return [];
+    }
+
+    $prevSpeaker = strtolower(trim(strval($previousMeta['speaker'] ?? '')));
+    $currSpeaker = strtolower(trim(strval($currentMeta['speaker'] ?? '')));
+    $prevTarget = strtolower(trim(strval($previousMeta['target'] ?? '')));
+    $currTarget = strtolower(trim(strval($currentMeta['target'] ?? '')));
+    if ($prevSpeaker === '' || $currSpeaker === '' || $prevSpeaker !== $currSpeaker) {
+        return [];
+    }
+    if ($prevTarget !== $currTarget) {
+        return [];
+    }
+
+    $merged = $previousMeta;
+    $mergedItems = is_array($merged['items'] ?? null) ? $merged['items'] : [];
+    $indexByKey = [];
+    foreach ($mergedItems as $idx => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $key = stobeNormalizeRecentContextTradeItemKey(strval($item['key'] ?? ''));
+        if ($key === '') {
+            $key = stobeNormalizeRecentContextTradeItemKey(strval($item['name'] ?? ''));
+        }
+        if ($key !== '') {
+            $indexByKey[$key] = $idx;
+        }
+    }
+
+    $currentItems = is_array($currentMeta['items'] ?? null) ? $currentMeta['items'] : [];
+    foreach ($currentItems as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $key = stobeNormalizeRecentContextTradeItemKey(strval($item['key'] ?? ''));
+        if ($key === '') {
+            $key = stobeNormalizeRecentContextTradeItemKey(strval($item['name'] ?? ''));
+        }
+        $qty = intval($item['qty'] ?? 0);
+        $name = trim(strval($item['name'] ?? ''));
+        if ($key === '' || $qty <= 0 || $name === '') {
+            continue;
+        }
+
+        if (array_key_exists($key, $indexByKey)) {
+            $idx = intval($indexByKey[$key]);
+            $existingQty = intval($mergedItems[$idx]['qty'] ?? 0);
+            $mergedItems[$idx]['qty'] = $existingQty + $qty;
+            if (trim(strval($mergedItems[$idx]['name'] ?? '')) === '') {
+                $mergedItems[$idx]['name'] = $name;
+            }
+        } else {
+            $indexByKey[$key] = count($mergedItems);
+            $mergedItems[] = [
+                'key' => $key,
+                'name' => $name,
+                'qty' => $qty,
+            ];
+        }
+    }
+
+    $merged['items'] = $mergedItems;
+    return $merged;
+}
+
+function stobeBuildRecentContextTransferTradeLine(array $meta): string {
+    $items = is_array($meta['items'] ?? null) ? $meta['items'] : [];
+    if (count($items) === 0) {
+        return '';
+    }
+
+    $speaker = trim(strval($meta['speaker_display'] ?? $meta['speaker'] ?? ''));
+    if ($speaker === '') {
+        $speaker = 'Unknown';
+    }
+    $target = trim(strval($meta['target_display'] ?? $meta['target'] ?? ''));
+
+    $parts = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $qty = intval($item['qty'] ?? 0);
+        $name = trim(strval($item['name'] ?? ''));
+        if ($qty <= 0 || $name === '') {
+            continue;
+        }
+        $parts[] = strval($qty) . 'x ' . $name;
+    }
+    if (count($parts) === 0) {
+        return '';
+    }
+
+    $line = $speaker . ': transferred ' . implode(', ', $parts);
+    if ($target !== '' && strcasecmp($target, $speaker) !== 0) {
+        $line .= ' (talking to: ' . $target . ')';
+    }
+    return stobeSanitizePromptContextLine($line);
+}
+
 function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets = 0, int $maxMessages = 64): array {
     $messages = [];
     $messageTypes = [];
     $messageKeys = [];
     $messageDialogueMeta = [];
+    $messageTransferTradeMeta = [];
     $lastLocation = '';
     $safeCurrentGamets = max(0, intval($currentGamets));
 
@@ -3033,6 +3212,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
             $messageTypes[] = 'location';
             $messageKeys[] = stobeBuildRecentContextDedupeKey('location', $line);
             $messageDialogueMeta[] = [];
+            $messageTransferTradeMeta[] = [];
             $lastLocation = $location;
         }
 
@@ -3060,6 +3240,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         ];
         $dedupeKey = stobeBuildRecentContextDedupeKey($historyType, $historyData);
         $dialogueMeta = stobeBuildRecentContextDialogueMeta($historyType, $historyData);
+        $transferTradeMeta = stobeParseRecentContextTransferTradeMeta($historyType, $historyData);
         $lastIndex = count($messages) - 1;
         $priorIndex = $lastIndex - 1;
 
@@ -3080,12 +3261,37 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
                 $messageTypes[$priorIndex] = $historyType;
                 $messageKeys[$priorIndex] = $dedupeKey;
                 $messageDialogueMeta[$priorIndex] = $dialogueMeta;
+                $messageTransferTradeMeta[$priorIndex] = $transferTradeMeta;
                 array_pop($messages);
                 continue;
             }
             if ($dialogueVariantDecision === 'skip_current') {
                 array_pop($messages);
                 continue;
+            }
+
+            $previousTransferTradeMeta = [];
+            if (isset($messageTransferTradeMeta[$priorIndex]) && is_array($messageTransferTradeMeta[$priorIndex])) {
+                $previousTransferTradeMeta = $messageTransferTradeMeta[$priorIndex];
+            }
+            $mergedTransferTradeMeta = stobeMergeRecentContextTransferTradeMeta(
+                $previousTransferTradeMeta,
+                $transferTradeMeta
+            );
+            if (count($mergedTransferTradeMeta) > 0) {
+                $mergedTransferLine = stobeBuildRecentContextTransferTradeLine($mergedTransferTradeMeta);
+                if ($mergedTransferLine !== '') {
+                    $messages[$priorIndex] = [
+                        'role' => 'user',
+                        'content' => " (...\n" . $mergedTransferLine . "\n...)",
+                    ];
+                    $messageTypes[$priorIndex] = 'trade';
+                    $messageKeys[$priorIndex] = stobeBuildRecentContextDedupeKey('trade', $mergedTransferLine);
+                    $messageDialogueMeta[$priorIndex] = stobeBuildRecentContextDialogueMeta('trade', $mergedTransferLine);
+                    $messageTransferTradeMeta[$priorIndex] = $mergedTransferTradeMeta;
+                    array_pop($messages);
+                    continue;
+                }
             }
 
             if (
@@ -3095,6 +3301,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
                 $messages[$priorIndex] = $messages[$lastIndex];
                 $messageKeys[$priorIndex] = $dedupeKey;
                 $messageDialogueMeta[$priorIndex] = $dialogueMeta;
+                $messageTransferTradeMeta[$priorIndex] = $transferTradeMeta;
                 array_pop($messages);
                 continue;
             }
@@ -3103,6 +3310,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         $messageTypes[] = $historyType;
         $messageKeys[] = $dedupeKey;
         $messageDialogueMeta[] = $dialogueMeta;
+        $messageTransferTradeMeta[] = $transferTradeMeta;
     }
 
     $safeMax = max(8, min(120, $maxMessages));
