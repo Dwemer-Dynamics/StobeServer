@@ -5610,15 +5610,6 @@ function buildWorldStateBlock(array $npcData): string {
         $fields['attack_target'] = $attackTarget;
     }
 
-    $movementSpeedRaw = $metadata['movement_speed'] ?? '';
-    $movementSpeedText = trim(strval($movementSpeedRaw));
-    if ($movementSpeedText !== '' && preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $movementSpeedText) === 1) {
-        $movementSpeed = floatval($movementSpeedText);
-        if ($movementSpeed > 0.0) {
-            $fields['movement_speed'] = number_format($movementSpeed, 2);
-        }
-    }
-
     $bounty = function_exists('stobeBountyAmountFromPayload')
         ? stobeBountyAmountFromPayload($npcData['bounty'] ?? [])
         : intval($npcData['bounty'] ?? 0);
@@ -6310,6 +6301,57 @@ function stobeBuildScenePromptBlock(array $npcData, string $speakerName = ''): s
     }
 
     return implode("\n\n", $blocks);
+}
+
+function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName = ''): string {
+    if (count($npcData) === 0) {
+        return '';
+    }
+
+    $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $isInCombat = stobeCoerceTruthyPromptFlag($metadata['is_in_combat'] ?? false);
+    $isAttacking = stobeCoerceTruthyPromptFlag($metadata['is_attacking'] ?? false);
+    $currentAction = strtolower(trim(strval($metadata['current_action'] ?? '')));
+    $actionFlagsText = strtolower(trim(strval($metadata['action_flags'] ?? '')));
+
+    $currentActionSignalsCombat = (
+        $currentAction === 'combat' ||
+        $currentAction === 'attacking' ||
+        strpos($currentAction, 'combat') !== false ||
+        strpos($currentAction, 'attack') !== false
+    );
+    $actionFlagsSignalCombat = (
+        strpos($actionFlagsText, 'in combat') !== false ||
+        strpos($actionFlagsText, 'attacking') !== false
+    );
+
+    if (!$isInCombat && !$isAttacking && !$currentActionSignalsCombat && !$actionFlagsSignalCombat) {
+        return '';
+    }
+
+    $speaker = normalizeParticipantNameToken($speakerName);
+    if ($speaker === '') {
+        $speaker = normalizeParticipantNameToken(strval($npcData['name'] ?? ''));
+    }
+    if ($speaker === '') {
+        $speaker = 'This NPC';
+    }
+
+    $attackTarget = normalizeParticipantNameToken(strval($metadata['attack_target'] ?? ''));
+    $priorityInstruction = "PRIORITY INSTRUCTION - {$speaker} is in active combat and fighting for survival right now. Prioritize combat-relevant responses over casual conversation.";
+
+    $lines = [];
+    $lines[] = '<combat_priority>';
+    $lines[] = '  <priority_instruction>' . stobePromptXmlEscape($priorityInstruction) . '</priority_instruction>';
+    $lines[] = '  <rule>Focus this turn on immediate threats, survival, and battlefield intent.</rule>';
+    $lines[] = '  <rule>Keep speech urgent, concise, and grounded in the active fight.</rule>';
+    $lines[] = '  <rule>Avoid casual, off-topic, or long-form chatter while combat is active.</rule>';
+    if ($attackTarget !== '') {
+        $lines[] = '  <attack_target>' . stobePromptXmlEscape($attackTarget) . '</attack_target>';
+    }
+    $lines[] = '</combat_priority>';
+
+    return implode("\n", $lines);
 }
 
 function getCurrentPlayerFactionIdentity(): array {
@@ -8711,6 +8753,11 @@ function buildSystemPrompt(
     $scenePromptBlock = stobeBuildScenePromptBlock($npcData, $npcName);
     if ($scenePromptBlock !== '') {
         $prompt .= "\n\n" . $scenePromptBlock;
+    }
+
+    $combatPriorityBlock = stobeBuildCombatPriorityPromptBlock($npcData, $npcName);
+    if ($combatPriorityBlock !== '') {
+        $prompt .= "\n\n" . $combatPriorityBlock;
     }
 
     return $prompt;
