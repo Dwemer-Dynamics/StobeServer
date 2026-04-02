@@ -674,6 +674,15 @@ foreach (array_reverse($eventHistory) as $row) {
 }
 $historyText = implode("\n", $historyLines);
 $historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$memoryContextMessages = stobeBuildMemoryEventContextMessages(
+    is_array($npcData) ? $npcData : [],
+    $respondingNpc,
+    $previousMessage,
+    intval($gamets)
+);
+if (count($memoryContextMessages) > 0) {
+    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
+}
 
 $rechatSpecialContext = [];
 if (

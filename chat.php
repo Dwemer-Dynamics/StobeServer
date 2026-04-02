@@ -227,6 +227,15 @@ foreach (array_reverse($eventHistory) as $row) {
 }
 $historyText = implode("\n", $historyLines);
 $historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$memoryContextMessages = stobeBuildMemoryEventContextMessages(
+    is_array($npcData) ? $npcData : [],
+    $targetNpc,
+    $message,
+    intval($gamets)
+);
+if (count($memoryContextMessages) > 0) {
+    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
+}
 
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/openaijson.php');

@@ -3344,6 +3344,49 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
     return $messages;
 }
 
+function stobeBuildMemoryEventContextMessages(
+    array $npcData,
+    string $npcName,
+    string $queryText = '',
+    int $currentGamets = 0
+): array {
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if ($safeNpc === '') {
+        return [];
+    }
+    if (
+        (function_exists('stobeIsNarratorName') && stobeIsNarratorName($safeNpc))
+        || strcasecmp($safeNpc, 'The Narrator') === 0
+    ) {
+        return [];
+    }
+
+    $blocks = [];
+    if (function_exists('stobeBuildRegularMemoryPromptBlock')) {
+        $regularBlock = stobeBuildRegularMemoryPromptBlock($npcData, $safeNpc, $queryText, $currentGamets);
+        if (trim($regularBlock) !== '') {
+            $blocks[] = trim($regularBlock);
+        }
+    }
+    $middleTermBlock = stobeBuildMiddleTermMemoryPromptBlock($npcData, $safeNpc);
+    if (trim($middleTermBlock) !== '') {
+        $blocks[] = trim($middleTermBlock);
+    }
+
+    if (count($blocks) === 0) {
+        return [];
+    }
+
+    $messages = [];
+    foreach ($blocks as $block) {
+        $messages[] = [
+            'role' => 'user',
+            'content' => " (...\n" . $block . "\n...)",
+        ];
+    }
+    return $messages;
+}
+
 function stobeBuildTurnGuidanceUserPrompt(string $npcName, string $previousSpeaker = ''): string {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
@@ -6040,6 +6083,8 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
     $activated = stobeGetActivatedNpcNameLookup();
     $hasActivatedLookup = count($activated) > 0;
     $seen = [];
+    $animalGroups = [];
+    $orderedEntries = [];
     $lines = [
         '<nearby_actors>',
         '# NEARBY ACTORS/NPC IN THE SCENE',
@@ -6055,10 +6100,51 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
             continue;
         }
         $nameKey = strtolower($name);
-        if ($nameKey === $speakerKey || isset($seen[$nameKey])) {
+        if ($nameKey === $speakerKey) {
             continue;
         }
-        if ($hasActivatedLookup && !isset($activated[$nameKey])) {
+
+        $action = trim(strval($entry['current_action'] ?? ''));
+        $actionLower = strtolower(trim(preg_replace('/\s+/', ' ', $action)));
+        $isDeadFlag = stobeParseFlexibleBool($entry['is_dead'] ?? null) === true;
+        $isKnockedOutFlag = stobeParseFlexibleBool($entry['is_knocked_out'] ?? ($entry['is_knockedout'] ?? null)) === true;
+        $isUnconsciousFlag = stobeParseFlexibleBool($entry['is_unconscious'] ?? null) === true;
+        $isDeadOrKnockedOut = $isDeadFlag
+            || $isKnockedOutFlag
+            || $isUnconsciousFlag
+            || (preg_match('/\b(dead|unconscious|knocked[ _-]?out|passed[ _-]?out)\b/iu', $actionLower) === 1);
+
+        $isAnimal = stobeParseFlexibleBool($entry['is_animal'] ?? null) === true;
+        if ($hasActivatedLookup && !isset($activated[$nameKey]) && !$isDeadOrKnockedOut && !$isAnimal) {
+            continue;
+        }
+
+        if ($isAnimal) {
+            if (!isset($animalGroups[$nameKey])) {
+                $animalGroups[$nameKey] = [
+                    'name' => $name,
+                    'count' => 0,
+                    'action' => '',
+                    'distance' => '',
+                ];
+                $orderedEntries[] = ['type' => 'animal', 'key' => $nameKey];
+            }
+            $animalGroups[$nameKey]['count']++;
+            $distanceBand = stobeDescribeDistanceBand($entry['dist'] ?? '');
+            if ($distanceBand !== '' && $animalGroups[$nameKey]['distance'] === '') {
+                $animalGroups[$nameKey]['distance'] = $distanceBand;
+            }
+            if (
+                $action !== ''
+                && !in_array(strtolower($action), ['unknown', 'none', 'n/a'], true)
+                && $animalGroups[$nameKey]['action'] === ''
+            ) {
+                $animalGroups[$nameKey]['action'] = $action;
+            }
+            continue;
+        }
+
+        if (isset($seen[$nameKey])) {
             continue;
         }
         $seen[$nameKey] = true;
@@ -6083,9 +6169,18 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if ($bountyText !== '') {
             $detailParts[] = $bountyText;
         }
-        $action = trim(strval($entry['current_action'] ?? ''));
-        if ($action !== '' && !in_array(strtolower($action), ['unknown', 'none', 'n/a'], true)) {
-            $detailParts[] = 'Action: ' . $action;
+        $displayAction = $action;
+        if ($displayAction === '' || in_array(strtolower($displayAction), ['unknown', 'none', 'n/a'], true)) {
+            if ($isDeadFlag) {
+                $displayAction = 'dead';
+            } elseif ($isKnockedOutFlag) {
+                $displayAction = 'knocked out';
+            } elseif ($isUnconsciousFlag) {
+                $displayAction = 'unconscious';
+            }
+        }
+        if ($displayAction !== '' && !in_array(strtolower($displayAction), ['unknown', 'none', 'n/a'], true)) {
+            $detailParts[] = 'Action: ' . $displayAction;
         }
         $isCarrying = stobeParseFlexibleBool($entry['is_carrying'] ?? null);
         $carryingTargetName = trim(strval($entry['carrying_target_name'] ?? ''));
@@ -6128,13 +6223,15 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if ($appearance !== '') {
             $detailParts[] = 'Appearance: ' . $appearance;
         }
-        $equipmentRaw = trim(strval($entry['equipment'] ?? ''));
-        $equipment = truncatePromptValue(
-            stobeEnrichItemCsvWithDescriptions($equipmentRaw, 8, 70, 760),
-            760
-        );
-        if ($equipment !== '') {
-            $detailParts[] = 'Equipment: ' . $equipment;
+        if (!$isDeadOrKnockedOut) {
+            $equipmentRaw = trim(strval($entry['equipment'] ?? ''));
+            $equipment = truncatePromptValue(
+                stobeEnrichItemCsvWithDescriptions($equipmentRaw, 8, 70, 760),
+                760
+            );
+            if ($equipment !== '') {
+                $detailParts[] = 'Equipment: ' . $equipment;
+            }
         }
         $distanceBand = stobeDescribeDistanceBand($entry['dist'] ?? '');
         if ($distanceBand !== '') {
@@ -6145,11 +6242,62 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if (count($detailParts) > 0) {
             $line .= ': ' . stobePromptXmlEscape(implode(' | ', $detailParts));
         }
-        $lines[] = $line;
-        $added++;
+        $orderedEntries[] = ['type' => 'line', 'line' => $line];
+    }
+
+    foreach ($orderedEntries as $entry) {
         if ($added >= 24) {
             break;
         }
+        if (($entry['type'] ?? '') === 'line') {
+            $line = strval($entry['line'] ?? '');
+            if ($line !== '') {
+                $lines[] = $line;
+                $added++;
+            }
+            continue;
+        }
+        if (($entry['type'] ?? '') !== 'animal') {
+            continue;
+        }
+
+        $animalKey = strval($entry['key'] ?? '');
+        $group = $animalGroups[$animalKey] ?? null;
+        if (!is_array($group)) {
+            continue;
+        }
+        $count = intval($group['count'] ?? 0);
+        if ($count <= 0) {
+            continue;
+        }
+        $animalName = trim(strval($group['name'] ?? ''));
+        if ($animalName === '') {
+            continue;
+        }
+
+        if ($count > 1) {
+            $line = '## ' . stobePromptXmlEscape($count . 'x ' . $animalName);
+            $lines[] = $line;
+            $added++;
+            continue;
+        }
+
+        $detailParts = [];
+        $animalAction = trim(strval($group['action'] ?? ''));
+        if ($animalAction !== '' && !in_array(strtolower($animalAction), ['unknown', 'none', 'n/a'], true)) {
+            $detailParts[] = 'Action: ' . $animalAction;
+        }
+        $animalDistance = trim(strval($group['distance'] ?? ''));
+        if ($animalDistance !== '') {
+            $detailParts[] = 'Distance: ' . $animalDistance;
+        }
+
+        $line = '## ' . stobePromptXmlEscape($animalName);
+        if (count($detailParts) > 0) {
+            $line .= ': ' . stobePromptXmlEscape(implode(' | ', $detailParts));
+        }
+        $lines[] = $line;
+        $added++;
     }
 
     if ($added === 0) {
@@ -8674,17 +8822,6 @@ function buildSystemPrompt(
     $npcBountyBlock = stobeBuildNpcBountyPromptBlock($npcData);
     $npcSkills = stobeBuildNpcSkillsText($npcData);
     $npcCondition = stobeBuildNpcConditionText($npcData, $metadata);
-    $regularMemoryBlock = '';
-    if (function_exists('stobeBuildRegularMemoryPromptBlock')) {
-        $regularMemoryBlock = stobeBuildRegularMemoryPromptBlock(
-            $npcData,
-            $npcName,
-            $playerMessage,
-            $currentGamets
-        );
-    }
-    $middleTermMemoryBlock = stobeBuildMiddleTermMemoryPromptBlock($npcData, $npcName);
-    $memoryBlocks = trim($regularMemoryBlock . ($regularMemoryBlock !== '' && $middleTermMemoryBlock !== '' ? "\n\n" : '') . $middleTermMemoryBlock);
     $promptOverrides = stobeResolveNpcPromptOverrides($npcData, $metadata);
     $promptHeadOverride = trim(strval($promptOverrides['prompt_head'] ?? ''));
     $profilePromptOverride = trim(strval($promptOverrides['profile_prompt'] ?? ''));
@@ -8716,7 +8853,7 @@ function buildSystemPrompt(
         '#NPC_SKILLS#' => $npcSkills,
         '#NPC_SPEECHSTYLE#' => stobePromptXmlEscape($npcSpeechStyle),
         '#NPC_GOALS#' => stobePromptXmlEscape($npcGoals),
-        '#NPC_MIDDLE_TERM_MEMORY#' => $memoryBlocks,
+        '#NPC_MIDDLE_TERM_MEMORY#' => '',
         '#PLAYER_NAME#' => stobePromptXmlEscape($playerName),
         '#PLAYER_CATS#' => stobePromptXmlEscape($playerCats),
         '#GENERAL_INSTRUCTIONS#' => stobePromptXmlEscape($generalInstructions),
