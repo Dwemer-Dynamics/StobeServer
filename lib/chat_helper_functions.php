@@ -5285,10 +5285,37 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
         }
         return null;
     };
+    $readFlag = static function (mixed $value): ?bool {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return floatval($value) > 0.0;
+        }
+        if (!is_string($value)) {
+            return null;
+        }
+        $trimmed = strtolower(trim($value));
+        if ($trimmed === '') {
+            return null;
+        }
+        if (in_array($trimmed, ['1', 'true', 'yes', 'y', 'on'], true)) {
+            return true;
+        }
+        if (in_array($trimmed, ['0', 'false', 'no', 'n', 'off'], true)) {
+            return false;
+        }
+        if (preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $trimmed) === 1) {
+            return floatval($trimmed) > 0.0;
+        }
+        return null;
+    };
 
-    $tracked = ['head', 'stomach', 'left_arm', 'right_arm', 'left_leg', 'right_leg', 'torso_extra_1'];
+    $tracked = ['head', 'stomach', 'left_arm', 'right_arm', 'left_leg', 'right_leg'];
     $missingTracked = ['left_arm', 'right_arm', 'left_leg', 'right_leg'];
     $missingLabelMap = [
+        'head' => 'head',
+        'stomach' => 'stomach',
         'left_arm' => 'left arm',
         'right_arm' => 'right arm',
         'left_leg' => 'left leg',
@@ -5296,11 +5323,13 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
     ];
     $missingLabels = [];
     $missingSeen = [];
-    $ratios = [];
+    $brokenLabels = [];
+    $damagedLabels = [];
 
     foreach ($tracked as $base) {
         $current = null;
         $max = null;
+        $rawMax = null;
         if (array_key_exists($base . '_current', $limbs)) {
             $current = $readNumeric($limbs[$base . '_current']);
         }
@@ -5310,6 +5339,7 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
         if (array_key_exists($base . '_max', $limbs)) {
             $max = $readNumeric($limbs[$base . '_max']);
         }
+        $rawMax = $max;
         if ($current === null) {
             continue;
         }
@@ -5321,43 +5351,54 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
         $pct = ($current / $max) * 100.0;
         $baseToken = stobeBaseLimbToken($base);
         $isRobotic = ($baseToken !== '' && isset($roboticLookup[$baseToken]));
-        if ($pct <= 1.0 && !$isRobotic && in_array($baseToken, $missingTracked, true) && !isset($missingSeen[$baseToken])) {
-            $missingSeen[$baseToken] = true;
-            $missingLabels[] = $missingLabelMap[$baseToken] ?? str_replace('_', ' ', $baseToken);
+        $displayLabel = $missingLabelMap[$baseToken] ?? str_replace('_', ' ', $baseToken);
+        $explicitMissing = null;
+        $missingFlagKeys = [$base . '_missing', $base . '_lost', $base . '_gone', 'missing_' . $base];
+        foreach ($missingFlagKeys as $flagKey) {
+            if (!array_key_exists($flagKey, $limbs)) {
+                continue;
+            }
+            $parsedFlag = $readFlag($limbs[$flagKey]);
+            if ($parsedFlag === null) {
+                continue;
+            }
+            $explicitMissing = $parsedFlag;
+            break;
         }
-
-        if ($pct <= 1.0 && $isRobotic) {
+        $isMissing = ($explicitMissing === true);
+        if (!$isMissing && $explicitMissing === null && $rawMax !== null && $rawMax <= 0.0 && $current <= 0.0) {
+            $isMissing = true;
+        }
+        if ($isMissing && !$isRobotic && in_array($baseToken, $missingTracked, true) && !isset($missingSeen[$baseToken])) {
+            $missingSeen[$baseToken] = true;
+            $missingLabels[] = $displayLabel;
             continue;
         }
-        $ratios[] = $pct;
+
+        if ($pct <= 0.0) {
+            $brokenLabels[] = $displayLabel;
+            continue;
+        }
+        if ($pct < 95.0) {
+            $damagedLabels[] = $displayLabel . ' (' . strval(intval(round($pct))) . '%)';
+        }
     }
 
     $statusParts = [];
     if (count($missingLabels) > 0) {
         $statusParts[] = 'Missing: ' . implode(', ', $missingLabels);
     }
-
-    $baseStatus = '';
-    if (count($ratios) > 0) {
-        $worst = min($ratios);
-        if ($worst >= 92.0) {
-            $baseStatus = 'Limbs intact';
-        } elseif ($worst >= 70.0) {
-            $baseStatus = 'Minor limb injuries';
-        } elseif ($worst >= 40.0) {
-            $baseStatus = 'Injured limbs';
-        } elseif ($worst >= 10.0) {
-            $baseStatus = 'Crippled';
-        } else {
-            $baseStatus = 'Maimed';
-        }
+    if (count($brokenLabels) > 0) {
+        $statusParts[] = 'Broken: ' . implode(', ', $brokenLabels);
     }
-
-    if ($baseStatus !== '' && count($missingLabels) === 0) {
-        $statusParts[] = $baseStatus;
+    if (count($damagedLabels) > 0) {
+        $statusParts[] = 'Damaged: ' . implode(', ', $damagedLabels);
     }
     if (count($roboticLabels) > 0) {
         $statusParts[] = 'Robotic: ' . implode(', ', $roboticLabels);
+    }
+    if (count($statusParts) === 0) {
+        $statusParts[] = 'Limbs intact';
     }
 
     return implode('; ', $statusParts);
