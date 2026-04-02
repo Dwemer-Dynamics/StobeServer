@@ -2327,6 +2327,18 @@ function stobeResolveWorldWeatherLabel(array $environment, array $metadata = [])
     return '';
 }
 
+function stobeShouldUseBuildingInWorldLocation(array $environment, array $metadata = []): bool {
+    $indoorsFlag = stobeParseFlexibleBool($environment['indoors'] ?? ($metadata['indoors'] ?? null));
+    $outdoorsFlag = stobeParseFlexibleBool($environment['outdoors'] ?? ($metadata['outdoors'] ?? null));
+    if ($outdoorsFlag === true) {
+        return false;
+    }
+    if ($indoorsFlag === false) {
+        return false;
+    }
+    return true;
+}
+
 function stobeBuildWorldPromptContextFromNpcData(array $npcData): array {
     $resolved = [
         'location' => '',
@@ -2373,17 +2385,25 @@ function stobeBuildWorldPromptContextFromNpcData(array $npcData): array {
         return '';
     };
 
-    $locationCandidates = [
-        $pickToken($environment, ['building_name', 'indoors_name', 'location', 'location_name', 'cell', 'area_name', 'area']),
-        $pickToken($environment, ['town_name', 'town', 'city', 'settlement']),
-        $pickToken($environment, ['zone_name', 'zone']),
-        $pickToken($environment, ['region', 'region_name']),
-        $pickToken($extendedData, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region']),
-        $pickToken($metadata, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region', 'region_name', 'building_name', 'cell']),
-        stobeNormalizeWorldPromptToken($npcData['town'] ?? ''),
-        stobeNormalizeWorldPromptToken($npcData['zone'] ?? ''),
-        stobeNormalizeWorldPromptToken($npcData['region'] ?? ''),
-    ];
+    $useBuildingToken = stobeShouldUseBuildingInWorldLocation($environment, $metadata);
+    $locationCandidates = [];
+    if ($useBuildingToken) {
+        $locationCandidates[] = $pickToken($environment, ['building_name', 'indoors_name', 'location', 'location_name', 'cell', 'area_name', 'area']);
+    } else {
+        $locationCandidates[] = $pickToken($environment, ['location', 'location_name', 'cell', 'area_name', 'area']);
+    }
+    $locationCandidates[] = $pickToken($environment, ['town_name', 'town', 'city', 'settlement']);
+    $locationCandidates[] = $pickToken($environment, ['zone_name', 'zone']);
+    $locationCandidates[] = $pickToken($environment, ['region', 'region_name']);
+    $locationCandidates[] = $pickToken($extendedData, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region']);
+    if ($useBuildingToken) {
+        $locationCandidates[] = $pickToken($metadata, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region', 'region_name', 'building_name', 'cell']);
+    } else {
+        $locationCandidates[] = $pickToken($metadata, ['location', 'location_name', 'town', 'town_name', 'zone', 'zone_name', 'region', 'region_name', 'cell']);
+    }
+    $locationCandidates[] = stobeNormalizeWorldPromptToken($npcData['town'] ?? '');
+    $locationCandidates[] = stobeNormalizeWorldPromptToken($npcData['zone'] ?? '');
+    $locationCandidates[] = stobeNormalizeWorldPromptToken($npcData['region'] ?? '');
 
     $locationParts = [];
     $seenLocationParts = [];
@@ -5508,12 +5528,14 @@ function buildWorldStateBlock(array $npcData): string {
         }
         return '';
     };
-    $locationCandidates = [
-        $pickEnvironmentToken($environment, ['building_name', 'indoors_name']),
-        $pickEnvironmentToken($environment, ['town_name', 'town', 'city', 'settlement']),
-        $pickEnvironmentToken($environment, ['zone_name', 'zone']),
-        $pickEnvironmentToken($environment, ['region', 'region_name']),
-    ];
+    $useBuildingToken = stobeShouldUseBuildingInWorldLocation($environment, $metadata);
+    $locationCandidates = [];
+    if ($useBuildingToken) {
+        $locationCandidates[] = $pickEnvironmentToken($environment, ['building_name', 'indoors_name']);
+    }
+    $locationCandidates[] = $pickEnvironmentToken($environment, ['town_name', 'town', 'city', 'settlement']);
+    $locationCandidates[] = $pickEnvironmentToken($environment, ['zone_name', 'zone']);
+    $locationCandidates[] = $pickEnvironmentToken($environment, ['region', 'region_name']);
     if (count(array_filter($locationCandidates, static function (string $value): bool {
         return $value !== '';
     })) === 0) {
