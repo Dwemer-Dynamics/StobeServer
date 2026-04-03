@@ -2470,6 +2470,74 @@ ON CONFLICT (label) DO UPDATE SET
     END,
     updated_at = NOW();
 
+INSERT INTO core_profiles (
+    label,
+    is_default_npc,
+    is_player_faction_profile,
+    response_connector,
+    diary_connector,
+    autochat_connector,
+    middleterm_connector,
+    backgroundlife_connector,
+    dynamic_connector,
+    relationship_connector,
+    tts_connector_id,
+    metadata
+)
+SELECT
+    'Player Faction',
+    FALSE,
+    TRUE,
+    src.response_connector,
+    src.diary_connector,
+    src.autochat_connector,
+    src.middleterm_connector,
+    src.backgroundlife_connector,
+    src.dynamic_connector,
+    src.relationship_connector,
+    src.tts_connector_id,
+    CASE
+        WHEN src.metadata IS NULL
+          OR src.metadata = '[]'::jsonb
+          OR jsonb_typeof(src.metadata) <> 'object'
+        THEN '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true}'::jsonb
+        ELSE jsonb_set(
+            jsonb_set(src.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+            '{MIDDLE_TERM_MEMORY_ENABLED}',
+            'true'::jsonb,
+            true
+        )
+    END
+FROM core_profiles src
+WHERE LOWER(COALESCE(src.label, '')) = 'default profile'
+ORDER BY CASE WHEN COALESCE(src.is_default_npc, FALSE) = TRUE THEN 0 ELSE 1 END,
+         src.id ASC
+LIMIT 1
+ON CONFLICT (label) DO UPDATE SET
+    is_default_npc = FALSE,
+    is_player_faction_profile = TRUE,
+    response_connector = COALESCE(EXCLUDED.response_connector, core_profiles.response_connector),
+    diary_connector = COALESCE(EXCLUDED.diary_connector, core_profiles.diary_connector),
+    autochat_connector = COALESCE(EXCLUDED.autochat_connector, core_profiles.autochat_connector),
+    middleterm_connector = COALESCE(EXCLUDED.middleterm_connector, core_profiles.middleterm_connector),
+    backgroundlife_connector = COALESCE(EXCLUDED.backgroundlife_connector, core_profiles.backgroundlife_connector),
+    dynamic_connector = COALESCE(EXCLUDED.dynamic_connector, core_profiles.dynamic_connector),
+    relationship_connector = COALESCE(EXCLUDED.relationship_connector, core_profiles.relationship_connector),
+    tts_connector_id = COALESCE(EXCLUDED.tts_connector_id, core_profiles.tts_connector_id),
+    metadata = CASE
+        WHEN core_profiles.metadata IS NULL
+          OR core_profiles.metadata = '[]'::jsonb
+          OR jsonb_typeof(core_profiles.metadata) <> 'object'
+        THEN EXCLUDED.metadata
+        ELSE jsonb_set(
+            jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+            '{MIDDLE_TERM_MEMORY_ENABLED}',
+            'true'::jsonb,
+            true
+        )
+    END,
+    updated_at = NOW();
+
 UPDATE core_profiles
 SET is_default_npc = CASE
     WHEN LOWER(label) = 'default profile' THEN TRUE
@@ -2477,6 +2545,15 @@ SET is_default_npc = CASE
 END
 WHERE LOWER(label) = 'default profile'
    OR is_default_npc = TRUE;
+
+UPDATE core_profiles
+SET is_player_faction_profile = FALSE
+WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE
+  AND LOWER(COALESCE(label, '')) <> 'player faction';
+
+UPDATE core_profiles
+SET is_player_faction_profile = TRUE
+WHERE LOWER(COALESCE(label, '')) = 'player faction';
 
 UPDATE core_profiles
 SET response_connector = COALESCE(

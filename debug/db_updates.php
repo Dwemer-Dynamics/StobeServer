@@ -1202,6 +1202,195 @@ PROMPT;
             );
         });
 
+        $applyPatch('core_profiles', 202604030003, static function () use ($db, $defaultMetadata): void {
+            $defaultProfile = $db->fetchOne(
+                "SELECT id,
+                        response_connector,
+                        diary_connector,
+                        autochat_connector,
+                        middleterm_connector,
+                        backgroundlife_connector,
+                        dynamic_connector,
+                        relationship_connector,
+                        tts_connector_id,
+                        metadata
+                 FROM core_profiles
+                 ORDER BY CASE
+                            WHEN COALESCE(is_default_npc, FALSE) = TRUE THEN 0
+                            WHEN LOWER(COALESCE(label, '')) = 'default profile' THEN 1
+                            ELSE 2
+                          END,
+                          id ASC
+                 LIMIT 1"
+            );
+            $defaultProfileId = intval($defaultProfile['id'] ?? 0);
+            if ($defaultProfileId <= 0) {
+                return;
+            }
+
+            $rawMetadata = $defaultProfile['metadata'] ?? '{}';
+            if (is_array($rawMetadata)) {
+                $playerMetadata = $rawMetadata;
+            } else {
+                $decoded = json_decode(strval($rawMetadata), true);
+                $playerMetadata = is_array($decoded) ? $decoded : [];
+            }
+            if (count($playerMetadata) === 0) {
+                $fallbackDecoded = json_decode($defaultMetadata, true);
+                if (is_array($fallbackDecoded)) {
+                    $playerMetadata = $fallbackDecoded;
+                }
+            }
+            $playerMetadata['DYNAMIC_PROFILE_ENABLED'] = true;
+            $playerMetadata['MIDDLE_TERM_MEMORY_ENABLED'] = true;
+            $playerMetadataJson = json_encode($playerMetadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (!is_string($playerMetadataJson) || trim($playerMetadataJson) === '') {
+                $playerMetadataJson = '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true}';
+            }
+
+            $playerByLabel = $db->fetchOne(
+                "SELECT id
+                 FROM core_profiles
+                 WHERE LOWER(COALESCE(label, '')) = 'player faction'
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+            $playerProfileId = intval($playerByLabel['id'] ?? 0);
+            if ($playerProfileId <= 0) {
+                $playerByFlag = $db->fetchOne(
+                    "SELECT id
+                     FROM core_profiles
+                     WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE
+                     ORDER BY id ASC
+                     LIMIT 1"
+                );
+                $playerProfileId = intval($playerByFlag['id'] ?? 0);
+            }
+
+            $responseConnector = intval($defaultProfile['response_connector'] ?? 0);
+            $diaryConnector = intval($defaultProfile['diary_connector'] ?? 0);
+            $autochatConnector = intval($defaultProfile['autochat_connector'] ?? 0);
+            $middletermConnector = intval($defaultProfile['middleterm_connector'] ?? 0);
+            $backgroundlifeConnector = intval($defaultProfile['backgroundlife_connector'] ?? 0);
+            $dynamicConnector = intval($defaultProfile['dynamic_connector'] ?? 0);
+            $relationshipConnector = intval($defaultProfile['relationship_connector'] ?? 0);
+            $ttsConnectorId = intval($defaultProfile['tts_connector_id'] ?? 0);
+
+            if ($playerProfileId <= 0) {
+                $inserted = $db->fetchOne(
+                    "INSERT INTO core_profiles (
+                        label,
+                        is_default_npc,
+                        is_player_faction_profile,
+                        response_connector,
+                        diary_connector,
+                        autochat_connector,
+                        middleterm_connector,
+                        backgroundlife_connector,
+                        dynamic_connector,
+                        relationship_connector,
+                        tts_connector_id,
+                        metadata
+                    ) VALUES (
+                        'Player Faction',
+                        FALSE,
+                        TRUE,
+                        $1, $2, $3, $4, $5, $6, $7, $8,
+                        $9::jsonb
+                    )
+                    ON CONFLICT (label) DO UPDATE SET
+                        is_default_npc = FALSE,
+                        is_player_faction_profile = TRUE,
+                        response_connector = COALESCE(EXCLUDED.response_connector, core_profiles.response_connector),
+                        diary_connector = COALESCE(EXCLUDED.diary_connector, core_profiles.diary_connector),
+                        autochat_connector = COALESCE(EXCLUDED.autochat_connector, core_profiles.autochat_connector),
+                        middleterm_connector = COALESCE(EXCLUDED.middleterm_connector, core_profiles.middleterm_connector),
+                        backgroundlife_connector = COALESCE(EXCLUDED.backgroundlife_connector, core_profiles.backgroundlife_connector),
+                        dynamic_connector = COALESCE(EXCLUDED.dynamic_connector, core_profiles.dynamic_connector),
+                        relationship_connector = COALESCE(EXCLUDED.relationship_connector, core_profiles.relationship_connector),
+                        tts_connector_id = COALESCE(EXCLUDED.tts_connector_id, core_profiles.tts_connector_id),
+                        metadata = CASE
+                            WHEN core_profiles.metadata IS NULL
+                              OR core_profiles.metadata = '[]'::jsonb
+                              OR jsonb_typeof(core_profiles.metadata) <> 'object'
+                            THEN EXCLUDED.metadata
+                            ELSE jsonb_set(
+                                jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+                                '{MIDDLE_TERM_MEMORY_ENABLED}',
+                                'true'::jsonb,
+                                true
+                            )
+                        END,
+                        updated_at = NOW()
+                    RETURNING id",
+                    [
+                        $responseConnector > 0 ? $responseConnector : null,
+                        $diaryConnector > 0 ? $diaryConnector : null,
+                        $autochatConnector > 0 ? $autochatConnector : null,
+                        $middletermConnector > 0 ? $middletermConnector : null,
+                        $backgroundlifeConnector > 0 ? $backgroundlifeConnector : null,
+                        $dynamicConnector > 0 ? $dynamicConnector : null,
+                        $relationshipConnector > 0 ? $relationshipConnector : null,
+                        $ttsConnectorId > 0 ? $ttsConnectorId : null,
+                        $playerMetadataJson
+                    ]
+                );
+                $playerProfileId = intval($inserted['id'] ?? 0);
+            }
+
+            if ($playerProfileId > 0) {
+                $db->exec(
+                    "UPDATE core_profiles
+                     SET label = 'Player Faction',
+                         is_default_npc = FALSE,
+                         is_player_faction_profile = TRUE,
+                         response_connector = COALESCE(response_connector, $1::INT),
+                         diary_connector = COALESCE(diary_connector, $2::INT),
+                         autochat_connector = COALESCE(autochat_connector, $3::INT),
+                         middleterm_connector = COALESCE(middleterm_connector, $4::INT),
+                         backgroundlife_connector = COALESCE(backgroundlife_connector, $5::INT),
+                         dynamic_connector = COALESCE(dynamic_connector, $6::INT),
+                         relationship_connector = COALESCE(relationship_connector, $7::INT),
+                         tts_connector_id = COALESCE(tts_connector_id, $8::INT),
+                         metadata = CASE
+                            WHEN metadata IS NULL
+                              OR metadata = '[]'::jsonb
+                              OR jsonb_typeof(metadata) <> 'object'
+                            THEN $9::jsonb
+                            ELSE jsonb_set(
+                                jsonb_set(metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+                                '{MIDDLE_TERM_MEMORY_ENABLED}',
+                                'true'::jsonb,
+                                true
+                            )
+                         END,
+                         updated_at = NOW()
+                     WHERE id = $10",
+                    [
+                        $responseConnector > 0 ? $responseConnector : null,
+                        $diaryConnector > 0 ? $diaryConnector : null,
+                        $autochatConnector > 0 ? $autochatConnector : null,
+                        $middletermConnector > 0 ? $middletermConnector : null,
+                        $backgroundlifeConnector > 0 ? $backgroundlifeConnector : null,
+                        $dynamicConnector > 0 ? $dynamicConnector : null,
+                        $relationshipConnector > 0 ? $relationshipConnector : null,
+                        $ttsConnectorId > 0 ? $ttsConnectorId : null,
+                        $playerMetadataJson,
+                        $playerProfileId
+                    ]
+                );
+
+                $db->exec(
+                    "UPDATE core_profiles
+                     SET is_player_faction_profile = FALSE,
+                         updated_at = NOW()
+                     WHERE id <> $1
+                       AND COALESCE(is_player_faction_profile, FALSE) = TRUE",
+                    [$playerProfileId]
+                );
+            }
+        });
+
         $applyPatch('core_npc_master', 202603270102, static function () use ($db): void {
             $db->exec("ALTER TABLE core_npc_master ADD COLUMN IF NOT EXISTS profile_id_before_player_faction INT");
             $db->exec("CREATE OR REPLACE VIEW core_npc AS SELECT * FROM core_npc_master");
