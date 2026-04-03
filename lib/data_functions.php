@@ -169,36 +169,69 @@ function stobeKenshiTownToZoneMap(): array {
         return $map;
     }
 
-    // Best-effort mapping for eventlog normalization. If a town is known
-    // but zone is absent, use this to append canonical zone to location.
-    $map = [
-        'the hub' => 'Border Zone',
-        'brink' => 'Unwanted Zone',
-        'squin' => 'Stenn Desert',
-        'admag' => 'Stenn Desert',
-        'stack' => "Okran's Pride",
-        'bad teeth' => "Okran's Pride",
-        'blister hill' => "Okran's Pride",
-        "world's end" => 'Hidden Forest',
-        'mongrel' => 'Fog Islands',
-        'shark' => 'Swamp',
-        'mud town' => 'Swamp',
-        'black desert city' => 'Deadlands',
-        'flats lagoon' => 'The Grid',
-        'clownsteady' => 'The Hook',
-        "drifter's last" => 'The Hook',
-        'bark' => 'The Hook',
-        'heft' => 'Great Desert',
-        'sho-battai' => 'Great Desert',
-        'stoat' => 'Great Desert',
-        'heng' => 'Heng',
-        'catun' => 'The Pits East',
-        'mourn' => 'Bonefields',
-        'black scratch' => 'Stormgap Coast',
-        'spring' => "Stobe's Gamble",
-    ];
-
+    // Intentionally disabled best-effort town->zone mapping.
+    // Keep an empty map so callers still receive a valid array.
+    $map = [];
     return $map;
+}
+
+function stobeIsKnownWorldRegionName(string $rawRegion): bool {
+    $region = stobeCanonicalizeKenshiZoneName($rawRegion);
+    if ($region === '') {
+        return false;
+    }
+    static $known = null;
+    if (!is_array($known)) {
+        $known = [];
+        foreach (stobeKenshiZoneAliasMap() as $alias => $canonical) {
+            $canonicalKey = strtolower(trim(strval($canonical)));
+            if ($canonicalKey !== '') {
+                $known[$canonicalKey] = true;
+            }
+        }
+    }
+    return isset($known[strtolower($region)]);
+}
+
+function stobeIsKnownZoneName(string $rawZone): bool {
+    $zone = stobeNormalizeGeoLabel($rawZone);
+    if ($zone === '') {
+        return false;
+    }
+
+    static $cache = [];
+    $cacheKey = strtolower($zone);
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    if (stobeResolveKenshiZoneFromTown($zone) !== '' || stobeIsKnownWorldRegionName($zone)) {
+        $cache[$cacheKey] = true;
+        return true;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if ($db) {
+        try {
+            $row = $db->fetchOne(
+                "SELECT 1 AS ok
+                 FROM location_zones
+                 WHERE LOWER(COALESCE(zone_name, '')) = LOWER($1)
+                    OR LOWER(COALESCE(city_name, '')) = LOWER($1)
+                 LIMIT 1",
+                [$zone]
+            );
+            if (is_array($row) && isset($row['ok'])) {
+                $cache[$cacheKey] = true;
+                return true;
+            }
+        } catch (Throwable $exception) {
+            // Ignore lookup errors and fall back to static checks.
+        }
+    }
+
+    $cache[$cacheKey] = false;
+    return false;
 }
 
 function stobeResolveSeenZoneFromCity(string $rawTown): string {
@@ -219,26 +252,38 @@ function stobeResolveSeenZoneFromCity(string $rawTown): string {
     }
 
     try {
-        $row = $db->fetchOne(
+        $rows = $db->fetchAll(
             "SELECT zone_name
              FROM location_zones
              WHERE LOWER(city_name) = LOWER($1)
              ORDER BY last_seen_ts DESC, id DESC
-             LIMIT 1",
+             LIMIT 12",
             [$town]
         );
     } catch (Throwable $exception) {
         return '';
     }
 
-    if (!$row) {
+    if (!is_array($rows) || count($rows) === 0) {
         return '';
     }
 
-    $zone = stobeCanonicalizeKenshiZoneName(strval($row['zone_name'] ?? ''));
-    if ($zone !== '' && strtolower($zone) !== strtolower($town)) {
-        return $zone;
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $zone = stobeCanonicalizeKenshiZoneName(strval($row['zone_name'] ?? ''));
+        if ($zone === '') {
+            continue;
+        }
+        if (strtolower($zone) === strtolower($town)) {
+            continue;
+        }
+        if (stobeIsKnownWorldRegionName($zone) || stobeResolveKenshiZoneFromTown($zone) !== '') {
+            return $zone;
+        }
     }
+
     return '';
 }
 
@@ -262,48 +307,149 @@ function stobeResolveKenshiZoneFromTown(string $rawTown): string {
     return $map[$lookup] ?? '';
 }
 
+function stobeResolveRegionFromAnyToken(string $rawToken): string {
+    $token = stobeNormalizeGeoLabel($rawToken);
+    if ($token === '') {
+        return '';
+    }
+
+    $canonical = stobeCanonicalizeKenshiZoneName($token);
+    if ($canonical !== '' && stobeIsKnownWorldRegionName($canonical)) {
+        return $canonical;
+    }
+
+    $seen = stobeResolveSeenZoneFromCity($token);
+    if ($seen !== '') {
+        return $seen;
+    }
+
+    $mapped = stobeResolveKenshiZoneFromTown($token);
+    if ($mapped !== '') {
+        return $mapped;
+    }
+
+    return '';
+}
+
 function stobeNormalizeGeoContext(array $geo): array {
+    $allowUnknownZone = coerceBoolean($geo['allow_unknown_zone'] ?? false);
+    $rawLocationToken = stobeNormalizeGeoLabel(strval($geo['location'] ?? ''));
+    $rawBuildingToken = stobeNormalizeGeoLabel(strval($geo['building'] ?? ($geo['loc_building'] ?? '')));
+    $zoneToken = stobeNormalizeGeoLabel(strval(
+        $geo['zone']
+            ?? ($geo['zone_name']
+            ?? ($geo['loc_zone'] ?? ''))
+    ));
+    $cityToken = stobeNormalizeGeoLabel(strval(
+        $geo['city']
+            ?? ($geo['town_name']
+            ?? ($geo['town']
+            ?? ($geo['settlement']
+            ?? ($geo['village'] ?? ''))))
+    ));
+    // Legacy compatibility: older payloads sometimes put zone into city/town keys.
+    if ($zoneToken === '' && $cityToken !== '') {
+        $zoneToken = $cityToken;
+    }
+
     $normalized = [
-        'location' => stobeNormalizeGeoLabel(strval($geo['location'] ?? '')),
-        'city' => stobeNormalizeGeoLabel(strval($geo['city'] ?? '')),
+        'location' => $rawLocationToken,
+        'building' => $rawBuildingToken,
+        'zone' => $zoneToken,
+        'city' => $cityToken,
         'region' => stobeNormalizeGeoLabel(strval($geo['region'] ?? '')),
     ];
 
+    $rawZoneBeforeCanonical = $normalized['zone'];
+    $rawRegionBeforeCanonical = $normalized['region'];
+    $normalized['zone'] = stobeCanonicalizeKenshiZoneName($normalized['zone']);
+    $zoneDropped = false;
+    $zoneRejected = '';
+    if ($normalized['region'] === '' && $normalized['zone'] !== '') {
+        $mappedRegion = stobeResolveKenshiZoneFromTown($normalized['zone']);
+        if ($mappedRegion !== '') {
+            $normalized['region'] = $mappedRegion;
+        }
+    }
+    // Zone is canonical source of truth; keep city as zone alias for legacy readers.
+    if (!$allowUnknownZone && $normalized['zone'] !== '' && !stobeIsKnownZoneName($normalized['zone'])) {
+        $zoneDropped = true;
+        $zoneRejected = $normalized['zone'];
+        $normalized['zone'] = '';
+    }
+    $normalized['city'] = $normalized['zone'] !== '' ? $normalized['zone'] : $normalized['city'];
+    $regionDropped = false;
+    $regionRejected = '';
+    $regionMappedFrom = '';
     $normalized['region'] = stobeCanonicalizeKenshiZoneName($normalized['region']);
-
-    $mappedZoneFromCity = '';
-    if ($normalized['city'] !== '') {
-        $mappedZoneFromCity = stobeResolveKenshiZoneFromTown($normalized['city']);
+    if ($normalized['region'] !== '' && !stobeIsKnownWorldRegionName($normalized['region'])) {
+        $mappedRegion = stobeResolveKenshiZoneFromTown($normalized['region']);
+        if ($mappedRegion !== '') {
+            $regionMappedFrom = $normalized['region'];
+            $normalized['region'] = $mappedRegion;
+        } else {
+            $regionDropped = true;
+            $regionRejected = $normalized['region'];
+            $normalized['region'] = '';
+        }
     }
-
-    // If city has a canonical zone mapping, prefer it over conflicting payload region.
-    if ($mappedZoneFromCity !== '') {
-        $normalized['region'] = $mappedZoneFromCity;
-    } elseif ($normalized['region'] === '' && $normalized['city'] !== '') {
-        $normalized['region'] = stobeResolveSeenZoneFromCity($normalized['city']);
-    }
-    if ($normalized['region'] === '' && $normalized['location'] !== '') {
-        $locationParts = preg_split('/\s*,\s*/', $normalized['location']) ?: [];
-        foreach ($locationParts as $part) {
-            $candidate = stobeCanonicalizeKenshiZoneName(strval($part));
-            if ($candidate !== '') {
-                $normalized['region'] = $candidate;
-                break;
+    if ($normalized['region'] === '') {
+        $candidateRegionToken = '';
+        if ($normalized['zone'] !== '') {
+            $candidateRegionToken = $normalized['zone'];
+        } elseif ($normalized['city'] !== '') {
+            $candidateRegionToken = $normalized['city'];
+        } elseif ($normalized['location'] !== '') {
+            $candidateRegionToken = $normalized['location'];
+        }
+        if ($candidateRegionToken !== '') {
+            $mappedRegion = stobeResolveRegionFromAnyToken($candidateRegionToken);
+            if ($mappedRegion !== '') {
+                $regionMappedFrom = $candidateRegionToken;
+                $normalized['region'] = $mappedRegion;
             }
         }
-        if ($normalized['region'] === '' && count($locationParts) > 0) {
-            $normalized['region'] = stobeResolveKenshiZoneFromTown(strval($locationParts[0]));
-        }
     }
 
-    if ($normalized['location'] === '') {
-        $normalized['location'] = $normalized['city'] !== '' ? $normalized['city'] : $normalized['region'];
+    $parts = [];
+    if ($normalized['building'] !== '') {
+        $parts[] = $normalized['building'];
+    }
+    if ($normalized['zone'] !== '') {
+        $parts[] = $normalized['zone'];
+    }
+    if ($normalized['region'] !== '') {
+        $parts[] = $normalized['region'];
+    }
+    if (count($parts) === 0) {
+        // Strict mode: do not keep free-form location text as source of truth.
+        $normalized['location'] = '';
+    } else {
+        $normalized['location'] = implode(', ', array_values(array_unique($parts)));
+    }
+    if ($zoneDropped || $regionDropped || $regionMappedFrom !== '') {
+        stobeLogDebug('GEO_DEBUG_NORMALIZE', [
+            'raw' => [
+                'location' => $rawLocationToken,
+                'building' => $rawBuildingToken,
+                'zone' => $rawZoneBeforeCanonical,
+                'city' => $cityToken,
+                'region' => $rawRegionBeforeCanonical,
+                'allow_unknown_zone' => $allowUnknownZone ? '1' : '0',
+            ],
+            'zone_dropped' => $zoneDropped ? '1' : '0',
+            'zone_rejected' => $zoneRejected,
+            'region_dropped' => $regionDropped ? '1' : '0',
+            'region_rejected' => $regionRejected,
+            'region_mapped_from' => $regionMappedFrom,
+            'normalized' => $normalized,
+        ]);
     }
     return $normalized;
 }
 
 function mergeEventGeoContext(array $base, array $extra): array {
-    foreach (['location', 'city', 'region'] as $key) {
+    foreach (['location', 'building', 'zone', 'city', 'region'] as $key) {
         if (!array_key_exists($key, $base)) {
             $base[$key] = '';
         }
@@ -828,7 +974,7 @@ function stobeUpsertDescriptionsFromInventoryEntries(array $inventoryEntries, st
 }
 
 function extractEventGeoFromArray(array $payload): array {
-    $context = ['location' => '', 'city' => '', 'region' => ''];
+    $context = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
 
     $pickValue = static function (array $source, array $keys): string {
         foreach ($keys as $key) {
@@ -845,16 +991,21 @@ function extractEventGeoFromArray(array $payload): array {
 
     $extractFrom = static function (array $source) use (&$context, $pickValue): void {
         $location = $pickValue($source, ['location', 'location_name', 'place', 'area_name', 'area', 'cell']);
-        $city = $pickValue($source, ['city', 'town_name', 'town', 'settlement', 'village']);
+        $building = $pickValue($source, ['building_name', 'building', 'loc_building']);
+        $zone = $pickValue($source, ['zone', 'zone_name', 'loc_zone', 'city', 'town_name', 'town', 'settlement', 'village']);
         $region = $pickValue($source, [
-            'region', 'region_name', 'regionName',
-            'zone', 'zone_name', 'zoneName',
+            'region', 'region_name', 'regionName', 'loc_region',
             'province', 'district', 'territory', 'biome'
         ]);
-        $building = $pickValue($source, ['building_name', 'building']);
 
-        if ($context['city'] === '' && $city !== '') {
-            $context['city'] = $city;
+        if ($context['building'] === '' && $building !== '') {
+            $context['building'] = $building;
+        }
+        if ($context['zone'] === '' && $zone !== '') {
+            $context['zone'] = $zone;
+        }
+        if ($context['city'] === '' && $zone !== '') {
+            $context['city'] = $zone;
         }
         if ($context['region'] === '' && $region !== '') {
             $context['region'] = $region;
@@ -862,14 +1013,6 @@ function extractEventGeoFromArray(array $payload): array {
         if ($context['location'] === '') {
             if ($location !== '') {
                 $context['location'] = $location;
-            } elseif ($building !== '' && $city !== '') {
-                $context['location'] = $building . ', ' . $city;
-            } elseif ($building !== '') {
-                $context['location'] = $building;
-            } elseif ($city !== '') {
-                $context['location'] = $city;
-            } elseif ($region !== '') {
-                $context['location'] = $region;
             }
         }
     };
@@ -883,17 +1026,13 @@ function extractEventGeoFromArray(array $payload): array {
         }
     }
 
-    if ($context['city'] === '' && $context['location'] !== '' && strpos($context['location'], ',') === false) {
-        $context['city'] = $context['location'];
-    }
-
     return stobeNormalizeGeoContext($context);
 }
 
 function extractEventGeoFromString(string $eventData): array {
     $text = trim($eventData);
     if ($text === '') {
-        return ['location' => '', 'city' => '', 'region' => ''];
+        return ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     }
 
     if ($text[0] === '{') {
@@ -935,22 +1074,28 @@ function extractEventGeoFromString(string $eventData): array {
         return extractEventGeoFromArray($pairs);
     }
 
-    return stobeNormalizeGeoContext(['location' => $text, 'city' => '', 'region' => '']);
+    return stobeNormalizeGeoContext([
+        'location' => $text,
+        'building' => '',
+        'zone' => '',
+        'city' => '',
+        'region' => '',
+    ]);
 }
 
 function extractEventGeoFromLocationUpdateMessage(string $eventData): array {
     $text = trim($eventData);
     if ($text === '') {
-        return ['location' => '', 'city' => '', 'region' => ''];
+        return ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     }
 
     if (preg_match('/location\s*update\s*:\s*(.+)$/iu', $text, $matches) !== 1) {
-        return ['location' => '', 'city' => '', 'region' => ''];
+        return ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     }
 
     $locationText = trim(strval($matches[1] ?? ''));
     if ($locationText === '') {
-        return ['location' => '', 'city' => '', 'region' => ''];
+        return ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     }
 
     if ($locationText[0] === '{') {
@@ -964,22 +1109,42 @@ function extractEventGeoFromLocationUpdateMessage(string $eventData): array {
         return $part !== '';
     }));
 
-    $city = '';
+    $building = '';
+    $zone = '';
     $region = '';
     if (count($parts) >= 3) {
-        $city = strval($parts[count($parts) - 2]);
+        $buildingParts = array_slice($parts, 0, count($parts) - 2);
+        $building = trim(implode(', ', $buildingParts));
+        $zone = strval($parts[count($parts) - 2]);
         $region = strval($parts[count($parts) - 1]);
     } elseif (count($parts) === 2) {
-        $city = strval($parts[1]);
-        $region = stobeResolveKenshiZoneFromTown($city);
+        $first = strval($parts[0]);
+        $second = strval($parts[1]);
+        $zoneAliases = stobeKenshiZoneAliasMap();
+        $secondLooksLikeRegion = isset($zoneAliases[strtolower($second)]);
+        if ($secondLooksLikeRegion) {
+            $zone = $first;
+            $region = $second;
+        } else {
+            $building = $first;
+            $zone = $second;
+        }
     } elseif (count($parts) === 1) {
-        $city = strval($parts[0]);
-        $region = stobeResolveKenshiZoneFromTown($city);
+        $zone = strval($parts[0]);
+    }
+
+    if ($region === '' && $zone !== '') {
+        $mappedRegion = stobeResolveKenshiZoneFromTown($zone);
+        if ($mappedRegion !== '') {
+            $region = $mappedRegion;
+        }
     }
 
     return stobeNormalizeGeoContext([
         'location' => $locationText,
-        'city' => $city,
+        'building' => $building,
+        'zone' => $zone,
+        'city' => $zone,
         'region' => $region,
     ]);
 }
@@ -987,7 +1152,7 @@ function extractEventGeoFromLocationUpdateMessage(string $eventData): array {
 function getEventGeoFromNpcName(string $name): array {
     $normalizedName = normalizeParticipantNameToken($name);
     if ($normalizedName === '') {
-        return ['location' => '', 'city' => '', 'region' => ''];
+        return ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     }
 
     static $cache = [];
@@ -1007,11 +1172,11 @@ function getEventGeoFromNpcName(string $name): array {
     );
 
     if (!$row) {
-        $cache[$cacheKey] = ['location' => '', 'city' => '', 'region' => ''];
+        $cache[$cacheKey] = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
         return $cache[$cacheKey];
     }
 
-    $resolved = ['location' => '', 'city' => '', 'region' => ''];
+    $resolved = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     foreach (['extended_data', 'metadata'] as $field) {
         $raw = $row[$field] ?? '{}';
         if (is_array($raw)) {
@@ -1050,11 +1215,11 @@ function getEventGeoFromPlayerSnapshot(): array {
     );
 
     if (!$row) {
-        $cached = ['location' => '', 'city' => '', 'region' => ''];
+        $cached = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
         return $cached;
     }
 
-    $resolved = ['location' => '', 'city' => '', 'region' => ''];
+    $resolved = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     foreach (['extended_data', 'metadata'] as $field) {
         $raw = $row[$field] ?? '{}';
         if (is_array($raw)) {
@@ -1079,6 +1244,7 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
     }
 
     $db = $GLOBALS["db"];
+    $hasGeoColumn = stobeEnsureEventlogGeoColumn();
     $window = $windowSeconds;
     if ($window < 60) {
         $window = 60;
@@ -1093,16 +1259,30 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
         $nameLower = strtolower($normalized);
         $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $nameLower);
         $row = $db->fetchOne(
-            "SELECT location
-             FROM eventlog
-             WHERE localts > $1
-               AND COALESCE(location, '') <> ''
-               AND (
-                    LOWER(data) LIKE $2 ESCAPE '\\'
-                    OR LOWER(people) LIKE $3 ESCAPE '\\'
-               )
-             ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
-             LIMIT 1",
+            ($hasGeoColumn
+                ? "SELECT location, geo
+              FROM eventlog
+              WHERE localts > $1
+                AND (
+                    COALESCE(location, '') <> ''
+                    OR COALESCE(geo::text, '{}') <> '{}'
+                )
+                AND (
+                     LOWER(data) LIKE $2 ESCAPE '\\'
+                     OR LOWER(people) LIKE $3 ESCAPE '\\'
+                )
+              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              LIMIT 1"
+                : "SELECT location
+              FROM eventlog
+              WHERE localts > $1
+                AND COALESCE(location, '') <> ''
+                AND (
+                     LOWER(data) LIKE $2 ESCAPE '\\'
+                     OR LOWER(people) LIKE $3 ESCAPE '\\'
+                )
+              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              LIMIT 1"),
             [
                 $cutoff,
                 $escaped . ':%',
@@ -1113,38 +1293,170 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
 
     if (!$row) {
         $row = $db->fetchOne(
-            "SELECT location
-             FROM eventlog
-             WHERE localts > $1
-               AND COALESCE(location, '') <> ''
-             ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
-             LIMIT 1",
+            ($hasGeoColumn
+                ? "SELECT location, geo
+              FROM eventlog
+              WHERE localts > $1
+                AND (
+                    COALESCE(location, '') <> ''
+                    OR COALESCE(geo::text, '{}') <> '{}'
+                )
+              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              LIMIT 1"
+                : "SELECT location
+              FROM eventlog
+              WHERE localts > $1
+                AND COALESCE(location, '') <> ''
+              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              LIMIT 1"),
             [$cutoff]
         );
     }
 
+    $geoRaw = $row['geo'] ?? null;
+    if (is_string($geoRaw) && trim($geoRaw) !== '') {
+        $decodedGeo = json_decode($geoRaw, true);
+        if (is_array($decodedGeo)) {
+            $cache[$key] = stobeNormalizeGeoContext($decodedGeo);
+            return $cache[$key];
+        }
+    } elseif (is_array($geoRaw)) {
+        $cache[$key] = stobeNormalizeGeoContext($geoRaw);
+        return $cache[$key];
+    }
+
     $location = trim(strval($row['location'] ?? ''));
-    $cache[$key] = $location !== '' ? extractEventGeoFromString($location) : ['location' => '', 'city' => '', 'region' => ''];
+    $cache[$key] = $location !== ''
+        ? stobeNormalizeGeoContext(['location' => $location, 'building' => '', 'zone' => '', 'region' => ''])
+        : ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     return $cache[$key];
 }
 
 function resolveEventGeoContext(string $normalizedType, string $eventData): array {
-    $resolved = ['location' => '', 'city' => '', 'region' => ''];
+    $resolved = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
     $speakerHint = '';
     $targetHint = '';
 
+    $queryBuilding = trim(strval($_GET['loc_building'] ?? ''));
+    $queryZone = trim(strval($_GET['loc_zone'] ?? ''));
+    $queryRegion = trim(strval($_GET['loc_region'] ?? ''));
+
     $fromQuery = [
         'location' => trim(strval($_GET['location'] ?? '')),
+        'building' => $queryBuilding,
+        'zone' => trim(strval($_GET['city'] ?? '')),
         'city' => trim(strval($_GET['city'] ?? '')),
         'region' => trim(strval($_GET['region'] ?? '')),
     ];
+    if ($fromQuery['zone'] === '' && $queryZone !== '') {
+        $fromQuery['zone'] = $queryZone;
+        $fromQuery['city'] = $queryZone;
+    }
+    if ($fromQuery['region'] === '' && $queryRegion !== '') {
+        $fromQuery['region'] = $queryRegion;
+    }
+    if ($fromQuery['region'] === '') {
+        $queryTownLike = trim(strval($fromQuery['zone'] !== '' ? $fromQuery['zone'] : ($fromQuery['city'] ?? '')));
+        if ($queryTownLike === '') {
+            $queryTownLike = trim(strval($fromQuery['location'] ?? ''));
+        }
+        if ($queryTownLike !== '') {
+            $mappedRegion = stobeResolveRegionFromAnyToken($queryTownLike);
+            if ($mappedRegion !== '') {
+                $fromQuery['region'] = $mappedRegion;
+            }
+        }
+    }
+    $queryIndoorsRaw = strtolower(trim(strval($_GET['loc_indoors'] ?? '')));
+    $queryOutdoors = in_array($queryIndoorsRaw, ['0', 'false', 'no', 'off'], true);
+    stobeLogDebug('GEO_DEBUG_RESOLVE_START', [
+        'type' => $normalizedType,
+        'event_data' => substr($eventData, 0, 220),
+        'query' => [
+            'location' => strval($_GET['location'] ?? ''),
+            'city' => strval($_GET['city'] ?? ''),
+            'region' => strval($_GET['region'] ?? ''),
+            'loc_building' => strval($_GET['loc_building'] ?? ''),
+            'loc_zone' => strval($_GET['loc_zone'] ?? ''),
+            'loc_region' => strval($_GET['loc_region'] ?? ''),
+            'loc_indoors' => strval($_GET['loc_indoors'] ?? ''),
+        ],
+    ]);
+    if ($queryOutdoors) {
+        // Outdoors world context should not retain stale building values.
+        // Keep zone/town when present (for example "Rot, Swamp").
+        if ($fromQuery['region'] === '') {
+            $queryTownLike = trim(strval($fromQuery['zone'] !== '' ? $fromQuery['zone'] : ($fromQuery['city'] ?? '')));
+            if ($queryTownLike === '') {
+                $queryTownLike = trim(strval($fromQuery['location'] ?? ''));
+            }
+            if ($queryTownLike !== '') {
+                $mappedRegion = stobeResolveRegionFromAnyToken($queryTownLike);
+                if ($mappedRegion !== '') {
+                    $fromQuery['region'] = $mappedRegion;
+                }
+            }
+        }
+        $fromQuery['building'] = '';
+        if ($fromQuery['zone'] !== '') {
+            $fromQuery['city'] = $fromQuery['zone'];
+            $fromQuery['location'] = $fromQuery['zone'];
+        } elseif ($fromQuery['region'] !== '') {
+            $fromQuery['location'] = $fromQuery['region'];
+        }
+        $hasOutdoorGeo = (
+            $fromQuery['location'] !== ''
+            || $fromQuery['zone'] !== ''
+            || $fromQuery['region'] !== ''
+        );
+        if (!$hasOutdoorGeo) {
+            $derivedRegion = trim(strval($GLOBALS["CACHE_REGION"] ?? ''));
+            if ($derivedRegion === '') {
+                $profileHint = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
+                $fallbackGeo = getRecentEventGeoFallback($profileHint, 86400);
+                $derivedRegion = trim(strval($fallbackGeo['region'] ?? ''));
+            }
+            if ($derivedRegion !== '') {
+                $fromQuery['region'] = $derivedRegion;
+                $fromQuery['location'] = $derivedRegion;
+                $fromQuery['zone'] = '';
+                $fromQuery['city'] = '';
+                stobeLogDebug('GEO_DEBUG_RESOLVE_OUTDOOR_REGION_FALLBACK', [
+                    'type' => $normalizedType,
+                    'region' => $derivedRegion,
+                    'profile' => strval($_GET['profile'] ?? ''),
+                ]);
+            }
+        }
+    }
+    $hasQueryGeo = (
+        $fromQuery['location'] !== ''
+        || $fromQuery['building'] !== ''
+        || $fromQuery['zone'] !== ''
+        || $fromQuery['region'] !== ''
+    );
     $resolved = mergeEventGeoContext($resolved, $fromQuery);
+
+    // Current request geo is authoritative and should not be cross-filled by
+    // historical fallbacks.
+    if ($hasQueryGeo) {
+        $queryNormalizedInput = $resolved;
+        $queryNormalizedInput['allow_unknown_zone'] = true;
+        $normalized = stobeNormalizeGeoContext($queryNormalizedInput);
+        $normalized['_source_query'] = '1';
+        stobeLogDebug('GEO_DEBUG_RESOLVE_RESULT', [
+            'type' => $normalizedType,
+            'source' => 'query',
+            'resolved' => $normalized,
+        ]);
+        return $normalized;
+    }
 
     if (in_array($normalizedType, ['location', 'infoloc'], true)) {
         $parsedEventGeo = extractEventGeoFromLocationUpdateMessage($eventData);
         if (
             $parsedEventGeo['location'] === '' &&
-            $parsedEventGeo['city'] === '' &&
+            trim(strval($parsedEventGeo['zone'] ?? ($parsedEventGeo['city'] ?? ''))) === '' &&
             $parsedEventGeo['region'] === ''
         ) {
             $parsedEventGeo = extractEventGeoFromString($eventData);
@@ -1191,8 +1503,7 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
                 }
                 $resolved = mergeEventGeoContext($resolved, getEventGeoFromNpcName($participantName));
                 if (
-                    $resolved['location'] !== '' &&
-                    $resolved['city'] !== '' &&
+                    $resolved['zone'] !== '' &&
                     $resolved['region'] !== ''
                 ) {
                     break;
@@ -1201,72 +1512,61 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         }
     }
 
-    $resolved = mergeEventGeoContext($resolved, getEventGeoFromPlayerSnapshot());
-
-    $resolved = mergeEventGeoContext($resolved, [
-        'location' => trim(strval($GLOBALS["CACHE_LOCATION"] ?? '')),
-        'city' => trim(strval($GLOBALS["CACHE_CITY"] ?? '')),
-        'region' => trim(strval($GLOBALS["CACHE_REGION"] ?? '')),
-    ]);
-
-    if ($resolved['location'] === '' || $resolved['city'] === '' || $resolved['region'] === '') {
+    if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
         $fallbackParticipant = $speakerHint !== '' ? $speakerHint : $targetHint;
         $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 86400));
     }
-    if ($resolved['location'] === '' || $resolved['city'] === '' || $resolved['region'] === '') {
+    if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
         $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback('', 86400));
     }
 
-    return stobeNormalizeGeoContext($resolved);
+    $normalized = stobeNormalizeGeoContext($resolved);
+    stobeLogDebug('GEO_DEBUG_RESOLVE_RESULT', [
+        'type' => $normalizedType,
+        'source' => 'fallback',
+        'speaker_hint' => $speakerHint,
+        'target_hint' => $targetHint,
+        'resolved' => $normalized,
+    ]);
+    return $normalized;
 }
 
 function composeEventLocationText(array $geo): string {
-    $normalizedGeo = stobeNormalizeGeoContext($geo);
+    $normalizeInput = $geo;
+    if (!array_key_exists('allow_unknown_zone', $normalizeInput)) {
+        if (strval($normalizeInput['_source_query'] ?? '') === '1') {
+            $normalizeInput['allow_unknown_zone'] = true;
+        }
+    }
+    $normalizedGeo = stobeNormalizeGeoContext($normalizeInput);
     $location = trim(strval($normalizedGeo['location'] ?? ''));
-    $city = trim(strval($normalizedGeo['city'] ?? ''));
+    $building = trim(strval($normalizedGeo['building'] ?? ''));
+    $zone = trim(strval($normalizedGeo['zone'] ?? ($normalizedGeo['city'] ?? '')));
     $region = trim(strval($normalizedGeo['region'] ?? ''));
 
-    if ($location === '') {
-        $location = $city !== '' ? $city : $region;
-    }
-    if ($location === '') {
-        return '';
-    }
-
     $parts = [];
-    $seen = [];
-    $pushPart = static function (string $rawPart) use (&$parts, &$seen): void {
-        $part = trim($rawPart);
-        if ($part === '') {
+    $pushPart = static function (array &$into, string $value): void {
+        $candidate = trim($value);
+        if ($candidate === '') {
             return;
         }
-        if (preg_match('/^(?:city|region)\s*:\s*(.+)$/i', $part, $m)) {
-            $part = trim(strval($m[1]));
+        foreach ($into as $existing) {
+            if (strcasecmp($existing, $candidate) === 0) {
+                return;
+            }
         }
-        if ($part === '') {
-            return;
-        }
-        $key = strtolower($part);
-        if (isset($seen[$key])) {
-            return;
-        }
-        $seen[$key] = true;
-        $parts[] = $part;
+        $into[] = $candidate;
     };
 
-    $legacyClean = preg_replace('/\((?:city|region)\s*:\s*[^)]*\)/i', '', $location);
-    $locationParts = preg_split('/\s*,\s*/', trim(strval($legacyClean))) ?: [];
-    foreach ($locationParts as $part) {
-        $pushPart(strval($part));
+    $pushPart($parts, $building);
+    $pushPart($parts, $zone);
+    $pushPart($parts, $region);
+
+    if (count($parts) > 0) {
+        return implode(', ', $parts);
     }
 
-    $pushPart($city);
-    $pushPart($region);
-
-    if (count($parts) === 0) {
-        return $location;
-    }
-    return implode(', ', $parts);
+    return '';
 }
 
 function stobeNormalizeZoneLocationToken(string $value): string {
@@ -1324,9 +1624,9 @@ function stobeExtractZoneSnapshotContext(array $snapshot): array {
         return stobeParseNullableCoordinate($fallback[$key] ?? null);
     };
 
-    $zoneName = $pickText($environment, ['zone_name', 'zone', 'region', 'region_name']);
+    $zoneName = $pickText($environment, ['zone_name', 'zone']);
     if ($zoneName === '') {
-        $zoneName = $pickText($snapshot, ['zone_name', 'zone', 'region', 'region_name']);
+        $zoneName = $pickText($snapshot, ['zone_name', 'zone']);
     }
     $zoneName = stobeCanonicalizeKenshiZoneName($zoneName);
 
@@ -1340,8 +1640,9 @@ function stobeExtractZoneSnapshotContext(array $snapshot): array {
         $zoneName = stobeResolveKenshiZoneFromTown($cityName);
     }
     if ($zoneName === '') {
-        // Final fallback when no canonical zone mapping exists for this place yet.
-        $zoneName = $cityName;
+        if (stobeIsKnownZoneName($cityName)) {
+            $zoneName = $cityName;
+        }
     }
     // Keep location_zones keyed on zone only.
 
@@ -1456,6 +1757,49 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     return true;
 }
 
+function stobeEnsureEventlogGeoColumn(): bool {
+    static $checked = false;
+    static $available = false;
+    if ($checked) {
+        return $available;
+    }
+    $checked = true;
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        $available = false;
+        return false;
+    }
+
+    try {
+        $row = $db->fetchOne(
+            "SELECT 1 AS ok
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'eventlog'
+               AND column_name = 'geo'
+             LIMIT 1"
+        );
+        if (is_array($row) && isset($row['ok'])) {
+            $available = true;
+            return true;
+        }
+    } catch (Throwable $exception) {
+        $available = false;
+        return false;
+    }
+
+    try {
+        $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS geo JSONB DEFAULT '{}'::jsonb");
+        $available = true;
+        return true;
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to ensure eventlog.geo column');
+        $available = false;
+        return false;
+    }
+}
+
 function storeEvent(string $type, int $ts, int $gamets, string $data, string $sess = 'pending'): void {
     $normalizedType = strtolower(trim($type));
     if ($normalizedType === 'npc_snapshot' || $normalizedType === 'playerinfo') {
@@ -1470,6 +1814,8 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     if ($eventLocation !== '') {
         $GLOBALS["CACHE_LOCATION"] = $eventLocation;
     }
+    $GLOBALS["CACHE_CITY"] = trim(strval($geo['zone'] ?? ($geo['city'] ?? '')));
+    $GLOBALS["CACHE_REGION"] = trim(strval($geo['region'] ?? ''));
 
     $db = $GLOBALS["db"];
     $eventLocalTs = time();
@@ -1480,21 +1826,66 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
         return;
     }
 
-    $inserted = $db->fetchOne(
-        "INSERT INTO eventlog (type, ts, gamets, data, sess, localts, people, location)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING rowid, localts",
-        [
-            $type,
-            $ts,
-            $gamets,
-            $data,
-            $sess,
-            $eventLocalTs,
-            $peopleCache,
-            $locationCache,
-        ]
-    );
+    $geoPayloadInput = [
+        'location' => trim(strval($geo['location'] ?? '')),
+        'building' => trim(strval($geo['building'] ?? '')),
+        'zone' => trim(strval($geo['zone'] ?? ($geo['city'] ?? ''))),
+        'region' => trim(strval($geo['region'] ?? '')),
+    ];
+    if (strval($geo['_source_query'] ?? '') === '1') {
+        $geoPayloadInput['allow_unknown_zone'] = true;
+    }
+    $geoPayload = stobeNormalizeGeoContext($geoPayloadInput);
+    $geoPayload['city'] = trim(strval($geoPayload['zone'] ?? ''));
+    $geoJson = json_encode($geoPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($geoJson) || trim($geoJson) === '') {
+        $geoJson = '{}';
+    }
+    stobeLogDebug('GEO_DEBUG_STORE_EVENT', [
+        'type' => $normalizedType,
+        'gamets' => $gamets,
+        'data' => substr($data, 0, 220),
+        'geo' => $geo,
+        'event_location' => $eventLocation,
+        'cache_location' => strval($GLOBALS["CACHE_LOCATION"] ?? ''),
+        'geo_payload' => $geoPayload,
+    ]);
+
+    $inserted = null;
+    if (stobeEnsureEventlogGeoColumn()) {
+        $inserted = $db->fetchOne(
+            "INSERT INTO eventlog (type, ts, gamets, data, sess, localts, people, location, geo)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+             RETURNING rowid, localts",
+            [
+                $type,
+                $ts,
+                $gamets,
+                $data,
+                $sess,
+                $eventLocalTs,
+                $peopleCache,
+                $locationCache,
+                $geoJson,
+            ]
+        );
+    } else {
+        $inserted = $db->fetchOne(
+            "INSERT INTO eventlog (type, ts, gamets, data, sess, localts, people, location)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING rowid, localts",
+            [
+                $type,
+                $ts,
+                $gamets,
+                $data,
+                $sess,
+                $eventLocalTs,
+                $peopleCache,
+                $locationCache,
+            ]
+        );
+    }
 
     if (is_array($inserted)) {
         $eventLocalTs = intval($inserted['localts'] ?? $eventLocalTs);

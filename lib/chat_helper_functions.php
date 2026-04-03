@@ -2646,14 +2646,19 @@ function stobeResolveWorldContextFromRecentEventData(int $windowSeconds = 1800, 
         return $cache[$cacheKey];
     }
 
-    $rows = $db->fetchAll(
-        "SELECT type, data, location
+    $hasGeoColumn = function_exists('stobeEnsureEventlogGeoColumn') && stobeEnsureEventlogGeoColumn();
+    $sql = $hasGeoColumn
+        ? "SELECT type, data, location, geo
          FROM eventlog
          WHERE localts > $1
          ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
-         LIMIT " . strval($safeLimit),
-        [time() - $safeWindow]
-    );
+         LIMIT " . strval($safeLimit)
+        : "SELECT type, data, location
+         FROM eventlog
+         WHERE localts > $1
+         ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+         LIMIT " . strval($safeLimit);
+    $rows = $db->fetchAll($sql, [time() - $safeWindow]);
     if (!is_array($rows) || count($rows) === 0) {
         $cache[$cacheKey] = $empty;
         return $cache[$cacheKey];
@@ -2664,9 +2669,33 @@ function stobeResolveWorldContextFromRecentEventData(int $windowSeconds = 1800, 
             continue;
         }
 
+        $geoRaw = $row['geo'] ?? null;
+        $fromGeoColumn = '';
+        if (is_array($geoRaw)) {
+            $fromGeoColumn = composeEventLocationText(stobeNormalizeGeoContext($geoRaw));
+        } elseif (is_string($geoRaw) && trim($geoRaw) !== '') {
+            $decodedGeo = json_decode($geoRaw, true);
+            if (is_array($decodedGeo)) {
+                $fromGeoColumn = composeEventLocationText(stobeNormalizeGeoContext($decodedGeo));
+            }
+        }
+        if ($fromGeoColumn !== '') {
+            $cache[$cacheKey] = [
+                'location' => truncatePromptValue($fromGeoColumn, 260),
+                'weather' => '',
+                'floor' => '',
+            ];
+            return $cache[$cacheKey];
+        }
+
         $locationToken = trim(strval($row['location'] ?? ''));
         if ($locationToken !== '') {
-            $fromLocationColumn = composeEventLocationText(extractEventGeoFromString($locationToken));
+            $fromLocationColumn = composeEventLocationText(stobeNormalizeGeoContext([
+                'location' => $locationToken,
+                'building' => '',
+                'zone' => '',
+                'region' => '',
+            ]));
             if ($fromLocationColumn !== '') {
                 $cache[$cacheKey] = [
                     'location' => truncatePromptValue($fromLocationColumn, 260),
@@ -2683,18 +2712,16 @@ function stobeResolveWorldContextFromRecentEventData(int $windowSeconds = 1800, 
             continue;
         }
 
-        $geo = ['location' => '', 'city' => '', 'region' => ''];
+        $geo = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
         if (in_array($eventType, ['location', 'infoloc'], true)) {
             $geo = extractEventGeoFromLocationUpdateMessage($eventData);
             if (
                 trim(strval($geo['location'] ?? '')) === '' &&
-                trim(strval($geo['city'] ?? '')) === '' &&
+                trim(strval($geo['zone'] ?? ($geo['city'] ?? ''))) === '' &&
                 trim(strval($geo['region'] ?? '')) === ''
             ) {
                 $geo = extractEventGeoFromString($eventData);
             }
-        } else {
-            $geo = extractEventGeoFromString($eventData);
         }
 
         $fromEventData = composeEventLocationText($geo);
@@ -2735,8 +2762,11 @@ function stobeResolveWorldPromptContext(mixed $context = null): array {
             }
         }
 
-        if ($resolved['location'] === '' && array_key_exists('location', $context)) {
-            $resolved['location'] = truncatePromptValue(stobeNormalizeWorldPromptToken($context['location']), 260);
+        if (array_key_exists('location', $context)) {
+            $contextLocation = truncatePromptValue(stobeNormalizeWorldPromptToken($context['location']), 260);
+            if ($contextLocation !== '') {
+                $resolved['location'] = $contextLocation;
+            }
         }
         if ($resolved['weather'] === '') {
             $resolved['weather'] = stobeResolveWorldWeatherLabel($context, $context);
@@ -2776,21 +2806,106 @@ function stobeResolveWorldPromptContext(mixed $context = null): array {
         }
     }
 
-    if ($resolved['location'] === '') {
-        $queryLocation = trim(strval($_GET['location'] ?? ''));
-        $queryCity = trim(strval($_GET['city'] ?? ''));
-        $queryRegion = trim(strval($_GET['region'] ?? ''));
-        $queryLocationText = '';
-        if ($queryLocation !== '' || $queryCity !== '' || $queryRegion !== '') {
-            $queryLocationText = composeEventLocationText([
-                'location' => $queryLocation,
-                'city' => $queryCity,
-                'region' => $queryRegion,
-            ]);
+    $queryLocation = trim(strval($_GET['location'] ?? ''));
+    $queryCity = trim(strval($_GET['city'] ?? ''));
+    $queryBuilding = trim(strval($_GET['loc_building'] ?? ''));
+    $queryRegion = trim(strval($_GET['region'] ?? ''));
+    $queryZone = trim(strval($_GET['loc_zone'] ?? ''));
+    $queryLocRegion = trim(strval($_GET['loc_region'] ?? ''));
+    $queryIndoorsRaw = strtolower(trim(strval($_GET['loc_indoors'] ?? '')));
+    $queryOutdoors = in_array($queryIndoorsRaw, ['0', 'false', 'no', 'off'], true);
+    if ($queryZone === '' && $queryCity !== '') {
+        $queryZone = $queryCity;
+    }
+    if ($queryRegion === '' && $queryLocRegion !== '') {
+        $queryRegion = $queryLocRegion;
+    }
+    if ($queryRegion === '') {
+        $queryTownLike = $queryZone !== '' ? $queryZone : $queryLocation;
+        $queryTownLike = trim($queryTownLike);
+        if ($queryTownLike !== '' && function_exists('stobeResolveRegionFromAnyToken')) {
+            $mappedRegion = stobeResolveRegionFromAnyToken($queryTownLike);
+            if ($mappedRegion !== '') {
+                $queryRegion = $mappedRegion;
+            }
+        } elseif ($queryTownLike !== '' && function_exists('stobeResolveKenshiZoneFromTown')) {
+            $mappedRegion = stobeResolveKenshiZoneFromTown($queryTownLike);
+            if ($mappedRegion !== '') {
+                $queryRegion = $mappedRegion;
+            }
         }
-        if ($queryLocationText !== '') {
-            $resolved['location'] = truncatePromptValue($queryLocationText, 260);
+    }
+    stobeLogDebug('GEO_DEBUG_WORLD_QUERY', [
+        'query' => [
+            'location' => $queryLocation,
+            'city' => $queryCity,
+            'region' => $queryRegion,
+            'loc_building' => $queryBuilding,
+            'loc_zone' => $queryZone,
+            'loc_region' => $queryLocRegion,
+            'loc_indoors' => $queryIndoorsRaw,
+        ],
+    ]);
+    if ($queryOutdoors) {
+        if ($queryRegion === '') {
+            $queryTownLike = $queryZone !== '' ? $queryZone : $queryLocation;
+            $queryTownLike = trim($queryTownLike);
+            if ($queryTownLike !== '' && function_exists('stobeResolveRegionFromAnyToken')) {
+                $mappedRegion = stobeResolveRegionFromAnyToken($queryTownLike);
+                if ($mappedRegion !== '') {
+                    $queryRegion = $mappedRegion;
+                }
+            } elseif ($queryTownLike !== '' && function_exists('stobeResolveKenshiZoneFromTown')) {
+                $mappedRegion = stobeResolveKenshiZoneFromTown($queryTownLike);
+                if ($mappedRegion !== '') {
+                    $queryRegion = $mappedRegion;
+                }
+            }
         }
+        $queryBuilding = '';
+        if ($queryZone !== '') {
+            $queryLocation = $queryZone;
+        } elseif ($queryRegion !== '') {
+            $queryLocation = $queryRegion;
+        } else {
+            $derivedRegion = trim(strval($GLOBALS['CACHE_REGION'] ?? ''));
+            if ($derivedRegion === '' && function_exists('getRecentEventGeoFallback')) {
+                $fallbackGeo = getRecentEventGeoFallback('', 86400);
+                $derivedRegion = trim(strval($fallbackGeo['region'] ?? ''));
+            }
+            if ($derivedRegion !== '') {
+                $queryRegion = $derivedRegion;
+                $queryLocation = $derivedRegion;
+                stobeLogDebug('GEO_DEBUG_WORLD_OUTDOOR_REGION_FALLBACK', [
+                    'region' => $derivedRegion,
+                ]);
+            }
+        }
+    }
+    $queryLocationText = '';
+    $queryLocationToken = stobeNormalizeWorldPromptToken($queryLocation);
+    if ($queryLocationToken !== '') {
+        $queryLocationText = composeEventLocationText([
+            'location' => $queryLocationToken,
+            'building' => $queryBuilding,
+            'zone' => $queryZone,
+            'city' => $queryZone,
+            'region' => $queryRegion,
+            'allow_unknown_zone' => true,
+        ]);
+    } elseif ($queryBuilding !== '' || $queryZone !== '' || $queryRegion !== '') {
+        $queryLocationText = composeEventLocationText([
+            'location' => '',
+            'building' => $queryBuilding,
+            'zone' => $queryZone,
+            'city' => $queryZone,
+            'region' => $queryRegion,
+            'allow_unknown_zone' => true,
+        ]);
+    }
+    // Current request geo is authoritative for the current prompt turn.
+    if ($queryLocationText !== '') {
+        $resolved['location'] = truncatePromptValue($queryLocationText, 260);
     }
 
     if ($resolved['location'] === '') {
@@ -2809,6 +2924,11 @@ function stobeResolveWorldPromptContext(mixed $context = null): array {
         stobeMergeWorldPromptContext($resolved, stobeResolveWorldContextFromRecentEventData(3600, 96));
     }
 
+    stobeLogDebug('GEO_DEBUG_WORLD_RESULT', [
+        'location' => strval($resolved['location'] ?? ''),
+        'weather' => strval($resolved['weather'] ?? ''),
+        'floor' => strval($resolved['floor'] ?? ''),
+    ]);
     return $resolved;
 }
 
@@ -8623,20 +8743,6 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
         }
     }
 
-    $geoFields = [];
-    foreach (['location', 'city', 'region'] as $geoTag) {
-        $geoValue = trim(strval($geo[$geoTag] ?? ''));
-        if ($geoValue !== '') {
-            $geoFields[$geoTag] = $geoValue;
-        }
-    }
-    if (count($geoFields) > 0) {
-        $lines[] = '  <geo_context>';
-        foreach ($geoFields as $geoTag => $geoValue) {
-            $lines[] = '    <' . $geoTag . '>' . stobePromptXmlEscape($geoValue) . '</' . $geoTag . '>';
-        }
-        $lines[] = '  </geo_context>';
-    }
     if ($nearbyActorsBlock !== '') {
         $nearbyActorsIndented = stobeIndentPromptBlock($nearbyActorsBlock, 2);
         if ($nearbyActorsIndented !== '') {

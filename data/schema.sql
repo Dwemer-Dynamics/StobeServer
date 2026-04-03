@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS eventlog (
     localts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()),
     ts BIGINT,
     people TEXT,
-    location TEXT
+    location TEXT,
+    geo JSONB DEFAULT '{}'::jsonb
 );
 
 CREATE INDEX IF NOT EXISTS idx_eventlog_type ON eventlog (type);
