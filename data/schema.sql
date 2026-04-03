@@ -670,8 +670,8 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     relationship_connector INT,
     tts_connector_id INT,
     metadata JSONB DEFAULT $${
-        "DYNAMIC_PROFILE_ENABLED": true,
-        "MIDDLE_TERM_MEMORY_ENABLED": true,
+        "DYNAMIC_PROFILE_ENABLED": false,
+        "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -1469,8 +1469,8 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS relationship_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS prompt_head TEXT DEFAULT '';
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT DEFAULT '';
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
-    "DYNAMIC_PROFILE_ENABLED": true,
-    "MIDDLE_TERM_MEMORY_ENABLED": true,
+    "DYNAMIC_PROFILE_ENABLED": false,
+    "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
@@ -1488,8 +1488,8 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "BORED_EVENT_CHANCE": 50
 }$$::jsonb;
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
-    "DYNAMIC_PROFILE_ENABLED": true,
-    "MIDDLE_TERM_MEMORY_ENABLED": true,
+    "DYNAMIC_PROFILE_ENABLED": false,
+    "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
@@ -1510,8 +1510,8 @@ UPDATE core_profiles
 SET metadata = CASE
     WHEN metadata IS NULL OR metadata = '[]'::jsonb OR jsonb_typeof(metadata) <> 'object'
         THEN $${
-            "DYNAMIC_PROFILE_ENABLED": true,
-            "MIDDLE_TERM_MEMORY_ENABLED": true,
+            "DYNAMIC_PROFILE_ENABLED": false,
+            "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
             "DYNAMIC_PROFILE_FIELDS": [
                 "personality",
@@ -1529,8 +1529,8 @@ SET metadata = CASE
             "BORED_EVENT_CHANCE": 50
         }$$::jsonb
     ELSE $${
-        "DYNAMIC_PROFILE_ENABLED": true,
-        "MIDDLE_TERM_MEMORY_ENABLED": true,
+        "DYNAMIC_PROFILE_ENABLED": false,
+        "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -2432,8 +2432,8 @@ INSERT INTO core_profiles (
     ),
     (SELECT id FROM core_tts_connector WHERE LOWER(name) = 'pocket tts default' LIMIT 1),
     '{
-        "DYNAMIC_PROFILE_ENABLED": true,
-        "MIDDLE_TERM_MEMORY_ENABLED": true,
+        "DYNAMIC_PROFILE_ENABLED": false,
+        "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",

@@ -215,8 +215,8 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         };
 
         $defaultMetadata = json_encode([
-            'DYNAMIC_PROFILE_ENABLED' => true,
-            'MIDDLE_TERM_MEMORY_ENABLED' => true,
+            'DYNAMIC_PROFILE_ENABLED' => false,
+            'MIDDLE_TERM_MEMORY_ENABLED' => false,
             'DIARY_DAYS' => 1,
             'DYNAMIC_PROFILE_FIELDS' => ['personality', 'occupation', 'speechstyle', 'goals'],
             'RECHAT_RESPONSES' => 3,
