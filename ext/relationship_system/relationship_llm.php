@@ -1356,7 +1356,14 @@ PROMPT;
         if ($lower === '') {
             return true;
         }
-        return in_array($lower, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true);
+        if (in_array($lower, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) {
+            return true;
+        }
+        $playerName = '';
+        if (function_exists('getSetting')) {
+            $playerName = strtolower(trim(strval(getSetting('PLAYER_NAME', 'Drifter'))));
+        }
+        return ($playerName !== '' && $lower === $playerName);
     }
 
     /**

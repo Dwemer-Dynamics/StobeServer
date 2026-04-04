@@ -175,6 +175,7 @@ try {
             require_once($path . "processor/infonpc.php");
             break;
 
+        case 'action':
         case 'infoaction':
             require_once($path . "processor/infoaction.php");
             break;
@@ -208,6 +209,7 @@ try {
         case 'death':
         case 'slavery':
         case 'item_pickup':
+        case 'trade':
             require_once($path . "processor/combat.php");
             break;
 

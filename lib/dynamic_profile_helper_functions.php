@@ -5,7 +5,8 @@
  *
  * Behavior:
  * - Periodically refreshes enabled NPC profile fields via LLM.
- * - Interval is controlled by conf_opts key DYNAMIC_PROFILE_INTERVAL_MINUTES.
+ * - Interval is controlled by conf_opts key DYNAMIC_PROFILE_INTERVAL_HOURS.
+ * - Interval uses Kenshi in-game gamets, not wall-clock time.
  * - Respects NPC/profile layered setting DYNAMIC_PROFILE_ENABLED.
  */
 
@@ -25,6 +26,11 @@ function stobeDynamicProfileLastGametsKey(string $npcName): string
     return 'DYNAMIC_PROFILE_LAST_GAMETS_' . stobeDynamicProfileNormalizeKeyToken($npcName);
 }
 
+function stobeDynamicProfileLastRunTsKey(string $npcName): string
+{
+    return 'DYNAMIC_PROFILE_LAST_RUN_TS_' . stobeDynamicProfileNormalizeKeyToken($npcName);
+}
+
 function stobeDynamicProfileAllowedEventType(string $eventType): bool
 {
     $type = strtolower(trim($eventType));
@@ -35,19 +41,34 @@ function stobeDynamicProfileAllowedEventType(string $eventType): bool
     return in_array($type, $allowed, true);
 }
 
-function stobeDynamicProfileIntervalMinutes(): int
+function stobeDynamicProfileIntervalHours(): int
 {
-    $raw = trim(strval(getConfOpt('DYNAMIC_PROFILE_INTERVAL_MINUTES', '')));
+    $raw = trim(strval(getConfOpt('DYNAMIC_PROFILE_INTERVAL_HOURS', '')));
     if ($raw === '') {
-        $raw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_MINUTES', '20')));
+        $raw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_HOURS', '24')));
     }
-    $minutes = parseIntLike($raw, 20);
-    if ($minutes < 1) {
-        $minutes = 1;
-    } elseif ($minutes > 720) {
-        $minutes = 720;
+
+    // Backward compatibility: older plugin/runtime sent minutes.
+    if ($raw === '') {
+        $legacyRaw = trim(strval(getConfOpt('DYNAMIC_PROFILE_INTERVAL_MINUTES', '')));
+        if ($legacyRaw === '') {
+            $legacyRaw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_MINUTES', '1440')));
+        }
+        $legacyMinutes = parseIntLike($legacyRaw, 1440);
+        if ($legacyMinutes < 1) {
+            $legacyMinutes = 60;
+        }
+        $hours = intval(ceil($legacyMinutes / 60));
+    } else {
+        $hours = parseIntLike($raw, 24);
     }
-    return $minutes;
+
+    if ($hours < 1) {
+        $hours = 1;
+    } elseif ($hours > 720) {
+        $hours = 720;
+    }
+    return $hours;
 }
 
 function stobeDynamicProfileLoadGraceSeconds(): int
@@ -183,7 +204,7 @@ function stobeDynamicProfileFetchCandidates(int $limit = 64): array
 }
 
 function stobeDynamicProfileProcessNarrator(
-    int $intervalMinutes,
+    int $intervalHours,
     string $eventType,
     int $gamets
 ): bool {
@@ -205,7 +226,7 @@ function stobeDynamicProfileProcessNarrator(
     }
 
     $narratorName = function_exists('stobeNarratorName') ? stobeNarratorName() : 'The Narrator';
-    if (!stobeDynamicProfileNpcDue($narratorName, $gamets, $intervalMinutes)) {
+    if (!stobeDynamicProfileNpcDue($narratorName, $gamets, $intervalHours)) {
         return false;
     }
 
@@ -265,9 +286,8 @@ function stobeDynamicProfileProcessNarrator(
     $payload['gamets_last_updated'] = strval($gamets > 0 ? $gamets : time());
     $narrator->setMultiple($payload);
 
-    $npcGametsKey = stobeDynamicProfileLastGametsKey($narratorName);
     if ($gamets > 0) {
-        setConfOpt($npcGametsKey, strval($gamets), true);
+        setConfOpt(stobeDynamicProfileLastGametsKey($narratorName), strval($gamets), true);
     }
 
     stobeLogInfo('Dynamic profile updated', [
@@ -275,7 +295,7 @@ function stobeDynamicProfileProcessNarrator(
         'npc_id' => 'core_narrator',
         'fields_updated' => array_keys($payload),
         'allowed_fields' => $gen['allowed_fields'] ?? [],
-        'interval_minutes' => $intervalMinutes,
+        'interval_hours' => $intervalHours,
         'event_type' => $eventType,
         'gamets' => $gamets,
     ]);
@@ -293,28 +313,46 @@ function stobeDynamicProfileNpcEnabled(array $npcData): bool
     );
 }
 
-function stobeDynamicProfileNpcDue(string $npcName, int $gamets, int $intervalMinutes): bool
+function stobeDynamicProfileNpcDue(string $npcName, int $currentGamets, int $intervalHours): bool
 {
-    if ($gamets <= 0) {
+    if ($currentGamets <= 0) {
         return false;
     }
-    $key = stobeDynamicProfileLastGametsKey($npcName);
-    $lastGamets = intval(getConfOpt($key, '0'));
-    if ($lastGamets <= 0) {
+
+    $gametsKey = stobeDynamicProfileLastGametsKey($npcName);
+    $lastRunGamets = intval(getConfOpt($gametsKey, '0'));
+
+    // One-time migration: if old wall-clock state exists but no gamets state,
+    // rebase to current gamets so we don't immediately spam updates.
+    if ($lastRunGamets <= 0) {
+        $legacyLastRunTs = intval(getConfOpt(stobeDynamicProfileLastRunTsKey($npcName), '0'));
+        if ($legacyLastRunTs > 0) {
+            setConfOpt($gametsKey, strval($currentGamets), true);
+            setConfOpt(stobeDynamicProfileLastRunTsKey($npcName), '0', true);
+            stobeLogDebug('Dynamic profile NPC timer migrated from wall-clock to gamets', [
+                'npc_name' => $npcName,
+                'legacy_last_run_ts' => $legacyLastRunTs,
+                'current_gamets' => $currentGamets,
+                'interval_hours' => $intervalHours,
+            ]);
+            return false;
+        }
         return true;
     }
-    $intervalGamets = $intervalMinutes * 60;
-    if ($gamets < $lastGamets) {
-        setConfOpt($key, strval($gamets), true);
+
+    if ($currentGamets + 5 < $lastRunGamets) {
+        setConfOpt($gametsKey, strval($currentGamets), true);
         stobeLogDebug('Dynamic profile NPC timer rebased after gamets rewind', [
             'npc_name' => $npcName,
-            'last_gamets' => $lastGamets,
-            'current_gamets' => $gamets,
-            'interval_minutes' => $intervalMinutes,
+            'last_run_gamets' => $lastRunGamets,
+            'current_gamets' => $currentGamets,
+            'interval_hours' => $intervalHours,
         ]);
         return false;
     }
-    return ($gamets - $lastGamets) >= $intervalGamets;
+
+    $intervalGamets = max(3600, $intervalHours * 3600);
+    return ($currentGamets - $lastRunGamets) >= $intervalGamets;
 }
 
 function stobeDynamicProfileDecodeJsonObject(string $raw): array
@@ -620,9 +658,9 @@ function stobeMaybeRunDynamicProfileCycle(
     }
 
     try {
-        $intervalMinutes = stobeDynamicProfileIntervalMinutes();
+        $intervalHours = stobeDynamicProfileIntervalHours();
         $processed = false;
-        if (stobeDynamicProfileProcessNarrator($intervalMinutes, $eventType, $gamets)) {
+        if (stobeDynamicProfileProcessNarrator($intervalHours, $eventType, $gamets)) {
             $processed = true;
         }
         $candidates = stobeDynamicProfileFetchCandidates(64);
@@ -647,7 +685,7 @@ function stobeMaybeRunDynamicProfileCycle(
             if (!stobeDynamicProfileNpcEnabled($npcData)) {
                 continue;
             }
-            if (!stobeDynamicProfileNpcDue($npcName, $gamets, $intervalMinutes)) {
+            if (!stobeDynamicProfileNpcDue($npcName, $gamets, $intervalHours)) {
                 continue;
             }
 
@@ -677,9 +715,8 @@ function stobeMaybeRunDynamicProfileCycle(
             }
             updateNpcById($npcId, $updates);
 
-            $npcGametsKey = stobeDynamicProfileLastGametsKey($npcName);
             if ($gamets > 0) {
-                setConfOpt($npcGametsKey, strval($gamets), true);
+                setConfOpt(stobeDynamicProfileLastGametsKey($npcName), strval($gamets), true);
             }
 
             stobeLogInfo('Dynamic profile updated', [
@@ -687,7 +724,7 @@ function stobeMaybeRunDynamicProfileCycle(
                 'npc_id' => $npcId,
                 'fields_updated' => array_keys($updates),
                 'allowed_fields' => $gen['allowed_fields'] ?? [],
-                'interval_minutes' => $intervalMinutes,
+                'interval_hours' => $intervalHours,
                 'event_type' => $eventType,
                 'gamets' => $gamets,
             ]);
@@ -706,7 +743,7 @@ function stobeMaybeRunDynamicProfileCycle(
                 'event_type' => $eventType,
                 'gamets' => $gamets,
                 'candidate_count' => count($candidates),
-                'interval_minutes' => $intervalMinutes,
+                'interval_hours' => $intervalHours,
             ]);
         }
     } catch (Throwable $exception) {

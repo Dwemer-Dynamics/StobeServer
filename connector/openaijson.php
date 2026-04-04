@@ -381,7 +381,6 @@ function stobeIsFastLlmEventType(string $eventType): bool {
     }
 
     $knownFastTypes = [
-        'rechat_target_picker',
         'autochat_rewrite',
         'relationship_eval',
         'relationship_llm',

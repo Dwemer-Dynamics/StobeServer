@@ -48,10 +48,30 @@ if (count($eventParts) === 2) {
     $speaker = normalizeParticipantNameToken(strval($eventParts[0] ?? ''));
 }
 if ($speaker === '' || strcasecmp($speaker, 'Unknown') === 0) {
-    $speaker = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
+    $speaker = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
+}
+if ($speaker === '' || strcasecmp($speaker, 'Unknown') === 0) {
+    $peopleRaw = trim(strval($_GET['people'] ?? ($GLOBALS['CACHE_PEOPLE'] ?? '')));
+    if ($peopleRaw !== '') {
+        $decodedPeople = json_decode($peopleRaw, true);
+        if (is_array($decodedPeople)) {
+            foreach ($decodedPeople as $candidate) {
+                $candidateName = normalizeParticipantNameToken(strval($candidate));
+                if ($candidateName === '' || strcasecmp($candidateName, $narratorName) === 0) {
+                    continue;
+                }
+                $speaker = $candidateName;
+                break;
+            }
+        }
+    }
 }
 if ($speaker === '') {
     $speaker = 'Drifter';
+}
+$speakerData = getNpcData($speaker);
+if (!is_array($speakerData)) {
+    $speakerData = [];
 }
 
 $speakerPeopleScope = $speaker . '|' . $narratorName;
@@ -78,7 +98,7 @@ if (function_exists('stobeFilterNarratorPromptContextRows')) {
 $historyMessages = stobeBuildRecentContextMessages($contextHistory, intval($gamets));
 
 $welcomeInstruction = 'Give a brief 2-3 sentence recap of recent events and welcome the speaker back to their journey.';
-$systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets))
+$systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets), $speakerData)
     . "\n\n"
     . buildSystemPrompt(
         $narratorName,

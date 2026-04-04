@@ -84,6 +84,126 @@ function parsePeopleList(mixed $rawPeople): string
     return $clean;
 }
 
+function normalizeAdventureDialogueForDedupe(string $rawMessage): string
+{
+    $normalized = strtolower(trim($rawMessage));
+    $normalized = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/\s+\?{2,}\s*$/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/(?<=\D)7+\s*$/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $normalized) ?? $normalized;
+    $normalized = preg_replace('/(?<=\p{L})\d{1,2}\s*$/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/[[:space:][:punct:]]+$/u', '', $normalized) ?? $normalized;
+    $normalized = preg_replace('/\s{2,}/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function parseAdventureDialogueRow(string $data): ?array
+{
+    $text = trim($data);
+    if ($text === '') {
+        return null;
+    }
+
+    $speaker = '';
+    $target = '';
+    $message = '';
+    if (preg_match('/^\s*([^:]+):\s*(.*?)\s*\(talking to:\s*(.*?)\s*\)\s*$/iu', $text, $match) === 1) {
+        $speaker = trim(strval($match[1] ?? ''));
+        $message = trim(strval($match[2] ?? ''));
+        $target = trim(strval($match[3] ?? ''));
+    } elseif (preg_match('/^\s*([^:]+):\s*(.+?)\s*$/u', $text, $match) === 1) {
+        $speaker = trim(strval($match[1] ?? ''));
+        $message = trim(strval($match[2] ?? ''));
+    } else {
+        return null;
+    }
+
+    $speakerNorm = strtolower($speaker);
+    $targetNorm = strtolower($target);
+    $messageNorm = normalizeAdventureDialogueForDedupe($message);
+    if ($speakerNorm === '' || $messageNorm === '') {
+        return null;
+    }
+
+    return [
+        'speaker' => $speakerNorm,
+        'target' => $targetNorm,
+        'message' => $messageNorm,
+    ];
+}
+
+function filterMirroredPlayerChatRows(array $rows): array
+{
+    if (count($rows) === 0) {
+        return $rows;
+    }
+
+    $filtered = [];
+    $recentInputRows = [];
+    foreach ($rows as $row) {
+        $type = strtolower(trim(strval($row['type'] ?? '')));
+        $rowData = strval($row['data'] ?? '');
+        $localTs = intval($row['localts'] ?? 0);
+
+        if ($type === 'inputtext' || $type === 'inputtext_s') {
+            $parsedInput = parseAdventureDialogueRow($rowData);
+            if (is_array($parsedInput)) {
+                $recentInputRows[] = [
+                    'speaker' => strval($parsedInput['speaker'] ?? ''),
+                    'target' => strval($parsedInput['target'] ?? ''),
+                    'message' => strval($parsedInput['message'] ?? ''),
+                    'localts' => $localTs,
+                ];
+                if (count($recentInputRows) > 24) {
+                    $recentInputRows = array_slice($recentInputRows, -24);
+                }
+            }
+            $filtered[] = $row;
+            continue;
+        }
+
+        if ($type === 'chat') {
+            $parsedChat = parseAdventureDialogueRow($rowData);
+            if (is_array($parsedChat)) {
+                $chatSpeaker = strval($parsedChat['speaker'] ?? '');
+                $chatTarget = strval($parsedChat['target'] ?? '');
+                $chatMessage = strval($parsedChat['message'] ?? '');
+                $isMirroredInput = false;
+
+                for ($idx = count($recentInputRows) - 1; $idx >= 0; $idx--) {
+                    $recentInput = $recentInputRows[$idx];
+                    $inputTs = intval($recentInput['localts'] ?? 0);
+                    if ($localTs > 0 && $inputTs > 0 && ($localTs - $inputTs) > 6) {
+                        break;
+                    }
+                    if (strcasecmp(strval($recentInput['speaker'] ?? ''), $chatSpeaker) !== 0) {
+                        continue;
+                    }
+                    if (strval($recentInput['message'] ?? '') !== $chatMessage) {
+                        continue;
+                    }
+
+                    $inputTarget = strval($recentInput['target'] ?? '');
+                    if ($chatTarget !== '' && $inputTarget !== '' && strcasecmp($inputTarget, $chatTarget) !== 0) {
+                        continue;
+                    }
+
+                    $isMirroredInput = true;
+                    break;
+                }
+
+                if ($isMirroredInput) {
+                    continue;
+                }
+            }
+        }
+
+        $filtered[] = $row;
+    }
+
+    return $filtered;
+}
+
 function processEventRow(array $row, bool $forCsv = false): array
 {
     $timestamp = intval($row["localts"] ?? 0);
@@ -223,10 +343,10 @@ function exportCsvIfRequested(sql $db, array $eventTypes): void
         $dtEnd = clone $dtStart;
         $dtEnd->modify("+1 day")->modify("-1 second");
         $endOfDay = $dtEnd->getTimestamp();
-        $rows = buildAdventureRows($db, $eventTypes, $startOfDay, $endOfDay);
+        $rows = filterMirroredPlayerChatRows(buildAdventureRows($db, $eventTypes, $startOfDay, $endOfDay));
         $fileName = "adventure_log_" . $selectedDate . ".csv";
     } else {
-        $rows = buildAdventureRows($db, $eventTypes);
+        $rows = filterMirroredPlayerChatRows(buildAdventureRows($db, $eventTypes));
     }
 
     header("Content-Type: text/csv; charset=utf-8");
@@ -363,7 +483,7 @@ $dtSelectedEnd = clone $dtSelected;
 $dtSelectedEnd->modify("+1 day")->modify("-1 second");
 $endOfDay = $dtSelectedEnd->getTimestamp();
 
-$rows = buildAdventureRows($db, $eventTypes, $startOfDay, $endOfDay);
+$rows = filterMirroredPlayerChatRows(buildAdventureRows($db, $eventTypes, $startOfDay, $endOfDay));
 
 ?>
 <!DOCTYPE html>
