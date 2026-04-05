@@ -5913,6 +5913,177 @@ function stobeFactionDisplayName(string $rawFaction): string {
     return $name;
 }
 
+function stobeFactionRelationStateTableAvailable(): bool {
+    static $available = null;
+    if ($available !== null) {
+        return boolval($available);
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        $available = false;
+        return false;
+    }
+
+    try {
+        $row = $db->fetchOne("SELECT to_regclass('public.faction_relation_state') AS rel");
+    } catch (Throwable $exception) {
+        $available = false;
+        return false;
+    }
+
+    $available = is_array($row) && trim(strval($row['rel'] ?? '')) !== '';
+    return boolval($available);
+}
+
+function stobeFactionIdentityMatches(array $leftIdentity, array $rightIdentity): bool {
+    $leftId = trim(strval($leftIdentity['id'] ?? ''));
+    $rightId = trim(strval($rightIdentity['id'] ?? ''));
+    if ($leftId !== '' && $rightId !== '') {
+        return strcasecmp($leftId, $rightId) === 0;
+    }
+
+    $leftName = trim(strval($leftIdentity['name'] ?? ''));
+    $rightName = trim(strval($rightIdentity['name'] ?? ''));
+    if ($leftName !== '' && $rightName !== '') {
+        return strcasecmp($leftName, $rightName) === 0;
+    }
+
+    return false;
+}
+
+function stobeBuildFactionRelationTokens(array $identity): array {
+    $tokens = [];
+    $id = trim(strval($identity['id'] ?? ''));
+    if ($id !== '') {
+        $tokens[] = 'sid:' . strtolower($id);
+        if (preg_match('/^-?[0-9]+$/', $id) === 1) {
+            $numericId = intval($id);
+            if ($numericId > 0) {
+                $tokens[] = 'id:' . strval($numericId);
+            }
+        }
+    }
+
+    $name = trim(strval($identity['name'] ?? ''));
+    if ($name !== '') {
+        $tokens[] = 'name:' . strtolower($name);
+    }
+
+    $deduped = [];
+    $seen = [];
+    foreach ($tokens as $token) {
+        if ($token === '' || isset($seen[$token])) {
+            continue;
+        }
+        $seen[$token] = true;
+        $deduped[] = $token;
+    }
+    return $deduped;
+}
+
+function stobeLookupDirectedFactionRelationValue(array $sourceIdentity, array $targetIdentity): ?float {
+    if (stobeFactionIdentityMatches($sourceIdentity, $targetIdentity)) {
+        return 100.0;
+    }
+    if (!stobeFactionRelationStateTableAvailable()) {
+        return null;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return null;
+    }
+
+    $sourceTokens = stobeBuildFactionRelationTokens($sourceIdentity);
+    $targetTokens = stobeBuildFactionRelationTokens($targetIdentity);
+    $mergeKeys = [];
+    foreach ($sourceTokens as $sourceToken) {
+        foreach ($targetTokens as $targetToken) {
+            $mergeKey = trim($sourceToken) . '->' . trim($targetToken);
+            if ($mergeKey !== '' && !isset($mergeKeys[$mergeKey])) {
+                $mergeKeys[$mergeKey] = true;
+            }
+        }
+    }
+
+    try {
+        if (count($mergeKeys) > 0) {
+            $where = [];
+            $params = [];
+            $idx = 1;
+            foreach (array_keys($mergeKeys) as $mergeKey) {
+                $where[] = 'merge_key = $' . strval($idx);
+                $params[] = $mergeKey;
+                $idx++;
+            }
+
+            $row = $db->fetchOne(
+                "SELECT relation
+                 FROM faction_relation_state
+                 WHERE " . implode(' OR ', $where) . "
+                 ORDER BY game_ts DESC, updated_at DESC, id DESC
+                 LIMIT 1",
+                $params
+            );
+            if (is_array($row) && array_key_exists('relation', $row)) {
+                return floatval($row['relation']);
+            }
+        }
+
+        $sourceName = trim(strval($sourceIdentity['name'] ?? ''));
+        $targetName = trim(strval($targetIdentity['name'] ?? ''));
+        if ($sourceName !== '' && $targetName !== '') {
+            $row = $db->fetchOne(
+                "SELECT relation
+                 FROM faction_relation_state
+                 WHERE LOWER(source_name) = LOWER($1)
+                   AND LOWER(target_name) = LOWER($2)
+                 ORDER BY game_ts DESC, updated_at DESC, id DESC
+                 LIMIT 1",
+                [$sourceName, $targetName]
+            );
+            if (is_array($row) && array_key_exists('relation', $row)) {
+                return floatval($row['relation']);
+            }
+        }
+    } catch (Throwable $exception) {
+        return null;
+    }
+
+    return null;
+}
+
+function stobeFactionRelationPromptLabel(?float $relationValue): string {
+    $relation = is_numeric($relationValue) ? floatval($relationValue) : 0.0;
+    if ($relation > 0.0) {
+        return 'Friendly';
+    }
+    if ($relation < 0.0) {
+        return 'Hostile';
+    }
+    return 'Neutral';
+}
+
+function stobeFormatFactionWithRelationPromptLabel(
+    string $factionName,
+    array $speakerFactionIdentity,
+    array $targetFactionIdentity
+): string {
+    $name = trim($factionName);
+    if ($name === '') {
+        return '';
+    }
+
+    if (stobeFactionIdentityMatches($speakerFactionIdentity, $targetFactionIdentity)) {
+        return $name . ' [Same Faction]';
+    }
+
+    $relationValue = stobeLookupDirectedFactionRelationValue($speakerFactionIdentity, $targetFactionIdentity);
+    $relationLabel = stobeFactionRelationPromptLabel($relationValue);
+    return $name . ' [' . $relationLabel . ']';
+}
+
 function normalizeNpcMetadataPayload(mixed $metadata): array {
     if (is_array($metadata)) {
         return $metadata;
@@ -6222,6 +6393,7 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
     }
 
     $speakerKey = strtolower(normalizeParticipantNameToken($speakerName));
+    $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $activated = stobeGetActivatedNpcNameLookup();
     $hasActivatedLookup = count($activated) > 0;
     $seen = [];
@@ -6303,9 +6475,17 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         $descriptor = count($descriptorParts) > 0 ? (' (' . implode(' ', $descriptorParts) . ')') : '';
 
         $detailParts = [];
-        $faction = stobeFactionDisplayName(strval($entry['faction'] ?? ''));
+        $entryFactionIdentity = getFactionIdentityFromNearbyEntry($entry);
+        $faction = trim(strval($entryFactionIdentity['name'] ?? ''));
+        if ($faction === '') {
+            $faction = stobeFactionDisplayName(strval($entry['faction'] ?? ''));
+        }
         if ($faction !== '' && !in_array(strtolower($faction), ['unknown', 'none', 'n/a'], true)) {
-            $detailParts[] = 'Faction: ' . $faction;
+            $detailParts[] = 'Faction: ' . stobeFormatFactionWithRelationPromptLabel(
+                $faction,
+                $speakerFactionIdentity,
+                $entryFactionIdentity
+            );
         }
         $bountyText = stobeBuildNearbyEntryBountyText($entry);
         if ($bountyText !== '') {

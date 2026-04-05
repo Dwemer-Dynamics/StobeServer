@@ -5718,6 +5718,387 @@ function storeWorldStateEntries(array $payload): int {
     return count($entriesByKey);
 }
 
+function stobeEnsureFactionRelationTables(): bool {
+    static $ensured = false;
+    if ($ensured) {
+        return true;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    try {
+        $ok = $db->exec(
+            "CREATE TABLE IF NOT EXISTS faction_relation_state (
+                id BIGSERIAL PRIMARY KEY,
+                merge_key TEXT NOT NULL UNIQUE,
+                source_name TEXT NOT NULL DEFAULT '',
+                source_string_id TEXT NOT NULL DEFAULT '',
+                source_numeric_id INT NOT NULL DEFAULT 0,
+                target_name TEXT NOT NULL DEFAULT '',
+                target_string_id TEXT NOT NULL DEFAULT '',
+                target_numeric_id INT NOT NULL DEFAULT 0,
+                relation DOUBLE PRECISION NOT NULL DEFAULT 0,
+                alliance BOOLEAN NOT NULL DEFAULT FALSE,
+                war BOOLEAN NOT NULL DEFAULT FALSE,
+                coexists BOOLEAN NOT NULL DEFAULT FALSE,
+                game_ts BIGINT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )"
+        );
+        if ($ok === false) {
+            return false;
+        }
+
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_faction_relation_state_game_ts ON faction_relation_state (game_ts DESC, id DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_faction_relation_state_source_lower ON faction_relation_state (LOWER(source_name))");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_faction_relation_state_target_lower ON faction_relation_state (LOWER(target_name))");
+
+        $ensured = true;
+        return true;
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to ensure faction relation tables');
+        return false;
+    }
+}
+
+function stobeFactionRelationStableToken(string $stringId, int $numericId, string $name): string {
+    $sid = trim($stringId);
+    if ($sid !== '') {
+        return 'sid:' . strtolower($sid);
+    }
+    if ($numericId > 0) {
+        return 'id:' . strval($numericId);
+    }
+    $trimmedName = trim($name);
+    if ($trimmedName !== '') {
+        return 'name:' . strtolower($trimmedName);
+    }
+    return '';
+}
+
+function stobeFactionRelationMergeKey(
+    string $sourceStringId,
+    int $sourceNumericId,
+    string $sourceName,
+    string $targetStringId,
+    int $targetNumericId,
+    string $targetName
+): string {
+    $sourceToken = stobeFactionRelationStableToken($sourceStringId, $sourceNumericId, $sourceName);
+    $targetToken = stobeFactionRelationStableToken($targetStringId, $targetNumericId, $targetName);
+    if ($sourceToken === '' || $targetToken === '') {
+        return '';
+    }
+    return $sourceToken . '->' . $targetToken;
+}
+
+/**
+ * Persist faction relation deltas/snapshots from Stobe.dll.
+ *
+ * Returns:
+ * [
+ *   'changed' => int,
+ *   'unchanged' => int,
+ *   'removed' => int,
+ * ]
+ */
+function storeFactionRelationEntries(array $payload): array|false {
+    if (!stobeEnsureFactionRelationTables()) {
+        return false;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    $gameTs = intval($payload['game_ts'] ?? 0);
+    if ($gameTs < 0) {
+        $gameTs = 0;
+    }
+
+    $parseBool = static function (mixed $value): bool {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return intval($value) !== 0;
+        }
+        $text = strtolower(trim(strval($value)));
+        if ($text === '') {
+            return false;
+        }
+        return in_array($text, ['1', 'true', 'yes', 'on'], true);
+    };
+
+    $normalizeList = static function (mixed $value): array {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value) && trim($value) !== '') {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+        return [];
+    };
+
+    $normalizeRelationEntry = static function (mixed $entry) use ($parseBool): ?array {
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $sourceName = trim(strval($entry['source_name'] ?? ''));
+        $sourceStringId = trim(strval($entry['source_string_id'] ?? ''));
+        $sourceNumericId = intval($entry['source_numeric_id'] ?? 0);
+        $targetName = trim(strval($entry['target_name'] ?? ''));
+        $targetStringId = trim(strval($entry['target_string_id'] ?? ''));
+        $targetNumericId = intval($entry['target_numeric_id'] ?? 0);
+
+        $mergeKey = trim(strval($entry['merge_key'] ?? ''));
+        if ($mergeKey === '') {
+            $mergeKey = stobeFactionRelationMergeKey(
+                $sourceStringId,
+                $sourceNumericId,
+                $sourceName,
+                $targetStringId,
+                $targetNumericId,
+                $targetName
+            );
+        }
+        if ($mergeKey === '') {
+            return null;
+        }
+
+        $relationRaw = $entry['relation'] ?? 0;
+        if (!is_numeric($relationRaw)) {
+            $relationRaw = str_replace(',', '.', strval($relationRaw));
+        }
+        $relation = is_numeric($relationRaw) ? floatval($relationRaw) : 0.0;
+        if ($relation > 100.0) {
+            $relation = 100.0;
+        } elseif ($relation < -100.0) {
+            $relation = -100.0;
+        }
+
+        return [
+            'merge_key' => $mergeKey,
+            'source_name' => $sourceName,
+            'source_string_id' => $sourceStringId,
+            'source_numeric_id' => $sourceNumericId,
+            'target_name' => $targetName,
+            'target_string_id' => $targetStringId,
+            'target_numeric_id' => $targetNumericId,
+            'relation' => $relation,
+            'alliance' => $parseBool($entry['alliance'] ?? false),
+            'war' => $parseBool($entry['war'] ?? false),
+            'coexists' => $parseBool($entry['coexists'] ?? false),
+        ];
+    };
+
+    $relationList = $normalizeList($payload['relations'] ?? []);
+    $removedList = $normalizeList($payload['removed'] ?? []);
+
+    $relationsByKey = [];
+    foreach ($relationList as $entry) {
+        $normalized = $normalizeRelationEntry($entry);
+        if (!is_array($normalized)) {
+            continue;
+        }
+        $relationsByKey[strval($normalized['merge_key'])] = $normalized;
+    }
+
+    $removedKeys = [];
+    foreach ($removedList as $entry) {
+        $mergeKey = '';
+        if (is_string($entry)) {
+            $mergeKey = trim($entry);
+        } elseif (is_array($entry)) {
+            $mergeKey = trim(strval($entry['merge_key'] ?? ''));
+            if ($mergeKey === '') {
+                $mergeKey = stobeFactionRelationMergeKey(
+                    trim(strval($entry['source_string_id'] ?? '')),
+                    intval($entry['source_numeric_id'] ?? 0),
+                    trim(strval($entry['source_name'] ?? '')),
+                    trim(strval($entry['target_string_id'] ?? '')),
+                    intval($entry['target_numeric_id'] ?? 0),
+                    trim(strval($entry['target_name'] ?? ''))
+                );
+            }
+        }
+        if ($mergeKey !== '') {
+            $removedKeys[$mergeKey] = true;
+        }
+    }
+
+    foreach ($removedKeys as $mergeKey => $_unused) {
+        unset($relationsByKey[$mergeKey]);
+    }
+
+    $changed = 0;
+    $unchanged = 0;
+    $removed = 0;
+
+    $txStarted = false;
+    try {
+        $beginOk = $db->exec("BEGIN");
+        if ($beginOk === false) {
+            return false;
+        }
+        $txStarted = true;
+
+        foreach ($removedKeys as $mergeKey => $_unused) {
+            $existing = $db->fetchOne(
+                "SELECT *
+                 FROM faction_relation_state
+                 WHERE merge_key = $1
+                 LIMIT 1",
+                [$mergeKey]
+            );
+            if (!is_array($existing)) {
+                continue;
+            }
+
+            $ok = $db->exec(
+                "DELETE FROM faction_relation_state
+                 WHERE merge_key = $1",
+                [$mergeKey]
+            );
+            if ($ok === false) {
+                $db->exec("ROLLBACK");
+                return false;
+            }
+            $removed++;
+        }
+
+        foreach ($relationsByKey as $entry) {
+            $mergeKey = strval($entry['merge_key'] ?? '');
+            if ($mergeKey === '') {
+                continue;
+            }
+
+            $existing = $db->fetchOne(
+                "SELECT *
+                 FROM faction_relation_state
+                 WHERE merge_key = $1
+                 LIMIT 1",
+                [$mergeKey]
+            );
+
+            $isChanged = !is_array($existing);
+            if (is_array($existing)) {
+                $prevRelation = floatval($existing['relation'] ?? 0);
+                $nextRelation = floatval($entry['relation'] ?? 0);
+                if (abs($prevRelation - $nextRelation) > 0.001) {
+                    $isChanged = true;
+                } elseif (boolval($existing['alliance'] ?? false) !== boolval($entry['alliance'] ?? false)) {
+                    $isChanged = true;
+                } elseif (boolval($existing['war'] ?? false) !== boolval($entry['war'] ?? false)) {
+                    $isChanged = true;
+                } elseif (boolval($existing['coexists'] ?? false) !== boolval($entry['coexists'] ?? false)) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['source_name'] ?? '')) !== trim(strval($entry['source_name'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['source_string_id'] ?? '')) !== trim(strval($entry['source_string_id'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (intval($existing['source_numeric_id'] ?? 0) !== intval($entry['source_numeric_id'] ?? 0)) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['target_name'] ?? '')) !== trim(strval($entry['target_name'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['target_string_id'] ?? '')) !== trim(strval($entry['target_string_id'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (intval($existing['target_numeric_id'] ?? 0) !== intval($entry['target_numeric_id'] ?? 0)) {
+                    $isChanged = true;
+                }
+            }
+
+            $ok = $db->exec(
+                "INSERT INTO faction_relation_state (
+                    merge_key,
+                    source_name,
+                    source_string_id,
+                    source_numeric_id,
+                    target_name,
+                    target_string_id,
+                    target_numeric_id,
+                    relation,
+                    alliance,
+                    war,
+                    coexists,
+                    game_ts,
+                    created_at,
+                    updated_at
+                 ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
+                 )
+                 ON CONFLICT (merge_key) DO UPDATE SET
+                    source_name = EXCLUDED.source_name,
+                    source_string_id = EXCLUDED.source_string_id,
+                    source_numeric_id = EXCLUDED.source_numeric_id,
+                    target_name = EXCLUDED.target_name,
+                    target_string_id = EXCLUDED.target_string_id,
+                    target_numeric_id = EXCLUDED.target_numeric_id,
+                    relation = EXCLUDED.relation,
+                    alliance = EXCLUDED.alliance,
+                    war = EXCLUDED.war,
+                    coexists = EXCLUDED.coexists,
+                    game_ts = EXCLUDED.game_ts,
+                    updated_at = NOW()",
+                [
+                    $mergeKey,
+                    strval($entry['source_name'] ?? ''),
+                    strval($entry['source_string_id'] ?? ''),
+                    intval($entry['source_numeric_id'] ?? 0),
+                    strval($entry['target_name'] ?? ''),
+                    strval($entry['target_string_id'] ?? ''),
+                    intval($entry['target_numeric_id'] ?? 0),
+                    floatval($entry['relation'] ?? 0),
+                    boolval($entry['alliance'] ?? false),
+                    boolval($entry['war'] ?? false),
+                    boolval($entry['coexists'] ?? false),
+                    $gameTs,
+                ]
+            );
+            if ($ok === false) {
+                $db->exec("ROLLBACK");
+                return false;
+            }
+
+            if (!$isChanged) {
+                $unchanged++;
+                continue;
+            }
+
+            $changed++;
+        }
+
+        $commitOk = $db->exec("COMMIT");
+        if ($commitOk === false) {
+            $db->exec("ROLLBACK");
+            return false;
+        }
+    } catch (Throwable $exception) {
+        if ($txStarted) {
+            $db->exec("ROLLBACK");
+        }
+        stobeLogException($exception, 'storeFactionRelationEntries failed', [
+            'game_ts' => $gameTs,
+        ]);
+        return false;
+    }
+
+    return [
+        'changed' => $changed,
+        'unchanged' => $unchanged,
+        'removed' => $removed,
+    ];
+}
+
 function getNpcData(string $name): array|false {
     $db = $GLOBALS["db"];
     $normalizedName = normalizeParticipantNameToken($name);

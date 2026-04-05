@@ -218,6 +218,30 @@ CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWE
 CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
 
 -- ----------------------------------------------------------
+-- FACTION_RELATIONS - global faction-to-faction current state
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS faction_relation_state (
+    id BIGSERIAL PRIMARY KEY,
+    merge_key TEXT NOT NULL UNIQUE,
+    source_name TEXT NOT NULL DEFAULT '',
+    source_string_id TEXT NOT NULL DEFAULT '',
+    source_numeric_id INT NOT NULL DEFAULT 0,
+    target_name TEXT NOT NULL DEFAULT '',
+    target_string_id TEXT NOT NULL DEFAULT '',
+    target_numeric_id INT NOT NULL DEFAULT 0,
+    relation DOUBLE PRECISION NOT NULL DEFAULT 0,
+    alliance BOOLEAN NOT NULL DEFAULT FALSE,
+    war BOOLEAN NOT NULL DEFAULT FALSE,
+    coexists BOOLEAN NOT NULL DEFAULT FALSE,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_game_ts ON faction_relation_state (game_ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_source_lower ON faction_relation_state (LOWER(source_name));
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_target_lower ON faction_relation_state (LOWER(target_name));
+
+-- ----------------------------------------------------------
 -- rename_global — DB-backed rename pools
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS core_voiceid (
