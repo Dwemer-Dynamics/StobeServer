@@ -46,13 +46,13 @@ function stobeMiddleTermAllowedEventType(string $eventType): bool
 
 function stobeMiddleTermRunIntervalGamets(): int
 {
-    $minutes = getSettingInt('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', 10);
-    if ($minutes < 1) {
-        $minutes = 1;
-    } elseif ($minutes > 1440) {
-        $minutes = 1440;
+    $hours = getSettingInt('MIDDLE_TERM_MEMORY_INTERVAL_HOURS', 10);
+    if ($hours < 1) {
+        $hours = 1;
+    } elseif ($hours > 240) {
+        $hours = 240;
     }
-    return $minutes * 60;
+    return $hours * 3600;
 }
 
 function stobeMiddleTermShouldRunCycle(string $eventType, int $gamets): bool

@@ -1396,6 +1396,14 @@ PROMPT;
             $db->exec("CREATE OR REPLACE VIEW core_npc AS SELECT * FROM core_npc_master");
         });
 
+        $applyPatch('general_settings', 202604050101, static function () use ($db): void {
+            $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
+                ('MIDDLE_TERM_MEMORY_INTERVAL_HOURS','10','Middle-term memory summary interval (in-game hours)',NOW())
+                ON CONFLICT (id) DO UPDATE
+                SET description = EXCLUDED.description,
+                    updated_at = NOW()");
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

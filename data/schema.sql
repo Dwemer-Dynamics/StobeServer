@@ -2196,6 +2196,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('MEMORY_CONTEXT_SIZE',  '1',            'Max number of memory entries injected'),
 ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
 ('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval'),
+('MIDDLE_TERM_MEMORY_INTERVAL_HOURS', '10', 'Middle-term memory summary interval (in-game hours)'),
 ('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
 ('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
