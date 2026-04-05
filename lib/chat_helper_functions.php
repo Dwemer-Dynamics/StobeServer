@@ -9821,6 +9821,67 @@ function stobeDedupeActionList(array $actions, string $eventType, ?array $config
     return $normalized;
 }
 
+if (!function_exists('stobeResolveDialogueListenerTarget')) {
+    function stobeResolveDialogueListenerTarget(string $listener, array $allowedNames, string $fallback = ''): string
+    {
+        $listenerName = normalizeParticipantNameToken($listener);
+        $fallbackName = normalizeParticipantNameToken($fallback);
+
+        $allowedByName = [];
+        $allowedByBaseName = [];
+        foreach ($allowedNames as $entry) {
+            $candidateRaw = '';
+            if (is_array($entry)) {
+                $candidateRaw = strval($entry['name'] ?? ($entry['target'] ?? ($entry['listener'] ?? '')));
+            } elseif (is_string($entry)) {
+                $candidateRaw = $entry;
+            }
+            $candidate = normalizeParticipantNameToken($candidateRaw);
+            if ($candidate === '') {
+                continue;
+            }
+
+            $nameKey = strtolower($candidate);
+            if (!isset($allowedByName[$nameKey])) {
+                $allowedByName[$nameKey] = $candidate;
+            }
+
+            $baseName = strtolower(baseNameWithoutBracketSuffix($candidate));
+            if ($baseName !== '' && !isset($allowedByBaseName[$baseName])) {
+                $allowedByBaseName[$baseName] = $candidate;
+            }
+        }
+
+        if ($listenerName !== '') {
+            $listenerKey = strtolower($listenerName);
+            if (isset($allowedByName[$listenerKey])) {
+                return $allowedByName[$listenerKey];
+            }
+
+            $listenerBase = strtolower(baseNameWithoutBracketSuffix($listenerName));
+            if ($listenerBase !== '' && isset($allowedByBaseName[$listenerBase])) {
+                return $allowedByBaseName[$listenerBase];
+            }
+        }
+
+        if ($fallbackName !== '') {
+            $fallbackKey = strtolower($fallbackName);
+            if (isset($allowedByName[$fallbackKey])) {
+                return $allowedByName[$fallbackKey];
+            }
+
+            $fallbackBase = strtolower(baseNameWithoutBracketSuffix($fallbackName));
+            if ($fallbackBase !== '' && isset($allowedByBaseName[$fallbackBase])) {
+                return $allowedByBaseName[$fallbackBase];
+            }
+
+            return $fallbackName;
+        }
+
+        return '';
+    }
+}
+
 function stobeStreamDialogueViaLlm(
     string $actor,
     array|false $actorData,
@@ -9837,6 +9898,7 @@ function stobeStreamDialogueViaLlm(
         'actions' => [],
         'actions_streamed' => false,
         'structured_json' => false,
+        'listener' => '',
         'chunks_emitted' => 0,
     ];
 
@@ -9924,6 +9986,7 @@ function stobeStreamDialogueViaLlm(
 
     $structured = stobeParseStructuredDialogueResponse($rawResponse, $eventType);
     $isStructured = boolval($structured['is_structured'] ?? false);
+    $listener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
 
     $responseText = '';
     if ($isStructured) {
@@ -9997,6 +10060,7 @@ function stobeStreamDialogueViaLlm(
     $result['actions'] = $dedupedActions;
     $result['actions_streamed'] = count($streamActionSeen) > 0;
     $result['structured_json'] = $isStructured;
+    $result['listener'] = $listener;
     $result['chunks_emitted'] = $chunksEmitted;
     return $result;
 }

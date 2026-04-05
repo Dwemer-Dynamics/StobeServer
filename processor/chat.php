@@ -722,6 +722,7 @@ if ($narratorMode) {
 
 $responseText = '';
 $responseActions = [];
+$responseListener = '';
 $alreadyStreamed = false;
 $actionsStreamedInLlm = false;
 $manualActionForcedEmoteOnly = false;
@@ -761,6 +762,7 @@ if ($manualActionActive && $manualActionCannotSpeak) {
     if (boolval($streamResult['ok'] ?? false)) {
         $responseText = sanitizeForKenshi(trim(strval($streamResult['response_text'] ?? '')));
         $responseActions = is_array($streamResult['actions'] ?? null) ? $streamResult['actions'] : [];
+        $responseListener = normalizeParticipantNameToken(strval($streamResult['listener'] ?? ''));
         $alreadyStreamed = intval($streamResult['chunks_emitted'] ?? 0) > 0;
         $actionsStreamedInLlm = boolval($streamResult['actions_streamed'] ?? false);
         stobeLogInfo('LLM stream response generated', [
@@ -787,6 +789,7 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             ]);
         } else {
             $structured = stobeParseStructuredDialogueResponse($rawResponse, 'chat');
+            $responseListener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
             $responseText = sanitizeForKenshi(trim(strval($structured['message'] ?? '')));
             $responseActions = [];
             $structuredAction = trim(strval($structured['action_tag'] ?? ''));
@@ -819,10 +822,35 @@ if ($narratorMode) {
     $responseActions = [];
 }
 
+$peopleRaw = strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? ''));
+$participantIdentities = extractParticipantIdentities([
+    'people' => $peopleRaw,
+    'profile' => $targetNpc,
+    'speaker' => $speaker,
+]);
+$listenerCandidates = [$speaker, $targetNpc, $playerName];
+foreach ($participantIdentities as $participantIdentity) {
+    if (!is_array($participantIdentity)) {
+        continue;
+    }
+    $listenerCandidates[] = strval($participantIdentity['name'] ?? '');
+}
+$replyTarget = stobeResolveDialogueListenerTarget($responseListener, $listenerCandidates, $speaker);
+if ($replyTarget === '') {
+    $replyTarget = $speaker;
+}
+if ($responseListener !== '' && strcasecmp($responseListener, $replyTarget) !== 0) {
+    stobeLogDebug('Chat listener remapped to known participant', [
+        'target_npc' => $targetNpc,
+        'parsed_listener' => $responseListener,
+        'resolved_listener' => $replyTarget,
+    ]);
+}
+
 if (!$manualActionForcedEmoteOnly && !$narratorMode) {
     $relationshipEval = stobeEvaluateRelationshipsForTurn(
         $targetNpc,
-        $speaker,
+        $replyTarget,
         $speaker . ': ' . $message,
         $responseText,
         $npcData,
@@ -844,9 +872,9 @@ if ($storedResponseText === '' && count($responseActions) > 0) {
     $storedResponseText = '...';
 }
 
-storeActionEvents($targetNpc, $responseActions, $gamets, $speaker, 'chat');
+storeActionEvents($targetNpc, $responseActions, $gamets, $replyTarget, 'chat');
 
-$chatEventData = $targetNpc . ': ' . $storedResponseText . ' (talking to: ' . $speaker . ')';
+$chatEventData = $targetNpc . ': ' . $storedResponseText . ' (talking to: ' . $replyTarget . ')';
 storeEvent('chat', time(), $gamets, $chatEventData);
 
 if ($alreadyStreamed) {
