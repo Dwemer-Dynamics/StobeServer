@@ -407,6 +407,27 @@ if ($forcedResponder !== '') {
         'limb' => strval($forcedLimbLossReaction['limb'] ?? ''),
         'hacksaw' => boolval($forcedLimbLossReaction['hacksaw'] ?? false),
     ]);
+
+    $forcedSuppression = stobeShouldSuppressLimbLossRechatForVictim(
+        $forcedResponder,
+        intval($forcedLimbLossReaction['rowid'] ?? 0),
+        intval($forcedLimbLossReaction['localts'] ?? 0),
+        false,
+        3
+    );
+    if (boolval($forcedSuppression['suppress'] ?? false)) {
+        stobeConsumeLimbLossRechatReaction(intval($forcedLimbLossReaction['rowid'] ?? 0));
+        stobeLogInfo('Rechat forced limb-loss reaction canceled before selection', [
+            'rowid' => intval($forcedLimbLossReaction['rowid'] ?? 0),
+            'victim' => $forcedResponder,
+            'reason' => strval($forcedSuppression['reason'] ?? ''),
+            'event_type' => strval($forcedSuppression['event_type'] ?? ''),
+            'event_rowid' => intval($forcedSuppression['event_rowid'] ?? 0),
+            'state' => strval($forcedSuppression['state'] ?? ''),
+        ]);
+        $forcedLimbLossReaction = [];
+        $forcedResponder = '';
+    }
 }
 
 $candidateNames = [];
@@ -644,29 +665,15 @@ foreach ($responderCandidates as $candidate) {
     }
 
     if (stobeNpcIsIncapacitatedForRechat($candidateData)) {
-        if ($isForcedLimbCandidate) {
-            $forcedState = stobeResolveNpcAwarenessState($candidateData);
-            if ($forcedState !== 'dead') {
-                // Forced limb-loss victim should still get the immediate scream reaction
-                // even when unconscious/KO/sleeping.
-            } else {
-                $skipCounts['incapacitated']++;
-                if (count($skipSamples) < 6) {
-                    $skipSamples[] = $candidateName . ':incapacitated_dead';
-                }
-                continue;
+        $skipCounts['incapacitated']++;
+        if (count($skipSamples) < 6) {
+            $stateLabel = strtolower(trim(strval($candidateData['character_state'] ?? 'unknown')));
+            if ($stateLabel === '') {
+                $stateLabel = 'unknown';
             }
-        } else {
-            $skipCounts['incapacitated']++;
-            if (count($skipSamples) < 6) {
-                $stateLabel = strtolower(trim(strval($candidateData['character_state'] ?? 'unknown')));
-                if ($stateLabel === '') {
-                    $stateLabel = 'unknown';
-                }
-                $skipSamples[] = $candidateName . ':incapacitated_' . $stateLabel;
-            }
-            continue;
+            $skipSamples[] = $candidateName . ':incapacitated_' . $stateLabel;
         }
+        continue;
     }
 
     if (!$isForcedLimbCandidate && !isRechatEligible($candidateData, $campaign, $requestedDepth)) {
@@ -775,6 +782,7 @@ if (
         'weapon' => strval($forcedLimbLossReaction['weapon'] ?? ''),
         'hacksaw' => boolval($forcedLimbLossReaction['hacksaw'] ?? false),
         'rowid' => intval($forcedLimbLossReaction['rowid'] ?? 0),
+        'localts' => intval($forcedLimbLossReaction['localts'] ?? 0),
     ];
     $hasLimbLossSpecialContext = true;
 }
@@ -972,6 +980,29 @@ if ($responseText === '' && count($responseActions) > 0) {
 if ($responseTextForStore === '') {
     echo "ok";
     return;
+}
+
+if ($hasLimbLossSpecialContext) {
+    $lateSuppression = stobeShouldSuppressLimbLossRechatForVictim(
+        $respondingNpc,
+        intval($rechatSpecialContext['rowid'] ?? 0),
+        intval($rechatSpecialContext['localts'] ?? 0),
+        is_array($npcData) ? $npcData : false,
+        3
+    );
+    if (boolval($lateSuppression['suppress'] ?? false)) {
+        stobeConsumeLimbLossRechatReaction(intval($rechatSpecialContext['rowid'] ?? 0));
+        stobeLogInfo('Rechat forced limb-loss reaction canceled before event write', [
+            'rowid' => intval($rechatSpecialContext['rowid'] ?? 0),
+            'victim' => $respondingNpc,
+            'reason' => strval($lateSuppression['reason'] ?? ''),
+            'event_type' => strval($lateSuppression['event_type'] ?? ''),
+            'event_rowid' => intval($lateSuppression['event_rowid'] ?? 0),
+            'state' => strval($lateSuppression['state'] ?? ''),
+        ]);
+        echo "ok";
+        return;
+    }
 }
 
 $chatEventData = $respondingNpc . ': ' . $responseTextForStore . ' (talking to: ' . $replyTarget . ')';

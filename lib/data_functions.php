@@ -2877,6 +2877,148 @@ function stobeResolvePendingLimbLossRechatReaction(array $conversationParticipan
     return [];
 }
 
+function stobeExtractStatusEventActorName(string $eventType, string $eventData): string {
+    $normalizedType = strtolower(trim($eventType));
+    $clean = trim($eventData);
+    if ($clean === '') {
+        return '';
+    }
+
+    if (function_exists('parseDialogueEventData')) {
+        $parsed = parseDialogueEventData($clean);
+        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+        if ($speaker !== '') {
+            return $speaker;
+        }
+    }
+
+    if (preg_match('/^([^:]+)\s*:/u', $clean, $match) === 1) {
+        $actor = normalizeParticipantNameToken(strval($match[1] ?? ''));
+        if ($actor !== '') {
+            return $actor;
+        }
+    }
+
+    if ($normalizedType === 'knockout' && preg_match('/^(.+?)\s+was\s+knocked\s+out\b/iu', $clean, $match) === 1) {
+        return normalizeParticipantNameToken(strval($match[1] ?? ''));
+    }
+    if ($normalizedType === 'death' && preg_match('/^(.+?)\s+(?:has\s+)?(?:died|was\s+slain|is\s+dead)\b/iu', $clean, $match) === 1) {
+        return normalizeParticipantNameToken(strval($match[1] ?? ''));
+    }
+    if ($normalizedType === 'recovered' && preg_match('/^(.+?)\s+regained\s+consciousness\b/iu', $clean, $match) === 1) {
+        return normalizeParticipantNameToken(strval($match[1] ?? ''));
+    }
+
+    return '';
+}
+
+function stobeShouldSuppressLimbLossRechatForVictim(
+    string $victimName,
+    int $limbLossRowId,
+    int $limbLossLocalTs = 0,
+    array|false $victimData = false,
+    int $recoveryGraceSeconds = 3
+): array {
+    $victim = normalizeParticipantNameToken($victimName);
+    if ($victim === '') {
+        return [
+            'suppress' => true,
+            'reason' => 'missing_victim',
+        ];
+    }
+
+    if (!is_array($victimData)) {
+        $victimData = getNpcData($victim);
+    }
+    $currentState = '';
+    if (is_array($victimData)) {
+        $currentState = stobeResolveNpcAwarenessState($victimData);
+        if (in_array($currentState, ['dead', 'unconscious', 'knocked_out', 'sleeping'], true)) {
+            return [
+                'suppress' => true,
+                'reason' => 'victim_state_' . $currentState,
+                'state' => $currentState,
+            ];
+        }
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $limbLossRowId <= 0) {
+        return [
+            'suppress' => false,
+            'reason' => '',
+            'state' => $currentState,
+        ];
+    }
+
+    $sinceLocalTs = $limbLossLocalTs > 0 ? max(0, $limbLossLocalTs - 2) : max(0, time() - 180);
+    $rows = $db->fetchAll(
+        "SELECT rowid, type, data, localts
+         FROM eventlog
+         WHERE rowid > $1
+           AND type IN ('knockout', 'death', 'recovered')
+           AND localts >= $2
+         ORDER BY rowid ASC
+         LIMIT 96",
+        [$limbLossRowId, $sinceLocalTs]
+    );
+
+    $latestRecoveredLocalTs = 0;
+    $latestRecoveredRowId = 0;
+    if (is_array($rows)) {
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $eventType = strtolower(trim(strval($row['type'] ?? '')));
+            $actor = stobeExtractStatusEventActorName($eventType, strval($row['data'] ?? ''));
+            if ($actor === '' || strcasecmp($actor, $victim) !== 0) {
+                continue;
+            }
+
+            $rowId = intval($row['rowid'] ?? 0);
+            $rowLocalTs = intval($row['localts'] ?? 0);
+            if ($eventType === 'knockout' || $eventType === 'death') {
+                return [
+                    'suppress' => true,
+                    'reason' => $eventType . '_after_limb_loss',
+                    'event_type' => $eventType,
+                    'event_rowid' => $rowId,
+                    'event_localts' => $rowLocalTs,
+                    'state' => $currentState,
+                ];
+            }
+            if ($eventType === 'recovered') {
+                if ($rowLocalTs >= $latestRecoveredLocalTs) {
+                    $latestRecoveredLocalTs = $rowLocalTs;
+                    $latestRecoveredRowId = $rowId;
+                }
+            }
+        }
+    }
+
+    if ($recoveryGraceSeconds > 0 && $latestRecoveredLocalTs > 0) {
+        $elapsed = time() - $latestRecoveredLocalTs;
+        if ($elapsed >= 0 && $elapsed < $recoveryGraceSeconds) {
+            return [
+                'suppress' => true,
+                'reason' => 'recovery_grace_window',
+                'event_type' => 'recovered',
+                'event_rowid' => $latestRecoveredRowId,
+                'event_localts' => $latestRecoveredLocalTs,
+                'elapsed_seconds' => $elapsed,
+                'state' => $currentState,
+            ];
+        }
+    }
+
+    return [
+        'suppress' => false,
+        'reason' => '',
+        'state' => $currentState,
+    ];
+}
+
 function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
     $speaker = normalizeParticipantNameToken($speakerName);
     if ($speaker === '') {
