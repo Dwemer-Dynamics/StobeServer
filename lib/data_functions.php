@@ -6814,14 +6814,14 @@ function stobeNormalizeJsonArrayValue(mixed $value): array {
     return [];
 }
 
-function stobeBuildNpcHistoryHashFromRow(array $row): string {
+function stobeBuildNpcHistoryCanonicalFromRow(array $row): array {
     $bounty = stobeNormalizeBountyPayload($row['bounty'] ?? '{}');
     $dynamicProfileEnabled = null;
     if (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
         $dynamicProfileEnabled = coerceBoolean($row['dynamic_profile']);
     }
 
-    $canonical = [
+    return [
         'name' => trim(strval($row['name'] ?? '')),
         'original_name' => trim(strval($row['original_name'] ?? '')),
         'npc_favorite' => coerceBoolean($row['npc_favorite'] ?? false),
@@ -6851,6 +6851,25 @@ function stobeBuildNpcHistoryHashFromRow(array $row): string {
         'is_slave' => coerceBoolean($row['is_slave'] ?? false),
         'world_knowledge_tags' => strval($row['world_knowledge_tags'] ?? ''),
     ];
+}
+
+function stobeGetNpcHistoryChangedFields(array $beforeRow, array $afterRow): array {
+    $beforeCanonical = stobeBuildNpcHistoryCanonicalFromRow($beforeRow);
+    $afterCanonical = stobeBuildNpcHistoryCanonicalFromRow($afterRow);
+    $changedFields = [];
+
+    foreach ($beforeCanonical as $key => $beforeValue) {
+        $afterValue = $afterCanonical[$key] ?? null;
+        if ($beforeValue !== $afterValue) {
+            $changedFields[] = $key;
+        }
+    }
+
+    return $changedFields;
+}
+
+function stobeBuildNpcHistoryHashFromRow(array $row): string {
+    $canonical = stobeBuildNpcHistoryCanonicalFromRow($row);
 
     $encoded = json_encode($canonical, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (!is_string($encoded) || $encoded === '') {
@@ -7057,6 +7076,20 @@ function stobeMaybeSnapshotNpcHistoryBeforeAfter(array|false $beforeRow, array|f
     $afterHash = stobeBuildNpcHistoryHashFromRow($afterRow);
     if ($beforeHash === '' || $afterHash === '' || hash_equals($beforeHash, $afterHash)) {
         return false;
+    }
+    $changedFields = stobeGetNpcHistoryChangedFields($beforeRow, $afterRow);
+    if (!empty($changedFields)) {
+        $snapshotNoiseFields = ['skills', 'relationships'];
+        $meaningfulChanges = array_values(array_diff($changedFields, $snapshotNoiseFields));
+        if (count($meaningfulChanges) === 0) {
+            stobeLogDebug('NPC history snapshot skipped for noisy-only field changes', [
+                'npc_id' => intval($beforeRow['id'] ?? ($afterRow['id'] ?? 0)),
+                'name' => trim(strval($afterRow['name'] ?? ($beforeRow['name'] ?? ''))),
+                'reason' => trim(strval($reason)),
+                'changed_fields' => $changedFields,
+            ]);
+            return false;
+        }
     }
     return stobeInsertNpcHistorySnapshotFromRow($beforeRow, $reason);
 }
