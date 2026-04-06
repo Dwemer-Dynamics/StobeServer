@@ -2651,12 +2651,12 @@ function stobeResolveWorldContextFromRecentEventData(int $windowSeconds = 1800, 
         ? "SELECT type, data, location, geo
          FROM eventlog
          WHERE localts > $1
-         ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+         ORDER BY localts DESC, ts DESC, rowid DESC
          LIMIT " . strval($safeLimit)
         : "SELECT type, data, location
          FROM eventlog
          WHERE localts > $1
-         ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+         ORDER BY localts DESC, ts DESC, rowid DESC
          LIMIT " . strval($safeLimit);
     $rows = $db->fetchAll($sql, [time() - $safeWindow]);
     if (!is_array($rows) || count($rows) === 0) {

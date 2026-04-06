@@ -88,7 +88,7 @@ if (isset($_GET["delete_last"])) {
             "DELETE FROM eventlog
              WHERE rowid IN (
                  SELECT rowid FROM eventlog
-                 ORDER BY gamets DESC, ts DESC, localts DESC, rowid DESC
+                 ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
                  LIMIT $1
              )",
             [$delCount]
@@ -135,7 +135,7 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
          FROM eventlog
          WHERE rowid > $1
            AND type NOT IN ('inputtext', 'inputtext_s')
-         ORDER BY rowid DESC
+         ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
          LIMIT 50",
         [$sinceRowId]
     );
@@ -168,7 +168,7 @@ $rows = safeFetchAll(
     "SELECT rowid, type, data, people, location, gamets, localts, ts
      FROM eventlog
      WHERE type NOT IN ('inputtext', 'inputtext_s')
-     ORDER BY gamets DESC, ts DESC, localts DESC, rowid DESC
+     ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
      LIMIT $1 OFFSET $2",
     [$limit, $offset]
 );

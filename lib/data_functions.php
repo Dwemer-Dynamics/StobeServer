@@ -1505,7 +1505,7 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
                      LOWER(data) LIKE $2 ESCAPE '\\'
                      OR LOWER(people) LIKE $3 ESCAPE '\\'
                 )
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"
                 : "SELECT location
               FROM eventlog
@@ -1515,7 +1515,7 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
                      LOWER(data) LIKE $2 ESCAPE '\\'
                      OR LOWER(people) LIKE $3 ESCAPE '\\'
                 )
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"),
             [
                 $cutoff,
@@ -1535,13 +1535,13 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
                     COALESCE(location, '') <> ''
                     OR COALESCE(geo::text, '{}') <> '{}'
                 )
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"
                 : "SELECT location
               FROM eventlog
               WHERE localts > $1
                 AND COALESCE(location, '') <> ''
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"),
             [$cutoff]
         );
@@ -5504,7 +5504,8 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
             $fetchLimit = 600;
         }
     }
-    $query .= " ORDER BY gamets DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
+    // Prompt context ordering must follow real-time sequence, not in-game gamets.
+    $query .= " ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
 
     $rows = $db->fetchAll($query, $params);
     if ($actorFilter === '' || count($rows) === 0) {
