@@ -5559,7 +5559,7 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
             continue;
         }
         if ($pct < 95.0) {
-            $damagedLabels[] = $displayLabel . ' (' . strval(intval(round($pct))) . '%)';
+            $damagedLabels[] = $displayLabel;
         }
     }
 
@@ -5576,8 +5576,12 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
     if (count($roboticLabels) > 0) {
         $statusParts[] = 'Robotic: ' . implode(', ', $roboticLabels);
     }
-    if (count($statusParts) === 0) {
-        $statusParts[] = 'Limbs intact';
+    if (count($missingLabels) === 0) {
+        if (count($statusParts) === 0) {
+            $statusParts[] = 'all limbs intact';
+        } else {
+            $statusParts[count($statusParts) - 1] .= ', all limbs intact';
+        }
     }
 
     return implode('; ', $statusParts);
