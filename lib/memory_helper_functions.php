@@ -888,7 +888,9 @@ function stobeRegularMemoryFetchLatestCompletedSummary(string $peopleKey, int $b
 function stobeRegularMemoryGenerateSummaryFromPacked(
     string $peopleKey,
     string $packedMessage,
-    string $previousSummary = ''
+    string $previousSummary = '',
+    int $gametsStart = 0,
+    int $gametsEnd = 0
 ): string {
     $packed = trim($packedMessage);
     if ($packed === '') {
@@ -908,6 +910,22 @@ function stobeRegularMemoryGenerateSummaryFromPacked(
 
     $userPrompt = "<regular_memory_request>\n"
         . "  <people>" . (function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($peopleLabel) : $peopleLabel) . "</people>\n";
+    $startGamets = max(0, intval($gametsStart));
+    $endGamets = max($startGamets, intval($gametsEnd));
+    if ($startGamets > 0 || $endGamets > 0) {
+        $windowStart = $startGamets > 0 ? stobeGametsDateLabel($startGamets) : '';
+        $windowEnd = $endGamets > 0 ? stobeGametsDateLabel($endGamets) : '';
+        $windowStartEscaped = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($windowStart) : $windowStart;
+        $windowEndEscaped = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($windowEnd) : $windowEnd;
+        $userPrompt .= "  <memory_window>\n";
+        if ($windowStartEscaped !== '') {
+            $userPrompt .= "    <start>{$windowStartEscaped}</start>\n";
+        }
+        if ($windowEndEscaped !== '') {
+            $userPrompt .= "    <end>{$windowEndEscaped}</end>\n";
+        }
+        $userPrompt .= "  </memory_window>\n";
+    }
     if ($previousSummary !== '') {
         $escapedPrev = function_exists('stobePromptXmlEscape')
             ? stobePromptXmlEscape($previousSummary)
@@ -916,7 +934,7 @@ function stobeRegularMemoryGenerateSummaryFromPacked(
     }
     $escapedPacked = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($packed) : $packed;
     $userPrompt .= "  <packed_events>{$escapedPacked}</packed_events>\n"
-        . "  <instruction>Create an updated concise memory summary for future retrieval.</instruction>\n"
+        . "  <instruction>Create an updated concise memory summary for future retrieval. Keep chronology using memory_window and event order, and never include raw gamets or numeric timestamp IDs in the summary text.</instruction>\n"
         . "</regular_memory_request>";
 
     $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
@@ -942,6 +960,14 @@ function stobeRegularMemoryGenerateSummaryFromPacked(
     if ($summary === '') {
         return truncatePromptValue($packed, 2500);
     }
+    $summary = preg_replace('/\bat\s+gamet[s]?\s*[:=]?\s*\d+\b/iu', '', $summary) ?? $summary;
+    $summary = preg_replace('/\bgamet[s]?\s*[:=]\s*\d+\b/iu', '', $summary) ?? $summary;
+    $summary = preg_replace('/\(\s*gamet[s]?\s*[:=]?\s*\d+\s*\)/iu', '', $summary) ?? $summary;
+    $summary = preg_replace('/\s{2,}/u', ' ', $summary) ?? $summary;
+    $summary = trim($summary);
+    if ($summary === '') {
+        return truncatePromptValue($packed, 2500);
+    }
     return truncatePromptValue($summary, 3500);
 }
 
@@ -952,7 +978,17 @@ function stobeRegularMemoryGenerateSummary(string $peopleKey, array $rows): stri
         return '';
     }
     $previous = stobeRegularMemoryFetchLatestCompletedSummary($peopleKey, 0);
-    return stobeRegularMemoryGenerateSummaryFromPacked($peopleKey, $packed, $previous);
+    $first = $rows[0] ?? [];
+    $last = $rows[count($rows) - 1] ?? [];
+    $gametsStart = max(0, intval($first['gamets'] ?? 0));
+    $gametsEnd = max($gametsStart, intval($last['gamets'] ?? $gametsStart));
+    return stobeRegularMemoryGenerateSummaryFromPacked(
+        $peopleKey,
+        $packed,
+        $previous,
+        $gametsStart,
+        $gametsEnd
+    );
 }
 
 function stobeRegularMemoryQueuePendingSummary(string $peopleKey, array $rows): bool
@@ -1737,7 +1773,7 @@ function stobeRegularMemoryInsertPackedGlobalSummaryRows(
                 MAX(localts) AS localts_end,
                 COUNT(*) AS n,
                 STRING_AGG(
-                    '[' || event_type || ' @ gamets=' || COALESCE(gamets::text, '0') || '] ' || COALESCE(content, ''),
+                    '[' || event_type || '] ' || COALESCE(content, ''),
                     E'\n\n'
                     ORDER BY gamets ASC, localts ASC, id ASC
                 ) AS packed_message
@@ -1922,7 +1958,13 @@ function stobeRegularMemoryProcessOneGlobalBatch(string $eventType, int $gamets)
         }
 
         $previous = stobeRegularMemoryFetchLatestCompletedSummary($peopleKey, $summaryId);
-        $summary = stobeRegularMemoryGenerateSummaryFromPacked($peopleKey, $packed, $previous);
+        $summary = stobeRegularMemoryGenerateSummaryFromPacked(
+            $peopleKey,
+            $packed,
+            $previous,
+            intval($pending['gamets_start'] ?? 0),
+            intval($pending['gamets_end'] ?? 0)
+        );
         if ($summary === '') {
             continue;
         }
