@@ -301,6 +301,11 @@ $eventType = 'inputtext';
 $message = $sanitizeChatMessage($message);
 $eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, time(), $gamets, $eventData);
+if (!$narratorMode) {
+    // Mirror player input as chat immediately so timeline order is stable even
+    // when game-emitted chat events arrive later.
+    storeEvent('chat', time() + 1, $gamets, $eventData, 'inputtext_chat_mirror');
+}
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"

@@ -134,6 +134,7 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
         "SELECT rowid, type, data, people, location, gamets, localts, ts
          FROM eventlog
          WHERE rowid > $1
+           AND type NOT IN ('inputtext', 'inputtext_s')
          ORDER BY rowid DESC
          LIMIT 50",
         [$sinceRowId]
@@ -166,12 +167,18 @@ $rows = safeFetchAll(
     $db,
     "SELECT rowid, type, data, people, location, gamets, localts, ts
      FROM eventlog
+     WHERE type NOT IN ('inputtext', 'inputtext_s')
      ORDER BY gamets DESC, ts DESC, localts DESC, rowid DESC
      LIMIT $1 OFFSET $2",
     [$limit, $offset]
 );
 
-$totalRecordsRow = safeFetchOne($db, "SELECT COUNT(*) AS total FROM eventlog");
+$totalRecordsRow = safeFetchOne(
+    $db,
+    "SELECT COUNT(*) AS total
+     FROM eventlog
+     WHERE type NOT IN ('inputtext', 'inputtext_s')"
+);
 $totalRecords = intval($totalRecordsRow["total"] ?? 0);
 $totalPages = max(1, (int)ceil($totalRecords / $limit));
 ?>
