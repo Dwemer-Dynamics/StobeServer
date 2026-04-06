@@ -548,6 +548,7 @@ if ($requestedDepth > 0) {
     );
 }
 
+$forcedReactionActive = ($forcedResponder !== '');
 if (!$forcedReactionActive && $requestedDepth > 0 && $requestedDepth > $effectiveRechatMaxDepth) {
     stobeLogInfo('Rechat skipped: depth budget reached', [
         'previous_speaker' => $previousSpeaker,
@@ -573,7 +574,6 @@ stobeLogDebug('Rechat depth budget resolved', [
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/llm_dispatcher.php');
 
-$forcedReactionActive = ($forcedResponder !== '');
 $responderCandidates = [];
 $responderSeen = [];
 $pushResponderCandidate = static function (string $rawName, string $source) use (

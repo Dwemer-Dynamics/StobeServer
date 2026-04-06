@@ -3775,7 +3775,6 @@ function stobeFetchParticipantAwarenessStateMap(array $participantIdentities): a
     $rows = $db->fetchAll(
         'SELECT name,
                 original_name,
-                character_state,
                 metadata,
                 extended_data,
                 COALESCE(metadata->>\'storage_id\', \'\') AS storage_id
