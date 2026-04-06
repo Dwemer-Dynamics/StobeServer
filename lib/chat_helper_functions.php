@@ -8495,7 +8495,7 @@ function stobeEvaluateRelationshipsForTurn(
             $method = 'none';
         }
         $result['method'] = $method;
-        stobeLogDebug('Relationship evaluation skipped/no changes', [
+        stobeLogRelationshipDebug('Relationship evaluation skipped/no changes', [
             'speaker' => $speaker,
             'listener' => $listener,
             'event_type' => $eventType,
@@ -8517,7 +8517,7 @@ function stobeEvaluateRelationshipsForTurn(
 
     $persisted = stobePersistNpcRelationshipMap($speaker, is_array($applied['map'] ?? null) ? $applied['map'] : [], $speakerNpcData);
     if (!$persisted) {
-        stobeLogWarn('Relationship updates computed but not persisted', [
+        stobeLogRelationshipWarn('Relationship updates computed but not persisted', [
             'speaker' => $speaker,
             'listener' => $listener,
             'event_type' => $eventType,
@@ -8531,7 +8531,7 @@ function stobeEvaluateRelationshipsForTurn(
     $result['updated'] = $updatedCount;
     $result['applied'] = $appliedRows;
 
-    stobeLogInfo('Relationship updates applied', [
+    stobeLogRelationshipInfo('Relationship updates applied', [
         'speaker' => $speaker,
         'listener' => $listener,
         'event_type' => $eventType,
@@ -9475,22 +9475,7 @@ function buildRechatSystemPrompt(
 ): string {
     $speakerForBasePrompt = $previousSpeaker !== '' ? $previousSpeaker : getSetting('PLAYER_NAME', 'Drifter');
     $prompt = buildSystemPrompt($npcName, $npcData, $speakerForBasePrompt, $previousMessage, true, 'rechat', $currentGamets);
-
-    $guidance = [
-        'This is an NPC-to-NPC rechat turn.',
-        "Respond naturally to {$speakerForBasePrompt}, who just spoke.",
-        'Address exactly one listener and keep continuity with the last line.',
-        'Keep the response concise and in-character for Kenshi.',
-    ];
-    if ($previousTarget !== '') {
-        $guidance[] = "The previous line was directed at: {$previousTarget}.";
-    }
-
-    $xml = ["<rechat_mode>"];
-    foreach ($guidance as $rule) {
-        $xml[] = '  <rule>' . stobePromptXmlEscape($rule) . '</rule>';
-    }
-    $xml[] = '</rechat_mode>';
+    $xml = [];
 
     $specialMode = strtolower(trim(strval($specialContext['mode'] ?? '')));
     if ($specialMode === 'limb_loss_reaction') {
@@ -9524,6 +9509,10 @@ function buildRechatSystemPrompt(
         $xml[] = '  <limb>' . stobePromptXmlEscape($limb) . '</limb>';
         $xml[] = '  <hacksaw>' . ($hacksawContext ? 'true' : 'false') . '</hacksaw>';
         $xml[] = '</limb_loss_meta>';
+    }
+
+    if (count($xml) === 0) {
+        return $prompt;
     }
 
     return $prompt . "\n\n" . implode("\n", $xml);

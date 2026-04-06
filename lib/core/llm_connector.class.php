@@ -40,6 +40,7 @@ if (!class_exists('StobeLegacyLlmDriver')) {
             if ($context !== '') {
                 $meta['event_type'] = $context;
             }
+            $meta['__stobe_force_fast_log'] = true;
 
             return stobeCallLLM($messages, $runtime, $meta);
         }
