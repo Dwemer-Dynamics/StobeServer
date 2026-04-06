@@ -1871,7 +1871,10 @@ function stobeRegularMemoryProcessOneGlobalPackBatch(string $eventType, int $gam
         return false;
     }
 
-    $cutoffGamets = max(0, intval($gamets) - stobeRegularMemoryOneHourGamets());
+    // Herika-style compaction uses the current max gamets window.
+    // Do not delay packing by an extra in-game hour; that can starve
+    // memory_summary generation when active conversations are recent.
+    $cutoffGamets = max(0, intval($gamets));
     if ($cutoffGamets <= $lastSummaryGamets) {
         return false;
     }

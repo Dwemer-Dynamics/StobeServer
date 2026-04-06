@@ -123,15 +123,14 @@ function stobeMiddleTermFetchCandidates(int $limit = 64): array
         $limit = 256;
     }
 
+    // Fetch a bounded candidate set and apply enablement logic in PHP.
+    // This preserves profile-level fallback behavior in stobeMiddleTermNpcEnabled()
+    // instead of requiring per-NPC extended_data flags to be pre-seeded.
     return $db->fetchAll(
         "SELECT id, name, profile_id, metadata, extended_data, gamets_last_updated
          FROM core_npc
          WHERE COALESCE(TRIM(name), '') <> ''
             AND LOWER(name) <> 'the narrator'
-            AND (
-                LOWER(COALESCE(extended_data->>'middle_term_enabled', '')) IN ('1','true','yes','on')
-                OR LOWER(COALESCE(extended_data->>'MIDDLE_TERM_MEMORY_ENABLED', '')) IN ('1','true','yes','on')
-            )
          ORDER BY gamets_last_updated DESC, updated_at DESC
          LIMIT " . intval($limit)
     );
