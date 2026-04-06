@@ -824,20 +824,61 @@ function stobeAssignVoiceIdIfMissing(
         return '';
     }
 
-    $row = $db->fetchOne(
-        "SELECT voiceid,
-                race,
-                gender,
-                faction,
-                original_name,
-                metadata
-         FROM core_npc_master
-         WHERE LOWER(name) = LOWER($1)
-         LIMIT 1",
-        [$safeName]
-    );
+    $metadata = normalizeCoreNpcMetadata($profile['metadata'] ?? []);
+    $storageId = normalizeStorageIdToken($metadata['storage_id'] ?? '');
+
+    $row = false;
+    if ($storageId !== '') {
+        $row = $db->fetchOne(
+            "SELECT id,
+                    voiceid,
+                    race,
+                    gender,
+                    faction,
+                    original_name,
+                    metadata
+             FROM core_npc_master
+             WHERE LOWER(COALESCE(metadata->>'storage_id', '')) = LOWER($1)
+             ORDER BY
+                CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+                gamets_last_updated DESC,
+                updated_at DESC,
+                id DESC
+             LIMIT 1",
+            [$storageId]
+        );
+    }
+    if (!$row) {
+        $row = $db->fetchOne(
+            "SELECT id,
+                    voiceid,
+                    race,
+                    gender,
+                    faction,
+                    original_name,
+                    metadata
+             FROM core_npc_master
+             WHERE LOWER(name) = LOWER($1)
+             ORDER BY
+                CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+                gamets_last_updated DESC,
+                updated_at DESC,
+                id DESC
+             LIMIT 1",
+            [$safeName]
+        );
+    }
     $existingVoice = trim(strval($row['voiceid'] ?? ''));
     if ($existingVoice !== '') {
+        $db->exec(
+            "UPDATE core_npc_master
+             SET voiceid = $2,
+                 updated_at = NOW()
+             WHERE LOWER(name) = LOWER($1)
+               AND (voiceid IS NULL OR BTRIM(voiceid) = '')",
+            [$safeName, $existingVoice]
+        );
         return $existingVoice;
     }
 
@@ -871,6 +912,17 @@ function stobeAssignVoiceIdIfMissing(
         return '';
     }
 
+    $rowId = intval($row['id'] ?? 0);
+    if ($rowId > 0) {
+        $db->exec(
+            "UPDATE core_npc_master
+             SET voiceid = $2,
+                 updated_at = NOW()
+             WHERE id = $1
+               AND (voiceid IS NULL OR BTRIM(voiceid) = '')",
+            [$rowId, $selected]
+        );
+    }
     $db->exec(
         "UPDATE core_npc_master
          SET voiceid = $2,

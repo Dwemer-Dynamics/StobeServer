@@ -133,6 +133,13 @@ function stobeResolveNpcDataForTts(string $npcName, array|false $npcData = false
         "SELECT id, name, profile_id, voiceid
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
+         ORDER BY
+            CASE WHEN profile_id IS NOT NULL AND profile_id > 0 THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+            gamets_last_updated DESC,
+            updated_at DESC,
+            id DESC
          LIMIT 1",
         [$safeName]
     );
@@ -174,7 +181,12 @@ function stobeResolveNpcVoiceIdByName(string $npcName): string {
         "SELECT voiceid
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
-         ORDER BY gamets_last_updated DESC, updated_at DESC
+         ORDER BY
+            CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+            gamets_last_updated DESC,
+            updated_at DESC,
+            id DESC
          LIMIT 1",
         [$safeName]
     );
@@ -188,9 +200,11 @@ function stobeResolveNpcVoiceIdByName(string $npcName): string {
          FROM core_npc
          WHERE LOWER(COALESCE(original_name, '')) = LOWER($1)
          ORDER BY
+            CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
             CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
             gamets_last_updated DESC,
-            updated_at DESC
+            updated_at DESC,
+            id DESC
          LIMIT 1",
         [$safeName]
     );
