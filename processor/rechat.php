@@ -385,6 +385,12 @@ $pushConversationScopeName($incomingProfile);
 $pushConversationScopeName($initiatorName);
 $pushConversationScopeName($resolvedRechatTargetName);
 
+if ($normalizedEventType === 'limb_loss') {
+    $limbLossParsed = stobeParseLimbLossEventData($eventData);
+    $pushConversationScopeName(strval($limbLossParsed['victim'] ?? ''));
+    $pushConversationScopeName(strval($limbLossParsed['attacker'] ?? ''));
+}
+
 $forcedLimbLossReaction = stobeResolvePendingLimbLossRechatReaction(array_values($conversationScopeNames), 300);
 $forcedResponder = normalizeParticipantNameToken(strval($forcedLimbLossReaction['victim'] ?? ''));
 if ($forcedResponder !== '') {
@@ -521,7 +527,7 @@ if ($requestedDepth > 0) {
     );
 }
 
-if ($requestedDepth > 0 && $requestedDepth > $effectiveRechatMaxDepth) {
+if (!$forcedReactionActive && $requestedDepth > 0 && $requestedDepth > $effectiveRechatMaxDepth) {
     stobeLogInfo('Rechat skipped: depth budget reached', [
         'previous_speaker' => $previousSpeaker,
         'requested_depth' => $requestedDepth,
@@ -612,6 +618,12 @@ foreach ($responderCandidates as $candidate) {
     if ($candidateSource === '') {
         $candidateSource = 'unknown';
     }
+    $isForcedLimbCandidate = (
+        $forcedReactionActive
+        && $forcedResponder !== ''
+        && strcasecmp($candidateSource, 'forced_limb_loss') === 0
+        && strcasecmp($candidateName, $forcedResponder) === 0
+    );
 
     $selectionOrder[] = $candidateName . ':' . $candidateSource;
 
@@ -632,18 +644,32 @@ foreach ($responderCandidates as $candidate) {
     }
 
     if (stobeNpcIsIncapacitatedForRechat($candidateData)) {
-        $skipCounts['incapacitated']++;
-        if (count($skipSamples) < 6) {
-            $stateLabel = strtolower(trim(strval($candidateData['character_state'] ?? 'unknown')));
-            if ($stateLabel === '') {
-                $stateLabel = 'unknown';
+        if ($isForcedLimbCandidate) {
+            $forcedState = stobeResolveNpcAwarenessState($candidateData);
+            if ($forcedState !== 'dead') {
+                // Forced limb-loss victim should still get the immediate scream reaction
+                // even when unconscious/KO/sleeping.
+            } else {
+                $skipCounts['incapacitated']++;
+                if (count($skipSamples) < 6) {
+                    $skipSamples[] = $candidateName . ':incapacitated_dead';
+                }
+                continue;
             }
-            $skipSamples[] = $candidateName . ':incapacitated_' . $stateLabel;
+        } else {
+            $skipCounts['incapacitated']++;
+            if (count($skipSamples) < 6) {
+                $stateLabel = strtolower(trim(strval($candidateData['character_state'] ?? 'unknown')));
+                if ($stateLabel === '') {
+                    $stateLabel = 'unknown';
+                }
+                $skipSamples[] = $candidateName . ':incapacitated_' . $stateLabel;
+            }
+            continue;
         }
-        continue;
     }
 
-    if (!isRechatEligible($candidateData, $campaign, $requestedDepth)) {
+    if (!$isForcedLimbCandidate && !isRechatEligible($candidateData, $campaign, $requestedDepth)) {
         $skipCounts['ineligible']++;
         if (count($skipSamples) < 6) {
             $skipSamples[] = $candidateName . ':ineligible';

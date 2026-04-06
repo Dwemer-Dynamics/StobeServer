@@ -257,6 +257,11 @@ try {
             require_once($path . "processor/rechat.php");
             break;
 
+        case 'limb_loss':
+            // Limb-loss events should trigger an immediate forced victim reaction.
+            require_once($path . "processor/rechat.php");
+            break;
+
         case 'location':
             require_once($path . "processor/location.php");
             break;
@@ -299,7 +304,6 @@ try {
         case 'combat_end':
         case 'knockout':
         case 'recovered':
-        case 'limb_loss':
         case 'death':
         case 'slavery':
         case 'item_pickup':
