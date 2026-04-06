@@ -1595,13 +1595,12 @@ if (isset($_GET['history'])) {
                     CASE WHEN COALESCE(h.dynamic_profile, FALSE) THEN 1 ELSE 0 END AS dynamic_profile,
                     h.md5,
                     h.gamets_last_updated,
-                    h.created,
                     ''::text AS core,
                     ''::text AS base,
                     h.tags
                 FROM core_npc_master_history h
                 WHERE h.npc_id = {$id}
-                ORDER BY COALESCE(h.gamets_last_updated,0) DESC, h.created DESC, h.history_id DESC
+                ORDER BY COALESCE(h.gamets_last_updated,0) DESC, h.history_id DESC
                 OFFSET 1";
         $rows = $GLOBALS['db']->fetchAll($sel) ?: [];
         $entries = [];
@@ -1609,13 +1608,11 @@ if (isset($_GET['history'])) {
             $g = isset($r['gamets_last_updated']) ? floatval($r['gamets_last_updated']) : 0.0;
             $tam = $g > 0 ? convert_gamets2skyrim_long_date2($g) : '';
             $greg = $g > 0 ? gamets2str_format_gregorian_date($g, 'Y-m-d H:i') : '';
-            $created = (string)($r['created'] ?? '');
             $entries[] = [
                 'history_id' => (int)($r['history_id'] ?? 0),
                 'gamets' => $g,
                 'when_tamrielic' => $tam,
                 'when_gregorian' => $greg,
-                'created' => $created,
                 'fields' => [
                     'npc_name' => $r['npc_name'] ?? '',
                     'profile_id' => isset($r['profile_id']) ? (string)$r['profile_id'] : '',
@@ -3774,7 +3771,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       const order = ['npc_name','profile_id','gender','race','voiceid','faction','npc_static_bio','appearance','personality','relationships','occupation','skills','speechstyle','goals','world_knowledge_tags','emote_moods','prompt_head','dynamic_profile','npc_favorite','lock_profile','tags'];
       let html = '';
       html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">';
-      html += '<div style="color:#cfd9ea;">'+(entry.when_tamrielic || (entry.created?('Created '+entry.created):'Unknown time'))+(entry.created?(' <span style="color:#9fb1c9">('+entry.created+')</span>'):'')+'</div>';
+      html += '<div style="color:#cfd9ea;">'+(entry.when_tamrielic || (entry.gamets ? ('GameTS '+String(entry.gamets)) : 'Unknown in-game time'))+'</div>';
       html += '<button class="btn-restore-history" data-history-id="'+String(entry.history_id||'')+'" style="background:#e6b76c; color:#111; border:1px solid #e6b76c; border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:700;">Restore this version</button>';
       html += '</div>';
       html += '<div style="display:grid; grid-template-columns: 220px 1fr; gap:6px;">';
@@ -3843,9 +3840,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             entries.forEach((e, idx)=>{
               const div = document.createElement('div');
               div.style.border='1px solid #4a4a4a'; div.style.borderRadius='8px'; div.style.padding='8px'; div.style.cursor='pointer'; div.style.marginBottom='6px';
-              const label = e.when_tamrielic || (e.created?('Created '+e.created):('Snapshot #'+String(e.history_id||idx+1)));
-              const second = e.created?('<div style="color:#9fb1c9; font-size:11px;">'+e.created+'</div>') : '';
-              div.innerHTML = '<div style="font-weight:700; color:#e9efff;">'+label+'</div>'+second;
+              const label = e.when_tamrielic || (e.gamets ? ('GameTS '+String(e.gamets)) : ('Snapshot #'+String(e.history_id||idx+1)));
+              div.innerHTML = '<div style="font-weight:700; color:#e9efff;">'+label+'</div>';
               div.addEventListener('click', function(){
                 listBox.querySelectorAll('.active').forEach(n=>{ n.classList.remove('active'); n.style.background=''; });
                 this.classList.add('active'); this.style.background='#333333';

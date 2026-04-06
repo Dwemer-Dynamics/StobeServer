@@ -6427,8 +6427,13 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
         return false;
     }
 
+    $safeReason = trim($reason);
+    if ($safeReason === '') {
+        $safeReason = 'snapshot';
+    }
+
     $latest = $db->fetchOne(
-        "SELECT snapshot_hash
+        "SELECT snapshot_hash, created
          FROM core_npc_master_history
          WHERE npc_id = $1
          ORDER BY history_id DESC
@@ -6440,14 +6445,32 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
         return false;
     }
 
+    $cooldownBypassReason = (
+        str_starts_with($safeReason, 'rollback_')
+        || $safeReason === 'delete_before'
+    );
+    if (!$cooldownBypassReason) {
+        $latestCreatedUnix = strtotime(strval($latest['created'] ?? ''));
+        if ($latestCreatedUnix !== false) {
+            $cooldownSeconds = 600; // 10 real-world minutes
+            $elapsedSeconds = max(0, time() - intval($latestCreatedUnix));
+            if ($elapsedSeconds < $cooldownSeconds) {
+                stobeLogDebug('NPC history snapshot skipped by cooldown', [
+                    'npc_id' => $npcId,
+                    'name' => $name,
+                    'reason' => $safeReason,
+                    'elapsed_seconds' => $elapsedSeconds,
+                    'cooldown_seconds' => $cooldownSeconds,
+                ]);
+                return false;
+            }
+        }
+    }
+
     $metadata = normalizeJsonString(normalizeCoreNpcMetadata($row['metadata'] ?? '{}'));
     $extendedData = normalizeJsonString(normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}'));
     $limbs = normalizeJsonString(stobeNormalizeJsonArrayValue($row['limbs'] ?? '{}'));
     $bounty = stobeNormalizeBountyJsonString($row['bounty'] ?? '{}');
-    $safeReason = trim($reason);
-    if ($safeReason === '') {
-        $safeReason = 'snapshot';
-    }
 
     $dynamicProfileEnabled = false;
     $metadataArray = normalizeCoreNpcMetadata($metadata);
