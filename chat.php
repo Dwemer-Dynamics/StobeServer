@@ -75,6 +75,28 @@ if ($targetNpc === '' || $message === '') {
     return;
 }
 
+$speakerProfileName = normalizeParticipantNameToken($speaker);
+if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
+    $speakerNpcData = getNpcData($speakerProfileName);
+    if (is_array($speakerNpcData) && stobeNpcCannotRespondInDirectChat($speakerNpcData)) {
+        $speakerState = function_exists('stobeResolveNpcAwarenessState')
+            ? stobeResolveNpcAwarenessState($speakerNpcData)
+            : strtolower(trim(strval($speakerNpcData['character_state'] ?? '')));
+        stobeLogInfo('JSON chat rejected: speaker cannot speak in current state', [
+            'speaker' => $speakerProfileName,
+            'target_npc' => $targetNpc,
+            'mode' => $mode,
+            'state' => $speakerState,
+            'gamets' => intval($gamets),
+        ]);
+        echo json_encode([
+            'ok' => false,
+            'error' => 'Speaker cannot speak while incapacitated.',
+        ]);
+        return;
+    }
+}
+
 $ingestRows = [];
 $ingestSource = 'chat_payload';
 if (count($context) > 0) {

@@ -389,6 +389,27 @@ if ($targetNpc === '') {
     echo "ok";
     return;
 }
+
+$speakerProfileName = normalizeParticipantNameToken(strval($speaker));
+if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
+    $speakerNpcData = getNpcData($speakerProfileName);
+    if (is_array($speakerNpcData) && stobeNpcCannotRespondInDirectChat($speakerNpcData)) {
+        $speakerState = function_exists('stobeResolveNpcAwarenessState')
+            ? stobeResolveNpcAwarenessState($speakerNpcData)
+            : strtolower(trim(strval($speakerNpcData['character_state'] ?? '')));
+        stobeLogInfo('Chat input rejected: speaker cannot speak in current state', [
+            'event_type' => $eventType,
+            'speaker' => $speakerProfileName,
+            'target_npc' => $targetNpc,
+            'state' => $speakerState,
+            'mode' => $dialogueMode,
+            'gamets' => intval($gamets),
+        ]);
+        echo "ok";
+        return;
+    }
+}
+
 if ($manualActionTarget === '') {
     $manualActionTarget = $targetNpc;
 }

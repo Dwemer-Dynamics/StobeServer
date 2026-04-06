@@ -1288,6 +1288,188 @@ function getEventGeoFromPlayerSnapshot(): array {
     return $cached;
 }
 
+function getEventGeoFromCoordinateFallback(?float $x, ?float $y, ?float $z, bool $allowBuilding): array {
+    $empty = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
+    if ($x === null || $z === null) {
+        return $empty;
+    }
+
+    static $cache = [];
+    $cacheKey = implode('|', [
+        number_format($x, 0, '.', ''),
+        number_format($z, 0, '.', ''),
+        $allowBuilding ? '1' : '0',
+    ]);
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT
+            COALESCE(
+                NULLIF(TRIM(env_ctx.env->>'zone_name'), ''),
+                NULLIF(TRIM(env_ctx.env->>'town_name'), ''),
+                NULLIF(TRIM(core_npc.metadata->>'zone'), ''),
+                NULLIF(TRIM(core_npc.metadata->>'town'), '')
+            ) AS zone_name,
+            COALESCE(
+                NULLIF(TRIM(env_ctx.env->>'region'), ''),
+                NULLIF(TRIM(core_npc.metadata->>'region'), '')
+            ) AS region_name,
+            NULLIF(TRIM(env_ctx.env->>'building_name'), '') AS building_name,
+            ((CAST(env_ctx.env->>'x' AS DOUBLE PRECISION) - $1) * (CAST(env_ctx.env->>'x' AS DOUBLE PRECISION) - $1)
+             + (CAST(env_ctx.env->>'z' AS DOUBLE PRECISION) - $2) * (CAST(env_ctx.env->>'z' AS DOUBLE PRECISION) - $2)) AS dist2
+         FROM core_npc
+         CROSS JOIN LATERAL (
+            SELECT
+                CASE
+                  WHEN jsonb_typeof(core_npc.extended_data) = 'object'
+                    THEN core_npc.extended_data->'environment'
+                  ELSE '{}'::jsonb
+                END AS env
+         ) AS env_ctx
+         WHERE (env_ctx.env->>'x') ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+           AND (env_ctx.env->>'z') ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+           AND (
+                COALESCE(
+                    NULLIF(TRIM(env_ctx.env->>'zone_name'), ''),
+                    NULLIF(TRIM(env_ctx.env->>'town_name'), ''),
+                    NULLIF(TRIM(core_npc.metadata->>'zone'), ''),
+                    NULLIF(TRIM(core_npc.metadata->>'town'), '')
+                ) IS NOT NULL
+                OR COALESCE(
+                    NULLIF(TRIM(env_ctx.env->>'region'), ''),
+                    NULLIF(TRIM(core_npc.metadata->>'region'), '')
+                ) IS NOT NULL
+           )
+         ORDER BY dist2 ASC
+         LIMIT 8",
+        [$x, $z]
+    );
+
+    if (!is_array($rows) || count($rows) === 0) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    $best = $rows[0];
+    $bestDist2 = floatval($best['dist2'] ?? 0.0);
+    $bestDistance = $bestDist2 > 0.0 ? sqrt($bestDist2) : 0.0;
+    $maxDistance = 120000.0;
+    if ($bestDistance > $maxDistance) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    $regionScores = [];
+    $regionBestRow = [];
+    $regionBestDist = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $zoneCandidate = trim(strval($row['zone_name'] ?? ''));
+        $regionCandidate = trim(strval($row['region_name'] ?? ''));
+        if ($regionCandidate === '' && $zoneCandidate !== '') {
+            $regionCandidate = stobeResolveRegionFromAnyToken($zoneCandidate);
+        }
+        if ($regionCandidate === '') {
+            continue;
+        }
+        $dist2 = floatval($row['dist2'] ?? 0.0);
+        $distance = $dist2 > 0.0 ? sqrt($dist2) : 0.0;
+        $weight = 1.0 / max(1.0, $distance);
+        $regionKey = strtolower($regionCandidate);
+        if (!array_key_exists($regionKey, $regionScores)) {
+            $regionScores[$regionKey] = 0.0;
+            $regionBestRow[$regionKey] = $row;
+            $regionBestDist[$regionKey] = $distance;
+        }
+        $regionScores[$regionKey] += $weight;
+        if ($distance < floatval($regionBestDist[$regionKey] ?? INF)) {
+            $regionBestDist[$regionKey] = $distance;
+            $regionBestRow[$regionKey] = $row;
+        }
+    }
+
+    if (count($regionScores) === 0) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+    arsort($regionScores);
+    $regionKeys = array_keys($regionScores);
+    $selectedRegionKey = strval($regionKeys[0] ?? '');
+    if ($selectedRegionKey === '') {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+    $selectedRegionRow = is_array($regionBestRow[$selectedRegionKey] ?? null) ? $regionBestRow[$selectedRegionKey] : $best;
+    $zone = trim(strval($selectedRegionRow['zone_name'] ?? ''));
+    $region = trim(strval($selectedRegionRow['region_name'] ?? ''));
+    if ($region === '' && $zone !== '') {
+        $region = stobeResolveRegionFromAnyToken($zone);
+    }
+    if ($region === '') {
+        $region = trim(strval($selectedRegionKey));
+    }
+    $selectedDistance = floatval($regionBestDist[$selectedRegionKey] ?? $bestDistance);
+    $zoneConfidenceDistance = 12000.0;
+    if ($selectedDistance > $zoneConfidenceDistance) {
+        $zone = '';
+    }
+
+    $building = '';
+    if ($allowBuilding && $zone !== '' && $selectedDistance <= 3000.0) {
+        $building = trim(strval($selectedRegionRow['building_name'] ?? ''));
+    }
+
+    $rawLocationParts = [];
+    if ($building !== '') {
+        $rawLocationParts[] = $building;
+    }
+    if ($zone !== '') {
+        $rawLocationParts[] = $zone;
+    }
+    if ($region !== '') {
+        $rawLocationParts[] = $region;
+    }
+    $candidate = [
+        'location' => count($rawLocationParts) > 0 ? implode(', ', array_values(array_unique($rawLocationParts))) : '',
+        'building' => $building,
+        'zone' => $zone,
+        'city' => $zone,
+        'region' => $region,
+    ];
+
+    $normalized = stobeNormalizeGeoContext($candidate);
+    if (trim(strval($normalized['zone'] ?? '')) === '' && trim(strval($normalized['region'] ?? '')) === '') {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    stobeLogDebug('GEO_DEBUG_COORDINATE_FALLBACK', [
+        'x' => $x,
+        'y' => $y,
+        'z' => $z,
+        'allow_building' => $allowBuilding ? '1' : '0',
+        'best_distance' => $bestDistance,
+        'selected_distance' => $selectedDistance,
+        'selected_region' => $region,
+        'region_scores' => $regionScores,
+        'candidate' => $candidate,
+        'normalized' => $normalized,
+    ]);
+
+    $cache[$cacheKey] = $normalized;
+    return $normalized;
+}
+
 function getRecentEventGeoFallback(string $participant = '', int $windowSeconds = 1800): array {
     static $cache = [];
     $key = strtolower(trim($participant)) . '|' . strval($windowSeconds);
@@ -1421,6 +1603,10 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     }
     $queryIndoorsRaw = strtolower(trim(strval($_GET['loc_indoors'] ?? '')));
     $queryOutdoors = in_array($queryIndoorsRaw, ['0', 'false', 'no', 'off'], true);
+    $queryIndoors = in_array($queryIndoorsRaw, ['1', 'true', 'yes', 'on'], true);
+    $queryX = stobeParseNullableCoordinate($_GET['loc_x'] ?? null);
+    $queryY = stobeParseNullableCoordinate($_GET['loc_y'] ?? null);
+    $queryZ = stobeParseNullableCoordinate($_GET['loc_z'] ?? null);
     stobeLogDebug('GEO_DEBUG_RESOLVE_START', [
         'type' => $normalizedType,
         'event_data' => substr($eventData, 0, 220),
@@ -1432,6 +1618,9 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
             'loc_zone' => strval($_GET['loc_zone'] ?? ''),
             'loc_region' => strval($_GET['loc_region'] ?? ''),
             'loc_indoors' => strval($_GET['loc_indoors'] ?? ''),
+            'loc_x' => strval($_GET['loc_x'] ?? ''),
+            'loc_y' => strval($_GET['loc_y'] ?? ''),
+            'loc_z' => strval($_GET['loc_z'] ?? ''),
         ],
     ]);
     if ($queryOutdoors) {
@@ -1492,6 +1681,12 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     // Current request geo is authoritative and should not be cross-filled by
     // historical fallbacks.
     if ($hasQueryGeo) {
+        if (($resolved['zone'] === '' || $resolved['region'] === '') && ($queryX !== null || $queryZ !== null)) {
+            $resolved = mergeEventGeoContext(
+                $resolved,
+                getEventGeoFromCoordinateFallback($queryX, $queryY, $queryZ, $queryIndoors && !$queryOutdoors)
+            );
+        }
         $queryNormalizedInput = $resolved;
         $queryNormalizedInput['allow_unknown_zone'] = true;
         $normalized = stobeNormalizeGeoContext($queryNormalizedInput);
@@ -1516,12 +1711,44 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         $resolved = mergeEventGeoContext($resolved, $parsedEventGeo);
     }
 
+    $coordinateOnlyQuery = (
+        !$hasQueryGeo
+        && ($queryX !== null || $queryZ !== null)
+    );
+    $coordinateFallbackLocked = false;
+    if ($coordinateOnlyQuery) {
+        $coordinateGeo = getEventGeoFromCoordinateFallback(
+            $queryX,
+            $queryY,
+            $queryZ,
+            $queryIndoors && !$queryOutdoors
+        );
+        if (
+            trim(strval($coordinateGeo['zone'] ?? '')) !== ''
+            || trim(strval($coordinateGeo['region'] ?? '')) !== ''
+        ) {
+            $resolved = mergeEventGeoContext($resolved, $coordinateGeo);
+            $coordinateFallbackLocked = true;
+        }
+    }
+
     $profileName = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
-    if ($profileName !== '') {
+    if (!$coordinateFallbackLocked && $profileName !== '') {
         $resolved = mergeEventGeoContext($resolved, getEventGeoFromNpcName($profileName));
     }
 
     if (
+        !$coordinateFallbackLocked
+        && ($resolved['zone'] === '' || $resolved['region'] === '')
+    ) {
+        $resolved = mergeEventGeoContext(
+            $resolved,
+            getEventGeoFromCoordinateFallback($queryX, $queryY, $queryZ, $queryIndoors && !$queryOutdoors)
+        );
+    }
+
+    if (
+        !$coordinateFallbackLocked &&
         in_array($normalizedType, ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored', 'action', 'infoaction', 'lockpicked', 'lockpiked', 'infonpc', 'infoloc'], true) &&
         strpos($eventData, ':') !== false
     ) {
@@ -1531,6 +1758,7 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         }
     }
     if (
+        !$coordinateFallbackLocked &&
         in_array($normalizedType, ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored', 'action', 'infoaction', 'lockpicked', 'lockpiked', 'infonpc', 'infoloc'], true) &&
         stripos($eventData, '(talking to:') !== false
     ) {
@@ -1542,7 +1770,7 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     }
 
     $peopleRaw = strval($GLOBALS["CACHE_PEOPLE"] ?? ($_GET['people'] ?? ''));
-    if (trim($peopleRaw) !== '') {
+    if (!$coordinateFallbackLocked && trim($peopleRaw) !== '') {
         $decodedPeople = json_decode($peopleRaw, true);
         if (is_array($decodedPeople)) {
             foreach ($decodedPeople as $participantToken) {
@@ -1564,12 +1792,14 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         }
     }
 
-    if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
-        $fallbackParticipant = $speakerHint !== '' ? $speakerHint : $targetHint;
-        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 86400));
-    }
-    if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
-        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback('', 86400));
+    if (!$coordinateFallbackLocked) {
+        if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
+            $fallbackParticipant = $speakerHint !== '' ? $speakerHint : $targetHint;
+            $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 86400));
+        }
+        if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
+            $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback('', 86400));
+        }
     }
 
     $normalized = stobeNormalizeGeoContext($resolved);
@@ -1874,7 +2104,17 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     $peopleCache = $GLOBALS["CACHE_PEOPLE"] ?? '';
     $locationCache = $GLOBALS["CACHE_LOCATION"] ?? '';
 
-    if ($normalizedType === 'chat' && stobeShouldSkipMirroredPlayerChatRow($db, $data, $eventLocalTs)) {
+    if (
+        $normalizedType === 'chat'
+        && strcasecmp(trim($sess), 'inputtext_chat_mirror') !== 0
+        && stobeShouldSkipMirroredPlayerChatRow($db, $data, $eventLocalTs)
+    ) {
+        return;
+    }
+    if (
+        ($normalizedType === 'chat' || $normalizedType === 'rechat')
+        && stobeShouldSkipDuplicateDialogueEchoRow($db, $normalizedType, $data, $eventLocalTs, $gamets)
+    ) {
         return;
     }
 
@@ -1990,12 +2230,12 @@ function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventL
         "SELECT rowid, data, localts
          FROM eventlog
          WHERE type IN ('inputtext', 'inputtext_s')
-           AND localts >= $1
-           AND LOWER(data) LIKE LOWER($2)
+            AND localts >= $1
+            AND LOWER(data) LIKE LOWER($2)
          ORDER BY rowid DESC
          LIMIT 8",
         [
-            $eventLocalTs - 4,
+            $eventLocalTs - 8,
             $chatSpeaker . ':%',
         ]
     );
@@ -2015,10 +2255,6 @@ function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventL
         $parsedInput = parseDialogueEventData($inputData);
         $inputSpeaker = normalizeParticipantNameToken(strval($parsedInput['speaker'] ?? ''));
         if ($inputSpeaker === '' || strcasecmp($inputSpeaker, $chatSpeaker) !== 0) {
-            continue;
-        }
-        $inputTarget = normalizeParticipantNameToken(strval($parsedInput['target'] ?? ''));
-        if ($chatTarget !== '' && $inputTarget !== '' && strcasecmp($chatTarget, $inputTarget) !== 0) {
             continue;
         }
         $inputMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedInput['message'] ?? ''));
@@ -2046,6 +2282,12 @@ function stobeSanitizeDialogueMessageForLog(string $message): string {
     $clean = sanitizeForKenshi(strval($message));
     $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
     $clean = trim($clean);
+
+    // Strip common corrupted UTF-8/question-mark suffixes emitted by game payload noise.
+    // Example: "want to join our cult6??х??????Ѽ? ɕ???" -> "want to join our cult"
+    $clean = preg_replace('/(?<=\p{L})\d+\?{2,}.*$/u', '', $clean) ?? $clean;
+    $clean = preg_replace('/\?{2,}[^\r\n]*[^\x00-\x7F][^\r\n]*$/u', '', $clean) ?? $clean;
+    $clean = preg_replace('/[^\x00-\x7F]{2,}[^\r\n]*$/u', '', $clean) ?? $clean;
 
     // Strip repeated trailing question marks that are emitted as corruption tails.
     $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
@@ -5768,6 +6010,115 @@ function storeWorldStateEntries(array $payload): int {
     }
 
     return count($entriesByKey);
+}
+
+function stobeShouldSkipDuplicateDialogueEchoRow(
+    $db,
+    string $eventType,
+    string $eventData,
+    int $eventLocalTs,
+    int $eventGamets
+): bool {
+    if (!$db) {
+        return false;
+    }
+
+    $parsedCurrent = parseDialogueEventData($eventData);
+    $currentSpeaker = normalizeParticipantNameToken(strval($parsedCurrent['speaker'] ?? ''));
+    $currentTarget = normalizeParticipantNameToken(strval($parsedCurrent['target'] ?? ''));
+    $currentMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedCurrent['message'] ?? ''));
+    if ($currentSpeaker === '' || $currentMessageNorm === '') {
+        return false;
+    }
+
+    $recentRows = $db->fetchAll(
+        "SELECT rowid, type, data, localts, gamets
+         FROM eventlog
+         WHERE type IN ('chat', 'rechat')
+           AND localts >= $1
+           AND LOWER(data) LIKE LOWER($2)
+         ORDER BY rowid DESC
+         LIMIT 12",
+        [
+            $eventLocalTs - 5,
+            $currentSpeaker . ':%',
+        ]
+    );
+
+    if (!is_array($recentRows) || count($recentRows) === 0) {
+        return false;
+    }
+
+    $currentType = strtolower(trim($eventType));
+    foreach ($recentRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $rowData = strval($row['data'] ?? '');
+        if ($rowData === '') {
+            continue;
+        }
+
+        $parsedRow = parseDialogueEventData($rowData);
+        $rowSpeaker = normalizeParticipantNameToken(strval($parsedRow['speaker'] ?? ''));
+        if ($rowSpeaker === '' || strcasecmp($rowSpeaker, $currentSpeaker) !== 0) {
+            continue;
+        }
+
+        $rowMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedRow['message'] ?? ''));
+        if ($rowMessageNorm === '' || $rowMessageNorm !== $currentMessageNorm) {
+            continue;
+        }
+
+        $rowTarget = normalizeParticipantNameToken(strval($parsedRow['target'] ?? ''));
+        $targetCompatible = false;
+        $targetReason = 'target_exact';
+        if ($currentTarget === '' || $rowTarget === '') {
+            $targetCompatible = true;
+            $targetReason = 'target_partial';
+        } elseif (strcasecmp($currentTarget, $rowTarget) === 0) {
+            $targetCompatible = true;
+            $targetReason = 'target_exact';
+        }
+
+        $rowType = strtolower(trim(strval($row['type'] ?? '')));
+        $rowGamets = intval($row['gamets'] ?? 0);
+        $gametsDelta = abs($eventGamets - $rowGamets);
+        if ($eventGamets > 0 && $rowGamets > 0 && $gametsDelta > 120) {
+            // Same words spoken by same NPC much later is likely intentional.
+            continue;
+        }
+        $localTsDelta = abs($eventLocalTs - intval($row['localts'] ?? 0));
+
+        // Accept strict target mismatch dedupe only for very short windows to catch
+        // known duplicate chat echo races where "talking to" differs but line is identical.
+        if (!$targetCompatible) {
+            if ($localTsDelta > 4 || ($eventGamets > 0 && $rowGamets > 0 && $gametsDelta > 60)) {
+                continue;
+            }
+            $targetReason = 'target_mismatch_short_window';
+            $targetCompatible = true;
+        }
+
+        stobeLogDebug('Skipped duplicate dialogue echo row', [
+            'incoming_type' => $currentType,
+            'incoming_speaker' => $currentSpeaker,
+            'incoming_target' => $currentTarget,
+            'incoming_message' => $currentMessageNorm,
+            'matched_rowid' => intval($row['rowid'] ?? 0),
+            'matched_type' => $rowType,
+            'matched_target' => $rowTarget,
+            'matched_localts' => intval($row['localts'] ?? 0),
+            'incoming_gamets' => $eventGamets,
+            'matched_gamets' => $rowGamets,
+            'gamets_delta' => $gametsDelta,
+            'localts_delta' => $localTsDelta,
+            'target_match' => $targetReason,
+        ]);
+        return true;
+    }
+
+    return false;
 }
 
 function stobeEnsureFactionRelationTables(): bool {

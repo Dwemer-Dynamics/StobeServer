@@ -3360,6 +3360,9 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         if ($historyType === 'infoaction') {
             continue;
         }
+        if ($historyType === 'inputtext' || $historyType === 'inputtext_s') {
+            continue;
+        }
         $historyData = stobeNormalizeContextHistoryDataLine(strval($row['data'] ?? ''));
         if ($historyData === '') {
             continue;
@@ -3470,6 +3473,9 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
             continue;
         }
         if (preg_match('/^\[\s*infoaction\b/i', $clean) === 1) {
+            continue;
+        }
+        if (preg_match('/^\[\s*inputtext(?:_s)?\b/i', $clean) === 1) {
             continue;
         }
         $messages[] = [
