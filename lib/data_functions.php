@@ -3025,7 +3025,7 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         $clean = stobeNormalizeKnockoutEventData($clean);
     }
 
-    $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
+    $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems', 'carry'];
     if (in_array($normalizedType, $contextOnlyTypes, true)) {
         // Context telemetry rows are not directional dialogue.
         $clean = preg_replace('/\s*\(talking to:\s*[^\)]*\)\s*/iu', ' ', $clean) ?? $clean;
