@@ -59,7 +59,6 @@ function loadPromptTemplate(string $templateName): string {
         . "</goals>\n"
         . "#NPC_MIDDLE_TERM_MEMORY#\n"
         . "</character>\n\n"
-        . "<conversation_target><name>#PLAYER_NAME#</name></conversation_target>\n\n"
         . "<general_instructions>\n"
         . "#GENERAL_INSTRUCTIONS#\n"
         . "</general_instructions>";
@@ -9025,8 +9024,6 @@ function stobeBuildNarratorSystemPrompt(
         $lines[] = '';
         $lines[] = $speakerContextBlock;
     }
-    $lines[] = '';
-    $lines[] = '<conversation_target><name>' . stobePromptXmlEscape($safeSpeaker) . '</name></conversation_target>';
     $lines[] = '';
     $lines[] = '<general_instructions>';
     $lines[] = stobePromptXmlEscape($generalInstructions);

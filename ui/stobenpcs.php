@@ -2529,7 +2529,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         </div>
 
         <div class="form-item span-2">
-            <label for="extended_data">Setting Overrides</label>
+            <label for="extended_data">Character Data</label>
             <small class="hint">Override global and profile settings for this specific NPC. Changes here take precedence over all other configurations.</small>
             <textarea id="extended_data" name="extended_data" placeholder="{}"><?= htmlspecialchars($editItem["extended_data"] ?? "") ?></textarea>
         </div>
