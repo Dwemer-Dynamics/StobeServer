@@ -3370,7 +3370,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         $inlineTypes = [
             'inputtext', 'inputtext_s', 'chat', 'rechat', 'bored',
             'action', 'death', 'limb_loss', 'knockout',
-            'enslaved', 'freed_slave', 'item_pickup', 'carry', 'trade',
+            'enslaved', 'freed_slave', 'item_pickup', 'carry', 'predation', 'trade',
         ];
         if (!in_array($historyType, $inlineTypes, true)) {
             $historyData = '[' . $historyType . '] ' . $historyData;

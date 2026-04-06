@@ -307,6 +307,12 @@ try {
         case 'death':
         case 'slavery':
         case 'item_pickup':
+        case 'chat':
+        case 'healing':
+        case 'carry':
+        case 'predation':
+        case 'eat':
+        case 'narration':
         case 'trade':
             require_once($path . "processor/combat.php");
             break;

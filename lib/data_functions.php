@@ -4266,7 +4266,7 @@ function resolveSnapshotTargetNpcName(string $incomingName, string $incomingStor
                         'candidate_original_name' => $candidateOriginalName,
                         'match_count' => $ambiguousCount,
                         'resolved_name' => $resolvedName,
-                    ], 'WARN');
+                    ], 'DEBUG');
                 }
                 return [
                     'name' => $resolvedName,
@@ -7631,7 +7631,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             'storage_id' => normalizeStorageIdToken($metadataArray['storage_id'] ?? ''),
             'metadata_source' => $metadataSource,
             'profile_keys' => array_keys($profile),
-        ], 'WARN');
+        ], 'DEBUG');
     }
 
     $metadataJson = normalizeJsonString($metadataArray);
