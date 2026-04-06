@@ -839,6 +839,7 @@ CREATE TABLE IF NOT EXISTS memory (
     event_type VARCHAR(64) DEFAULT '',
     gamets BIGINT DEFAULT 0,
     localts BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()),
+    location TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -2192,13 +2193,9 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
-('MEMORY_TIME_DELAY',    '12',           'Minutes before recent memories can be recalled'),
-('MEMORY_CONTEXT_SIZE',  '1',            'Max number of memory entries injected'),
 ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
-('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval'),
-('MIDDLE_TERM_MEMORY_INTERVAL_HOURS', '10', 'Middle-term memory summary interval (in-game hours)'),
-('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
-('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
+('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval. Is measured in ingame hours.'),
+('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),
 ('RELATIONSHIP_SYSTEM',  'true',         'Master toggle for relationship connector evaluation. When false, relationship LLM updates are skipped.'),

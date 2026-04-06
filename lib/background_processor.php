@@ -33,12 +33,28 @@ function stobeBackgroundProcessorIsRunning(float $timeoutSeconds = 0.8): bool
         $timeoutSeconds = 2.0;
     }
 
-    $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, $timeoutSeconds);
-    if (!is_resource($socket)) {
-        return false;
+    // Probe multiple times to avoid false negatives during startup.
+    for ($attempt = 0; $attempt < 4; $attempt++) {
+        $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, $timeoutSeconds);
+        if (is_resource($socket)) {
+            @fclose($socket);
+            return true;
+        }
+        usleep(100000);
     }
-    @fclose($socket);
-    return true;
+
+    // Fallback: if the daemon process exists, consider it running even if the
+    // heartbeat port has not opened yet.
+    if (function_exists('shell_exec')) {
+        $startScript = stobeBackgroundProcessorStartScriptPath();
+        $normalizedStartScript = str_replace('\\', '/', $startScript);
+        $processCheck = @shell_exec('pgrep -f ' . escapeshellarg($normalizedStartScript) . ' 2>/dev/null');
+        if (is_string($processCheck) && trim($processCheck) !== '') {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function stobeEnsureBackgroundProcessorRunning(bool $logFailures = true): bool
@@ -64,11 +80,17 @@ function stobeEnsureBackgroundProcessorRunning(bool $logFailures = true): bool
         return false;
     }
 
-    $command = 'bash ' . escapeshellarg($startScript) . ' > /dev/null 2>&1 &';
+    $command = 'nohup bash ' . escapeshellarg($startScript) . ' > /dev/null 2>&1 < /dev/null &';
     @shell_exec($command);
 
-    usleep(250000);
-    $running = stobeBackgroundProcessorIsRunning();
+    $running = false;
+    for ($attempt = 0; $attempt < 20; $attempt++) {
+        usleep(150000);
+        if (stobeBackgroundProcessorIsRunning(0.25)) {
+            $running = true;
+            break;
+        }
+    }
     if ($running) {
         stobeLogInfo('Background processor started', [
             'port' => stobeBackgroundProcessorPort(),

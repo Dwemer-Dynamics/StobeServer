@@ -220,29 +220,10 @@ try {
             break;
     }
 
-    if (function_exists('stobeMaybeRunMiddleTermCycle')) {
-        stobeMaybeRunMiddleTermCycle(
-            strval($eventType),
-            intval($timestamp),
-            intval($gamets),
-            strval($eventData)
-        );
-    }
-    if (function_exists('stobeMaybeRunRegularMemoryCycle')) {
-        stobeMaybeRunRegularMemoryCycle(
-            strval($eventType),
-            intval($timestamp),
-            intval($gamets),
-            strval($eventData)
-        );
-    }
-    if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
-        stobeMaybeRunDynamicProfileCycle(
-            strval($eventType),
-            intval($timestamp),
-            intval($gamets),
-            strval($eventData)
-        );
+    // Daemon-style behavior: periodic cycles run in service/manager.php only.
+    // Foreground request path does not execute maintenance cycles.
+    if (function_exists('stobeEnsureBackgroundProcessorRunning')) {
+        stobeEnsureBackgroundProcessorRunning(false);
     }
 } catch (Throwable $exception) {
     stobeLogException($exception, 'Event routing failed', [

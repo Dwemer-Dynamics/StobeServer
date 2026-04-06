@@ -3508,20 +3508,16 @@ function stobeBuildMemoryEventContextMessages(
             $blocks[] = trim($regularBlock);
         }
     }
-    $middleTermBlock = stobeBuildMiddleTermMemoryPromptBlock($npcData, $safeNpc);
-    if (trim($middleTermBlock) !== '') {
-        $blocks[] = trim($middleTermBlock);
-    }
-
     if (count($blocks) === 0) {
         return [];
     }
 
     $messages = [];
     foreach ($blocks as $block) {
+        $memoryLine = "<memory> {$safeNpc} remembers this: [{$block}] </memory>";
         $messages[] = [
             'role' => 'user',
-            'content' => " (...\n" . $block . "\n...)",
+            'content' => $memoryLine,
         ];
     }
     return $messages;
@@ -8708,40 +8704,21 @@ function stobeBuildMiddleTermMemoryPromptBlock(array $npcData, string $npcName):
         return '';
     }
 
-    $enabled = getNpcProfileBoolSetting(
-        $npcData,
-        ['middle_term_enabled', 'MIDDLE_TERM_MEMORY_ENABLED'],
-        'MIDDLE_TERM_MEMORY_ENABLED',
-        true
-    );
-    if (!$enabled) {
+    // Herika-style prompt injection: only latest middle-term memory entry.
+    $entries = stobeExtractMiddleTermMemoryEntriesFromExtendedData($npcData, 1);
+    if (count($entries) === 0) {
         return '';
     }
 
-    $maxEntries = getNpcProfileIntegerSetting(
-        $npcData,
-        ['MEMORY_CONTEXT_SIZE'],
-        'MEMORY_CONTEXT_SIZE',
-        1,
-        1,
-        8
-    );
-
-    $entries = stobeExtractMiddleTermMemoryEntriesFromExtendedData($npcData, $maxEntries);
-    if (count($entries) === 0) {
+    $latest = trim(strval($entries[count($entries) - 1] ?? ''));
+    if ($latest === '') {
         return '';
     }
 
     $lines = [];
     $lines[] = '<middle_term_memory>';
-    $lines[] = 'Past events';
-    if (count($entries) === 1) {
-        $lines[] = stobePromptXmlEscape($entries[0]);
-    } else {
-        foreach ($entries as $entry) {
-            $lines[] = '- ' . stobePromptXmlEscape($entry);
-        }
-    }
+    $lines[] = '#Past events';
+    $lines[] = $latest;
     $lines[] = '</middle_term_memory>';
     return implode("\n", $lines);
 }
@@ -9161,7 +9138,7 @@ function buildSystemPrompt(
         '#NPC_SKILLS#' => $npcSkills,
         '#NPC_SPEECHSTYLE#' => stobePromptXmlEscape($npcSpeechStyle),
         '#NPC_GOALS#' => stobePromptXmlEscape($npcGoals),
-        '#NPC_MIDDLE_TERM_MEMORY#' => '',
+        '#NPC_MIDDLE_TERM_MEMORY#' => stobeBuildMiddleTermMemoryPromptBlock($npcData, $npcName),
         '#PLAYER_NAME#' => stobePromptXmlEscape($playerName),
         '#PLAYER_CATS#' => stobePromptXmlEscape($playerCats),
         '#GENERAL_INSTRUCTIONS#' => stobePromptXmlEscape($generalInstructions),

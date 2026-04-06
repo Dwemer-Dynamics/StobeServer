@@ -184,8 +184,8 @@ if (isset($_POST["run_memory_sync"])) {
 }
 
 $memoryEnabled = getGeneralSettingBool($db, "MEMORY_ENABLED", true);
-$memoryTimeDelay = getGeneralSetting($db, "MEMORY_TIME_DELAY", "12");
-$memoryContextSize = getGeneralSetting($db, "MEMORY_CONTEXT_SIZE", "1");
+$memorySummaryInterval = getGeneralSetting($db, "MEMORY_AUTO_CREATE_SUMMARY_INTERVAL", "10");
+$individualSummaryThreshold = getGeneralSetting($db, "INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD", "3");
 $txtaiUrl = function_exists("getMemoryTxtaiUrl") ? getMemoryTxtaiUrl() : "http://127.0.0.1:8082";
 $useText2Vec = function_exists("getMemoryUseText2Vec") ? getMemoryUseText2Vec() : true;
 
@@ -473,9 +473,9 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                     </div>
 
                     <div style="background: #2a2a2a; padding: 15px; border-radius: 5px; border: 1px solid #3a3a3a;">
-                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">Context Settings</div>
-                        <div style="font-size: 12px; color: #f8f9fa;">Time Delay: <?= h($memoryTimeDelay) ?> minutes</div>
-                        <div style="font-size: 12px; color: #f8f9fa; margin-top: 4px;">Context Size: <?= h($memoryContextSize) ?> memories</div>
+                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">Summary Settings</div>
+                        <div style="font-size: 12px; color: #f8f9fa;">Auto Summary Interval: <?= h($memorySummaryInterval) ?> (in-game hours)</div>
+                        <div style="font-size: 12px; color: #f8f9fa; margin-top: 4px;">Individual Summary Threshold: <?= h($individualSummaryThreshold) ?></div>
                     </div>
                 </div>
             </div>

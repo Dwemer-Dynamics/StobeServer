@@ -1404,6 +1404,81 @@ PROMPT;
                     updated_at = NOW()");
         });
 
+        $applyPatch('general_settings', 202604050102, static function () use ($db): void {
+            $db->exec("DELETE FROM general_settings WHERE id = 'MIDDLE_TERM_MEMORY_INTERVAL_HOURS'");
+        });
+
+        $applyPatch('general_settings', 202604050104, static function () use ($db): void {
+            $db->exec("DELETE FROM general_settings WHERE id IN (
+                'MEMORY_TIME_DELAY',
+                'MEMORY_CONTEXT_SIZE',
+                'MEMORY_BIAS_A',
+                'MEMORY_BIAS_B'
+            )");
+        });
+
+        $applyPatch('prompts', 202604050103, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES
+                 (
+                    'middleterm_narrative_summarizer',
+                    'You are a long-term narrative continuity summarizer for an improvised Kenshi universe chronicle.
+- Always read ALL provided materials.
+- Treat any **Previous Context History Summary** as the canonical prior unless anything in the new Context History explicitly supersedes it.
+- Maintain in-universe tone and correct chronology. Do not invent facts outside the supplied context.
+- When combining prior and new histories, you may compress the earlier parts of the prior summary.
+- Maintain roughly 20-25 bullet points total in **Notable Events**. Older portions should be condensed into broader, grouped statements unless they describe major quest milestones, major character life events (e.g., death, intimacy, severe injury, transformation), or other pivotal story turns.
+- Preserve continuity and references to major quests even when compressing earlier material.',
+                    'Herika-style middle-term narrative summarizer system prompt.'
+                 ),
+                 (
+                    'middleterm_narrative_request',
+                    'Main character in this logbook is {HERIKA_NAME}.
+Task: Read **Context History** (newest session) and, if present, the **Previous Context History Summary** (prior canon). Integrate them to produce an updated broad narrative strokes summary that preserves continuity. Summary sections:
+
+- **Notable Events in Chronological Order:**
+  - Provide ~10 bullet points from earliest to latest, reflecting the story so far.
+  - Prefer facts already established in the previous summary; only revise if the new context clearly changes them.
+
+- **Current Quest Progression and background:**
+  - Name questlines, stages/milestones if stated, objectives completed/active, and motivations.
+When generating entries, ensure that {HERIKA_NAME} - the protagonist - is actively present in the scene. Any narrative content that occurs before {HERIKA_NAME}''s arrival or outside {HERIKA_NAME}''s perspective should be omitted, reflect only events {HERIKA_NAME} directly witness or participate in.
+If the resulting summary would exceed roughly 25 bullet points, merge or generalise older entries into broader grouped events. Always retain explicit entries for major quest milestones, major character life events, or turning points.',
+                    'Herika-style middle-term narrative request prompt.'
+                 )
+                 ON CONFLICT (prompt_key) DO UPDATE SET
+                    default_prompt = EXCLUDED.default_prompt,
+                    description = EXCLUDED.description"
+            );
+        });
+
+        $applyPatch('memory', 202604050105, static function () use ($db): void {
+            $db->exec("ALTER TABLE memory ADD COLUMN IF NOT EXISTS location TEXT DEFAULT ''");
+        });
+
+        $applyPatch('general_settings', 202604050106, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'AUTO_CREATE_SUMMARY_MIN_EVENTS',
+                    '5',
+                    'Minimum memory events required to create one packed summary block.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+
+            $db->exec(
+                "UPDATE general_settings
+                 SET description = 'Memory summary packing interval (in-game hours). Used for both run cadence and pack time buckets (Herika-style).',
+                     updated_at = NOW()
+                 WHERE id = 'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL'"
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }
