@@ -50,15 +50,15 @@ function stobeRegularMemoryAllowedEventType(string $eventType): bool
 
 function stobeRegularMemoryRunIntervalGamets(): int
 {
-    // Herika-style packing window:
-    // pfi = AUTO_CREATE_SUMMARY_INTERVAL * 100000
-    $interval = getSettingInt('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', 10);
+    // Kenshi gamets are TimeOfDay seconds, so 1 in-game hour = 3600 gamets.
+    // Keep MEMORY_AUTO_CREATE_SUMMARY_INTERVAL semantics in in-game hours.
+    $interval = getSettingInt('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', 6);
     if ($interval < 1) {
         $interval = 1;
     } elseif ($interval > 720) {
         $interval = 720;
     }
-    return $interval * 100000;
+    return $interval * 3600;
 }
 
 function stobeRegularMemorySummaryMinEvents(): int
@@ -74,7 +74,7 @@ function stobeRegularMemorySummaryMinEvents(): int
 
 function stobeRegularMemoryOneHourGamets(): int
 {
-    return intval(round(1 / 0.0000024, 0));
+    return 3600;
 }
 
 function stobeRegularMemoryLatestCompletedGlobalSummaryGamets(): int

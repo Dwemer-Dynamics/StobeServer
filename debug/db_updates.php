@@ -1473,9 +1473,25 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
 
             $db->exec(
                 "UPDATE general_settings
-                 SET description = 'Memory summary packing interval (in-game hours). Used for both run cadence and pack time buckets (Herika-style).',
+                 SET description = 'Memory summary packing interval (in-game hours).',
                      updated_at = NOW()
                  WHERE id = 'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL'"
+            );
+        });
+
+        $applyPatch('general_settings', 202604060301, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL',
+                    '6',
+                    'Memory summary packing interval (in-game hours).',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE
+                 SET value = EXCLUDED.value,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()"
             );
         });
 

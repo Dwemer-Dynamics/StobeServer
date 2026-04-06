@@ -2194,7 +2194,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
 ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
-('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval. Is measured in ingame hours.'),
+('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '6', 'Memory summary packing interval. Is measured in ingame hours.'),
 ('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),

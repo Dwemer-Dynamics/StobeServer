@@ -53,6 +53,100 @@ if (!function_exists('stobeAppendSttLog')) {
     }
 }
 
+if (!function_exists('stobeResolveLatestGametsForInlineMaintenance')) {
+    function stobeResolveLatestGametsForInlineMaintenance(int $candidateGamets): int
+    {
+        $candidate = intval($candidateGamets);
+        if ($candidate > 0) {
+            return $candidate;
+        }
+
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) {
+            return 0;
+        }
+
+        try {
+            $row = $db->fetchOne("SELECT COALESCE(MAX(gamets), 0) AS max_gamets FROM eventlog");
+            return max(0, intval($row['max_gamets'] ?? 0));
+        } catch (Throwable $exception) {
+            stobeLogException($exception, 'Inline maintenance gamets lookup failed');
+            return 0;
+        }
+    }
+}
+
+if (!function_exists('stobeTryInlineMemoryMaintenanceFallback')) {
+    function stobeTryInlineMemoryMaintenanceFallback(
+        int $timestamp,
+        int $gamets,
+        string $eventType,
+        string $eventData = ''
+    ): void {
+        if ($gamets <= 0) {
+            return;
+        }
+
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) {
+            return;
+        }
+
+        $lockId = 937469; // dedicated lock for inline fallback maintenance
+        $locked = false;
+        try {
+            $row = $db->fetchOne("SELECT pg_try_advisory_lock($1) AS locked", [$lockId]);
+            $raw = $row['locked'] ?? false;
+            if (is_bool($raw)) {
+                $locked = $raw;
+            } elseif (is_numeric($raw)) {
+                $locked = (intval($raw) === 1);
+            } else {
+                $normalized = strtolower(trim(strval($raw)));
+                $locked = in_array($normalized, ['t', 'true', '1', 'yes', 'on'], true);
+            }
+        } catch (Throwable $exception) {
+            stobeLogException($exception, 'Inline maintenance lock acquisition failed', [
+                'gamets' => $gamets,
+                'event_type' => $eventType,
+            ]);
+            return;
+        }
+
+        if (!$locked) {
+            return;
+        }
+
+        try {
+            $tickPayload = '[inline_fallback_tick] ' . trim($eventData);
+            if (function_exists('stobeRunMiddleTermDaemonEntrypoint')) {
+                stobeRunMiddleTermDaemonEntrypoint($timestamp, $gamets, $tickPayload);
+            } elseif (function_exists('stobeMaybeRunMiddleTermCycle')) {
+                stobeMaybeRunMiddleTermCycle('middleterm_daemon', $timestamp, $gamets, $tickPayload);
+            }
+
+            if (function_exists('stobeMaybeRunRegularMemoryCycle')) {
+                // Use manager-equivalent event type so regular-memory allowlist applies.
+                stobeMaybeRunRegularMemoryCycle('chat', $timestamp, $gamets, $tickPayload);
+            }
+        } catch (Throwable $exception) {
+            stobeLogException($exception, 'Inline memory maintenance fallback failed', [
+                'gamets' => $gamets,
+                'event_type' => $eventType,
+            ]);
+        } finally {
+            try {
+                $db->exec("SELECT pg_advisory_unlock($1)", [$lockId]);
+            } catch (Throwable $exception) {
+                stobeLogException($exception, 'Inline maintenance lock release failed', [
+                    'gamets' => $gamets,
+                    'event_type' => $eventType,
+                ]);
+            }
+        }
+    }
+}
+
 // Parse event: type|timestamp|gamets|data
 $gameRequest = explode("|", $receivedData);
 $eventType = $gameRequest[0] ?? '';
@@ -220,8 +314,24 @@ try {
             break;
     }
 
-    // Daemon-style behavior: periodic cycles run in service/manager.php only.
-    // Foreground request path does not execute maintenance cycles.
+    // Daemon-style behavior: periodic cycles run in service/manager.php.
+    // Fallback: if daemon is down, run memory cycles inline to avoid stalled sync.
+    $backgroundRunning = true;
+    if (function_exists('stobeBackgroundProcessorIsRunning')) {
+        $backgroundRunning = stobeBackgroundProcessorIsRunning(0.1);
+    }
+    if (!$backgroundRunning) {
+        $maintenanceGamets = stobeResolveLatestGametsForInlineMaintenance(intval($gamets));
+        if ($maintenanceGamets > 0) {
+            stobeTryInlineMemoryMaintenanceFallback(
+                intval($timestamp),
+                $maintenanceGamets,
+                strval($eventType),
+                strval($eventData)
+            );
+        }
+    }
+
     if (function_exists('stobeEnsureBackgroundProcessorRunning')) {
         stobeEnsureBackgroundProcessorRunning(false);
     }

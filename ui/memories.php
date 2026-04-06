@@ -184,7 +184,7 @@ if (isset($_POST["run_memory_sync"])) {
 }
 
 $memoryEnabled = getGeneralSettingBool($db, "MEMORY_ENABLED", true);
-$memorySummaryInterval = getGeneralSetting($db, "MEMORY_AUTO_CREATE_SUMMARY_INTERVAL", "10");
+$memorySummaryInterval = getGeneralSetting($db, "MEMORY_AUTO_CREATE_SUMMARY_INTERVAL", "6");
 $individualSummaryThreshold = getGeneralSetting($db, "INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD", "3");
 $txtaiUrl = function_exists("getMemoryTxtaiUrl") ? getMemoryTxtaiUrl() : "http://127.0.0.1:8082";
 $useText2Vec = function_exists("getMemoryUseText2Vec") ? getMemoryUseText2Vec() : true;
