@@ -154,6 +154,37 @@ function extractContextText(array $requestData): string
     return implode("\n\n", $parts);
 }
 
+function extractRelationshipTagFromMessages(array $requestData, string $tagName): string
+{
+    if ($tagName === "") {
+        return "";
+    }
+
+    $messages = $requestData["messages"] ?? null;
+    if (!is_array($messages) && isset($requestData["full"]) && is_array($requestData["full"])) {
+        $messages = $requestData["full"]["messages"] ?? null;
+    }
+    if (!is_array($messages)) {
+        return "";
+    }
+
+    $pattern = '/<' . preg_quote($tagName, '/') . '>\s*([^<]+?)\s*<\/' . preg_quote($tagName, '/') . '>/i';
+    foreach ($messages as $message) {
+        if (!is_array($message)) {
+            continue;
+        }
+        $content = strval($message["content"] ?? "");
+        if ($content === "") {
+            continue;
+        }
+        if (preg_match($pattern, $content, $matches) === 1) {
+            return trim(strval($matches[1] ?? ""));
+        }
+    }
+
+    return "";
+}
+
 function extractChanges(string $resultRaw, string $speakerName = "", string $listenerName = ""): array
 {
     $parsed = decodeJsonLoose($resultRaw);
@@ -346,6 +377,7 @@ $rows = safeFetchAll(
         result,
         connector,
         model,
+        npc_name,
         event_type,
         status,
         error
@@ -684,7 +716,7 @@ $rows = safeFetchAll(
                     <tr>
                         <th style="width:120px;">Time (UTC)</th>
                         <th style="width:90px;">Type</th>
-                        <th style="width:180px;">NPC / Pair</th>
+                        <th style="width:180px;">NPC</th>
                         <th>Changes & Context</th>
                     </tr>
                     </thead>
@@ -699,22 +731,33 @@ $rows = safeFetchAll(
                                 $rawType = strval($row["event_type"] ?? "");
                             }
                             [$typeLabel, $typeClass, $npcDisplay] = relationshipTypeLabel($rawType);
-                            $speakerName = "";
+                            $speakerName = trim(strval($row["npc_name"] ?? ""));
                             $listenerName = "";
-                            if (str_starts_with($rawType, "npc2npc_")) {
+                            if ($speakerName === "" && is_array($requestData)) {
+                                $speakerName = extractRelationshipTagFromMessages($requestData, "speaker");
+                            }
+                            if (is_array($requestData)) {
+                                $listenerName = extractRelationshipTagFromMessages($requestData, "listener");
+                            }
+                            if (str_starts_with(strtolower($rawType), "npc2npc_")) {
                                 $rest = trim(substr($rawType, 8));
                                 $parts = explode("_", $rest, 2);
-                                $speakerName = trim($parts[0] ?? "");
-                                $listenerName = trim($parts[1] ?? "");
+                                if ($speakerName === "") {
+                                    $speakerName = trim($parts[0] ?? "");
+                                }
+                                if ($listenerName === "") {
+                                    $listenerName = trim($parts[1] ?? "");
+                                }
                             }
                             $changes = extractChanges($resultRaw, $speakerName, $listenerName);
                             $contextText = is_array($requestData) ? extractContextText($requestData) : "";
                             $rowKey = "ctx_" . intval($row["id"] ?? 0);
+                            $npcDisplay = $speakerName !== "" ? $speakerName : "unknown";
                         ?>
                         <tr>
                             <td><?= h(formatLocalTs($row["localts"] ?? 0)) ?></td>
                             <td><span class="rel-type <?= h($typeClass) ?>"><?= h($typeLabel) ?></span></td>
-                            <td class="mono"><?= h($npcDisplay !== "" ? $npcDisplay : strval($row["event_type"] ?? "unknown")) ?></td>
+                            <td class="mono"><?= h($npcDisplay) ?></td>
                             <td>
                                 <?php if (count($changes) === 0): ?>
                                     <div class="rel-change-item">No parsed change payload.</div>
