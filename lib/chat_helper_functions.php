@@ -3523,7 +3523,11 @@ function stobeBuildMemoryEventContextMessages(
     return $messages;
 }
 
-function stobeBuildTurnGuidanceUserPrompt(string $npcName, string $previousSpeaker = ''): string {
+function stobeBuildTurnGuidanceUserPrompt(
+    string $npcName,
+    string $previousSpeaker = '',
+    bool $endConversationNaturally = false
+): string {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
         $safeNpc = 'the NPC';
@@ -3535,7 +3539,11 @@ function stobeBuildTurnGuidanceUserPrompt(string $npcName, string $previousSpeak
         $targetLine = 'Address ' . $safeSpeaker . ' directly.';
     }
 
-    return 'Dialogue turn for ' . $safeNpc . '. Respond naturally to whoever just spoke. '
+    $responseInstruction = $endConversationNaturally
+        ? 'Respond naturally to whoever just spoke and end the conversation naturally.'
+        : 'Respond naturally to whoever just spoke.';
+
+    return 'Dialogue turn for ' . $safeNpc . '. ' . $responseInstruction . ' '
         . $targetLine
         . ' Write the next dialogue line. Be original and avoid repeating phraseology from recent context history.';
 }

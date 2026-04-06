@@ -11792,7 +11792,7 @@ function DataRechatHistory(string $campaignFilter = '', int $windowSeconds = 120
     return $db->fetchAll(
         "SELECT gamets
          FROM eventlog
-         WHERE type IN ('rechat')
+         WHERE type IN ('rechat', 'narration', 'inputtext', 'inputtext_s')
            AND localts > $1
          ORDER BY gamets DESC, ts DESC
          LIMIT " . intval($safeLimit),
