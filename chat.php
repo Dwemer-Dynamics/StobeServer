@@ -307,11 +307,19 @@ if (!$narratorMode) {
     storeEvent('chat', time() + 1, $gamets, $eventData, 'inputtext_chat_mirror');
 }
 
+$promptNpcData = $npcData;
+if (is_array($promptNpcData) && count($nearby) > 0) {
+    $extended = normalizeNpcExtendedDataPayload($promptNpcData['extended_data'] ?? []);
+    $extended['nearby_actors'] = $nearby;
+    $extended['nearby'] = $nearby;
+    $promptNpcData['extended_data'] = $extended;
+}
+
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
         $targetNpc,
-        $npcData,
+        $promptNpcData,
         $speaker,
         $message,
         !$narratorMode,

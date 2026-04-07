@@ -1569,6 +1569,18 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('general_settings', 202604060302, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES
+                    ('PLAYER_FACTION_CUSTOM_NAME', '', 'Optional custom display name for the player faction in prompts.', NOW()),
+                    ('PLAYER_FACTION_PROMPT', '', 'Optional player-faction instruction block injected into prompts.', NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }
