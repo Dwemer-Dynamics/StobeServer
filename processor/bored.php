@@ -180,13 +180,6 @@ $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($speakerData, $spe
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
-$systemPrompt .= "\n\n<bored_event_mode>\n"
-    . "  <rule>Start a spontaneous nearby NPC conversation.</rule>\n"
-    . "  <listener>" . stobePromptXmlEscape($listener) . "</listener>\n"
-    . "  <rule>Keep it one short spoken line (max 20 words).</rule>\n"
-    . "  <rule>No stage directions or action tags.</rule>\n"
-    . "  <theme_seed>" . stobePromptXmlEscape($cue) . "</theme_seed>\n"
-    . "</bored_event_mode>";
 $messages = [
     [
         'role' => 'system',
@@ -201,7 +194,7 @@ $messages[] = [
     'content' => "<bored_event_request>\n"
         . "  <speaker>" . stobePromptXmlEscape($speakerNpc) . "</speaker>\n"
         . "  <listener>" . stobePromptXmlEscape($listener) . "</listener>\n"
-        . "  <instruction>Start a brief spontaneous line to the listener.</instruction>\n"
+        . "  <instruction>Start a brief spontaneous conversation to the listener about the current situation.</instruction>\n"
         . "</bored_event_request>",
 ];
 $messages[] = [

@@ -17,28 +17,49 @@ if (!function_exists('minai_log')) {
 if (!class_exists('Logger')) {
     class Logger
     {
+        private static function shouldUseRelationshipLog(string $message): bool
+        {
+            return str_starts_with(ltrim($message), '[REL');
+        }
+
         public static function info(string $message): void
         {
+            if (self::shouldUseRelationshipLog($message)) {
+                stobeLogRelationshipInfo($message);
+                return;
+            }
             stobeLogInfo($message);
         }
 
         public static function warn(string $message): void
         {
+            if (self::shouldUseRelationshipLog($message)) {
+                stobeLogRelationshipWarn($message);
+                return;
+            }
             stobeLogWarn($message);
         }
 
         public static function warning(string $message): void
         {
-            stobeLogWarn($message);
+            self::warn($message);
         }
 
         public static function error(string $message): void
         {
+            if (self::shouldUseRelationshipLog($message)) {
+                stobeLogRelationshipError($message);
+                return;
+            }
             stobeLogError($message);
         }
 
         public static function debug(string $message): void
         {
+            if (self::shouldUseRelationshipLog($message)) {
+                stobeLogRelationshipDebug($message);
+                return;
+            }
             stobeLogDebug($message);
         }
     }

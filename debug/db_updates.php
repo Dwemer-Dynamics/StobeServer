@@ -1173,6 +1173,80 @@ PROMPT;
                 )
             ");
         });
+        $applyPatch('core_npc_master', 202604050101, static function () use ($db): void {
+            $db->exec("CREATE OR REPLACE FUNCTION core_npc_master_history_audit_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE
+                src RECORD;
+                reason TEXT;
+                normalized_old JSONB;
+                normalized_new JSONB;
+                snapshot_payload JSONB;
+                source_npc_id INTEGER;
+            BEGIN
+                IF TG_OP='UPDATE' THEN
+                    normalized_old := COALESCE(to_jsonb(OLD), '{}'::jsonb) - '{updated_at,metadata,extended_data,limbs,blood,hunger,skills,relationships}'::text[];
+                    normalized_new := COALESCE(to_jsonb(NEW), '{}'::jsonb) - '{updated_at,metadata,extended_data,limbs,blood,hunger,skills,relationships}'::text[];
+                    IF normalized_old = normalized_new THEN
+                        RETURN NEW;
+                    END IF;
+                END IF;
+
+                IF TG_OP='DELETE' THEN
+                    src := OLD;
+                    reason := 'delete';
+                ELSIF TG_OP='INSERT' THEN
+                    src := NEW;
+                    reason := 'create';
+                ELSE
+                    src := NEW;
+                    reason := 'snapshot';
+                END IF;
+
+                snapshot_payload := COALESCE(to_jsonb(src), '{}'::jsonb) - '{updated_at,metadata,extended_data,limbs,blood,hunger,skills,relationships}'::text[];
+                source_npc_id := COALESCE(src.id, 0);
+
+                INSERT INTO core_npc_master_history (
+                    npc_id, name, original_name, npc_favorite, lock_profile,
+                    prompt_head, personality, backstory, emote_moods, occupation,
+                    appearance, equipment, inventory, skills, speechstyle,
+                    goals, relationships, voiceid, metadata, race, faction, gender,
+                    profile_id, dynamic_profile, extended_data, md5, gamets_last_updated,
+                    bounty, limbs, blood, hunger, tags, is_animal, is_slave,
+                    world_knowledge_tags,
+                    snapshot_reason, snapshot_hash, source_created_at, source_updated_at, created
+                ) VALUES (
+                    COALESCE(src.id,0), COALESCE(src.name,''), COALESCE(src.original_name,''),
+                    COALESCE(src.npc_favorite,FALSE), COALESCE(src.lock_profile,FALSE),
+                    COALESCE(src.prompt_head,''), COALESCE(src.personality,''), COALESCE(src.backstory,''), COALESCE(src.emote_moods,''), COALESCE(src.occupation,''),
+                    COALESCE(src.appearance,''), COALESCE(src.equipment,''), COALESCE(src.inventory,''), COALESCE(src.skills,''), COALESCE(src.speechstyle,''),
+                    COALESCE(src.goals,''), COALESCE(src.relationships,''), COALESCE(src.voiceid,''), COALESCE(src.metadata,'{}'::jsonb), COALESCE(src.race,''), COALESCE(src.faction,''), COALESCE(src.gender,''),
+                    src.profile_id, FALSE, COALESCE(src.extended_data,'{}'::jsonb), COALESCE(src.md5,''), COALESCE(src.gamets_last_updated,0),
+                    COALESCE(src.bounty,'{}'::jsonb), COALESCE(src.limbs,'{}'::jsonb), COALESCE(src.blood,'0/0'), COALESCE(src.hunger,'300/300'), COALESCE(src.tags,''), COALESCE(src.is_animal,FALSE), COALESCE(src.is_slave,FALSE),
+                    COALESCE(src.world_knowledge_tags,''),
+                    reason, md5(COALESCE(snapshot_payload::text,'')), src.created_at, src.updated_at, NOW()
+                );
+
+                IF source_npc_id > 0 THEN
+                    DELETE FROM core_npc_master_history
+                    WHERE history_id IN (
+                        SELECT history_id
+                        FROM core_npc_master_history
+                        WHERE npc_id = source_npc_id
+                        ORDER BY history_id DESC
+                        OFFSET 50
+                    );
+                END IF;
+
+                IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+                RETURN NEW;
+            END;
+            $$;");
+            $db->exec("DROP TRIGGER IF EXISTS trg_core_npc_master_history_audit ON core_npc_master");
+            $db->exec("CREATE TRIGGER trg_core_npc_master_history_audit AFTER INSERT OR UPDATE OR DELETE ON core_npc_master FOR EACH ROW EXECUTE FUNCTION core_npc_master_history_audit_fn()");
+        });
 
         $applyPatch('core_profiles', 202603270101, static function () use ($db): void {
             $db->exec("ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS is_player_faction_profile BOOLEAN DEFAULT FALSE");
@@ -1394,6 +1468,117 @@ PROMPT;
         $applyPatch('core_npc_master', 202603270102, static function () use ($db): void {
             $db->exec("ALTER TABLE core_npc_master ADD COLUMN IF NOT EXISTS profile_id_before_player_faction INT");
             $db->exec("CREATE OR REPLACE VIEW core_npc AS SELECT * FROM core_npc_master");
+        });
+
+        $applyPatch('general_settings', 202604050101, static function () use ($db): void {
+            $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
+                ('MIDDLE_TERM_MEMORY_INTERVAL_HOURS','10','Middle-term memory summary interval (in-game hours)',NOW())
+                ON CONFLICT (id) DO UPDATE
+                SET description = EXCLUDED.description,
+                    updated_at = NOW()");
+        });
+
+        $applyPatch('general_settings', 202604050102, static function () use ($db): void {
+            $db->exec("DELETE FROM general_settings WHERE id = 'MIDDLE_TERM_MEMORY_INTERVAL_HOURS'");
+        });
+
+        $applyPatch('general_settings', 202604050104, static function () use ($db): void {
+            $db->exec("DELETE FROM general_settings WHERE id IN (
+                'MEMORY_TIME_DELAY',
+                'MEMORY_CONTEXT_SIZE',
+                'MEMORY_BIAS_A',
+                'MEMORY_BIAS_B'
+            )");
+        });
+
+        $applyPatch('prompts', 202604050103, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES
+                 (
+                    'middleterm_narrative_summarizer',
+                    'You are a long-term narrative continuity summarizer for an improvised Kenshi universe chronicle.
+- Always read ALL provided materials.
+- Treat any **Previous Context History Summary** as the canonical prior unless anything in the new Context History explicitly supersedes it.
+- Maintain in-universe tone and correct chronology. Do not invent facts outside the supplied context.
+- When combining prior and new histories, you may compress the earlier parts of the prior summary.
+- Maintain roughly 20-25 bullet points total in **Notable Events**. Older portions should be condensed into broader, grouped statements unless they describe major quest milestones, major character life events (e.g., death, intimacy, severe injury, transformation), or other pivotal story turns.
+- Preserve continuity and references to major quests even when compressing earlier material.',
+                    'Herika-style middle-term narrative summarizer system prompt.'
+                 ),
+                 (
+                    'middleterm_narrative_request',
+                    'Main character in this logbook is {HERIKA_NAME}.
+Task: Read **Context History** (newest session) and, if present, the **Previous Context History Summary** (prior canon). Integrate them to produce an updated broad narrative strokes summary that preserves continuity. Summary sections:
+
+- **Notable Events in Chronological Order:**
+  - Provide ~10 bullet points from earliest to latest, reflecting the story so far.
+  - Prefer facts already established in the previous summary; only revise if the new context clearly changes them.
+
+- **Current Quest Progression and background:**
+  - Name questlines, stages/milestones if stated, objectives completed/active, and motivations.
+When generating entries, ensure that {HERIKA_NAME} - the protagonist - is actively present in the scene. Any narrative content that occurs before {HERIKA_NAME}''s arrival or outside {HERIKA_NAME}''s perspective should be omitted, reflect only events {HERIKA_NAME} directly witness or participate in.
+If the resulting summary would exceed roughly 25 bullet points, merge or generalise older entries into broader grouped events. Always retain explicit entries for major quest milestones, major character life events, or turning points.',
+                    'Herika-style middle-term narrative request prompt.'
+                 )
+                 ON CONFLICT (prompt_key) DO UPDATE SET
+                    default_prompt = EXCLUDED.default_prompt,
+                    description = EXCLUDED.description"
+            );
+        });
+
+        $applyPatch('memory', 202604050105, static function () use ($db): void {
+            $db->exec("ALTER TABLE memory ADD COLUMN IF NOT EXISTS location TEXT DEFAULT ''");
+        });
+
+        $applyPatch('general_settings', 202604050106, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'AUTO_CREATE_SUMMARY_MIN_EVENTS',
+                    '5',
+                    'Minimum memory events required to create one packed summary block.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+
+            $db->exec(
+                "UPDATE general_settings
+                 SET description = 'Memory summary packing interval (in-game hours).',
+                     updated_at = NOW()
+                 WHERE id = 'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL'"
+            );
+        });
+
+        $applyPatch('general_settings', 202604060301, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL',
+                    '6',
+                    'Memory summary packing interval (in-game hours).',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE
+                 SET value = EXCLUDED.value,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+        });
+
+        $applyPatch('general_settings', 202604060302, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES
+                    ('PLAYER_FACTION_CUSTOM_NAME', '', 'Optional custom display name for the player faction in prompts.', NOW()),
+                    ('PLAYER_FACTION_PROMPT', '', 'Optional player-faction instruction block injected into prompts.', NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

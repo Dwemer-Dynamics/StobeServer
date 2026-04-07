@@ -26,6 +26,12 @@ if (!isset($GLOBALS['db']) || !($GLOBALS['db'] instanceof sql)) {
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'core' . DIRECTORY_SEPARATOR . 'narrator.class.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'settings.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'server_logger.php');
+if (function_exists('stobeConfigurePhpErrorLogging')) {
+    stobeConfigurePhpErrorLogging();
+}
+if (function_exists('stobeRegisterErrorHandlers')) {
+    stobeRegisterErrorHandlers();
+}
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'background_processor.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'utils_game_timestamp.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-pockettts.php');

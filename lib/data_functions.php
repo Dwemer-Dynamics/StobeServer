@@ -824,20 +824,61 @@ function stobeAssignVoiceIdIfMissing(
         return '';
     }
 
-    $row = $db->fetchOne(
-        "SELECT voiceid,
-                race,
-                gender,
-                faction,
-                original_name,
-                metadata
-         FROM core_npc_master
-         WHERE LOWER(name) = LOWER($1)
-         LIMIT 1",
-        [$safeName]
-    );
+    $metadata = normalizeCoreNpcMetadata($profile['metadata'] ?? []);
+    $storageId = normalizeStorageIdToken($metadata['storage_id'] ?? '');
+
+    $row = false;
+    if ($storageId !== '') {
+        $row = $db->fetchOne(
+            "SELECT id,
+                    voiceid,
+                    race,
+                    gender,
+                    faction,
+                    original_name,
+                    metadata
+             FROM core_npc_master
+             WHERE LOWER(COALESCE(metadata->>'storage_id', '')) = LOWER($1)
+             ORDER BY
+                CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+                gamets_last_updated DESC,
+                updated_at DESC,
+                id DESC
+             LIMIT 1",
+            [$storageId]
+        );
+    }
+    if (!$row) {
+        $row = $db->fetchOne(
+            "SELECT id,
+                    voiceid,
+                    race,
+                    gender,
+                    faction,
+                    original_name,
+                    metadata
+             FROM core_npc_master
+             WHERE LOWER(name) = LOWER($1)
+             ORDER BY
+                CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+                gamets_last_updated DESC,
+                updated_at DESC,
+                id DESC
+             LIMIT 1",
+            [$safeName]
+        );
+    }
     $existingVoice = trim(strval($row['voiceid'] ?? ''));
     if ($existingVoice !== '') {
+        $db->exec(
+            "UPDATE core_npc_master
+             SET voiceid = $2,
+                 updated_at = NOW()
+             WHERE LOWER(name) = LOWER($1)
+               AND (voiceid IS NULL OR BTRIM(voiceid) = '')",
+            [$safeName, $existingVoice]
+        );
         return $existingVoice;
     }
 
@@ -871,6 +912,17 @@ function stobeAssignVoiceIdIfMissing(
         return '';
     }
 
+    $rowId = intval($row['id'] ?? 0);
+    if ($rowId > 0) {
+        $db->exec(
+            "UPDATE core_npc_master
+             SET voiceid = $2,
+                 updated_at = NOW()
+             WHERE id = $1
+               AND (voiceid IS NULL OR BTRIM(voiceid) = '')",
+            [$rowId, $selected]
+        );
+    }
     $db->exec(
         "UPDATE core_npc_master
          SET voiceid = $2,
@@ -1236,6 +1288,188 @@ function getEventGeoFromPlayerSnapshot(): array {
     return $cached;
 }
 
+function getEventGeoFromCoordinateFallback(?float $x, ?float $y, ?float $z, bool $allowBuilding): array {
+    $empty = ['location' => '', 'building' => '', 'zone' => '', 'city' => '', 'region' => ''];
+    if ($x === null || $z === null) {
+        return $empty;
+    }
+
+    static $cache = [];
+    $cacheKey = implode('|', [
+        number_format($x, 0, '.', ''),
+        number_format($z, 0, '.', ''),
+        $allowBuilding ? '1' : '0',
+    ]);
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT
+            COALESCE(
+                NULLIF(TRIM(env_ctx.env->>'zone_name'), ''),
+                NULLIF(TRIM(env_ctx.env->>'town_name'), ''),
+                NULLIF(TRIM(core_npc.metadata->>'zone'), ''),
+                NULLIF(TRIM(core_npc.metadata->>'town'), '')
+            ) AS zone_name,
+            COALESCE(
+                NULLIF(TRIM(env_ctx.env->>'region'), ''),
+                NULLIF(TRIM(core_npc.metadata->>'region'), '')
+            ) AS region_name,
+            NULLIF(TRIM(env_ctx.env->>'building_name'), '') AS building_name,
+            ((CAST(env_ctx.env->>'x' AS DOUBLE PRECISION) - $1) * (CAST(env_ctx.env->>'x' AS DOUBLE PRECISION) - $1)
+             + (CAST(env_ctx.env->>'z' AS DOUBLE PRECISION) - $2) * (CAST(env_ctx.env->>'z' AS DOUBLE PRECISION) - $2)) AS dist2
+         FROM core_npc
+         CROSS JOIN LATERAL (
+            SELECT
+                CASE
+                  WHEN jsonb_typeof(core_npc.extended_data) = 'object'
+                    THEN core_npc.extended_data->'environment'
+                  ELSE '{}'::jsonb
+                END AS env
+         ) AS env_ctx
+         WHERE (env_ctx.env->>'x') ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+           AND (env_ctx.env->>'z') ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+           AND (
+                COALESCE(
+                    NULLIF(TRIM(env_ctx.env->>'zone_name'), ''),
+                    NULLIF(TRIM(env_ctx.env->>'town_name'), ''),
+                    NULLIF(TRIM(core_npc.metadata->>'zone'), ''),
+                    NULLIF(TRIM(core_npc.metadata->>'town'), '')
+                ) IS NOT NULL
+                OR COALESCE(
+                    NULLIF(TRIM(env_ctx.env->>'region'), ''),
+                    NULLIF(TRIM(core_npc.metadata->>'region'), '')
+                ) IS NOT NULL
+           )
+         ORDER BY dist2 ASC
+         LIMIT 8",
+        [$x, $z]
+    );
+
+    if (!is_array($rows) || count($rows) === 0) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    $best = $rows[0];
+    $bestDist2 = floatval($best['dist2'] ?? 0.0);
+    $bestDistance = $bestDist2 > 0.0 ? sqrt($bestDist2) : 0.0;
+    $maxDistance = 120000.0;
+    if ($bestDistance > $maxDistance) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    $regionScores = [];
+    $regionBestRow = [];
+    $regionBestDist = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $zoneCandidate = trim(strval($row['zone_name'] ?? ''));
+        $regionCandidate = trim(strval($row['region_name'] ?? ''));
+        if ($regionCandidate === '' && $zoneCandidate !== '') {
+            $regionCandidate = stobeResolveRegionFromAnyToken($zoneCandidate);
+        }
+        if ($regionCandidate === '') {
+            continue;
+        }
+        $dist2 = floatval($row['dist2'] ?? 0.0);
+        $distance = $dist2 > 0.0 ? sqrt($dist2) : 0.0;
+        $weight = 1.0 / max(1.0, $distance);
+        $regionKey = strtolower($regionCandidate);
+        if (!array_key_exists($regionKey, $regionScores)) {
+            $regionScores[$regionKey] = 0.0;
+            $regionBestRow[$regionKey] = $row;
+            $regionBestDist[$regionKey] = $distance;
+        }
+        $regionScores[$regionKey] += $weight;
+        if ($distance < floatval($regionBestDist[$regionKey] ?? INF)) {
+            $regionBestDist[$regionKey] = $distance;
+            $regionBestRow[$regionKey] = $row;
+        }
+    }
+
+    if (count($regionScores) === 0) {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+    arsort($regionScores);
+    $regionKeys = array_keys($regionScores);
+    $selectedRegionKey = strval($regionKeys[0] ?? '');
+    if ($selectedRegionKey === '') {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+    $selectedRegionRow = is_array($regionBestRow[$selectedRegionKey] ?? null) ? $regionBestRow[$selectedRegionKey] : $best;
+    $zone = trim(strval($selectedRegionRow['zone_name'] ?? ''));
+    $region = trim(strval($selectedRegionRow['region_name'] ?? ''));
+    if ($region === '' && $zone !== '') {
+        $region = stobeResolveRegionFromAnyToken($zone);
+    }
+    if ($region === '') {
+        $region = trim(strval($selectedRegionKey));
+    }
+    $selectedDistance = floatval($regionBestDist[$selectedRegionKey] ?? $bestDistance);
+    $zoneConfidenceDistance = 12000.0;
+    if ($selectedDistance > $zoneConfidenceDistance) {
+        $zone = '';
+    }
+
+    $building = '';
+    if ($allowBuilding && $zone !== '' && $selectedDistance <= 3000.0) {
+        $building = trim(strval($selectedRegionRow['building_name'] ?? ''));
+    }
+
+    $rawLocationParts = [];
+    if ($building !== '') {
+        $rawLocationParts[] = $building;
+    }
+    if ($zone !== '') {
+        $rawLocationParts[] = $zone;
+    }
+    if ($region !== '') {
+        $rawLocationParts[] = $region;
+    }
+    $candidate = [
+        'location' => count($rawLocationParts) > 0 ? implode(', ', array_values(array_unique($rawLocationParts))) : '',
+        'building' => $building,
+        'zone' => $zone,
+        'city' => $zone,
+        'region' => $region,
+    ];
+
+    $normalized = stobeNormalizeGeoContext($candidate);
+    if (trim(strval($normalized['zone'] ?? '')) === '' && trim(strval($normalized['region'] ?? '')) === '') {
+        $cache[$cacheKey] = $empty;
+        return $empty;
+    }
+
+    stobeLogDebug('GEO_DEBUG_COORDINATE_FALLBACK', [
+        'x' => $x,
+        'y' => $y,
+        'z' => $z,
+        'allow_building' => $allowBuilding ? '1' : '0',
+        'best_distance' => $bestDistance,
+        'selected_distance' => $selectedDistance,
+        'selected_region' => $region,
+        'region_scores' => $regionScores,
+        'candidate' => $candidate,
+        'normalized' => $normalized,
+    ]);
+
+    $cache[$cacheKey] = $normalized;
+    return $normalized;
+}
+
 function getRecentEventGeoFallback(string $participant = '', int $windowSeconds = 1800): array {
     static $cache = [];
     $key = strtolower(trim($participant)) . '|' . strval($windowSeconds);
@@ -1271,7 +1505,7 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
                      LOWER(data) LIKE $2 ESCAPE '\\'
                      OR LOWER(people) LIKE $3 ESCAPE '\\'
                 )
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"
                 : "SELECT location
               FROM eventlog
@@ -1281,7 +1515,7 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
                      LOWER(data) LIKE $2 ESCAPE '\\'
                      OR LOWER(people) LIKE $3 ESCAPE '\\'
                 )
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"),
             [
                 $cutoff,
@@ -1301,13 +1535,13 @@ function getRecentEventGeoFallback(string $participant = '', int $windowSeconds 
                     COALESCE(location, '') <> ''
                     OR COALESCE(geo::text, '{}') <> '{}'
                 )
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"
                 : "SELECT location
               FROM eventlog
               WHERE localts > $1
                 AND COALESCE(location, '') <> ''
-              ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+              ORDER BY localts DESC, ts DESC, rowid DESC
               LIMIT 1"),
             [$cutoff]
         );
@@ -1369,6 +1603,10 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     }
     $queryIndoorsRaw = strtolower(trim(strval($_GET['loc_indoors'] ?? '')));
     $queryOutdoors = in_array($queryIndoorsRaw, ['0', 'false', 'no', 'off'], true);
+    $queryIndoors = in_array($queryIndoorsRaw, ['1', 'true', 'yes', 'on'], true);
+    $queryX = stobeParseNullableCoordinate($_GET['loc_x'] ?? null);
+    $queryY = stobeParseNullableCoordinate($_GET['loc_y'] ?? null);
+    $queryZ = stobeParseNullableCoordinate($_GET['loc_z'] ?? null);
     stobeLogDebug('GEO_DEBUG_RESOLVE_START', [
         'type' => $normalizedType,
         'event_data' => substr($eventData, 0, 220),
@@ -1380,6 +1618,9 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
             'loc_zone' => strval($_GET['loc_zone'] ?? ''),
             'loc_region' => strval($_GET['loc_region'] ?? ''),
             'loc_indoors' => strval($_GET['loc_indoors'] ?? ''),
+            'loc_x' => strval($_GET['loc_x'] ?? ''),
+            'loc_y' => strval($_GET['loc_y'] ?? ''),
+            'loc_z' => strval($_GET['loc_z'] ?? ''),
         ],
     ]);
     if ($queryOutdoors) {
@@ -1440,6 +1681,12 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     // Current request geo is authoritative and should not be cross-filled by
     // historical fallbacks.
     if ($hasQueryGeo) {
+        if (($resolved['zone'] === '' || $resolved['region'] === '') && ($queryX !== null || $queryZ !== null)) {
+            $resolved = mergeEventGeoContext(
+                $resolved,
+                getEventGeoFromCoordinateFallback($queryX, $queryY, $queryZ, $queryIndoors && !$queryOutdoors)
+            );
+        }
         $queryNormalizedInput = $resolved;
         $queryNormalizedInput['allow_unknown_zone'] = true;
         $normalized = stobeNormalizeGeoContext($queryNormalizedInput);
@@ -1464,12 +1711,44 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         $resolved = mergeEventGeoContext($resolved, $parsedEventGeo);
     }
 
+    $coordinateOnlyQuery = (
+        !$hasQueryGeo
+        && ($queryX !== null || $queryZ !== null)
+    );
+    $coordinateFallbackLocked = false;
+    if ($coordinateOnlyQuery) {
+        $coordinateGeo = getEventGeoFromCoordinateFallback(
+            $queryX,
+            $queryY,
+            $queryZ,
+            $queryIndoors && !$queryOutdoors
+        );
+        if (
+            trim(strval($coordinateGeo['zone'] ?? '')) !== ''
+            || trim(strval($coordinateGeo['region'] ?? '')) !== ''
+        ) {
+            $resolved = mergeEventGeoContext($resolved, $coordinateGeo);
+            $coordinateFallbackLocked = true;
+        }
+    }
+
     $profileName = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
-    if ($profileName !== '') {
+    if (!$coordinateFallbackLocked && $profileName !== '') {
         $resolved = mergeEventGeoContext($resolved, getEventGeoFromNpcName($profileName));
     }
 
     if (
+        !$coordinateFallbackLocked
+        && ($resolved['zone'] === '' || $resolved['region'] === '')
+    ) {
+        $resolved = mergeEventGeoContext(
+            $resolved,
+            getEventGeoFromCoordinateFallback($queryX, $queryY, $queryZ, $queryIndoors && !$queryOutdoors)
+        );
+    }
+
+    if (
+        !$coordinateFallbackLocked &&
         in_array($normalizedType, ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored', 'action', 'infoaction', 'lockpicked', 'lockpiked', 'infonpc', 'infoloc'], true) &&
         strpos($eventData, ':') !== false
     ) {
@@ -1479,6 +1758,7 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         }
     }
     if (
+        !$coordinateFallbackLocked &&
         in_array($normalizedType, ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored', 'action', 'infoaction', 'lockpicked', 'lockpiked', 'infonpc', 'infoloc'], true) &&
         stripos($eventData, '(talking to:') !== false
     ) {
@@ -1490,7 +1770,7 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
     }
 
     $peopleRaw = strval($GLOBALS["CACHE_PEOPLE"] ?? ($_GET['people'] ?? ''));
-    if (trim($peopleRaw) !== '') {
+    if (!$coordinateFallbackLocked && trim($peopleRaw) !== '') {
         $decodedPeople = json_decode($peopleRaw, true);
         if (is_array($decodedPeople)) {
             foreach ($decodedPeople as $participantToken) {
@@ -1512,12 +1792,14 @@ function resolveEventGeoContext(string $normalizedType, string $eventData): arra
         }
     }
 
-    if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
-        $fallbackParticipant = $speakerHint !== '' ? $speakerHint : $targetHint;
-        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 86400));
-    }
-    if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
-        $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback('', 86400));
+    if (!$coordinateFallbackLocked) {
+        if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
+            $fallbackParticipant = $speakerHint !== '' ? $speakerHint : $targetHint;
+            $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback($fallbackParticipant, 86400));
+        }
+        if ($resolved['location'] === '' || $resolved['zone'] === '' || $resolved['region'] === '') {
+            $resolved = mergeEventGeoContext($resolved, getRecentEventGeoFallback('', 86400));
+        }
     }
 
     $normalized = stobeNormalizeGeoContext($resolved);
@@ -1822,7 +2104,17 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     $peopleCache = $GLOBALS["CACHE_PEOPLE"] ?? '';
     $locationCache = $GLOBALS["CACHE_LOCATION"] ?? '';
 
-    if ($normalizedType === 'chat' && stobeShouldSkipMirroredPlayerChatRow($db, $data, $eventLocalTs)) {
+    if (
+        $normalizedType === 'chat'
+        && strcasecmp(trim($sess), 'inputtext_chat_mirror') !== 0
+        && stobeShouldSkipMirroredPlayerChatRow($db, $data, $eventLocalTs)
+    ) {
+        return;
+    }
+    if (
+        ($normalizedType === 'chat' || $normalizedType === 'rechat')
+        && stobeShouldSkipDuplicateDialogueEchoRow($db, $normalizedType, $data, $eventLocalTs, $gamets)
+    ) {
         return;
     }
 
@@ -1938,12 +2230,12 @@ function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventL
         "SELECT rowid, data, localts
          FROM eventlog
          WHERE type IN ('inputtext', 'inputtext_s')
-           AND localts >= $1
-           AND LOWER(data) LIKE LOWER($2)
+            AND localts >= $1
+            AND LOWER(data) LIKE LOWER($2)
          ORDER BY rowid DESC
          LIMIT 8",
         [
-            $eventLocalTs - 4,
+            $eventLocalTs - 8,
             $chatSpeaker . ':%',
         ]
     );
@@ -1963,10 +2255,6 @@ function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventL
         $parsedInput = parseDialogueEventData($inputData);
         $inputSpeaker = normalizeParticipantNameToken(strval($parsedInput['speaker'] ?? ''));
         if ($inputSpeaker === '' || strcasecmp($inputSpeaker, $chatSpeaker) !== 0) {
-            continue;
-        }
-        $inputTarget = normalizeParticipantNameToken(strval($parsedInput['target'] ?? ''));
-        if ($chatTarget !== '' && $inputTarget !== '' && strcasecmp($chatTarget, $inputTarget) !== 0) {
             continue;
         }
         $inputMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedInput['message'] ?? ''));
@@ -1994,6 +2282,12 @@ function stobeSanitizeDialogueMessageForLog(string $message): string {
     $clean = sanitizeForKenshi(strval($message));
     $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
     $clean = trim($clean);
+
+    // Strip common corrupted UTF-8/question-mark suffixes emitted by game payload noise.
+    // Example: "want to join our cult6??х??????Ѽ? ɕ???" -> "want to join our cult"
+    $clean = preg_replace('/(?<=\p{L})\d+\?{2,}.*$/u', '', $clean) ?? $clean;
+    $clean = preg_replace('/\?{2,}[^\r\n]*[^\x00-\x7F][^\r\n]*$/u', '', $clean) ?? $clean;
+    $clean = preg_replace('/[^\x00-\x7F]{2,}[^\r\n]*$/u', '', $clean) ?? $clean;
 
     // Strip repeated trailing question marks that are emitted as corruption tails.
     $clean = preg_replace('/\s+\?{2,}\s*$/u', '', $clean) ?? $clean;
@@ -2583,6 +2877,148 @@ function stobeResolvePendingLimbLossRechatReaction(array $conversationParticipan
     return [];
 }
 
+function stobeExtractStatusEventActorName(string $eventType, string $eventData): string {
+    $normalizedType = strtolower(trim($eventType));
+    $clean = trim($eventData);
+    if ($clean === '') {
+        return '';
+    }
+
+    if (function_exists('parseDialogueEventData')) {
+        $parsed = parseDialogueEventData($clean);
+        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+        if ($speaker !== '') {
+            return $speaker;
+        }
+    }
+
+    if (preg_match('/^([^:]+)\s*:/u', $clean, $match) === 1) {
+        $actor = normalizeParticipantNameToken(strval($match[1] ?? ''));
+        if ($actor !== '') {
+            return $actor;
+        }
+    }
+
+    if ($normalizedType === 'knockout' && preg_match('/^(.+?)\s+was\s+knocked\s+out\b/iu', $clean, $match) === 1) {
+        return normalizeParticipantNameToken(strval($match[1] ?? ''));
+    }
+    if ($normalizedType === 'death' && preg_match('/^(.+?)\s+(?:has\s+)?(?:died|was\s+slain|is\s+dead)\b/iu', $clean, $match) === 1) {
+        return normalizeParticipantNameToken(strval($match[1] ?? ''));
+    }
+    if ($normalizedType === 'recovered' && preg_match('/^(.+?)\s+regained\s+consciousness\b/iu', $clean, $match) === 1) {
+        return normalizeParticipantNameToken(strval($match[1] ?? ''));
+    }
+
+    return '';
+}
+
+function stobeShouldSuppressLimbLossRechatForVictim(
+    string $victimName,
+    int $limbLossRowId,
+    int $limbLossLocalTs = 0,
+    array|false $victimData = false,
+    int $recoveryGraceSeconds = 3
+): array {
+    $victim = normalizeParticipantNameToken($victimName);
+    if ($victim === '') {
+        return [
+            'suppress' => true,
+            'reason' => 'missing_victim',
+        ];
+    }
+
+    if (!is_array($victimData)) {
+        $victimData = getNpcData($victim);
+    }
+    $currentState = '';
+    if (is_array($victimData)) {
+        $currentState = stobeResolveNpcAwarenessState($victimData);
+        if (in_array($currentState, ['dead', 'unconscious', 'knocked_out', 'sleeping'], true)) {
+            return [
+                'suppress' => true,
+                'reason' => 'victim_state_' . $currentState,
+                'state' => $currentState,
+            ];
+        }
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $limbLossRowId <= 0) {
+        return [
+            'suppress' => false,
+            'reason' => '',
+            'state' => $currentState,
+        ];
+    }
+
+    $sinceLocalTs = $limbLossLocalTs > 0 ? max(0, $limbLossLocalTs - 2) : max(0, time() - 180);
+    $rows = $db->fetchAll(
+        "SELECT rowid, type, data, localts
+         FROM eventlog
+         WHERE rowid > $1
+           AND type IN ('knockout', 'death', 'recovered')
+           AND localts >= $2
+         ORDER BY rowid ASC
+         LIMIT 96",
+        [$limbLossRowId, $sinceLocalTs]
+    );
+
+    $latestRecoveredLocalTs = 0;
+    $latestRecoveredRowId = 0;
+    if (is_array($rows)) {
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $eventType = strtolower(trim(strval($row['type'] ?? '')));
+            $actor = stobeExtractStatusEventActorName($eventType, strval($row['data'] ?? ''));
+            if ($actor === '' || strcasecmp($actor, $victim) !== 0) {
+                continue;
+            }
+
+            $rowId = intval($row['rowid'] ?? 0);
+            $rowLocalTs = intval($row['localts'] ?? 0);
+            if ($eventType === 'knockout' || $eventType === 'death') {
+                return [
+                    'suppress' => true,
+                    'reason' => $eventType . '_after_limb_loss',
+                    'event_type' => $eventType,
+                    'event_rowid' => $rowId,
+                    'event_localts' => $rowLocalTs,
+                    'state' => $currentState,
+                ];
+            }
+            if ($eventType === 'recovered') {
+                if ($rowLocalTs >= $latestRecoveredLocalTs) {
+                    $latestRecoveredLocalTs = $rowLocalTs;
+                    $latestRecoveredRowId = $rowId;
+                }
+            }
+        }
+    }
+
+    if ($recoveryGraceSeconds > 0 && $latestRecoveredLocalTs > 0) {
+        $elapsed = time() - $latestRecoveredLocalTs;
+        if ($elapsed >= 0 && $elapsed < $recoveryGraceSeconds) {
+            return [
+                'suppress' => true,
+                'reason' => 'recovery_grace_window',
+                'event_type' => 'recovered',
+                'event_rowid' => $latestRecoveredRowId,
+                'event_localts' => $latestRecoveredLocalTs,
+                'elapsed_seconds' => $elapsed,
+                'state' => $currentState,
+            ];
+        }
+    }
+
+    return [
+        'suppress' => false,
+        'reason' => '',
+        'state' => $currentState,
+    ];
+}
+
 function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
     $speaker = normalizeParticipantNameToken($speakerName);
     if ($speaker === '') {
@@ -2731,7 +3167,7 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         $clean = stobeNormalizeKnockoutEventData($clean);
     }
 
-    $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'];
+    $contextOnlyTypes = ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems', 'carry'];
     if (in_array($normalizedType, $contextOnlyTypes, true)) {
         // Context telemetry rows are not directional dialogue.
         $clean = preg_replace('/\s*\(talking to:\s*[^\)]*\)\s*/iu', ' ', $clean) ?? $clean;
@@ -3339,7 +3775,6 @@ function stobeFetchParticipantAwarenessStateMap(array $participantIdentities): a
     $rows = $db->fetchAll(
         'SELECT name,
                 original_name,
-                character_state,
                 metadata,
                 extended_data,
                 COALESCE(metadata->>\'storage_id\', \'\') AS storage_id
@@ -3831,7 +4266,7 @@ function resolveSnapshotTargetNpcName(string $incomingName, string $incomingStor
                         'candidate_original_name' => $candidateOriginalName,
                         'match_count' => $ambiguousCount,
                         'resolved_name' => $resolvedName,
-                    ], 'WARN');
+                    ], 'DEBUG');
                 }
                 return [
                     'name' => $resolvedName,
@@ -5210,7 +5645,8 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
             $fetchLimit = 600;
         }
     }
-    $query .= " ORDER BY gamets DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
+    // Prompt context ordering must follow real-time sequence, not in-game gamets.
+    $query .= " ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
 
     $rows = $db->fetchAll($query, $params);
     if ($actorFilter === '' || count($rows) === 0) {
@@ -5718,6 +6154,496 @@ function storeWorldStateEntries(array $payload): int {
     return count($entriesByKey);
 }
 
+function stobeShouldSkipDuplicateDialogueEchoRow(
+    $db,
+    string $eventType,
+    string $eventData,
+    int $eventLocalTs,
+    int $eventGamets
+): bool {
+    if (!$db) {
+        return false;
+    }
+
+    $parsedCurrent = parseDialogueEventData($eventData);
+    $currentSpeaker = normalizeParticipantNameToken(strval($parsedCurrent['speaker'] ?? ''));
+    $currentTarget = normalizeParticipantNameToken(strval($parsedCurrent['target'] ?? ''));
+    $currentMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedCurrent['message'] ?? ''));
+    if ($currentSpeaker === '' || $currentMessageNorm === '') {
+        return false;
+    }
+
+    $recentRows = $db->fetchAll(
+        "SELECT rowid, type, data, localts, gamets
+         FROM eventlog
+         WHERE type IN ('chat', 'rechat')
+           AND localts >= $1
+           AND LOWER(data) LIKE LOWER($2)
+         ORDER BY rowid DESC
+         LIMIT 12",
+        [
+            $eventLocalTs - 5,
+            $currentSpeaker . ':%',
+        ]
+    );
+
+    if (!is_array($recentRows) || count($recentRows) === 0) {
+        return false;
+    }
+
+    $currentType = strtolower(trim($eventType));
+    foreach ($recentRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $rowData = strval($row['data'] ?? '');
+        if ($rowData === '') {
+            continue;
+        }
+
+        $parsedRow = parseDialogueEventData($rowData);
+        $rowSpeaker = normalizeParticipantNameToken(strval($parsedRow['speaker'] ?? ''));
+        if ($rowSpeaker === '' || strcasecmp($rowSpeaker, $currentSpeaker) !== 0) {
+            continue;
+        }
+
+        $rowMessageNorm = stobeNormalizeDialogueForMirrorDedupe(strval($parsedRow['message'] ?? ''));
+        if ($rowMessageNorm === '' || $rowMessageNorm !== $currentMessageNorm) {
+            continue;
+        }
+
+        $rowTarget = normalizeParticipantNameToken(strval($parsedRow['target'] ?? ''));
+        $targetCompatible = false;
+        $targetReason = 'target_exact';
+        if ($currentTarget === '' || $rowTarget === '') {
+            $targetCompatible = true;
+            $targetReason = 'target_partial';
+        } elseif (strcasecmp($currentTarget, $rowTarget) === 0) {
+            $targetCompatible = true;
+            $targetReason = 'target_exact';
+        }
+
+        $rowType = strtolower(trim(strval($row['type'] ?? '')));
+        $rowGamets = intval($row['gamets'] ?? 0);
+        $gametsDelta = abs($eventGamets - $rowGamets);
+        if ($eventGamets > 0 && $rowGamets > 0 && $gametsDelta > 120) {
+            // Same words spoken by same NPC much later is likely intentional.
+            continue;
+        }
+        $localTsDelta = abs($eventLocalTs - intval($row['localts'] ?? 0));
+
+        // Accept strict target mismatch dedupe only for very short windows to catch
+        // known duplicate chat echo races where "talking to" differs but line is identical.
+        if (!$targetCompatible) {
+            if ($localTsDelta > 4 || ($eventGamets > 0 && $rowGamets > 0 && $gametsDelta > 60)) {
+                continue;
+            }
+            $targetReason = 'target_mismatch_short_window';
+            $targetCompatible = true;
+        }
+
+        stobeLogDebug('Skipped duplicate dialogue echo row', [
+            'incoming_type' => $currentType,
+            'incoming_speaker' => $currentSpeaker,
+            'incoming_target' => $currentTarget,
+            'incoming_message' => $currentMessageNorm,
+            'matched_rowid' => intval($row['rowid'] ?? 0),
+            'matched_type' => $rowType,
+            'matched_target' => $rowTarget,
+            'matched_localts' => intval($row['localts'] ?? 0),
+            'incoming_gamets' => $eventGamets,
+            'matched_gamets' => $rowGamets,
+            'gamets_delta' => $gametsDelta,
+            'localts_delta' => $localTsDelta,
+            'target_match' => $targetReason,
+        ]);
+        return true;
+    }
+
+    return false;
+}
+
+function stobeEnsureFactionRelationTables(): bool {
+    static $ensured = false;
+    if ($ensured) {
+        return true;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    try {
+        $ok = $db->exec(
+            "CREATE TABLE IF NOT EXISTS faction_relation_state (
+                id BIGSERIAL PRIMARY KEY,
+                merge_key TEXT NOT NULL UNIQUE,
+                source_name TEXT NOT NULL DEFAULT '',
+                source_string_id TEXT NOT NULL DEFAULT '',
+                source_numeric_id INT NOT NULL DEFAULT 0,
+                target_name TEXT NOT NULL DEFAULT '',
+                target_string_id TEXT NOT NULL DEFAULT '',
+                target_numeric_id INT NOT NULL DEFAULT 0,
+                relation DOUBLE PRECISION NOT NULL DEFAULT 0,
+                alliance BOOLEAN NOT NULL DEFAULT FALSE,
+                war BOOLEAN NOT NULL DEFAULT FALSE,
+                coexists BOOLEAN NOT NULL DEFAULT FALSE,
+                game_ts BIGINT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )"
+        );
+        if ($ok === false) {
+            return false;
+        }
+
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_faction_relation_state_game_ts ON faction_relation_state (game_ts DESC, id DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_faction_relation_state_source_lower ON faction_relation_state (LOWER(source_name))");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_faction_relation_state_target_lower ON faction_relation_state (LOWER(target_name))");
+
+        $ensured = true;
+        return true;
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to ensure faction relation tables');
+        return false;
+    }
+}
+
+function stobeFactionRelationStableToken(string $stringId, int $numericId, string $name): string {
+    $sid = trim($stringId);
+    if ($sid !== '') {
+        return 'sid:' . strtolower($sid);
+    }
+    if ($numericId > 0) {
+        return 'id:' . strval($numericId);
+    }
+    $trimmedName = trim($name);
+    if ($trimmedName !== '') {
+        return 'name:' . strtolower($trimmedName);
+    }
+    return '';
+}
+
+function stobeFactionRelationMergeKey(
+    string $sourceStringId,
+    int $sourceNumericId,
+    string $sourceName,
+    string $targetStringId,
+    int $targetNumericId,
+    string $targetName
+): string {
+    $sourceToken = stobeFactionRelationStableToken($sourceStringId, $sourceNumericId, $sourceName);
+    $targetToken = stobeFactionRelationStableToken($targetStringId, $targetNumericId, $targetName);
+    if ($sourceToken === '' || $targetToken === '') {
+        return '';
+    }
+    return $sourceToken . '->' . $targetToken;
+}
+
+/**
+ * Persist faction relation deltas/snapshots from Stobe.dll.
+ *
+ * Returns:
+ * [
+ *   'changed' => int,
+ *   'unchanged' => int,
+ *   'removed' => int,
+ * ]
+ */
+function storeFactionRelationEntries(array $payload): array|false {
+    if (!stobeEnsureFactionRelationTables()) {
+        return false;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    $gameTs = intval($payload['game_ts'] ?? 0);
+    if ($gameTs < 0) {
+        $gameTs = 0;
+    }
+
+    $parseBool = static function (mixed $value): bool {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return intval($value) !== 0;
+        }
+        $text = strtolower(trim(strval($value)));
+        if ($text === '') {
+            return false;
+        }
+        return in_array($text, ['1', 'true', 'yes', 'on'], true);
+    };
+
+    $normalizeList = static function (mixed $value): array {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value) && trim($value) !== '') {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+        return [];
+    };
+
+    $normalizeRelationEntry = static function (mixed $entry) use ($parseBool): ?array {
+        if (!is_array($entry)) {
+            return null;
+        }
+
+        $sourceName = trim(strval($entry['source_name'] ?? ''));
+        $sourceStringId = trim(strval($entry['source_string_id'] ?? ''));
+        $sourceNumericId = intval($entry['source_numeric_id'] ?? 0);
+        $targetName = trim(strval($entry['target_name'] ?? ''));
+        $targetStringId = trim(strval($entry['target_string_id'] ?? ''));
+        $targetNumericId = intval($entry['target_numeric_id'] ?? 0);
+
+        $mergeKey = trim(strval($entry['merge_key'] ?? ''));
+        if ($mergeKey === '') {
+            $mergeKey = stobeFactionRelationMergeKey(
+                $sourceStringId,
+                $sourceNumericId,
+                $sourceName,
+                $targetStringId,
+                $targetNumericId,
+                $targetName
+            );
+        }
+        if ($mergeKey === '') {
+            return null;
+        }
+
+        $relationRaw = $entry['relation'] ?? 0;
+        if (!is_numeric($relationRaw)) {
+            $relationRaw = str_replace(',', '.', strval($relationRaw));
+        }
+        $relation = is_numeric($relationRaw) ? floatval($relationRaw) : 0.0;
+        if ($relation > 100.0) {
+            $relation = 100.0;
+        } elseif ($relation < -100.0) {
+            $relation = -100.0;
+        }
+
+        return [
+            'merge_key' => $mergeKey,
+            'source_name' => $sourceName,
+            'source_string_id' => $sourceStringId,
+            'source_numeric_id' => $sourceNumericId,
+            'target_name' => $targetName,
+            'target_string_id' => $targetStringId,
+            'target_numeric_id' => $targetNumericId,
+            'relation' => $relation,
+            'alliance' => $parseBool($entry['alliance'] ?? false),
+            'war' => $parseBool($entry['war'] ?? false),
+            'coexists' => $parseBool($entry['coexists'] ?? false),
+        ];
+    };
+
+    $relationList = $normalizeList($payload['relations'] ?? []);
+    $removedList = $normalizeList($payload['removed'] ?? []);
+
+    $relationsByKey = [];
+    foreach ($relationList as $entry) {
+        $normalized = $normalizeRelationEntry($entry);
+        if (!is_array($normalized)) {
+            continue;
+        }
+        $relationsByKey[strval($normalized['merge_key'])] = $normalized;
+    }
+
+    $removedKeys = [];
+    foreach ($removedList as $entry) {
+        $mergeKey = '';
+        if (is_string($entry)) {
+            $mergeKey = trim($entry);
+        } elseif (is_array($entry)) {
+            $mergeKey = trim(strval($entry['merge_key'] ?? ''));
+            if ($mergeKey === '') {
+                $mergeKey = stobeFactionRelationMergeKey(
+                    trim(strval($entry['source_string_id'] ?? '')),
+                    intval($entry['source_numeric_id'] ?? 0),
+                    trim(strval($entry['source_name'] ?? '')),
+                    trim(strval($entry['target_string_id'] ?? '')),
+                    intval($entry['target_numeric_id'] ?? 0),
+                    trim(strval($entry['target_name'] ?? ''))
+                );
+            }
+        }
+        if ($mergeKey !== '') {
+            $removedKeys[$mergeKey] = true;
+        }
+    }
+
+    foreach ($removedKeys as $mergeKey => $_unused) {
+        unset($relationsByKey[$mergeKey]);
+    }
+
+    $changed = 0;
+    $unchanged = 0;
+    $removed = 0;
+
+    $txStarted = false;
+    try {
+        $beginOk = $db->exec("BEGIN");
+        if ($beginOk === false) {
+            return false;
+        }
+        $txStarted = true;
+
+        foreach ($removedKeys as $mergeKey => $_unused) {
+            $existing = $db->fetchOne(
+                "SELECT *
+                 FROM faction_relation_state
+                 WHERE merge_key = $1
+                 LIMIT 1",
+                [$mergeKey]
+            );
+            if (!is_array($existing)) {
+                continue;
+            }
+
+            $ok = $db->exec(
+                "DELETE FROM faction_relation_state
+                 WHERE merge_key = $1",
+                [$mergeKey]
+            );
+            if ($ok === false) {
+                $db->exec("ROLLBACK");
+                return false;
+            }
+            $removed++;
+        }
+
+        foreach ($relationsByKey as $entry) {
+            $mergeKey = strval($entry['merge_key'] ?? '');
+            if ($mergeKey === '') {
+                continue;
+            }
+
+            $existing = $db->fetchOne(
+                "SELECT *
+                 FROM faction_relation_state
+                 WHERE merge_key = $1
+                 LIMIT 1",
+                [$mergeKey]
+            );
+
+            $isChanged = !is_array($existing);
+            if (is_array($existing)) {
+                $prevRelation = floatval($existing['relation'] ?? 0);
+                $nextRelation = floatval($entry['relation'] ?? 0);
+                if (abs($prevRelation - $nextRelation) > 0.001) {
+                    $isChanged = true;
+                } elseif (boolval($existing['alliance'] ?? false) !== boolval($entry['alliance'] ?? false)) {
+                    $isChanged = true;
+                } elseif (boolval($existing['war'] ?? false) !== boolval($entry['war'] ?? false)) {
+                    $isChanged = true;
+                } elseif (boolval($existing['coexists'] ?? false) !== boolval($entry['coexists'] ?? false)) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['source_name'] ?? '')) !== trim(strval($entry['source_name'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['source_string_id'] ?? '')) !== trim(strval($entry['source_string_id'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (intval($existing['source_numeric_id'] ?? 0) !== intval($entry['source_numeric_id'] ?? 0)) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['target_name'] ?? '')) !== trim(strval($entry['target_name'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (trim(strval($existing['target_string_id'] ?? '')) !== trim(strval($entry['target_string_id'] ?? ''))) {
+                    $isChanged = true;
+                } elseif (intval($existing['target_numeric_id'] ?? 0) !== intval($entry['target_numeric_id'] ?? 0)) {
+                    $isChanged = true;
+                }
+            }
+
+            $ok = $db->exec(
+                "INSERT INTO faction_relation_state (
+                    merge_key,
+                    source_name,
+                    source_string_id,
+                    source_numeric_id,
+                    target_name,
+                    target_string_id,
+                    target_numeric_id,
+                    relation,
+                    alliance,
+                    war,
+                    coexists,
+                    game_ts,
+                    created_at,
+                    updated_at
+                 ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
+                 )
+                 ON CONFLICT (merge_key) DO UPDATE SET
+                    source_name = EXCLUDED.source_name,
+                    source_string_id = EXCLUDED.source_string_id,
+                    source_numeric_id = EXCLUDED.source_numeric_id,
+                    target_name = EXCLUDED.target_name,
+                    target_string_id = EXCLUDED.target_string_id,
+                    target_numeric_id = EXCLUDED.target_numeric_id,
+                    relation = EXCLUDED.relation,
+                    alliance = EXCLUDED.alliance,
+                    war = EXCLUDED.war,
+                    coexists = EXCLUDED.coexists,
+                    game_ts = EXCLUDED.game_ts,
+                    updated_at = NOW()",
+                [
+                    $mergeKey,
+                    strval($entry['source_name'] ?? ''),
+                    strval($entry['source_string_id'] ?? ''),
+                    intval($entry['source_numeric_id'] ?? 0),
+                    strval($entry['target_name'] ?? ''),
+                    strval($entry['target_string_id'] ?? ''),
+                    intval($entry['target_numeric_id'] ?? 0),
+                    floatval($entry['relation'] ?? 0),
+                    boolval($entry['alliance'] ?? false),
+                    boolval($entry['war'] ?? false),
+                    boolval($entry['coexists'] ?? false),
+                    $gameTs,
+                ]
+            );
+            if ($ok === false) {
+                $db->exec("ROLLBACK");
+                return false;
+            }
+
+            if (!$isChanged) {
+                $unchanged++;
+                continue;
+            }
+
+            $changed++;
+        }
+
+        $commitOk = $db->exec("COMMIT");
+        if ($commitOk === false) {
+            $db->exec("ROLLBACK");
+            return false;
+        }
+    } catch (Throwable $exception) {
+        if ($txStarted) {
+            $db->exec("ROLLBACK");
+        }
+        stobeLogException($exception, 'storeFactionRelationEntries failed', [
+            'game_ts' => $gameTs,
+        ]);
+        return false;
+    }
+
+    return [
+        'changed' => $changed,
+        'unchanged' => $unchanged,
+        'removed' => $removed,
+    ];
+}
+
 function getNpcData(string $name): array|false {
     $db = $GLOBALS["db"];
     $normalizedName = normalizeParticipantNameToken($name);
@@ -5887,14 +6813,14 @@ function stobeNormalizeJsonArrayValue(mixed $value): array {
     return [];
 }
 
-function stobeBuildNpcHistoryHashFromRow(array $row): string {
+function stobeBuildNpcHistoryCanonicalFromRow(array $row): array {
     $bounty = stobeNormalizeBountyPayload($row['bounty'] ?? '{}');
     $dynamicProfileEnabled = null;
     if (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
         $dynamicProfileEnabled = coerceBoolean($row['dynamic_profile']);
     }
 
-    $canonical = [
+    return [
         'name' => trim(strval($row['name'] ?? '')),
         'original_name' => trim(strval($row['original_name'] ?? '')),
         'npc_favorite' => coerceBoolean($row['npc_favorite'] ?? false),
@@ -5924,6 +6850,25 @@ function stobeBuildNpcHistoryHashFromRow(array $row): string {
         'is_slave' => coerceBoolean($row['is_slave'] ?? false),
         'world_knowledge_tags' => strval($row['world_knowledge_tags'] ?? ''),
     ];
+}
+
+function stobeGetNpcHistoryChangedFields(array $beforeRow, array $afterRow): array {
+    $beforeCanonical = stobeBuildNpcHistoryCanonicalFromRow($beforeRow);
+    $afterCanonical = stobeBuildNpcHistoryCanonicalFromRow($afterRow);
+    $changedFields = [];
+
+    foreach ($beforeCanonical as $key => $beforeValue) {
+        $afterValue = $afterCanonical[$key] ?? null;
+        if ($beforeValue !== $afterValue) {
+            $changedFields[] = $key;
+        }
+    }
+
+    return $changedFields;
+}
+
+function stobeBuildNpcHistoryHashFromRow(array $row): string {
+    $canonical = stobeBuildNpcHistoryCanonicalFromRow($row);
 
     $encoded = json_encode($canonical, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (!is_string($encoded) || $encoded === '') {
@@ -5994,8 +6939,13 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
         return false;
     }
 
+    $safeReason = trim($reason);
+    if ($safeReason === '') {
+        $safeReason = 'snapshot';
+    }
+
     $latest = $db->fetchOne(
-        "SELECT snapshot_hash
+        "SELECT snapshot_hash, created
          FROM core_npc_master_history
          WHERE npc_id = $1
          ORDER BY history_id DESC
@@ -6007,14 +6957,32 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
         return false;
     }
 
+    $cooldownBypassReason = (
+        str_starts_with($safeReason, 'rollback_')
+        || $safeReason === 'delete_before'
+    );
+    if (!$cooldownBypassReason) {
+        $latestCreatedUnix = strtotime(strval($latest['created'] ?? ''));
+        if ($latestCreatedUnix !== false) {
+            $cooldownSeconds = 600; // 10 real-world minutes
+            $elapsedSeconds = max(0, time() - intval($latestCreatedUnix));
+            if ($elapsedSeconds < $cooldownSeconds) {
+                stobeLogDebug('NPC history snapshot skipped by cooldown', [
+                    'npc_id' => $npcId,
+                    'name' => $name,
+                    'reason' => $safeReason,
+                    'elapsed_seconds' => $elapsedSeconds,
+                    'cooldown_seconds' => $cooldownSeconds,
+                ]);
+                return false;
+            }
+        }
+    }
+
     $metadata = normalizeJsonString(normalizeCoreNpcMetadata($row['metadata'] ?? '{}'));
     $extendedData = normalizeJsonString(normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}'));
     $limbs = normalizeJsonString(stobeNormalizeJsonArrayValue($row['limbs'] ?? '{}'));
     $bounty = stobeNormalizeBountyJsonString($row['bounty'] ?? '{}');
-    $safeReason = trim($reason);
-    if ($safeReason === '') {
-        $safeReason = 'snapshot';
-    }
 
     $dynamicProfileEnabled = false;
     $metadataArray = normalizeCoreNpcMetadata($metadata);
@@ -6107,6 +7075,20 @@ function stobeMaybeSnapshotNpcHistoryBeforeAfter(array|false $beforeRow, array|f
     $afterHash = stobeBuildNpcHistoryHashFromRow($afterRow);
     if ($beforeHash === '' || $afterHash === '' || hash_equals($beforeHash, $afterHash)) {
         return false;
+    }
+    $changedFields = stobeGetNpcHistoryChangedFields($beforeRow, $afterRow);
+    if (!empty($changedFields)) {
+        $snapshotNoiseFields = ['skills', 'relationships'];
+        $meaningfulChanges = array_values(array_diff($changedFields, $snapshotNoiseFields));
+        if (count($meaningfulChanges) === 0) {
+            stobeLogDebug('NPC history snapshot skipped for noisy-only field changes', [
+                'npc_id' => intval($beforeRow['id'] ?? ($afterRow['id'] ?? 0)),
+                'name' => trim(strval($afterRow['name'] ?? ($beforeRow['name'] ?? ''))),
+                'reason' => trim(strval($reason)),
+                'changed_fields' => $changedFields,
+            ]);
+            return false;
+        }
     }
     return stobeInsertNpcHistorySnapshotFromRow($beforeRow, $reason);
 }
@@ -6649,7 +7631,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             'storage_id' => normalizeStorageIdToken($metadataArray['storage_id'] ?? ''),
             'metadata_source' => $metadataSource,
             'profile_keys' => array_keys($profile),
-        ], 'WARN');
+        ], 'DEBUG');
     }
 
     $metadataJson = normalizeJsonString($metadataArray);
@@ -11359,7 +12341,7 @@ function DataRechatHistory(string $campaignFilter = '', int $windowSeconds = 120
     return $db->fetchAll(
         "SELECT gamets
          FROM eventlog
-         WHERE type IN ('rechat')
+         WHERE type IN ('rechat', 'narration', 'inputtext', 'inputtext_s')
            AND localts > $1
          ORDER BY gamets DESC, ts DESC
          LIMIT " . intval($safeLimit),

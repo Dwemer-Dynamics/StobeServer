@@ -59,7 +59,6 @@ function loadPromptTemplate(string $templateName): string {
         . "</goals>\n"
         . "#NPC_MIDDLE_TERM_MEMORY#\n"
         . "</character>\n\n"
-        . "<conversation_target><name>#PLAYER_NAME#</name></conversation_target>\n\n"
         . "<general_instructions>\n"
         . "#GENERAL_INSTRUCTIONS#\n"
         . "</general_instructions>";
@@ -485,6 +484,7 @@ function stobeBuildFactionRelationsActionInlineGuidance(array $npcData): string 
     }
     $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $speakerFactionName = trim(strval($speakerFactionIdentity['name'] ?? ''));
+    $speakerFactionName = stobeResolvePlayerFactionPromptDisplayName($speakerFactionName, $speakerFactionIdentity);
     if ($speakerFactionName === '') {
         $speakerFactionName = 'Unknown';
     }
@@ -2651,12 +2651,12 @@ function stobeResolveWorldContextFromRecentEventData(int $windowSeconds = 1800, 
         ? "SELECT type, data, location, geo
          FROM eventlog
          WHERE localts > $1
-         ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+         ORDER BY localts DESC, ts DESC, rowid DESC
          LIMIT " . strval($safeLimit)
         : "SELECT type, data, location
          FROM eventlog
          WHERE localts > $1
-         ORDER BY localts DESC, gamets DESC, ts DESC, rowid DESC
+         ORDER BY localts DESC, ts DESC, rowid DESC
          LIMIT " . strval($safeLimit);
     $rows = $db->fetchAll($sql, [time() - $safeWindow]);
     if (!is_array($rows) || count($rows) === 0) {
@@ -3360,6 +3360,9 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         if ($historyType === 'infoaction') {
             continue;
         }
+        if ($historyType === 'inputtext' || $historyType === 'inputtext_s') {
+            continue;
+        }
         $historyData = stobeNormalizeContextHistoryDataLine(strval($row['data'] ?? ''));
         if ($historyData === '') {
             continue;
@@ -3368,7 +3371,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         $inlineTypes = [
             'inputtext', 'inputtext_s', 'chat', 'rechat', 'bored',
             'action', 'death', 'limb_loss', 'knockout',
-            'enslaved', 'freed_slave', 'item_pickup', 'carry', 'trade',
+            'enslaved', 'freed_slave', 'item_pickup', 'carry', 'predation', 'trade',
         ];
         if (!in_array($historyType, $inlineTypes, true)) {
             $historyData = '[' . $historyType . '] ' . $historyData;
@@ -3472,6 +3475,9 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
         if (preg_match('/^\[\s*infoaction\b/i', $clean) === 1) {
             continue;
         }
+        if (preg_match('/^\[\s*inputtext(?:_s)?\b/i', $clean) === 1) {
+            continue;
+        }
         $messages[] = [
             'role' => 'user',
             'content' => " (...\n" . $clean . "\n...)",
@@ -3508,26 +3514,26 @@ function stobeBuildMemoryEventContextMessages(
             $blocks[] = trim($regularBlock);
         }
     }
-    $middleTermBlock = stobeBuildMiddleTermMemoryPromptBlock($npcData, $safeNpc);
-    if (trim($middleTermBlock) !== '') {
-        $blocks[] = trim($middleTermBlock);
-    }
-
     if (count($blocks) === 0) {
         return [];
     }
 
     $messages = [];
     foreach ($blocks as $block) {
+        $memoryLine = "<memory> {$safeNpc} remembers this: [{$block}] </memory>";
         $messages[] = [
             'role' => 'user',
-            'content' => " (...\n" . $block . "\n...)",
+            'content' => $memoryLine,
         ];
     }
     return $messages;
 }
 
-function stobeBuildTurnGuidanceUserPrompt(string $npcName, string $previousSpeaker = ''): string {
+function stobeBuildTurnGuidanceUserPrompt(
+    string $npcName,
+    string $previousSpeaker = '',
+    bool $endConversationNaturally = false
+): string {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
         $safeNpc = 'the NPC';
@@ -3539,7 +3545,11 @@ function stobeBuildTurnGuidanceUserPrompt(string $npcName, string $previousSpeak
         $targetLine = 'Address ' . $safeSpeaker . ' directly.';
     }
 
-    return 'Dialogue turn for ' . $safeNpc . '. Respond naturally to whoever just spoke. '
+    $responseInstruction = $endConversationNaturally
+        ? 'Respond naturally to whoever just spoke and end the conversation naturally.'
+        : 'Respond naturally to whoever just spoke.';
+
+    return 'Dialogue turn for ' . $safeNpc . '. ' . $responseInstruction . ' '
         . $targetLine
         . ' Write the next dialogue line. Be original and avoid repeating phraseology from recent context history.';
 }
@@ -5563,7 +5573,7 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
             continue;
         }
         if ($pct < 95.0) {
-            $damagedLabels[] = $displayLabel . ' (' . strval(intval(round($pct))) . '%)';
+            $damagedLabels[] = $displayLabel;
         }
     }
 
@@ -5580,8 +5590,12 @@ function stobeDescribeLimbStatus(mixed $limbsRaw, mixed $roboticLimbRaw = null):
     if (count($roboticLabels) > 0) {
         $statusParts[] = 'Robotic: ' . implode(', ', $roboticLabels);
     }
-    if (count($statusParts) === 0) {
-        $statusParts[] = 'Limbs intact';
+    if (count($missingLabels) === 0) {
+        if (count($statusParts) === 0) {
+            $statusParts[] = 'All limbs intact';
+        } else {
+            $statusParts[count($statusParts) - 1] .= ', all limbs intact';
+        }
     }
 
     return implode('; ', $statusParts);
@@ -5913,6 +5927,335 @@ function stobeFactionDisplayName(string $rawFaction): string {
     return $name;
 }
 
+function stobeFactionRelationStateTableAvailable(): bool {
+    static $available = null;
+    if ($available !== null) {
+        return boolval($available);
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        $available = false;
+        return false;
+    }
+
+    try {
+        $row = $db->fetchOne("SELECT to_regclass('public.faction_relation_state') AS rel");
+    } catch (Throwable $exception) {
+        $available = false;
+        return false;
+    }
+
+    $available = is_array($row) && trim(strval($row['rel'] ?? '')) !== '';
+    return boolval($available);
+}
+
+function stobeFactionIdentityMatches(array $leftIdentity, array $rightIdentity): bool {
+    $leftId = trim(strval($leftIdentity['id'] ?? ''));
+    $rightId = trim(strval($rightIdentity['id'] ?? ''));
+    if ($leftId !== '' && $rightId !== '') {
+        return strcasecmp($leftId, $rightId) === 0;
+    }
+
+    $leftName = trim(strval($leftIdentity['name'] ?? ''));
+    $rightName = trim(strval($rightIdentity['name'] ?? ''));
+    if ($leftName !== '' && $rightName !== '') {
+        return strcasecmp($leftName, $rightName) === 0;
+    }
+
+    return false;
+}
+
+function stobeBuildFactionRelationTokens(array $identity): array {
+    $tokens = [];
+    $id = trim(strval($identity['id'] ?? ''));
+    if ($id !== '') {
+        $tokens[] = 'sid:' . strtolower($id);
+        if (preg_match('/^-?[0-9]+$/', $id) === 1) {
+            $numericId = intval($id);
+            if ($numericId > 0) {
+                $tokens[] = 'id:' . strval($numericId);
+            }
+        }
+    }
+
+    $name = trim(strval($identity['name'] ?? ''));
+    if ($name !== '') {
+        $tokens[] = 'name:' . strtolower($name);
+    }
+
+    $deduped = [];
+    $seen = [];
+    foreach ($tokens as $token) {
+        if ($token === '' || isset($seen[$token])) {
+            continue;
+        }
+        $seen[$token] = true;
+        $deduped[] = $token;
+    }
+    return $deduped;
+}
+
+function stobeLookupDirectedFactionRelationValue(array $sourceIdentity, array $targetIdentity): ?float {
+    if (stobeFactionIdentityMatches($sourceIdentity, $targetIdentity)) {
+        return 100.0;
+    }
+    if (!stobeFactionRelationStateTableAvailable()) {
+        return null;
+    }
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return null;
+    }
+
+    $sourceTokens = stobeBuildFactionRelationTokens($sourceIdentity);
+    $targetTokens = stobeBuildFactionRelationTokens($targetIdentity);
+    $mergeKeys = [];
+    foreach ($sourceTokens as $sourceToken) {
+        foreach ($targetTokens as $targetToken) {
+            $mergeKey = trim($sourceToken) . '->' . trim($targetToken);
+            if ($mergeKey !== '' && !isset($mergeKeys[$mergeKey])) {
+                $mergeKeys[$mergeKey] = true;
+            }
+        }
+    }
+
+    try {
+        if (count($mergeKeys) > 0) {
+            $where = [];
+            $params = [];
+            $idx = 1;
+            foreach (array_keys($mergeKeys) as $mergeKey) {
+                $where[] = 'merge_key = $' . strval($idx);
+                $params[] = $mergeKey;
+                $idx++;
+            }
+
+            $row = $db->fetchOne(
+                "SELECT relation
+                 FROM faction_relation_state
+                 WHERE " . implode(' OR ', $where) . "
+                 ORDER BY game_ts DESC, updated_at DESC, id DESC
+                 LIMIT 1",
+                $params
+            );
+            if (is_array($row) && array_key_exists('relation', $row)) {
+                return floatval($row['relation']);
+            }
+        }
+
+        $sourceName = trim(strval($sourceIdentity['name'] ?? ''));
+        $targetName = trim(strval($targetIdentity['name'] ?? ''));
+        if ($sourceName !== '' && $targetName !== '') {
+            $row = $db->fetchOne(
+                "SELECT relation
+                 FROM faction_relation_state
+                 WHERE LOWER(source_name) = LOWER($1)
+                   AND LOWER(target_name) = LOWER($2)
+                 ORDER BY game_ts DESC, updated_at DESC, id DESC
+                 LIMIT 1",
+                [$sourceName, $targetName]
+            );
+            if (is_array($row) && array_key_exists('relation', $row)) {
+                return floatval($row['relation']);
+            }
+        }
+    } catch (Throwable $exception) {
+        return null;
+    }
+
+    return null;
+}
+
+function stobeFactionRelationPromptLabel(?float $relationValue): string {
+    $relation = is_numeric($relationValue) ? floatval($relationValue) : 0.0;
+    if ($relation > 0.0) {
+        return 'Friendly';
+    }
+    if ($relation < 0.0) {
+        return 'Hostile';
+    }
+    return 'Neutral';
+}
+
+function stobeFormatFactionWithRelationPromptLabel(
+    string $factionName,
+    array $speakerFactionIdentity,
+    array $targetFactionIdentity
+): string {
+    $name = trim($factionName);
+    if ($name === '') {
+        return '';
+    }
+
+    if (stobeFactionIdentityMatches($speakerFactionIdentity, $targetFactionIdentity)) {
+        return $name . ' [Same Faction]';
+    }
+
+    $relationValue = stobeLookupDirectedFactionRelationValue($speakerFactionIdentity, $targetFactionIdentity);
+    $relationLabel = stobeFactionRelationPromptLabel($relationValue);
+    return $name . ' [' . $relationLabel . ']';
+}
+
+function stobeGetPlayerFactionCustomNameSetting(): string {
+    static $cached = null;
+    if ($cached !== null) {
+        return strval($cached);
+    }
+
+    $cached = trim(strval(getSetting('PLAYER_FACTION_CUSTOM_NAME', '')));
+    return strval($cached);
+}
+
+function stobeGetPlayerFactionPromptSetting(): string {
+    static $cached = null;
+    if ($cached !== null) {
+        return strval($cached);
+    }
+
+    $cached = trim(strval(getSetting('PLAYER_FACTION_PROMPT', '')));
+    return strval($cached);
+}
+
+function stobeResolvePlayerFactionPromptDisplayName(string $factionName, array $factionIdentity = []): string {
+    $name = trim($factionName);
+    if ($name === '') {
+        return '';
+    }
+
+    $customName = stobeGetPlayerFactionCustomNameSetting();
+    if ($customName === '') {
+        return $name;
+    }
+
+    $playerFaction = getCurrentPlayerFactionIdentity();
+    if (stobeFactionIdentityMatches($playerFaction, $factionIdentity)) {
+        return $customName;
+    }
+
+    if (strcasecmp($name, 'Nameless') !== 0) {
+        return $name;
+    }
+
+    $playerFactionName = trim(strval($playerFaction['name'] ?? ''));
+    if ($playerFactionName === '' || strcasecmp($playerFactionName, 'Nameless') === 0) {
+        return $customName;
+    }
+
+    return $name;
+}
+
+function stobeAliasPlayerFactionNameInText(string $text, array $factionIdentity = [], bool $forceAlias = false): string {
+    $customName = stobeGetPlayerFactionCustomNameSetting();
+    if ($customName === '') {
+        return $text;
+    }
+
+    $playerFaction = getCurrentPlayerFactionIdentity();
+    $shouldAlias = $forceAlias || stobeFactionIdentityMatches($playerFaction, $factionIdentity);
+    if (!$shouldAlias) {
+        return $text;
+    }
+
+    $aliased = $text;
+    $candidateNames = [];
+    $playerFactionName = trim(strval($playerFaction['name'] ?? ''));
+    if ($playerFactionName !== '') {
+        $candidateNames[] = $playerFactionName;
+    }
+    $candidateNames[] = 'Nameless';
+    $seen = [];
+
+    foreach ($candidateNames as $candidate) {
+        $name = trim(strval($candidate));
+        if ($name === '') {
+            continue;
+        }
+        $key = strtolower($name);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        if (strcasecmp($name, $customName) === 0) {
+            continue;
+        }
+        $pattern = '/\b' . preg_quote($name, '/') . '\b/iu';
+        $aliased = preg_replace($pattern, $customName, $aliased) ?? $aliased;
+    }
+
+    return $aliased;
+}
+
+function stobePromptHasPlayerFactionContext(array $npcData): bool {
+    if (npcIsInPlayerFaction($npcData)) {
+        return true;
+    }
+
+    $customName = trim(stobeGetPlayerFactionCustomNameSetting());
+    $hasPlayerFactionNearby = static function (array $entries) use ($customName): bool {
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
+            if (nearbyEntryIsInPlayerFaction($entry)) {
+                return true;
+            }
+            if ($customName !== '') {
+                $factionRaw = trim(strval($entry['faction'] ?? ''));
+                if ($factionRaw !== '' && stripos($factionRaw, $customName) !== false) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $nearby = stobeExtractSceneArray($extendedData, 'nearby_actors');
+    if (count($nearby) === 0) {
+        $nearby = stobeExtractSceneArray($extendedData, 'nearby');
+    }
+    if ($hasPlayerFactionNearby($nearby)) {
+        return true;
+    }
+
+    // Keep this in sync with scene prompt fallback logic so player-faction
+    // prompt inclusion matches what is actually rendered in <nearby_actors>.
+    $peopleRaw = trim(strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? '')));
+    if ($peopleRaw !== '') {
+        $fallbackNearby = stobeBuildNearbyActorsFromPeopleScope($peopleRaw);
+        if ($hasPlayerFactionNearby($fallbackNearby)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function stobeBuildPlayerFactionPromptBlock(array $npcData): string {
+    $customPrompt = stobeGetPlayerFactionPromptSetting();
+    if (trim($customPrompt) === '') {
+        return '';
+    }
+
+    $playerFactionIdentity = getCurrentPlayerFactionIdentity();
+    $baseName = trim(strval($playerFactionIdentity['name'] ?? ''));
+    if ($baseName === '') {
+        $baseName = 'Nameless';
+    }
+    $displayName = stobeResolvePlayerFactionPromptDisplayName($baseName, $playerFactionIdentity);
+    if ($displayName === '') {
+        $displayName = 'Nameless';
+    }
+
+    $title = trim($displayName !== '' ? $displayName : 'Nameless');
+    $content = trim($customPrompt);
+    $entryText = $title . ': ' . $content;
+    return '<entry>' . stobePromptXmlEscape($entryText) . '</entry>';
+}
+
 function normalizeNpcMetadataPayload(mixed $metadata): array {
     if (is_array($metadata)) {
         return $metadata;
@@ -6222,9 +6565,9 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
     }
 
     $speakerKey = strtolower(normalizeParticipantNameToken($speakerName));
-    $activated = stobeGetActivatedNpcNameLookup();
-    $hasActivatedLookup = count($activated) > 0;
+    $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $seen = [];
+    $seenFactionLabels = [];
     $animalGroups = [];
     $orderedEntries = [];
     $lines = [
@@ -6237,6 +6580,7 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if (!is_array($entry)) {
             continue;
         }
+        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
         $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
         if ($name === '') {
             continue;
@@ -6257,9 +6601,6 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
             || (preg_match('/\b(dead|unconscious|knocked[ _-]?out|passed[ _-]?out)\b/iu', $actionLower) === 1);
 
         $isAnimal = stobeParseFlexibleBool($entry['is_animal'] ?? null) === true;
-        if ($hasActivatedLookup && !isset($activated[$nameKey]) && !$isDeadOrKnockedOut && !$isAnimal) {
-            continue;
-        }
 
         if ($isAnimal) {
             if (!isset($animalGroups[$nameKey])) {
@@ -6303,9 +6644,23 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         $descriptor = count($descriptorParts) > 0 ? (' (' . implode(' ', $descriptorParts) . ')') : '';
 
         $detailParts = [];
-        $faction = stobeFactionDisplayName(strval($entry['faction'] ?? ''));
+        $entryFactionIdentity = getFactionIdentityFromNearbyEntry($entry);
+        $faction = trim(strval($entryFactionIdentity['name'] ?? ''));
+        if ($faction === '') {
+            $faction = stobeFactionDisplayName(strval($entry['faction'] ?? ''));
+        }
+        $faction = stobeResolvePlayerFactionPromptDisplayName($faction, $entryFactionIdentity);
         if ($faction !== '' && !in_array(strtolower($faction), ['unknown', 'none', 'n/a'], true)) {
-            $detailParts[] = 'Faction: ' . $faction;
+            $formattedFaction = stobeFormatFactionWithRelationPromptLabel(
+                $faction,
+                $speakerFactionIdentity,
+                $entryFactionIdentity
+            );
+            $factionKey = strtolower(trim($formattedFaction));
+            if ($formattedFaction !== '' && !isset($seenFactionLabels[$factionKey])) {
+                $detailParts[] = 'Faction: ' . $formattedFaction;
+                $seenFactionLabels[$factionKey] = true;
+            }
         }
         $bountyText = stobeBuildNearbyEntryBountyText($entry);
         if ($bountyText !== '') {
@@ -6450,6 +6805,202 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
     return implode("\n", $lines);
 }
 
+function stobeEnrichNearbyEntryFromNpcProfile(array $entry): array {
+    $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+    if ($name === '') {
+        return $entry;
+    }
+
+    $hasRace = trim(strval($entry['race'] ?? '')) !== '';
+    $hasGender = trim(strval($entry['gender'] ?? '')) !== '';
+    $hasFaction = trim(strval($entry['faction'] ?? '')) !== '';
+    $hasAction = trim(strval($entry['current_action'] ?? '')) !== '';
+    $hasEquipment = trim(strval($entry['equipment'] ?? '')) !== '';
+    $hasAnimalFlag = array_key_exists('is_animal', $entry);
+    $hasDeadFlag = array_key_exists('is_dead', $entry);
+    $hasKnockoutFlag = array_key_exists('is_knocked_out', $entry) || array_key_exists('is_knockedout', $entry);
+    $hasUnconsciousFlag = array_key_exists('is_unconscious', $entry);
+
+    if (
+        $hasRace && $hasGender && $hasFaction && $hasAction && $hasEquipment
+        && $hasAnimalFlag && $hasDeadFlag && $hasKnockoutFlag && $hasUnconsciousFlag
+    ) {
+        return $entry;
+    }
+
+    if (!function_exists('getNpcData')) {
+        return $entry;
+    }
+
+    $npcData = getNpcData($name);
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return $entry;
+    }
+
+    $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+
+    if (!$hasRace) {
+        $race = trim(strval($npcData['race'] ?? ''));
+        if ($race !== '') {
+            $entry['race'] = $race;
+        }
+    }
+
+    if (!$hasGender) {
+        $gender = trim(strval($npcData['gender'] ?? ''));
+        if ($gender !== '') {
+            $entry['gender'] = $gender;
+        }
+    }
+
+    if (!$hasFaction) {
+        $faction = trim(strval($npcData['faction'] ?? ''));
+        if ($faction !== '') {
+            $entry['faction'] = $faction;
+        }
+    }
+
+    if (trim(strval($entry['faction_id'] ?? ($entry['factionID'] ?? ''))) === '') {
+        $factionId = trim(strval($metadata['faction_id'] ?? ($metadata['factionID'] ?? '')));
+        if ($factionId !== '') {
+            $entry['faction_id'] = $factionId;
+        }
+    }
+
+    if (!$hasAction) {
+        $currentAction = trim(strval($metadata['current_action'] ?? ''));
+        if ($currentAction === '') {
+            if (stobeParseFlexibleBool($metadata['is_attacking'] ?? null) === true) {
+                $currentAction = 'attacking';
+            } elseif (stobeParseFlexibleBool($metadata['is_in_combat'] ?? null) === true) {
+                $currentAction = 'combat';
+            } elseif (stobeParseFlexibleBool($metadata['is_moving'] ?? null) === true) {
+                $currentAction = 'moving';
+            }
+        }
+        if ($currentAction === '') {
+            $state = strtolower(trim(strval($metadata['character_state'] ?? '')));
+            if ($state !== '' && $state !== 'normal') {
+                $currentAction = $state;
+            }
+        }
+        if ($currentAction !== '') {
+            $entry['current_action'] = $currentAction;
+        }
+    }
+
+    if (!$hasEquipment) {
+        $equipment = trim(strval($npcData['equipment'] ?? ''));
+        if ($equipment !== '') {
+            $entry['equipment'] = $equipment;
+        }
+    }
+
+    if (!$hasAnimalFlag) {
+        $entry['is_animal'] = coerceBoolean($npcData['is_animal'] ?? ($metadata['is_animal'] ?? false));
+    }
+
+    if (!$hasDeadFlag) {
+        $entry['is_dead'] = coerceBoolean($metadata['is_dead'] ?? false);
+    }
+    if (!$hasKnockoutFlag) {
+        $isKnockedOut = coerceBoolean($metadata['is_knocked_out'] ?? ($metadata['is_knockedout'] ?? false));
+        if ($isKnockedOut) {
+            $entry['is_knocked_out'] = true;
+        }
+    }
+    if (!$hasUnconsciousFlag) {
+        $isUnconscious = coerceBoolean($metadata['is_unconscious'] ?? false);
+        if ($isUnconscious) {
+            $entry['is_unconscious'] = true;
+        }
+    }
+
+    if (trim(strval($entry['dist'] ?? '')) === '') {
+        $dist = trim(strval($metadata['dist'] ?? ($metadata['distance'] ?? '')));
+        if ($dist !== '' && is_numeric($dist)) {
+            $entry['dist'] = $dist;
+        }
+    }
+
+    if (trim(strval($entry['storage_id'] ?? '')) === '') {
+        $storageId = normalizeStorageIdToken($metadata['storage_id'] ?? '');
+        if ($storageId !== '') {
+            $entry['storage_id'] = $storageId;
+        }
+    }
+
+    return $entry;
+}
+
+function stobeBuildNearbyActorsFromPeopleScope(string $peopleRaw): array {
+    $peopleText = trim($peopleRaw);
+    if ($peopleText === '') {
+        return [];
+    }
+
+    $identities = [];
+    if (function_exists('extractParticipantIdentities')) {
+        $identities = extractParticipantIdentities(['people' => $peopleText]);
+    }
+
+    if (!is_array($identities) || count($identities) === 0) {
+        $decoded = json_decode($peopleText, true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $token) {
+                if (!is_string($token)) {
+                    continue;
+                }
+                $parsed = function_exists('extractParticipantIdentityToken')
+                    ? extractParticipantIdentityToken($token)
+                    : ['name' => normalizeParticipantNameToken($token), 'storage_id' => ''];
+                $name = normalizeParticipantNameToken(strval($parsed['name'] ?? ''));
+                if ($name === '') {
+                    continue;
+                }
+                $identities[] = [
+                    'name' => $name,
+                    'storage_id' => normalizeStorageIdToken(strval($parsed['storage_id'] ?? '')),
+                ];
+            }
+        }
+    }
+
+    if (!is_array($identities) || count($identities) === 0) {
+        return [];
+    }
+
+    $actors = [];
+    $seen = [];
+    foreach ($identities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $nameKey = strtolower($name);
+        if (isset($seen[$nameKey])) {
+            continue;
+        }
+        $seen[$nameKey] = true;
+
+        $entry = ['name' => $name];
+        $storageId = normalizeStorageIdToken(strval($identity['storage_id'] ?? ''));
+        if ($storageId !== '') {
+            $entry['storage_id'] = $storageId;
+        }
+        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
+        $actors[] = $entry;
+        if (count($actors) >= 32) {
+            break;
+        }
+    }
+
+    return $actors;
+}
+
 function stobeBuildNearbyItemsPromptBlock(array $npcData): string {
     $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
     $items = stobeExtractSceneArray($extendedData, 'nearby_items');
@@ -6572,6 +7123,24 @@ function stobeBuildScenePromptBlock(array $npcData, string $speakerName = ''): s
     $blocks = [];
 
     $actors = stobeBuildNearbyActorsPromptBlock($npcData, $speakerName);
+    if ($actors === '') {
+        $peopleRaw = trim(strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? '')));
+        $fallbackActors = stobeBuildNearbyActorsFromPeopleScope($peopleRaw);
+        if (count($fallbackActors) > 0) {
+            $fallbackNpcData = $npcData;
+            $fallbackExtended = normalizeNpcExtendedDataPayload($fallbackNpcData['extended_data'] ?? []);
+            $fallbackExtended['nearby_actors'] = $fallbackActors;
+            $fallbackExtended['nearby'] = $fallbackActors;
+            $fallbackNpcData['extended_data'] = $fallbackExtended;
+            $actors = stobeBuildNearbyActorsPromptBlock($fallbackNpcData, $speakerName);
+            if ($actors !== '') {
+                stobeLogDebug('Nearby actors prompt hydrated from request people scope', [
+                    'speaker' => $speakerName,
+                    'count' => count($fallbackActors),
+                ]);
+            }
+        }
+    }
     if ($actors !== '') {
         $blocks[] = $actors;
     }
@@ -6666,7 +7235,9 @@ function getCurrentPlayerFactionIdentity(): array {
     );
 
     if (!$row) {
-        $cached = ['name' => '', 'id' => ''];
+        // Kenshi default player faction is Nameless; use it as a stable fallback
+        // when no explicit player-character row is available.
+        $cached = ['name' => 'Nameless', 'id' => ''];
         return $cached;
     }
 
@@ -6688,6 +7259,10 @@ function getCurrentPlayerFactionIdentity(): array {
                 $identity['id'] = $metaIdentity['id'];
             }
         }
+    }
+
+    if ($identity['name'] === '') {
+        $identity['name'] = 'Nameless';
     }
 
     $cached = $identity;
@@ -6840,6 +7415,11 @@ function nearbyEntryIsInPlayerFaction(array $entry): bool {
         return strcasecmp($playerFactionName, $nearFactionName) === 0;
     }
 
+    $customName = stobeGetPlayerFactionCustomNameSetting();
+    if ($customName !== '' && $nearFactionName !== '' && strcasecmp($nearFactionName, $customName) === 0) {
+        return true;
+    }
+
     return false;
 }
 
@@ -6986,7 +7566,6 @@ function stobeBuildGeneralInstructionsText(array|false $npcData = false): string
         'Stay in character at all times.',
         'Keep responses concise unless the moment needs detail.',
         'Use Kenshi world logic, factions, and survival tone.',
-        'Never mention being an AI or being in a game.',
     ];
     return implode("\n", $defaults);
 }
@@ -8301,7 +8880,7 @@ function stobeEvaluateRelationshipsForTurn(
             $method = 'none';
         }
         $result['method'] = $method;
-        stobeLogDebug('Relationship evaluation skipped/no changes', [
+        stobeLogRelationshipDebug('Relationship evaluation skipped/no changes', [
             'speaker' => $speaker,
             'listener' => $listener,
             'event_type' => $eventType,
@@ -8323,7 +8902,7 @@ function stobeEvaluateRelationshipsForTurn(
 
     $persisted = stobePersistNpcRelationshipMap($speaker, is_array($applied['map'] ?? null) ? $applied['map'] : [], $speakerNpcData);
     if (!$persisted) {
-        stobeLogWarn('Relationship updates computed but not persisted', [
+        stobeLogRelationshipWarn('Relationship updates computed but not persisted', [
             'speaker' => $speaker,
             'listener' => $listener,
             'event_type' => $eventType,
@@ -8337,7 +8916,7 @@ function stobeEvaluateRelationshipsForTurn(
     $result['updated'] = $updatedCount;
     $result['applied'] = $appliedRows;
 
-    stobeLogInfo('Relationship updates applied', [
+    stobeLogRelationshipInfo('Relationship updates applied', [
         'speaker' => $speaker,
         'listener' => $listener,
         'event_type' => $eventType,
@@ -8528,40 +9107,21 @@ function stobeBuildMiddleTermMemoryPromptBlock(array $npcData, string $npcName):
         return '';
     }
 
-    $enabled = getNpcProfileBoolSetting(
-        $npcData,
-        ['middle_term_enabled', 'MIDDLE_TERM_MEMORY_ENABLED'],
-        'MIDDLE_TERM_MEMORY_ENABLED',
-        true
-    );
-    if (!$enabled) {
+    // Herika-style prompt injection: only latest middle-term memory entry.
+    $entries = stobeExtractMiddleTermMemoryEntriesFromExtendedData($npcData, 1);
+    if (count($entries) === 0) {
         return '';
     }
 
-    $maxEntries = getNpcProfileIntegerSetting(
-        $npcData,
-        ['MEMORY_CONTEXT_SIZE'],
-        'MEMORY_CONTEXT_SIZE',
-        1,
-        1,
-        8
-    );
-
-    $entries = stobeExtractMiddleTermMemoryEntriesFromExtendedData($npcData, $maxEntries);
-    if (count($entries) === 0) {
+    $latest = trim(strval($entries[count($entries) - 1] ?? ''));
+    if ($latest === '') {
         return '';
     }
 
     $lines = [];
     $lines[] = '<middle_term_memory>';
-    $lines[] = 'Past events';
-    if (count($entries) === 1) {
-        $lines[] = stobePromptXmlEscape($entries[0]);
-    } else {
-        foreach ($entries as $entry) {
-            $lines[] = '- ' . stobePromptXmlEscape($entry);
-        }
-    }
+    $lines[] = '#Past events';
+    $lines[] = $latest;
     $lines[] = '</middle_term_memory>';
     return implode("\n", $lines);
 }
@@ -8644,12 +9204,20 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
     if (is_array($speakerData) && count($speakerData) > 0) {
         $metadata = normalizeNpcMetadataPayload($speakerData['metadata'] ?? []);
         $speakerRace = trim(strval($speakerData['race'] ?? ''));
-        $speakerFaction = stobeFactionDisplayName(strval($speakerData['faction'] ?? ''));
+        $speakerFactionIdentity = getNpcFactionIdentityFromProfile($speakerData);
+        $speakerFaction = trim(strval($speakerFactionIdentity['name'] ?? ''));
+        if ($speakerFaction === '') {
+            $speakerFaction = stobeFactionDisplayName(strval($speakerData['faction'] ?? ''));
+        }
+        $speakerFaction = stobeResolvePlayerFactionPromptDisplayName($speakerFaction, $speakerFactionIdentity);
         $speakerGender = trim(strval($speakerData['gender'] ?? ''));
         $speakerOccupation = trim(strval($speakerData['occupation'] ?? ''));
         if ($speakerOccupation !== '') {
             $speakerOccupation = preg_replace('/\s*\[default[^\]]*factionsid\]\s*/iu', ' ', $speakerOccupation) ?? $speakerOccupation;
             $speakerOccupation = trim(preg_replace('/\s+/u', ' ', $speakerOccupation) ?? $speakerOccupation);
+            if (npcIsInPlayerFaction($speakerData)) {
+                $speakerOccupation = stobeAliasPlayerFactionNameInText($speakerOccupation, $speakerFactionIdentity, true);
+            }
         }
         $speakerSummary = trim(strval($speakerData['backstory'] ?? ''));
         if ($speakerSummary === '') {
@@ -8851,8 +9419,6 @@ function stobeBuildNarratorSystemPrompt(
         $lines[] = $speakerContextBlock;
     }
     $lines[] = '';
-    $lines[] = '<conversation_target><name>' . stobePromptXmlEscape($safeSpeaker) . '</name></conversation_target>';
-    $lines[] = '';
     $lines[] = '<general_instructions>';
     $lines[] = stobePromptXmlEscape($generalInstructions);
     $lines[] = '</general_instructions>';
@@ -8910,7 +9476,12 @@ function buildSystemPrompt(
     if ($npcRace === '') {
         $npcRace = 'Unknown';
     }
-    $npcFaction = stobeFactionDisplayName(strval($npcData['faction'] ?? ''));
+    $npcFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
+    $npcFaction = trim(strval($npcFactionIdentity['name'] ?? ''));
+    if ($npcFaction === '') {
+        $npcFaction = stobeFactionDisplayName(strval($npcData['faction'] ?? ''));
+    }
+    $npcFaction = stobeResolvePlayerFactionPromptDisplayName($npcFaction, $npcFactionIdentity);
     if ($npcFaction === '') {
         $npcFaction = 'Unknown';
     }
@@ -8941,6 +9512,9 @@ function buildSystemPrompt(
     if ($npcOccupation !== '') {
         $npcOccupation = preg_replace('/\s*\[default[^\]]*factionsid\]\s*/iu', ' ', $npcOccupation) ?? $npcOccupation;
         $npcOccupation = trim(preg_replace('/\s+/u', ' ', $npcOccupation) ?? $npcOccupation);
+        if ($inPlayerFaction) {
+            $npcOccupation = stobeAliasPlayerFactionNameInText($npcOccupation, $npcFactionIdentity, true);
+        }
     }
     if ($npcOccupation === '') {
         $npcOccupation = 'Wasteland drifter.';
@@ -8981,7 +9555,7 @@ function buildSystemPrompt(
         '#NPC_SKILLS#' => $npcSkills,
         '#NPC_SPEECHSTYLE#' => stobePromptXmlEscape($npcSpeechStyle),
         '#NPC_GOALS#' => stobePromptXmlEscape($npcGoals),
-        '#NPC_MIDDLE_TERM_MEMORY#' => '',
+        '#NPC_MIDDLE_TERM_MEMORY#' => stobeBuildMiddleTermMemoryPromptBlock($npcData, $npcName),
         '#PLAYER_NAME#' => stobePromptXmlEscape($playerName),
         '#PLAYER_CATS#' => stobePromptXmlEscape($playerCats),
         '#GENERAL_INSTRUCTIONS#' => stobePromptXmlEscape($generalInstructions),
@@ -9001,12 +9575,17 @@ function buildSystemPrompt(
             . "</player_faction_funds>";
     }
 
+    $playerFactionPromptBlock = stobeBuildPlayerFactionPromptBlock($npcData);
+
     $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
     $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
-    if (count($loreHints) > 0) {
+    if (count($loreHints) > 0 || $playerFactionPromptBlock !== '') {
         $prompt .= "\n\n<knowledge>";
         foreach ($loreHints as $hint) {
             $prompt .= "\n  <entry>" . stobePromptXmlEscape($hint) . "</entry>";
+        }
+        if ($playerFactionPromptBlock !== '') {
+            $prompt .= "\n  " . trim($playerFactionPromptBlock);
         }
         $prompt .= "\n</knowledge>";
     }
@@ -9300,22 +9879,7 @@ function buildRechatSystemPrompt(
 ): string {
     $speakerForBasePrompt = $previousSpeaker !== '' ? $previousSpeaker : getSetting('PLAYER_NAME', 'Drifter');
     $prompt = buildSystemPrompt($npcName, $npcData, $speakerForBasePrompt, $previousMessage, true, 'rechat', $currentGamets);
-
-    $guidance = [
-        'This is an NPC-to-NPC rechat turn.',
-        "Respond naturally to {$speakerForBasePrompt}, who just spoke.",
-        'Address exactly one listener and keep continuity with the last line.',
-        'Keep the response concise and in-character for Kenshi.',
-    ];
-    if ($previousTarget !== '') {
-        $guidance[] = "The previous line was directed at: {$previousTarget}.";
-    }
-
-    $xml = ["<rechat_mode>"];
-    foreach ($guidance as $rule) {
-        $xml[] = '  <rule>' . stobePromptXmlEscape($rule) . '</rule>';
-    }
-    $xml[] = '</rechat_mode>';
+    $xml = [];
 
     $specialMode = strtolower(trim(strval($specialContext['mode'] ?? '')));
     if ($specialMode === 'limb_loss_reaction') {
@@ -9349,6 +9913,10 @@ function buildRechatSystemPrompt(
         $xml[] = '  <limb>' . stobePromptXmlEscape($limb) . '</limb>';
         $xml[] = '  <hacksaw>' . ($hacksawContext ? 'true' : 'false') . '</hacksaw>';
         $xml[] = '</limb_loss_meta>';
+    }
+
+    if (count($xml) === 0) {
+        return $prompt;
     }
 
     return $prompt . "\n\n" . implode("\n", $xml);
@@ -9641,6 +10209,67 @@ function stobeDedupeActionList(array $actions, string $eventType, ?array $config
     return $normalized;
 }
 
+if (!function_exists('stobeResolveDialogueListenerTarget')) {
+    function stobeResolveDialogueListenerTarget(string $listener, array $allowedNames, string $fallback = ''): string
+    {
+        $listenerName = normalizeParticipantNameToken($listener);
+        $fallbackName = normalizeParticipantNameToken($fallback);
+
+        $allowedByName = [];
+        $allowedByBaseName = [];
+        foreach ($allowedNames as $entry) {
+            $candidateRaw = '';
+            if (is_array($entry)) {
+                $candidateRaw = strval($entry['name'] ?? ($entry['target'] ?? ($entry['listener'] ?? '')));
+            } elseif (is_string($entry)) {
+                $candidateRaw = $entry;
+            }
+            $candidate = normalizeParticipantNameToken($candidateRaw);
+            if ($candidate === '') {
+                continue;
+            }
+
+            $nameKey = strtolower($candidate);
+            if (!isset($allowedByName[$nameKey])) {
+                $allowedByName[$nameKey] = $candidate;
+            }
+
+            $baseName = strtolower(baseNameWithoutBracketSuffix($candidate));
+            if ($baseName !== '' && !isset($allowedByBaseName[$baseName])) {
+                $allowedByBaseName[$baseName] = $candidate;
+            }
+        }
+
+        if ($listenerName !== '') {
+            $listenerKey = strtolower($listenerName);
+            if (isset($allowedByName[$listenerKey])) {
+                return $allowedByName[$listenerKey];
+            }
+
+            $listenerBase = strtolower(baseNameWithoutBracketSuffix($listenerName));
+            if ($listenerBase !== '' && isset($allowedByBaseName[$listenerBase])) {
+                return $allowedByBaseName[$listenerBase];
+            }
+        }
+
+        if ($fallbackName !== '') {
+            $fallbackKey = strtolower($fallbackName);
+            if (isset($allowedByName[$fallbackKey])) {
+                return $allowedByName[$fallbackKey];
+            }
+
+            $fallbackBase = strtolower(baseNameWithoutBracketSuffix($fallbackName));
+            if ($fallbackBase !== '' && isset($allowedByBaseName[$fallbackBase])) {
+                return $allowedByBaseName[$fallbackBase];
+            }
+
+            return $fallbackName;
+        }
+
+        return '';
+    }
+}
+
 function stobeStreamDialogueViaLlm(
     string $actor,
     array|false $actorData,
@@ -9657,6 +10286,7 @@ function stobeStreamDialogueViaLlm(
         'actions' => [],
         'actions_streamed' => false,
         'structured_json' => false,
+        'listener' => '',
         'chunks_emitted' => 0,
     ];
 
@@ -9744,6 +10374,7 @@ function stobeStreamDialogueViaLlm(
 
     $structured = stobeParseStructuredDialogueResponse($rawResponse, $eventType);
     $isStructured = boolval($structured['is_structured'] ?? false);
+    $listener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
 
     $responseText = '';
     if ($isStructured) {
@@ -9817,6 +10448,7 @@ function stobeStreamDialogueViaLlm(
     $result['actions'] = $dedupedActions;
     $result['actions_streamed'] = count($streamActionSeen) > 0;
     $result['structured_json'] = $isStructured;
+    $result['listener'] = $listener;
     $result['chunks_emitted'] = $chunksEmitted;
     return $result;
 }

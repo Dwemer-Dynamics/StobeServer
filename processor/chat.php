@@ -346,6 +346,85 @@ $allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat', 'narra
 if (!in_array($dialogueMode, $allowedDialogueModes, true)) {
     $dialogueMode = 'talk';
 }
+
+if (!function_exists('stobeParseNearbyRosterNamesFromEventData')) {
+    function stobeParseNearbyRosterNamesFromEventData(string $eventData): array
+    {
+        $text = trim($eventData);
+        if ($text === '') {
+            return [];
+        }
+
+        if (preg_match('/nearby\s+NPC\s+roster\s*\([0-9]+\)\s*:\s*(.+)$/iu', $text, $matches) !== 1) {
+            return [];
+        }
+
+        $rosterText = trim(strval($matches[1] ?? ''));
+        if ($rosterText === '') {
+            return [];
+        }
+
+        $parts = explode(',', $rosterText);
+        $names = [];
+        $seen = [];
+        foreach ($parts as $part) {
+            $name = normalizeParticipantNameToken(strval($part));
+            $name = trim(str_replace('...', '', $name));
+            if ($name === '') {
+                continue;
+            }
+            $key = strtolower($name);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $names[] = $name;
+            if (count($names) >= 24) {
+                break;
+            }
+        }
+        return $names;
+    }
+}
+
+if (!function_exists('stobeFetchNearbyActorsFromInfonpcRoster')) {
+    function stobeFetchNearbyActorsFromInfonpcRoster(string $speakerName): array
+    {
+        $safeSpeaker = normalizeParticipantNameToken($speakerName);
+        if ($safeSpeaker === '') {
+            return [];
+        }
+
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db) {
+            return [];
+        }
+
+        $row = $db->fetchOne(
+            "SELECT data
+             FROM eventlog
+             WHERE type = 'infonpc'
+               AND data ILIKE $1
+             ORDER BY rowid DESC
+             LIMIT 1",
+            [$safeSpeaker . ': nearby NPC roster%']
+        );
+        if (!is_array($row)) {
+            return [];
+        }
+
+        $names = stobeParseNearbyRosterNamesFromEventData(strval($row['data'] ?? ''));
+        if (count($names) === 0) {
+            return [];
+        }
+
+        $actors = [];
+        foreach ($names as $name) {
+            $actors[] = ['name' => $name];
+        }
+        return $actors;
+    }
+}
 $narratorMode = ($dialogueMode === 'narrator');
 $narratorName = stobeNarratorName();
 if ($narratorMode && !stobeNarratorModeEnabled()) {
@@ -389,6 +468,27 @@ if ($targetNpc === '') {
     echo "ok";
     return;
 }
+
+$speakerProfileName = normalizeParticipantNameToken(strval($speaker));
+if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
+    $speakerNpcData = getNpcData($speakerProfileName);
+    if (is_array($speakerNpcData) && stobeNpcCannotRespondInDirectChat($speakerNpcData)) {
+        $speakerState = function_exists('stobeResolveNpcAwarenessState')
+            ? stobeResolveNpcAwarenessState($speakerNpcData)
+            : strtolower(trim(strval($speakerNpcData['character_state'] ?? '')));
+        stobeLogInfo('Chat input rejected: speaker cannot speak in current state', [
+            'event_type' => $eventType,
+            'speaker' => $speakerProfileName,
+            'target_npc' => $targetNpc,
+            'state' => $speakerState,
+            'mode' => $dialogueMode,
+            'gamets' => intval($gamets),
+        ]);
+        echo "ok";
+        return;
+    }
+}
+
 if ($manualActionTarget === '') {
     $manualActionTarget = $targetNpc;
 }
@@ -554,6 +654,11 @@ if ($dialogueMode === 'autochat') {
 $message = $sanitizeChatMessage($message);
 $eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, $timestamp, $gamets, $eventData);
+if (!$narratorMode) {
+    // Mirror player input as chat immediately so timeline order is stable even
+    // when game-emitted chat events arrive later.
+    storeEvent('chat', intval($timestamp) + 1, $gamets, $eventData, 'inputtext_chat_mirror');
+}
 
 if (
     !$narratorMode &&
@@ -602,11 +707,61 @@ $manualActionCannotSpeak = $manualActionActive
     ? stobeManualActionTargetCannotSpeak($npcData, $manualActionKey)
     : false;
 
+$promptNpcData = $npcData;
+if (
+    !$narratorMode &&
+    $speakerProfileName !== '' &&
+    is_array($promptNpcData)
+) {
+    $targetExtended = normalizeNpcExtendedDataPayload($promptNpcData['extended_data'] ?? []);
+    $targetNearbyActors = stobeExtractSceneArray($targetExtended, 'nearby_actors');
+    if (count($targetNearbyActors) === 0) {
+        $targetNearbyActors = stobeExtractSceneArray($targetExtended, 'nearby');
+    }
+
+    if (count($targetNearbyActors) === 0) {
+        $speakerPromptData = getNpcData($speakerProfileName);
+        if (is_array($speakerPromptData) && count($speakerPromptData) > 0) {
+            $speakerExtended = normalizeNpcExtendedDataPayload($speakerPromptData['extended_data'] ?? []);
+            $speakerNearbyActors = stobeExtractSceneArray($speakerExtended, 'nearby_actors');
+            if (count($speakerNearbyActors) === 0) {
+                $speakerNearbyActors = stobeExtractSceneArray($speakerExtended, 'nearby');
+            }
+            if (count($speakerNearbyActors) > 0) {
+                $targetExtended['nearby_actors'] = $speakerNearbyActors;
+                $targetExtended['nearby'] = $speakerNearbyActors;
+                $promptNpcData['extended_data'] = $targetExtended;
+                $targetNearbyActors = $speakerNearbyActors;
+                stobeLogDebug('Chat prompt nearby actors hydrated from speaker snapshot', [
+                    'target_npc' => $targetNpc,
+                    'speaker' => $speakerProfileName,
+                    'count' => count($speakerNearbyActors),
+                ]);
+            }
+        }
+    }
+
+    if (count($targetNearbyActors) === 0) {
+        $rosterNearbyActors = stobeFetchNearbyActorsFromInfonpcRoster($speakerProfileName);
+        if (count($rosterNearbyActors) > 0) {
+            $targetExtended['nearby_actors'] = $rosterNearbyActors;
+            $targetExtended['nearby'] = $rosterNearbyActors;
+            $promptNpcData['extended_data'] = $targetExtended;
+            $targetNearbyActors = $rosterNearbyActors;
+            stobeLogDebug('Chat prompt nearby actors hydrated from latest infonpc roster', [
+                'target_npc' => $targetNpc,
+                'speaker' => $speakerProfileName,
+                'count' => count($rosterNearbyActors),
+            ]);
+        }
+    }
+}
+
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
         $targetNpc,
-        $npcData,
+        $promptNpcData,
         $speaker,
         $message,
         !$narratorMode,
@@ -722,6 +877,7 @@ if ($narratorMode) {
 
 $responseText = '';
 $responseActions = [];
+$responseListener = '';
 $alreadyStreamed = false;
 $actionsStreamedInLlm = false;
 $manualActionForcedEmoteOnly = false;
@@ -761,6 +917,7 @@ if ($manualActionActive && $manualActionCannotSpeak) {
     if (boolval($streamResult['ok'] ?? false)) {
         $responseText = sanitizeForKenshi(trim(strval($streamResult['response_text'] ?? '')));
         $responseActions = is_array($streamResult['actions'] ?? null) ? $streamResult['actions'] : [];
+        $responseListener = normalizeParticipantNameToken(strval($streamResult['listener'] ?? ''));
         $alreadyStreamed = intval($streamResult['chunks_emitted'] ?? 0) > 0;
         $actionsStreamedInLlm = boolval($streamResult['actions_streamed'] ?? false);
         stobeLogInfo('LLM stream response generated', [
@@ -787,6 +944,7 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             ]);
         } else {
             $structured = stobeParseStructuredDialogueResponse($rawResponse, 'chat');
+            $responseListener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
             $responseText = sanitizeForKenshi(trim(strval($structured['message'] ?? '')));
             $responseActions = [];
             $structuredAction = trim(strval($structured['action_tag'] ?? ''));
@@ -819,10 +977,35 @@ if ($narratorMode) {
     $responseActions = [];
 }
 
+$peopleRaw = strval($GLOBALS['CACHE_PEOPLE'] ?? ($_GET['people'] ?? ''));
+$participantIdentities = extractParticipantIdentities([
+    'people' => $peopleRaw,
+    'profile' => $targetNpc,
+    'speaker' => $speaker,
+]);
+$listenerCandidates = [$speaker, $targetNpc, $playerName];
+foreach ($participantIdentities as $participantIdentity) {
+    if (!is_array($participantIdentity)) {
+        continue;
+    }
+    $listenerCandidates[] = strval($participantIdentity['name'] ?? '');
+}
+$replyTarget = stobeResolveDialogueListenerTarget($responseListener, $listenerCandidates, $speaker);
+if ($replyTarget === '') {
+    $replyTarget = $speaker;
+}
+if ($responseListener !== '' && strcasecmp($responseListener, $replyTarget) !== 0) {
+    stobeLogDebug('Chat listener remapped to known participant', [
+        'target_npc' => $targetNpc,
+        'parsed_listener' => $responseListener,
+        'resolved_listener' => $replyTarget,
+    ]);
+}
+
 if (!$manualActionForcedEmoteOnly && !$narratorMode) {
     $relationshipEval = stobeEvaluateRelationshipsForTurn(
         $targetNpc,
-        $speaker,
+        $replyTarget,
         $speaker . ': ' . $message,
         $responseText,
         $npcData,
@@ -844,9 +1027,9 @@ if ($storedResponseText === '' && count($responseActions) > 0) {
     $storedResponseText = '...';
 }
 
-storeActionEvents($targetNpc, $responseActions, $gamets, $speaker, 'chat');
+storeActionEvents($targetNpc, $responseActions, $gamets, $replyTarget, 'chat');
 
-$chatEventData = $targetNpc . ': ' . $storedResponseText . ' (talking to: ' . $speaker . ')';
+$chatEventData = $targetNpc . ': ' . $storedResponseText . ' (talking to: ' . $replyTarget . ')';
 storeEvent('chat', time(), $gamets, $chatEventData);
 
 if ($alreadyStreamed) {

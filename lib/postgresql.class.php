@@ -18,10 +18,14 @@ class sql {
 
     public function exec(string $query, array $params = []): mixed {
         if (empty($params)) {
-            $result = pg_query($this->conn, $query);
+            // Suppress native PHP warnings from pg_* calls; callers handle false
+            // and we capture the DB error in $this->lastError for diagnostics.
+            $result = @pg_query($this->conn, $query);
         } else {
             $normalizedParams = $this->normalizeParams($params);
-            $result = pg_query_params($this->conn, $query, $normalizedParams);
+            // Suppress native PHP warnings from pg_* calls; callers handle false
+            // and we capture the DB error in $this->lastError for diagnostics.
+            $result = @pg_query_params($this->conn, $query, $normalizedParams);
         }
         if ($result === false) {
             $this->lastError = pg_last_error($this->conn) ?: 'Unknown PostgreSQL error';

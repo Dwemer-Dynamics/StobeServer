@@ -22,6 +22,16 @@ try {
                 'value' => 'true',
                 'description' => 'Enable relationship system analysis and updates for NPC interactions.',
             ],
+            [
+                'id' => 'PLAYER_FACTION_CUSTOM_NAME',
+                'value' => '',
+                'description' => 'Optional custom display name for the player faction in prompts.',
+            ],
+            [
+                'id' => 'PLAYER_FACTION_PROMPT',
+                'value' => '',
+                'description' => 'Optional player-faction instruction block injected into prompts.',
+            ],
         ];
 
         foreach ($requiredSettings as $requiredSetting) {
@@ -96,6 +106,9 @@ function stobeHideFromGlobalSettingsUi(string $id): bool
     if ($idUpper === 'STOBE_QUICKSTART_COMPLETED') {
         return true;
     }
+    if (in_array($idUpper, ['MEMORY_TIME_DELAY', 'MEMORY_CONTEXT_SIZE', 'MEMORY_BIAS_A', 'MEMORY_BIAS_B'], true)) {
+        return true;
+    }
     // Legacy relationship toggle key; RELATIONSHIP_SYSTEM is the canonical setting.
     if ($idUpper === 'RELATIONSHIP_SYSTEM_ENABLED') {
         return true;
@@ -113,9 +126,6 @@ function stobeSettingLooksBoolean(string $value): bool
 function stobeSettingType(string $id, string $value): string
 {
     $idUpper = strtoupper($id);
-    if ($idUpper === 'MEMORY_CONTEXT_SIZE') {
-        return 'int';
-    }
     if (stobeSettingLooksBoolean($value)) {
         return 'bool';
     }
@@ -128,7 +138,7 @@ function stobeSettingType(string $id, string $value): string
     if (strpos($idUpper, 'API_KEY') !== false || strpos($idUpper, 'SECRET') !== false || strpos($idUpper, 'TOKEN') !== false) {
         return 'password';
     }
-    if (in_array($idUpper, ['PROMPT_HEAD', 'EMOTEMOODS', 'ROLEPLAY_INSTRUCTIONS', 'GENERAL_INSTRUCTIONS', 'ACTIONS_ALLOWLIST'], true)) {
+    if (in_array($idUpper, ['PROMPT_HEAD', 'EMOTEMOODS', 'ROLEPLAY_INSTRUCTIONS', 'GENERAL_INSTRUCTIONS', 'ACTIONS_ALLOWLIST', 'PLAYER_FACTION_PROMPT'], true)) {
         return 'textarea';
     }
     if (strlen($value) > 120 || strpos($value, "\n") !== false) {
@@ -176,7 +186,9 @@ function stobeInferGroup(string $id): string
         'AUTO_LOCK_PROFILE',
         'RELATIONSHIP_SYSTEM',
         'RELATIONSHIP_SYSTEM_ENABLED',
-        'RELATION_SYSTEM_ENABLED'
+        'RELATION_SYSTEM_ENABLED',
+        'PLAYER_FACTION_CUSTOM_NAME',
+        'PLAYER_FACTION_PROMPT'
     ], true)) {
         return 'Core';
     }
@@ -273,6 +285,8 @@ foreach ($grouped as $groupName => $rows) {
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
+            'PLAYER_FACTION_CUSTOM_NAME' => 3,
+            'PLAYER_FACTION_PROMPT' => 4,
             'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,

@@ -114,6 +114,10 @@ function stobeFormatEventHistoryLine(array $row, bool $includeGamets = true): st
     if ($historyType === '') {
         $historyType = 'event';
     }
+    $historyTypeLower = strtolower($historyType);
+    if ($historyTypeLower === 'inputtext' || $historyTypeLower === 'inputtext_s') {
+        return '';
+    }
     $historyData = trim(strval($row['data'] ?? ''));
     if ($historyData === '') {
         return '';

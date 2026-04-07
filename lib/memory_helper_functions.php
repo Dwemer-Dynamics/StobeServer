@@ -50,13 +50,52 @@ function stobeRegularMemoryAllowedEventType(string $eventType): bool
 
 function stobeRegularMemoryRunIntervalGamets(): int
 {
-    $minutes = getSettingInt('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', 10);
-    if ($minutes < 1) {
-        $minutes = 1;
-    } elseif ($minutes > 1440) {
-        $minutes = 1440;
+    // Kenshi gamets are TimeOfDay seconds, so 1 in-game hour = 3600 gamets.
+    // Keep MEMORY_AUTO_CREATE_SUMMARY_INTERVAL semantics in in-game hours.
+    $interval = getSettingInt('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', 6);
+    if ($interval < 1) {
+        $interval = 1;
+    } elseif ($interval > 720) {
+        $interval = 720;
     }
-    return $minutes * 60;
+    return $interval * 3600;
+}
+
+function stobeRegularMemorySummaryMinEvents(): int
+{
+    $minEvents = getSettingInt('AUTO_CREATE_SUMMARY_MIN_EVENTS', 5);
+    if ($minEvents < 1) {
+        $minEvents = 1;
+    } elseif ($minEvents > 50) {
+        $minEvents = 50;
+    }
+    return $minEvents;
+}
+
+function stobeRegularMemoryOneHourGamets(): int
+{
+    return 3600;
+}
+
+function stobeRegularMemoryLatestCompletedGlobalSummaryGamets(): int
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
+        return 0;
+    }
+
+    $scopeClause = '';
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $scopeClause = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
+    }
+
+    $row = $db->fetchOne(
+        "SELECT COALESCE(MAX(gamets_end), 0) AS max_gamets
+         FROM memory_summary
+         WHERE COALESCE(BTRIM(summary), '') <> ''
+           {$scopeClause}"
+    );
+    return max(0, intval($row['max_gamets'] ?? 0));
 }
 
 function stobeRegularMemoryShouldRunCycle(string $eventType, int $gamets): bool
@@ -68,25 +107,17 @@ function stobeRegularMemoryShouldRunCycle(string $eventType, int $gamets): bool
         return false;
     }
 
-    $lastRunTs = intval(getConfOpt('MEMORY_LAST_RUN_TS', '0'));
-    $nowTs = time();
-    if ($lastRunTs > 0 && ($nowTs - $lastRunTs) < 12) {
-        return false;
-    }
-
     if ($gamets <= 0) {
         return false;
     }
 
-    $lastRunGamets = intval(getConfOpt('MEMORY_LAST_RUN_GAMETS', '0'));
-    if ($lastRunGamets > 0) {
-        $intervalGamets = stobeRegularMemoryRunIntervalGamets();
-        if ($gamets >= $lastRunGamets && ($gamets - $lastRunGamets) < $intervalGamets) {
-            return false;
-        }
+    $lastSummaryGamets = stobeRegularMemoryLatestCompletedGlobalSummaryGamets();
+    if ($gamets <= $lastSummaryGamets) {
+        return false;
     }
 
-    return true;
+    $pfi = stobeRegularMemoryRunIntervalGamets();
+    return ($gamets - $lastSummaryGamets) > $pfi;
 }
 
 function stobeRegularMemoryTryLock(): bool
@@ -170,6 +201,31 @@ function stobeRegularMemorySummaryScopeColumnAvailable(): bool
          WHERE table_schema = 'public'
            AND table_name = 'memory_summary'
            AND column_name = 'scope'
+         LIMIT 1"
+    );
+    $available = is_array($row);
+    return boolval($available);
+}
+
+function stobeRegularMemoryLocationColumnAvailable(): bool
+{
+    static $available = null;
+    if ($available !== null) {
+        return boolval($available);
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemoryTableAvailable()) {
+        $available = false;
+        return false;
+    }
+
+    $row = $db->fetchOne(
+        "SELECT 1 AS ok
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'memory'
+           AND column_name = 'location'
          LIMIT 1"
     );
     $available = is_array($row);
@@ -560,7 +616,8 @@ function stobeRegularMemoryStoreRow(
     string $content,
     string $eventType,
     int $gamets,
-    int $localts
+    int $localts,
+    string $location = ''
 ): bool {
     $db = $GLOBALS['db'] ?? null;
     if (!$db || !stobeRegularMemoryTableAvailable()) {
@@ -570,6 +627,7 @@ function stobeRegularMemoryStoreRow(
     $safePeople = trim($peopleKey);
     $safeContent = trim(sanitizeForKenshi($content));
     $safeEventType = strtolower(trim($eventType));
+    $safeLocation = trim(sanitizeForKenshi($location));
     if ($safePeople === '' || $safePeople === '[]' || $safeContent === '' || $safeEventType === '') {
         return false;
     }
@@ -593,33 +651,66 @@ function stobeRegularMemoryStoreRow(
     $embedding = stobeRegularMemoryEmbedText($safeContent);
     $vectorLiteral = stobeRegularMemoryVectorLiteral($embedding);
 
-    $result = $db->exec(
-        "INSERT INTO memory (
-            people,
-            content,
-            embedding,
-            event_type,
-            gamets,
-            localts,
-            created_at
-        ) VALUES (
-            $1,
-            $2,
-            CASE WHEN $3 = '' THEN NULL ELSE $3::vector END,
-            $4,
-            $5,
-            $6,
-            NOW()
-        )",
-        [
-            $safePeople,
-            truncatePromptValue($safeContent, 2800),
-            $vectorLiteral,
-            $safeEventType,
-            max(0, $gamets),
-            max(0, $localts),
-        ]
-    );
+    if (stobeRegularMemoryLocationColumnAvailable()) {
+        $result = $db->exec(
+            "INSERT INTO memory (
+                people,
+                content,
+                embedding,
+                event_type,
+                gamets,
+                localts,
+                location,
+                created_at
+            ) VALUES (
+                $1,
+                $2,
+                CASE WHEN $3 = '' THEN NULL ELSE $3::vector END,
+                $4,
+                $5,
+                $6,
+                $7,
+                NOW()
+            )",
+            [
+                $safePeople,
+                truncatePromptValue($safeContent, 2800),
+                $vectorLiteral,
+                $safeEventType,
+                max(0, $gamets),
+                max(0, $localts),
+                truncatePromptValue($safeLocation, 512),
+            ]
+        );
+    } else {
+        $result = $db->exec(
+            "INSERT INTO memory (
+                people,
+                content,
+                embedding,
+                event_type,
+                gamets,
+                localts,
+                created_at
+            ) VALUES (
+                $1,
+                $2,
+                CASE WHEN $3 = '' THEN NULL ELSE $3::vector END,
+                $4,
+                $5,
+                $6,
+                NOW()
+            )",
+            [
+                $safePeople,
+                truncatePromptValue($safeContent, 2800),
+                $vectorLiteral,
+                $safeEventType,
+                max(0, $gamets),
+                max(0, $localts),
+            ]
+        );
+    }
 
     return $result !== false;
 }
@@ -670,7 +761,7 @@ function stobeMemoryTrackEvent(
     }
 
     $safeLocalTs = $localts > 0 ? $localts : time();
-    $stored = stobeRegularMemoryStoreRow($peopleKey, $line, $safeType, $gamets, $safeLocalTs) ? 1 : 0;
+    $stored = stobeRegularMemoryStoreRow($peopleKey, $line, $safeType, $gamets, $safeLocalTs, $location) ? 1 : 0;
 
     if ($stored > 0) {
         stobeLogDebug('Regular memory rows stored from event', [
@@ -756,33 +847,54 @@ function stobeRegularMemoryBuildPackedMessage(array $rows): string
     return implode("\n", $lines);
 }
 
-function stobeRegularMemoryGenerateSummary(string $peopleKey, array $rows): string
+function stobeRegularMemoryFetchLatestCompletedSummary(string $peopleKey, int $beforeId = 0): string
 {
-    $packed = trim(stobeRegularMemoryBuildPackedMessage($rows));
-    if ($packed === '') {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
         return '';
     }
+    $safePeople = trim($peopleKey);
+    if ($safePeople === '' || $safePeople === '[]') {
+        return '';
+    }
+    $scopeClause = '';
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $scopeClause = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
+    }
+    $beforeClause = '';
+    $params = [$safePeople];
+    if ($beforeId > 0) {
+        $beforeClause = "AND id < $2";
+        $params[] = $beforeId;
+    }
+    $prevRow = $db->fetchOne(
+        "SELECT summary
+         FROM memory_summary
+         WHERE LOWER(people) = LOWER($1)
+           {$scopeClause}
+           AND summary IS NOT NULL
+           AND BTRIM(summary) <> ''
+           {$beforeClause}
+         ORDER BY id DESC
+         LIMIT 1",
+        $params
+    );
+    if (!is_array($prevRow)) {
+        return '';
+    }
+    return trim(sanitizeForKenshi(strval($prevRow['summary'] ?? '')));
+}
 
-    $previous = '';
-    $db = $GLOBALS['db'] ?? null;
-    if ($db && stobeRegularMemorySummaryTableAvailable()) {
-        $scopeClause = '';
-        if (stobeRegularMemorySummaryScopeColumnAvailable()) {
-            $scopeClause = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
-        }
-
-        $prevRow = $db->fetchOne(
-            "SELECT summary
-             FROM memory_summary
-             WHERE LOWER(people) = LOWER($1)
-             {$scopeClause}
-             ORDER BY id DESC
-             LIMIT 1",
-            [$peopleKey]
-        );
-        if (is_array($prevRow)) {
-            $previous = trim(sanitizeForKenshi(strval($prevRow['summary'] ?? '')));
-        }
+function stobeRegularMemoryGenerateSummaryFromPacked(
+    string $peopleKey,
+    string $packedMessage,
+    string $previousSummary = '',
+    int $gametsStart = 0,
+    int $gametsEnd = 0
+): string {
+    $packed = trim($packedMessage);
+    if ($packed === '') {
+        return '';
     }
 
     $peopleLabel = stobeRegularMemoryPeopleLabel($peopleKey);
@@ -798,13 +910,31 @@ function stobeRegularMemoryGenerateSummary(string $peopleKey, array $rows): stri
 
     $userPrompt = "<regular_memory_request>\n"
         . "  <people>" . (function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($peopleLabel) : $peopleLabel) . "</people>\n";
-    if ($previous !== '') {
-        $escapedPrev = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($previous) : $previous;
+    $startGamets = max(0, intval($gametsStart));
+    $endGamets = max($startGamets, intval($gametsEnd));
+    if ($startGamets > 0 || $endGamets > 0) {
+        $windowStart = $startGamets > 0 ? stobeGametsDateLabel($startGamets) : '';
+        $windowEnd = $endGamets > 0 ? stobeGametsDateLabel($endGamets) : '';
+        $windowStartEscaped = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($windowStart) : $windowStart;
+        $windowEndEscaped = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($windowEnd) : $windowEnd;
+        $userPrompt .= "  <memory_window>\n";
+        if ($windowStartEscaped !== '') {
+            $userPrompt .= "    <start>{$windowStartEscaped}</start>\n";
+        }
+        if ($windowEndEscaped !== '') {
+            $userPrompt .= "    <end>{$windowEndEscaped}</end>\n";
+        }
+        $userPrompt .= "  </memory_window>\n";
+    }
+    if ($previousSummary !== '') {
+        $escapedPrev = function_exists('stobePromptXmlEscape')
+            ? stobePromptXmlEscape($previousSummary)
+            : $previousSummary;
         $userPrompt .= "  <previous_summary>{$escapedPrev}</previous_summary>\n";
     }
     $escapedPacked = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($packed) : $packed;
     $userPrompt .= "  <packed_events>{$escapedPacked}</packed_events>\n"
-        . "  <instruction>Create an updated concise memory summary for future retrieval.</instruction>\n"
+        . "  <instruction>Create an updated concise memory summary for future retrieval. Keep chronology using memory_window and event order, and never include raw gamets or numeric timestamp IDs in the summary text.</instruction>\n"
         . "</regular_memory_request>";
 
     $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
@@ -830,7 +960,268 @@ function stobeRegularMemoryGenerateSummary(string $peopleKey, array $rows): stri
     if ($summary === '') {
         return truncatePromptValue($packed, 2500);
     }
+    $summary = preg_replace('/\bat\s+gamet[s]?\s*[:=]?\s*\d+\b/iu', '', $summary) ?? $summary;
+    $summary = preg_replace('/\bgamet[s]?\s*[:=]\s*\d+\b/iu', '', $summary) ?? $summary;
+    $summary = preg_replace('/\(\s*gamet[s]?\s*[:=]?\s*\d+\s*\)/iu', '', $summary) ?? $summary;
+    $summary = preg_replace('/\s{2,}/u', ' ', $summary) ?? $summary;
+    $summary = trim($summary);
+    if ($summary === '') {
+        return truncatePromptValue($packed, 2500);
+    }
     return truncatePromptValue($summary, 3500);
+}
+
+function stobeRegularMemoryGenerateSummary(string $peopleKey, array $rows): string
+{
+    $packed = trim(stobeRegularMemoryBuildPackedMessage($rows));
+    if ($packed === '') {
+        return '';
+    }
+    $previous = stobeRegularMemoryFetchLatestCompletedSummary($peopleKey, 0);
+    $first = $rows[0] ?? [];
+    $last = $rows[count($rows) - 1] ?? [];
+    $gametsStart = max(0, intval($first['gamets'] ?? 0));
+    $gametsEnd = max($gametsStart, intval($last['gamets'] ?? $gametsStart));
+    return stobeRegularMemoryGenerateSummaryFromPacked(
+        $peopleKey,
+        $packed,
+        $previous,
+        $gametsStart,
+        $gametsEnd
+    );
+}
+
+function stobeRegularMemoryQueuePendingSummary(string $peopleKey, array $rows): bool
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
+        return false;
+    }
+    if (count($rows) === 0) {
+        return false;
+    }
+
+    $safePeople = trim($peopleKey);
+    if ($safePeople === '' || $safePeople === '[]') {
+        return false;
+    }
+
+    $first = $rows[0];
+    $last = $rows[count($rows) - 1];
+    $fromId = intval($first['id'] ?? 0);
+    $toId = intval($last['id'] ?? 0);
+    if ($fromId <= 0 || $toId <= 0 || $toId < $fromId) {
+        return false;
+    }
+
+    $scopePendingClause = '';
+    $scopeInsertColumn = '';
+    $scopeInsertParam = [];
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $scopePendingClause = "AND LOWER(COALESCE(scope, '')) = 'global'";
+        $scopeInsertColumn = ", scope";
+        $scopeInsertParam[] = 'global';
+    }
+
+    $existing = $db->fetchOne(
+        "SELECT id
+         FROM memory_summary
+         WHERE LOWER(people) = LOWER($1)
+           AND source_from_memory_id = $2
+           AND source_to_memory_id = $3
+           {$scopePendingClause}
+         LIMIT 1",
+        [$safePeople, $fromId, $toId]
+    );
+    if (is_array($existing) && intval($existing['id'] ?? 0) > 0) {
+        return true;
+    }
+
+    $firstLocalTs = intval($first['localts'] ?? time());
+    $lastLocalTs = intval($last['localts'] ?? $firstLocalTs);
+    if ($firstLocalTs <= 0) {
+        $firstLocalTs = time();
+    }
+    if ($lastLocalTs <= 0) {
+        $lastLocalTs = $firstLocalTs;
+    }
+
+    $periodStart = gmdate('Y-m-d H:i:s', $firstLocalTs);
+    $periodEnd = gmdate('Y-m-d H:i:s', $lastLocalTs);
+    $gametsStart = max(0, intval($first['gamets'] ?? 0));
+    $gametsEnd = max($gametsStart, intval($last['gamets'] ?? $gametsStart));
+    $packedMessage = truncatePromptValue(stobeRegularMemoryBuildPackedMessage($rows), 12000);
+    if ($packedMessage === '') {
+        return false;
+    }
+
+    if ($scopeInsertColumn !== '') {
+        $result = $db->exec(
+            "INSERT INTO memory_summary (
+                people
+                {$scopeInsertColumn},
+                summary,
+                embedding,
+                period_start,
+                period_end,
+                n,
+                packed_message,
+                source_from_memory_id,
+                source_to_memory_id,
+                localts,
+                gamets_start,
+                gamets_end,
+                created_at
+            ) VALUES (
+                $1,
+                $2,
+                '',
+                NULL,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11,
+                NOW()
+            )",
+            array_merge(
+                [$safePeople],
+                $scopeInsertParam,
+                [
+                    $periodStart,
+                    $periodEnd,
+                    count($rows),
+                    $packedMessage,
+                    $fromId,
+                    $toId,
+                    $lastLocalTs,
+                    $gametsStart,
+                    $gametsEnd,
+                ]
+            )
+        );
+    } else {
+        $result = $db->exec(
+            "INSERT INTO memory_summary (
+                people,
+                summary,
+                embedding,
+                period_start,
+                period_end,
+                n,
+                packed_message,
+                source_from_memory_id,
+                source_to_memory_id,
+                localts,
+                gamets_start,
+                gamets_end,
+                created_at
+            ) VALUES (
+                $1,
+                '',
+                NULL,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                NOW()
+            )",
+            [
+                $safePeople,
+                $periodStart,
+                $periodEnd,
+                count($rows),
+                $packedMessage,
+                $fromId,
+                $toId,
+                $lastLocalTs,
+                $gametsStart,
+                $gametsEnd,
+            ]
+        );
+    }
+
+    if ($result === false) {
+        return false;
+    }
+
+    return true;
+}
+
+function stobeRegularMemoryFetchPendingSummaryRows(int $limit = 72): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
+        return [];
+    }
+    if ($limit < 1) {
+        $limit = 1;
+    } elseif ($limit > 256) {
+        $limit = 256;
+    }
+
+    $scopeClause = '';
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $scopeClause = "AND LOWER(COALESCE(scope, '')) = 'global'";
+    }
+
+    return $db->fetchAll(
+        "SELECT
+            id,
+            people,
+            packed_message,
+            n,
+            source_from_memory_id,
+            source_to_memory_id,
+            localts,
+            gamets_start,
+            gamets_end,
+            created_at
+         FROM memory_summary
+         WHERE BTRIM(COALESCE(summary, '')) = ''
+           AND COALESCE(BTRIM(packed_message), '') <> ''
+           {$scopeClause}
+         ORDER BY id ASC
+         LIMIT " . intval($limit)
+    );
+}
+
+function stobeRegularMemoryFinalizePendingSummary(int $summaryId, string $summary): bool
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
+        return false;
+    }
+    if ($summaryId <= 0) {
+        return false;
+    }
+
+    $safeSummary = trim(sanitizeForKenshi($summary));
+    if ($safeSummary === '') {
+        return false;
+    }
+    $safeSummary = truncatePromptValue($safeSummary, 3500);
+    $embedding = stobeRegularMemoryEmbedText($safeSummary);
+    $vectorLiteral = stobeRegularMemoryVectorLiteral($embedding);
+
+    $result = $db->exec(
+        "UPDATE memory_summary
+         SET summary = $2,
+             embedding = CASE WHEN $3 = '' THEN NULL ELSE $3::vector END
+         WHERE id = $1
+           AND BTRIM(COALESCE(summary, '')) = ''",
+        [$summaryId, $safeSummary, $vectorLiteral]
+    );
+    return $result !== false;
 }
 
 function stobeRegularMemoryPersistSummary(string $peopleKey, array $rows, string $summary): bool
@@ -1273,58 +1664,330 @@ function stobeRegularMemoryPersistIndividualSummary(string $npcName, array $glob
     return $result !== false;
 }
 
-function stobeRegularMemoryProcessOneGlobalBatch(string $eventType, int $gamets): bool
+function stobeRegularMemoryInsertPackedGlobalSummaryRows(
+    int $afterGamets,
+    int $beforeGamets,
+    int $pfi,
+    int $minEvents
+): int {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemoryTableAvailable() || !stobeRegularMemorySummaryTableAvailable()) {
+        return 0;
+    }
+    if ($pfi < 1 || $beforeGamets <= $afterGamets) {
+        return 0;
+    }
+
+    $safeAfter = max(0, $afterGamets);
+    $safeBefore = max(0, $beforeGamets);
+    $safePfi = max(1, $pfi);
+    $safeMinEvents = max(1, $minEvents);
+
+    $scopeInsertColumn = '';
+    $scopeInsertValue = '';
+    $scopeJoinClause = '';
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $scopeInsertColumn = ', scope';
+        $scopeInsertValue = ", 'global'::text";
+        $scopeJoinClause = "AND LOWER(COALESCE(ms.scope, '')) = 'global'";
+    }
+
+    $locationExpr = "NULL::text";
+    if (stobeRegularMemoryLocationColumnAvailable()) {
+        $locationExpr = "NULLIF(LOWER(BTRIM(COALESCE(location, ''))), '')";
+    }
+
+    $rows = $db->fetchAll(
+        "WITH source_rows AS (
+            SELECT
+                id,
+                people,
+                gamets,
+                COALESCE(localts, 0) AS localts,
+                content,
+                LOWER(COALESCE(NULLIF(BTRIM(event_type), ''), 'memory')) AS event_type,
+                ROUND(gamets::numeric / $3::numeric, 0) AS time_bucket,
+                {$locationExpr} AS location_key
+            FROM memory
+            WHERE gamets > $1
+              AND gamets < $2
+              AND COALESCE(BTRIM(people), '') <> ''
+              AND BTRIM(people) <> '[]'
+              AND LOWER(COALESCE(event_type, '')) NOT IN ('diary', 'auto_diary', 'backgroundlife_diary')
+        ),
+        queue_boundaries AS (
+            SELECT
+                id,
+                people,
+                gamets,
+                localts,
+                content,
+                event_type,
+                time_bucket,
+                location_key,
+                LAG(location_key) OVER (PARTITION BY people ORDER BY gamets ASC, localts ASC, id ASC) AS prev_location_key,
+                LAG(time_bucket) OVER (PARTITION BY people ORDER BY gamets ASC, localts ASC, id ASC) AS prev_time_bucket
+            FROM source_rows
+        ),
+        queued_rows AS (
+            SELECT
+                id,
+                people,
+                gamets,
+                localts,
+                content,
+                event_type,
+                CASE
+                    WHEN prev_time_bucket IS NULL THEN 1
+                    WHEN location_key IS NULL THEN 1
+                    WHEN prev_location_key IS NULL THEN 1
+                    WHEN location_key <> prev_location_key THEN 1
+                    WHEN time_bucket <> prev_time_bucket THEN 1
+                    ELSE 0
+                END AS is_new_queue
+            FROM queue_boundaries
+        ),
+        grouped_rows AS (
+            SELECT
+                id,
+                people,
+                gamets,
+                localts,
+                content,
+                event_type,
+                SUM(is_new_queue) OVER (
+                    PARTITION BY people
+                    ORDER BY gamets ASC, localts ASC, id ASC
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS queue_id
+            FROM queued_rows
+        ),
+        aggregated AS (
+            SELECT
+                people,
+                MIN(id) AS source_from_memory_id,
+                MAX(id) AS source_to_memory_id,
+                MIN(gamets) AS gamets_start,
+                MAX(gamets) AS gamets_end,
+                MIN(localts) AS localts_start,
+                MAX(localts) AS localts_end,
+                COUNT(*) AS n,
+                STRING_AGG(
+                    '[' || event_type || '] ' || COALESCE(content, ''),
+                    E'\n\n'
+                    ORDER BY gamets ASC, localts ASC, id ASC
+                ) AS packed_message
+            FROM grouped_rows
+            GROUP BY people, queue_id
+            HAVING COUNT(*) >= $4
+        )
+        INSERT INTO memory_summary (
+            people
+            {$scopeInsertColumn},
+            summary,
+            period_start,
+            period_end,
+            n,
+            packed_message,
+            source_from_memory_id,
+            source_to_memory_id,
+            localts,
+            gamets_start,
+            gamets_end,
+            created_at
+        )
+        SELECT
+            a.people
+            {$scopeInsertValue},
+            ''::text,
+            TO_TIMESTAMP(CASE WHEN a.localts_start > 0 THEN a.localts_start ELSE EXTRACT(EPOCH FROM NOW()) END),
+            TO_TIMESTAMP(CASE WHEN a.localts_end > 0 THEN a.localts_end ELSE EXTRACT(EPOCH FROM NOW()) END),
+            a.n,
+            COALESCE(a.packed_message, ''),
+            a.source_from_memory_id,
+            a.source_to_memory_id,
+            a.localts_end,
+            a.gamets_start,
+            a.gamets_end,
+            NOW()
+        FROM aggregated a
+        LEFT JOIN memory_summary ms
+            ON LOWER(ms.people) = LOWER(a.people)
+           AND COALESCE(ms.source_from_memory_id, 0) = COALESCE(a.source_from_memory_id, 0)
+           AND COALESCE(ms.source_to_memory_id, 0) = COALESCE(a.source_to_memory_id, 0)
+           {$scopeJoinClause}
+        WHERE ms.id IS NULL
+          AND COALESCE(BTRIM(COALESCE(a.packed_message, '')), '') <> ''
+        RETURNING id",
+        [$safeAfter, $safeBefore, $safePfi, $safeMinEvents]
+    );
+
+    return is_array($rows) ? count($rows) : 0;
+}
+
+function stobeRegularMemoryInsertDiarySummaryRows(int $afterGamets, int $beforeGamets): int
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemoryTableAvailable() || !stobeRegularMemorySummaryTableAvailable()) {
+        return 0;
+    }
+    if ($beforeGamets <= $afterGamets) {
+        return 0;
+    }
+
+    $scopeInsertColumn = '';
+    $scopeInsertValue = '';
+    $scopeJoinClause = '';
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $scopeInsertColumn = ', scope';
+        $scopeInsertValue = ", 'global'::text";
+        $scopeJoinClause = "AND LOWER(COALESCE(ms.scope, '')) = 'global'";
+    }
+
+    $rows = $db->fetchAll(
+        "INSERT INTO memory_summary (
+            people
+            {$scopeInsertColumn},
+            summary,
+            period_start,
+            period_end,
+            n,
+            packed_message,
+            source_from_memory_id,
+            source_to_memory_id,
+            localts,
+            gamets_start,
+            gamets_end,
+            created_at
+        )
+        SELECT
+            m.people
+            {$scopeInsertValue},
+            COALESCE(BTRIM(m.content), ''),
+            TO_TIMESTAMP(CASE WHEN COALESCE(m.localts, 0) > 0 THEN m.localts ELSE EXTRACT(EPOCH FROM NOW()) END),
+            TO_TIMESTAMP(CASE WHEN COALESCE(m.localts, 0) > 0 THEN m.localts ELSE EXTRACT(EPOCH FROM NOW()) END),
+            1,
+            COALESCE(BTRIM(m.content), ''),
+            m.id,
+            m.id,
+            COALESCE(m.localts, 0),
+            COALESCE(m.gamets, 0),
+            COALESCE(m.gamets, 0),
+            NOW()
+        FROM memory m
+        LEFT JOIN memory_summary ms
+            ON LOWER(ms.people) = LOWER(m.people)
+           AND COALESCE(ms.source_from_memory_id, 0) = m.id
+           AND COALESCE(ms.source_to_memory_id, 0) = m.id
+           {$scopeJoinClause}
+        WHERE COALESCE(BTRIM(m.people), '') <> ''
+          AND BTRIM(m.people) <> '[]'
+          AND COALESCE(BTRIM(m.content), '') <> ''
+          AND COALESCE(m.gamets, 0) > $1
+          AND COALESCE(m.gamets, 0) < $2
+          AND LOWER(COALESCE(m.event_type, '')) IN ('diary', 'auto_diary', 'backgroundlife_diary')
+          AND ms.id IS NULL
+        RETURNING id",
+        [max(0, $afterGamets), max(0, $beforeGamets)]
+    );
+
+    return is_array($rows) ? count($rows) : 0;
+}
+
+function stobeRegularMemoryProcessOneGlobalPackBatch(string $eventType, int $gamets): bool
 {
     $safeEventType = strtolower(trim($eventType));
     if ($safeEventType === 'manual_sync') {
         stobeRegularMemoryNormalizeLegacyPeopleKeys(1600);
     }
 
-    $minRows = ($safeEventType === 'manual_sync') ? 3 : 10;
-    $candidates = stobeRegularMemoryFetchPeopleCandidates(72);
-    foreach ($candidates as $candidate) {
-        if (!is_array($candidate)) {
-            continue;
-        }
-        $peopleKey = trim(strval($candidate['people'] ?? ''));
-        if ($peopleKey === '' || $peopleKey === '[]') {
+    $pfi = stobeRegularMemoryRunIntervalGamets();
+    $lastSummaryGamets = stobeRegularMemoryLatestCompletedGlobalSummaryGamets();
+    if ($safeEventType !== 'manual_sync' && ($gamets - $lastSummaryGamets) <= $pfi) {
+        return false;
+    }
+
+    // Herika-style compaction uses the current max gamets window.
+    // Do not delay packing by an extra in-game hour; that can starve
+    // memory_summary generation when active conversations are recent.
+    $cutoffGamets = max(0, intval($gamets));
+    if ($cutoffGamets <= $lastSummaryGamets) {
+        return false;
+    }
+
+    $minEvents = stobeRegularMemorySummaryMinEvents();
+    $packedInserted = stobeRegularMemoryInsertPackedGlobalSummaryRows(
+        $lastSummaryGamets,
+        $cutoffGamets,
+        $pfi,
+        $minEvents
+    );
+    $diaryInserted = stobeRegularMemoryInsertDiarySummaryRows($lastSummaryGamets, $cutoffGamets);
+    $totalInserted = $packedInserted + $diaryInserted;
+
+    if ($totalInserted > 0) {
+        stobeLogInfo('Regular memory summary pack queued (Herika-style)', [
+            'packed_inserted' => $packedInserted,
+            'diary_inserted' => $diaryInserted,
+            'total_inserted' => $totalInserted,
+            'after_gamets' => $lastSummaryGamets,
+            'before_gamets' => $cutoffGamets,
+            'pfi' => $pfi,
+            'min_events' => $minEvents,
+            'gamets' => $gamets,
+            'event_type' => $eventType,
+        ]);
+    }
+
+    return $totalInserted > 0;
+}
+
+function stobeRegularMemoryProcessOneGlobalBatch(string $eventType, int $gamets): bool
+{
+    $pendingRows = stobeRegularMemoryFetchPendingSummaryRows(72);
+    foreach ($pendingRows as $pending) {
+        if (!is_array($pending)) {
             continue;
         }
 
-        $cursorKey = stobeRegularMemoryCursorKey($peopleKey);
-        $cursor = intval(getConfOpt($cursorKey, '0'));
-        $rows = stobeRegularMemoryFetchRowsAfterCursor($peopleKey, $cursor, 260);
-        if (count($rows) < $minRows) {
+        $summaryId = intval($pending['id'] ?? 0);
+        $peopleKey = trim(strval($pending['people'] ?? ''));
+        $packed = trim(strval($pending['packed_message'] ?? ''));
+        if ($summaryId <= 0 || $peopleKey === '' || $peopleKey === '[]' || $packed === '') {
             continue;
         }
 
-        $summary = stobeRegularMemoryGenerateSummary($peopleKey, $rows);
+        $previous = stobeRegularMemoryFetchLatestCompletedSummary($peopleKey, $summaryId);
+        $summary = stobeRegularMemoryGenerateSummaryFromPacked(
+            $peopleKey,
+            $packed,
+            $previous,
+            intval($pending['gamets_start'] ?? 0),
+            intval($pending['gamets_end'] ?? 0)
+        );
         if ($summary === '') {
             continue;
         }
 
-        if (!stobeRegularMemoryPersistSummary($peopleKey, $rows, $summary)) {
-            stobeLogWarn('Regular memory summary persist failed', [
+        if (!stobeRegularMemoryFinalizePendingSummary($summaryId, $summary)) {
+            stobeLogWarn('Regular memory pending summary finalize failed', [
+                'summary_id' => $summaryId,
                 'people' => $peopleKey,
-                'rows' => count($rows),
-                'cursor_before' => $cursor,
+                'packed_length' => strlen($packed),
             ]);
             continue;
         }
 
-        $last = $rows[count($rows) - 1];
-        $lastId = intval($last['id'] ?? 0);
-        if ($lastId > 0) {
-            setConfOpt($cursorKey, strval($lastId), true);
-        }
-
         stobeLogInfo('Regular memory summary generated', [
+            'summary_id' => $summaryId,
             'people' => $peopleKey,
             'people_count' => count(stobeRegularMemoryDecodePeopleKey($peopleKey)),
-            'rows' => count($rows),
-            'cursor_before' => $cursor,
-            'cursor_after' => $lastId,
+            'packed_length' => strlen($packed),
             'summary_length' => strlen($summary),
+            'source_from_memory_id' => intval($pending['source_from_memory_id'] ?? 0),
+            'source_to_memory_id' => intval($pending['source_to_memory_id'] ?? 0),
+            'gamets_start' => intval($pending['gamets_start'] ?? 0),
+            'gamets_end' => intval($pending['gamets_end'] ?? 0),
             'gamets' => $gamets,
             'event_type' => $eventType,
         ]);
@@ -1419,6 +2082,7 @@ function stobeMaybeRunRegularMemoryCycle(
     }
 
     try {
+        $processedPack = stobeRegularMemoryProcessOneGlobalPackBatch($eventType, $gamets);
         $processedGlobal = stobeRegularMemoryProcessOneGlobalBatch($eventType, $gamets);
         $processedIndividual = stobeRegularMemoryProcessOneIndividualBatch($eventType, $gamets);
 
@@ -1427,10 +2091,11 @@ function stobeMaybeRunRegularMemoryCycle(
             setConfOpt('MEMORY_LAST_RUN_GAMETS', strval($gamets), true);
         }
 
-        if (!$processedGlobal && !$processedIndividual) {
+        if (!$processedPack && !$processedGlobal && !$processedIndividual) {
             stobeLogDebug('Regular memory cycle completed with no eligible NPC work', [
                 'event_type' => $eventType,
                 'gamets' => $gamets,
+                'pack_processed' => false,
                 'global_processed' => false,
                 'individual_processed' => false,
             ]);
@@ -1456,6 +2121,7 @@ function stobeRunRegularMemorySyncNow(int $gamets, int $maxPasses = 16): array
 
     $result = [
         'passes' => 0,
+        'packed' => 0,
         'global' => 0,
         'individual' => 0,
     ];
@@ -1465,13 +2131,18 @@ function stobeRunRegularMemorySyncNow(int $gamets, int $maxPasses = 16): array
             break;
         }
 
+        $processedPack = false;
         $processedGlobal = false;
         $processedIndividual = false;
         try {
+            $processedPack = stobeRegularMemoryProcessOneGlobalPackBatch('manual_sync', $gamets);
             $processedGlobal = stobeRegularMemoryProcessOneGlobalBatch('manual_sync', $gamets);
             $processedIndividual = stobeRegularMemoryProcessOneIndividualBatch('manual_sync', $gamets);
 
             $result['passes']++;
+            if ($processedPack) {
+                $result['packed']++;
+            }
             if ($processedGlobal) {
                 $result['global']++;
             }
@@ -1493,12 +2164,255 @@ function stobeRunRegularMemorySyncNow(int $gamets, int $maxPasses = 16): array
             stobeRegularMemoryUnlock();
         }
 
-        if (!$processedGlobal && !$processedIndividual) {
+        if (!$processedPack && !$processedGlobal && !$processedIndividual) {
             break;
         }
     }
 
     return $result;
+}
+
+function stobeRegularMemoryNormalizeSearchText(string $value): string
+{
+    $text = trim($value);
+    if ($text === '') {
+        return '';
+    }
+    $text = preg_replace('/\([^)]+\)/u', ' ', $text) ?? $text;
+    $text = preg_replace('/[^a-z0-9_]+/iu', ' ', $text) ?? $text;
+    $text = strtolower(trim($text));
+    return preg_replace('/\s+/u', ' ', $text) ?? $text;
+}
+
+function stobeRegularMemoryExtractSearchTokens(string $value): array
+{
+    $normalized = stobeRegularMemoryNormalizeSearchText($value);
+    if ($normalized === '') {
+        return [];
+    }
+
+    $parts = preg_split('/\s+/u', $normalized) ?: [];
+    $tokens = [];
+    foreach ($parts as $part) {
+        $token = trim(strval($part));
+        if ($token === '' || strlen($token) < 3) {
+            continue;
+        }
+        $token = preg_replace('/[^a-z0-9_]/u', '', $token) ?? $token;
+        if ($token === '' || strlen($token) < 3) {
+            continue;
+        }
+        $tokens[$token] = $token;
+    }
+
+    return array_values($tokens);
+}
+
+function stobeRegularMemoryBuildTsQueryStrings(array $tokens): array
+{
+    $clean = [];
+    foreach ($tokens as $token) {
+        if (!is_scalar($token) || $token === null) {
+            continue;
+        }
+        $value = strtolower(trim(strval($token)));
+        $value = preg_replace('/[^a-z0-9_]/u', '', $value) ?? $value;
+        if ($value === '' || strlen($value) < 3) {
+            continue;
+        }
+        $clean[$value] = $value;
+    }
+
+    if (count($clean) === 0) {
+        $clean['memory'] = 'memory';
+    }
+
+    $ordered = array_values($clean);
+    return [
+        'any' => implode(' | ', $ordered),
+        'all' => implode(' & ', $ordered),
+        'keywords' => implode(' ', $ordered),
+    ];
+}
+
+function stobeRegularMemoryFetchContextTokens(string $npcName, int $limit = 5): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return [];
+    }
+
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if ($safeNpc === '') {
+        return [];
+    }
+
+    if ($limit < 1) {
+        $limit = 1;
+    } elseif ($limit > 20) {
+        $limit = 20;
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT data
+         FROM eventlog
+         WHERE type = 'chat'
+           AND LOWER(COALESCE(people, '')) LIKE LOWER($1)
+         ORDER BY gamets DESC
+         LIMIT " . intval($limit),
+        ['%' . $safeNpc . '%']
+    );
+
+    $tokens = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $line = trim(strval($row['data'] ?? ''));
+        if ($line === '') {
+            continue;
+        }
+        $rowTokens = stobeRegularMemoryExtractSearchTokens($line);
+        foreach ($rowTokens as $token) {
+            $tokens[$token] = $token;
+        }
+    }
+
+    return array_values($tokens);
+}
+
+function stobeRegularMemorySearchByVector(
+    array|false $npcData,
+    string $npcName,
+    string $queryText,
+    int $timeThreshold = 0,
+    bool $useContextKw = false
+): ?array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
+        return null;
+    }
+
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if ($safeNpc === '') {
+        return null;
+    }
+
+    $tokens = stobeRegularMemoryExtractSearchTokens($queryText);
+    if ($useContextKw) {
+        $contextTokens = stobeRegularMemoryFetchContextTokens($safeNpc, 5);
+        foreach ($contextTokens as $token) {
+            $tokens[$token] = $token;
+        }
+        $tokens = array_values($tokens);
+    }
+
+    $tsQuery = stobeRegularMemoryBuildTsQueryStrings($tokens);
+    $keywords = trim(strval($tsQuery['keywords'] ?? ''));
+    if ($keywords === '') {
+        $keywords = trim($queryText) !== '' ? trim($queryText) : 'memory';
+    }
+
+    $embedding = stobeRegularMemoryEmbedText($keywords);
+    $vectorLiteral = stobeRegularMemoryVectorLiteral($embedding);
+    if ($vectorLiteral === '') {
+        return null;
+    }
+
+    $jsonQuotedNpc = strtolower(json_encode($safeNpc, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
+    if ($jsonQuotedNpc === '') {
+        $jsonQuotedNpc = '"' . strtolower($safeNpc) . '"';
+    }
+
+    $scopeClause = '';
+    $params = [
+        $safeNpc,
+        $vectorLiteral,
+        $jsonQuotedNpc,
+        strval($tsQuery['any'] ?? 'memory'),
+        strval($tsQuery['all'] ?? 'memory'),
+        max(0, intval($timeThreshold)),
+    ];
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        if (stobeRegularMemoryIndividualEnabledForNpc($npcData)) {
+            $scopeClause = "AND LOWER(COALESCE(scope, '')) = LOWER($7)";
+            $params[] = $safeNpc;
+        } else {
+            $scopeClause = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
+        }
+    }
+
+    try {
+        $rows = $db->fetchAll(
+            "SELECT
+                id,
+                summary,
+                gamets_end,
+                created_at,
+                embedding <-> $2::vector AS distance,
+                ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $4)) AS rank_any_fts_raw,
+                ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $5)) AS rank_all_fts_raw,
+                ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $4))
+                  + ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $5)) AS rank_any_fts,
+                ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $4))
+                  + ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $5)) AS rank_all_fts,
+                (embedding <-> $2::vector)
+                  - (
+                        ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $4))
+                        + ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $5))
+                    ) AS mixed_distance
+             FROM memory_summary
+             WHERE embedding IS NOT NULL
+               AND summary IS NOT NULL
+               AND BTRIM(summary) <> ''
+               AND (
+                    LOWER(people) = LOWER($1)
+                    OR POSITION($3 IN LOWER(COALESCE(people, ''))) > 0
+               )
+               {$scopeClause}
+               AND (COALESCE(gamets_end, 0) < $6 OR $6 = 0)
+             ORDER BY
+               ROUND((embedding <-> $2::vector)::numeric, 2) ASC,
+               (
+                    ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $4))
+                    + ts_rank(to_tsvector('simple', COALESCE(summary, '')), to_tsquery('simple', $5))
+               ) DESC
+             LIMIT 50",
+            $params
+        );
+    } catch (Throwable $exception) {
+        stobeLogWarn('Regular memory vector search query failed', [
+            'npc_name' => $safeNpc,
+            'error' => $exception->getMessage(),
+        ]);
+        return null;
+    }
+
+    if (!is_array($rows) || count($rows) === 0) {
+        return null;
+    }
+
+    $singleMemory = null;
+    $maxRankAny = -INF;
+    foreach ($rows as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $candidateRankAny = floatval($entry['rank_any_fts'] ?? -INF);
+        if ($singleMemory === null || $candidateRankAny > $maxRankAny) {
+            $maxRankAny = $candidateRankAny;
+            $singleMemory = $entry;
+        }
+    }
+
+    if (!is_array($singleMemory)) {
+        return null;
+    }
+
+    $singleMemory['rank_any'] = floatval($singleMemory['rank_any_fts'] ?? 0.0)
+        + (floatval($singleMemory['rank_all_fts'] ?? 0.0) / 2.0);
+    $singleMemory['rank_all'] = floatval($singleMemory['rank_all_fts'] ?? 0.0);
+    return $singleMemory;
 }
 
 function stobeRegularMemoryRecallRows(
@@ -1508,131 +2422,84 @@ function stobeRegularMemoryRecallRows(
     int $currentGamets,
     int $maxEntries
 ): array {
-    $db = $GLOBALS['db'] ?? null;
-    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
-        return [];
-    }
-
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
         return [];
     }
-    if ($maxEntries < 1) {
-        $maxEntries = 1;
-    } elseif ($maxEntries > 8) {
-        $maxEntries = 8;
+
+    $timeThreshold = 0;
+    if ($currentGamets > 0) {
+        $hoursWindow = stobeRegularMemoryGetGametsLimitFor($safeNpc);
+        $timeThreshold = max(0, intval(round($currentGamets - ($hoursWindow / 0.0000024), 0) - 1));
     }
 
-    $memoryDelayMinutes = getSettingInt('MEMORY_TIME_DELAY', 12);
-    if ($memoryDelayMinutes < 0) {
-        $memoryDelayMinutes = 0;
-    } elseif ($memoryDelayMinutes > 1440) {
-        $memoryDelayMinutes = 1440;
-    }
-    $oldestAllowedGamets = 0;
-    if ($currentGamets > 0 && $memoryDelayMinutes > 0) {
-        $oldestAllowedGamets = max(0, $currentGamets - ($memoryDelayMinutes * 60));
+    $resWithContext = stobeRegularMemorySearchByVector($npcData, $safeNpc, $queryText, $timeThreshold, true);
+    $resWithoutContext = stobeRegularMemorySearchByVector($npcData, $safeNpc, $queryText, $timeThreshold, false);
+
+    $selected = null;
+    if (is_array($resWithContext) && is_array($resWithoutContext)) {
+        $rankA = floatval($resWithContext['rank_any'] ?? -INF);
+        $rankB = floatval($resWithoutContext['rank_any'] ?? -INF);
+        $selected = ($rankA >= $rankB) ? $resWithContext : $resWithoutContext;
+    } elseif (is_array($resWithContext)) {
+        $selected = $resWithContext;
+    } elseif (is_array($resWithoutContext)) {
+        $selected = $resWithoutContext;
     }
 
-    $queryBasis = trim($queryText);
-    if ($queryBasis === '') {
-        $queryBasis = 'recent dialogue context';
-    }
-    $embedding = stobeRegularMemoryEmbedText($queryBasis);
-    $vectorLiteral = stobeRegularMemoryVectorLiteral($embedding);
-    $jsonQuotedNpc = strtolower(json_encode($safeNpc, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
-    if ($jsonQuotedNpc === '') {
-        $jsonQuotedNpc = '"' . strtolower($safeNpc) . '"';
-    }
-
-    $scopeCondition = '';
-    $scopeParamsFallback = [];
-    $scopeParamsVector = [];
-    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
-        if (stobeRegularMemoryIndividualEnabledForNpc($npcData)) {
-            $scopeCondition = "AND LOWER(COALESCE(scope, '')) = LOWER($4)";
-            $scopeParamsFallback[] = $safeNpc;
-            $scopeParamsVector[] = $safeNpc;
-        } else {
-            $scopeCondition = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
-        }
-    }
-
-    if ($vectorLiteral === '') {
-        $fallbackParams = [$safeNpc, $jsonQuotedNpc, $oldestAllowedGamets];
-        $fallbackParams = array_merge($fallbackParams, $scopeParamsFallback);
-        return $db->fetchAll(
-            "SELECT summary, gamets_end, created_at, people
-             FROM memory_summary
-             WHERE (
-                    LOWER(people) = LOWER($1)
-                    OR POSITION($2 IN LOWER(COALESCE(people, ''))) > 0
-                   )
-               {$scopeCondition}
-               AND summary IS NOT NULL
-               AND BTRIM(summary) <> ''
-               AND ($3::BIGINT <= 0 OR COALESCE(gamets_end, 0) <= $3::BIGINT OR COALESCE(gamets_end, 0) = 0)
-             ORDER BY COALESCE(gamets_end, 0) DESC, created_at DESC
-             LIMIT " . intval($maxEntries),
-            $fallbackParams
-        );
-    }
-
-    $vectorScopeCondition = $scopeCondition;
-    if ($vectorScopeCondition !== '') {
-        $vectorScopeCondition = str_replace('$4', '$5', $vectorScopeCondition);
-    }
-    $vectorParams = [$safeNpc, $vectorLiteral, $jsonQuotedNpc, $oldestAllowedGamets];
-    $vectorParams = array_merge($vectorParams, $scopeParamsVector);
-    $rows = $db->fetchAll(
-        "SELECT
-            summary,
-            gamets_end,
-            people,
-            embedding <-> $2::vector AS distance,
-            created_at
-         FROM memory_summary
-         WHERE (
-                LOWER(people) = LOWER($1)
-                OR POSITION($3 IN LOWER(COALESCE(people, ''))) > 0
-               )
-           {$vectorScopeCondition}
-           AND embedding IS NOT NULL
-           AND summary IS NOT NULL
-           AND BTRIM(summary) <> ''
-           AND ($4::BIGINT <= 0 OR COALESCE(gamets_end, 0) <= $4::BIGINT OR COALESCE(gamets_end, 0) = 0)
-         ORDER BY embedding <-> $2::vector ASC, created_at DESC
-         LIMIT " . intval($maxEntries * 6),
-        $vectorParams
-    );
-
-    if (!is_array($rows) || count($rows) === 0) {
+    if (!is_array($selected)) {
         return [];
     }
 
-    $biasA = getSettingInt('MEMORY_BIAS_A', 33);
-    $biasB = getSettingInt('MEMORY_BIAS_B', 66);
-    $distanceLimit = max(0.2, min(1.5, max($biasA, $biasB) / 100.0));
+    return [$selected];
+}
 
-    $selected = [];
-    foreach ($rows as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-        $distance = floatval($row['distance'] ?? 9.9);
-        if ($distance <= $distanceLimit) {
-            $selected[] = $row;
-        }
-        if (count($selected) >= $maxEntries) {
-            break;
-        }
+function stobeRegularMemoryGetGametsLimitFor(string $npcName): float
+{
+    static $cache = [];
+
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if ($safeNpc === '') {
+        return 72.0;
+    }
+    $cacheKey = strtolower($safeNpc);
+    if (isset($cache[$cacheKey])) {
+        return floatval($cache[$cacheKey]);
     }
 
-    if (count($selected) === 0 && count($rows) > 0) {
-        $selected[] = $rows[0];
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        $cache[$cacheKey] = 72.0;
+        return 72.0;
     }
 
-    return array_values($selected);
+    $limit = getSettingInt('CONTEXT_HISTORY', 75);
+    if ($limit < 5) {
+        $limit = 5;
+    } elseif ($limit > 300) {
+        $limit = 300;
+    }
+
+    $row = $db->fetchOne(
+        "SELECT (MAX(gamets) - MIN(gamets)) * 0.0000024 AS hour_threshold
+         FROM (
+             SELECT gamets
+             FROM eventlog
+             WHERE type = 'chat'
+               AND LOWER(COALESCE(people, '')) LIKE LOWER($1)
+             ORDER BY gamets DESC
+             LIMIT " . intval($limit) . "
+         ) AS recent_events",
+        ['%' . $safeNpc . '%']
+    );
+
+    $hours = floatval($row['hour_threshold'] ?? 0.0);
+    if (!is_finite($hours) || $hours <= 0.0) {
+        $hours = 72.0;
+    }
+
+    $cache[$cacheKey] = $hours;
+    return $hours;
 }
 
 function stobeBuildRegularMemoryPromptBlock(
@@ -1649,44 +2516,66 @@ function stobeBuildRegularMemoryPromptBlock(
         return '';
     }
 
-    $maxEntries = getNpcProfileIntegerSetting(
-        $npcData,
-        ['MEMORY_CONTEXT_SIZE'],
-        'MEMORY_CONTEXT_SIZE',
-        1,
-        1,
-        8
-    );
-    $rows = stobeRegularMemoryRecallRows($npcData, $safeNpc, $queryText, $currentGamets, $maxEntries);
+    // Herika-style memory offering: inject one best memory line, not a list block.
+    $rows = stobeRegularMemoryRecallRows($npcData, $safeNpc, $queryText, $currentGamets, 1);
     if (count($rows) === 0) {
         return '';
     }
 
-    $lines = [];
-    $lines[] = '<memory>';
-    $lines[] = 'Past recalled memories';
-    foreach ($rows as $row) {
-        $summary = trim(sanitizeForKenshi(strval($row['summary'] ?? '')));
-        if ($summary === '') {
-            continue;
-        }
-        $summaryEscaped = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($summary) : $summary;
-        $peopleLabel = stobeRegularMemoryPeopleLabel(strval($row['people'] ?? ''));
-        $peoplePrefix = '';
-        if ($peopleLabel !== '') {
-            $escapedPeople = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($peopleLabel) : $peopleLabel;
-            $peoplePrefix = ' (' . $escapedPeople . ')';
-        }
-        $gametsEnd = intval($row['gamets_end'] ?? 0);
-        if ($gametsEnd > 0) {
-            $dateLabel = stobeGametsDateLabel($gametsEnd);
-            $dateEscaped = function_exists('stobePromptXmlEscape') ? stobePromptXmlEscape($dateLabel) : $dateLabel;
-            $lines[] = '- [' . $dateEscaped . ']' . $peoplePrefix . ' ' . $summaryEscaped;
-        } else {
-            $lines[] = '- ' . ($peoplePrefix !== '' ? ($peoplePrefix . ' ') : '') . $summaryEscaped;
+    $row = $rows[0] ?? [];
+    if (!is_array($row)) {
+        return '';
+    }
+
+    $rankAny = array_key_exists('rank_any', $row) ? floatval($row['rank_any']) : null;
+    $rankAll = array_key_exists('rank_all', $row) ? floatval($row['rank_all']) : null;
+    $thresholdModifier = getSettingFloat('MEMORY_THRESHOLD_MODIFIER', 0.0);
+    $accepted = false;
+    if ($rankAny !== null && $rankAll !== null) {
+        if (abs($rankAny - $rankAll) < 0.00001 && $rankAny > (0.25 + $thresholdModifier)) {
+            $accepted = true;
+        } elseif ((($rankAll + $rankAny) / 2.0) > (0.25 + $thresholdModifier)) {
+            $accepted = true;
+        } elseif (($rankAny > (0.50 + $thresholdModifier)) && array_key_exists('mixed_distance', $row)) {
+            $accepted = true;
         }
     }
-    $lines[] = '</memory>';
+    if (!$accepted) {
+        return '';
+    }
 
-    return implode("\n", $lines);
+    $summary = trim(sanitizeForKenshi(strval($row['summary'] ?? '')));
+    if ($summary === '') {
+        return '';
+    }
+
+    // Keep summary content, but strip compacted tag payloads to match Herika memory style.
+    $summary = trim(preg_replace('/#Tags:.*$/mi', '', $summary) ?? $summary);
+    if ($summary === '') {
+        return '';
+    }
+
+    $rowGamets = max(0, intval($row['gamets_end'] ?? 0));
+    $safeCurrentGamets = max(0, intval($currentGamets));
+    $prefix = '';
+    if ($safeCurrentGamets > 0 && $rowGamets > 0 && $safeCurrentGamets >= $rowGamets) {
+        $hoursAgo = round(max(0.0, ($safeCurrentGamets - $rowGamets) * 0.0000024), 0);
+        $limitHours = stobeRegularMemoryGetGametsLimitFor($safeNpc);
+        if ($hoursAgo <= $limitHours) {
+            // Herika-style: suppress "too recent" memories.
+            return '';
+        }
+
+        $daysAgo = max(0, intval(floor(max(0.0, ($safeCurrentGamets - $rowGamets) * 0.0000001))));
+        $dateLabel = function_exists('gamets2str_format_gregorian_date')
+            ? trim(strval(gamets2str_format_gregorian_date($rowGamets, 'Y-m-d')))
+            : '';
+        if ($dateLabel !== '') {
+            $prefix = strval($daysAgo) . ' days ago, on ' . $dateLabel . ' ... ';
+        } else {
+            $prefix = strval($daysAgo) . ' days ago ... ';
+        }
+    }
+
+    return $prefix . truncatePromptValue($summary, 2200);
 }

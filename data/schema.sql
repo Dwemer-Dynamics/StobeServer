@@ -218,6 +218,30 @@ CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWE
 CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
 
 -- ----------------------------------------------------------
+-- FACTION_RELATIONS - global faction-to-faction current state
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS faction_relation_state (
+    id BIGSERIAL PRIMARY KEY,
+    merge_key TEXT NOT NULL UNIQUE,
+    source_name TEXT NOT NULL DEFAULT '',
+    source_string_id TEXT NOT NULL DEFAULT '',
+    source_numeric_id INT NOT NULL DEFAULT 0,
+    target_name TEXT NOT NULL DEFAULT '',
+    target_string_id TEXT NOT NULL DEFAULT '',
+    target_numeric_id INT NOT NULL DEFAULT 0,
+    relation DOUBLE PRECISION NOT NULL DEFAULT 0,
+    alliance BOOLEAN NOT NULL DEFAULT FALSE,
+    war BOOLEAN NOT NULL DEFAULT FALSE,
+    coexists BOOLEAN NOT NULL DEFAULT FALSE,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_game_ts ON faction_relation_state (game_ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_source_lower ON faction_relation_state (LOWER(source_name));
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_target_lower ON faction_relation_state (LOWER(target_name));
+
+-- ----------------------------------------------------------
 -- rename_global — DB-backed rename pools
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS core_voiceid (
@@ -815,6 +839,7 @@ CREATE TABLE IF NOT EXISTS memory (
     event_type VARCHAR(64) DEFAULT '',
     gamets BIGINT DEFAULT 0,
     localts BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()),
+    location TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -2168,16 +2193,15 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
-('MEMORY_TIME_DELAY',    '12',           'Minutes before recent memories can be recalled'),
-('MEMORY_CONTEXT_SIZE',  '1',            'Max number of memory entries injected'),
 ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
-('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval'),
-('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
-('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
+('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '6', 'Memory summary packing interval. Is measured in ingame hours.'),
+('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),
 ('RELATIONSHIP_SYSTEM',  'true',         'Master toggle for relationship connector evaluation. When false, relationship LLM updates are skipped.'),
 ('AUTO_LOCK_PROFILE',    'true',         'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.'),
+('PLAYER_FACTION_CUSTOM_NAME', '',       'Optional custom display name for the player faction in prompts.'),
+('PLAYER_FACTION_PROMPT', '',            'Optional player-faction instruction block injected into prompts.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
 

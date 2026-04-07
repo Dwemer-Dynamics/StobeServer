@@ -75,6 +75,28 @@ if ($targetNpc === '' || $message === '') {
     return;
 }
 
+$speakerProfileName = normalizeParticipantNameToken($speaker);
+if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
+    $speakerNpcData = getNpcData($speakerProfileName);
+    if (is_array($speakerNpcData) && stobeNpcCannotRespondInDirectChat($speakerNpcData)) {
+        $speakerState = function_exists('stobeResolveNpcAwarenessState')
+            ? stobeResolveNpcAwarenessState($speakerNpcData)
+            : strtolower(trim(strval($speakerNpcData['character_state'] ?? '')));
+        stobeLogInfo('JSON chat rejected: speaker cannot speak in current state', [
+            'speaker' => $speakerProfileName,
+            'target_npc' => $targetNpc,
+            'mode' => $mode,
+            'state' => $speakerState,
+            'gamets' => intval($gamets),
+        ]);
+        echo json_encode([
+            'ok' => false,
+            'error' => 'Speaker cannot speak while incapacitated.',
+        ]);
+        return;
+    }
+}
+
 $ingestRows = [];
 $ingestSource = 'chat_payload';
 if (count($context) > 0) {
@@ -279,12 +301,25 @@ $eventType = 'inputtext';
 $message = $sanitizeChatMessage($message);
 $eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, time(), $gamets, $eventData);
+if (!$narratorMode) {
+    // Mirror player input as chat immediately so timeline order is stable even
+    // when game-emitted chat events arrive later.
+    storeEvent('chat', time() + 1, $gamets, $eventData, 'inputtext_chat_mirror');
+}
+
+$promptNpcData = $npcData;
+if (is_array($promptNpcData) && count($nearby) > 0) {
+    $extended = normalizeNpcExtendedDataPayload($promptNpcData['extended_data'] ?? []);
+    $extended['nearby_actors'] = $nearby;
+    $extended['nearby'] = $nearby;
+    $promptNpcData['extended_data'] = $extended;
+}
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
         $targetNpc,
-        $npcData,
+        $promptNpcData,
         $speaker,
         $message,
         !$narratorMode,

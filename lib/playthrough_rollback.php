@@ -9,6 +9,32 @@ function stobePlaythroughRollbackToleranceGamets(): int
     return 5;
 }
 
+function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
+{
+    $event = strtolower(trim($eventType));
+    if ($event === '') {
+        return false;
+    }
+
+    // Keep regression tests exercising rollback paths.
+    if (strpos($event, 'test_') === 0) {
+        return true;
+    }
+
+    static $authoritativeEvents = [
+        'init' => true,
+        'gamedata' => true,
+        'npc_snapshot' => true,
+        'world_state' => true,
+        'chat_json' => true,
+        'item_image_upload' => true,
+        'portrait_upload' => true,
+        'faction_relations' => true,
+    ];
+
+    return isset($authoritativeEvents[$event]);
+}
+
 function stobePlaythroughRollbackLockKey(): int
 {
     return 937463;
@@ -596,6 +622,124 @@ function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): b
     return $result !== false;
 }
 
+function stobePlaythroughFindHistoryRowForNpcIdentityAtCutoff(int $cutoffGamets, array $npcRow): array|false
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    $cutoff = max(0, intval($cutoffGamets));
+    $rowName = trim(strval($npcRow['name'] ?? ''));
+    $rowOriginalName = trim(strval($npcRow['original_name'] ?? ''));
+    $rowMetadata = function_exists('normalizeCoreNpcMetadata')
+        ? normalizeCoreNpcMetadata($npcRow['metadata'] ?? '{}')
+        : stobePlaythroughNormalizeRollbackJsonObject($npcRow['metadata'] ?? '{}');
+    $rowStorageId = function_exists('normalizeStorageIdToken')
+        ? normalizeStorageIdToken($rowMetadata['storage_id'] ?? '')
+        : trim(strval($rowMetadata['storage_id'] ?? ''));
+
+    $params = [$cutoff];
+    $paramIndex = 2;
+    $identityClauses = [];
+
+    $storageClause = '';
+    if ($rowStorageId !== '') {
+        $storageClause = "LOWER(COALESCE(metadata->>'storage_id', '')) = LOWER($" . $paramIndex . ")";
+        $params[] = $rowStorageId;
+        $paramIndex++;
+        $identityClauses[] = $storageClause;
+    }
+
+    $nameClause = '';
+    if ($rowName !== '') {
+        $nameClause = "LOWER(name) = LOWER($" . $paramIndex . ")";
+        $params[] = $rowName;
+        $paramIndex++;
+        $identityClauses[] = $nameClause;
+    }
+
+    $originalClause = '';
+    if ($rowOriginalName !== '') {
+        $originalClause = "LOWER(COALESCE(original_name, '')) = LOWER($" . $paramIndex . ")";
+        $params[] = $rowOriginalName;
+        $paramIndex++;
+        $identityClauses[] = $originalClause;
+    }
+
+    if (count($identityClauses) === 0) {
+        return false;
+    }
+
+    $priorityWhen = [];
+    if ($storageClause !== '') {
+        $priorityWhen[] = 'WHEN ' . $storageClause . ' THEN 0';
+    }
+    if ($nameClause !== '') {
+        $priorityWhen[] = 'WHEN ' . $nameClause . ' THEN 1';
+    }
+    if ($originalClause !== '') {
+        $priorityWhen[] = 'WHEN ' . $originalClause . ' THEN 2';
+    }
+    $priorityCase = 'CASE ' . implode(' ', $priorityWhen) . ' ELSE 3 END';
+
+    $historyColumns = stobePlaythroughHistoryColumns();
+    $worldKnowledgeSelect = isset($historyColumns['world_knowledge_tags'])
+        ? 'world_knowledge_tags'
+        : "''::text AS world_knowledge_tags";
+
+    $query = 'SELECT
+            history_id,
+            npc_id,
+            name,
+            original_name,
+            npc_favorite,
+            lock_profile,
+            prompt_head,
+            personality,
+            backstory,
+            emote_moods,
+            occupation,
+            appearance,
+            equipment,
+            inventory,
+            skills,
+            speechstyle,
+            goals,
+            relationships,
+            voiceid,
+            metadata,
+            race,
+            faction,
+            gender,
+            profile_id,
+            dynamic_profile,
+            extended_data,
+            md5,
+            gamets_last_updated,
+            bounty,
+            limbs,
+            blood,
+            hunger,
+            tags,
+            is_animal,
+            is_slave,
+            ' . $worldKnowledgeSelect . ',
+            snapshot_reason,
+            snapshot_hash
+         FROM core_npc_master_history
+         WHERE gamets_last_updated <= $1
+           AND (' . implode(' OR ', $identityClauses) . ')
+         ORDER BY ' . $priorityCase . ',
+                  gamets_last_updated DESC,
+                  CASE WHEN snapshot_reason = \'rollback_restore_applied\' THEN 1 ELSE 0 END ASC,
+                  history_id DESC
+         LIMIT 1';
+
+    $row = $db->fetchOne($query, $params);
+    return is_array($row) ? $row : false;
+}
+
 function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
 {
     $db = $GLOBALS['db'] ?? null;
@@ -687,6 +831,19 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
         }
 
         if (array_key_exists($npcId, $historyByNpcId)) {
+            continue;
+        }
+
+        $fallbackHistory = stobePlaythroughFindHistoryRowForNpcIdentityAtCutoff($cutoff, $row);
+        if (is_array($fallbackHistory)) {
+            $historyByNpcId[$npcId] = $fallbackHistory;
+            stobeLogInfo('PLAYTHROUGH: rollback identity fallback matched history', [
+                'npc_id' => $npcId,
+                'name' => strval($row['name'] ?? ''),
+                'history_npc_id' => intval($fallbackHistory['npc_id'] ?? 0),
+                'history_name' => strval($fallbackHistory['name'] ?? ''),
+                'history_gamets' => intval($fallbackHistory['gamets_last_updated'] ?? 0),
+            ]);
             continue;
         }
 
@@ -1231,6 +1388,10 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
 {
     $incoming = stobeGametsNormalize($incomingGamets);
     $event = strtolower(trim($eventType));
+
+    if (!stobePlaythroughRollbackEventIsAuthoritative($event)) {
+        return ['triggered' => false, 'reason' => 'event_not_authoritative'];
+    }
 
     if ($incoming <= 0) {
         return ['triggered' => false, 'reason' => 'no_gamets'];

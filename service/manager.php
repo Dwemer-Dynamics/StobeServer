@@ -43,7 +43,9 @@ if ($tickGamets <= 0) {
 }
 
 try {
-    if (function_exists('stobeMaybeRunMiddleTermCycle')) {
+    if (function_exists('stobeRunMiddleTermDaemonEntrypoint')) {
+        stobeRunMiddleTermDaemonEntrypoint($tickTimestamp, $tickGamets, $tickPayload);
+    } elseif (function_exists('stobeMaybeRunMiddleTermCycle')) {
         stobeMaybeRunMiddleTermCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
     if (function_exists('stobeMaybeRunRegularMemoryCycle')) {
