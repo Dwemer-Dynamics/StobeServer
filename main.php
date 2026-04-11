@@ -129,8 +129,12 @@ if (!function_exists('stobeTryInlineMemoryMaintenanceFallback')) {
                 // Use manager-equivalent event type so regular-memory allowlist applies.
                 stobeMaybeRunRegularMemoryCycle('chat', $timestamp, $gamets, $tickPayload);
             }
+            if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
+                // Keep dynamic profiles moving even when the daemon loop is unavailable.
+                stobeMaybeRunDynamicProfileCycle('chat', $timestamp, $gamets, $tickPayload);
+            }
         } catch (Throwable $exception) {
-            stobeLogException($exception, 'Inline memory maintenance fallback failed', [
+            stobeLogException($exception, 'Inline maintenance fallback failed', [
                 'gamets' => $gamets,
                 'event_type' => $eventType,
             ]);
@@ -326,11 +330,18 @@ try {
 
     // Daemon-style behavior: periodic cycles run in service/manager.php.
     // Fallback: if daemon is down, run memory cycles inline to avoid stalled sync.
-    $backgroundRunning = true;
-    if (function_exists('stobeBackgroundProcessorIsRunning')) {
-        $backgroundRunning = stobeBackgroundProcessorIsRunning(0.1);
+    $needsInlineMaintenance = false;
+    if (function_exists('stobeBackgroundProcessorNeedsInlineFallback')) {
+        $needsInlineMaintenance = stobeBackgroundProcessorNeedsInlineFallback();
+    } else {
+        $backgroundRunning = true;
+        if (function_exists('stobeBackgroundProcessorIsRunning')) {
+            $backgroundRunning = stobeBackgroundProcessorIsRunning(0.1);
+        }
+        $needsInlineMaintenance = !$backgroundRunning;
     }
-    if (!$backgroundRunning) {
+
+    if ($needsInlineMaintenance) {
         $maintenanceGamets = stobeResolveLatestGametsForInlineMaintenance(intval($gamets));
         if ($maintenanceGamets > 0) {
             stobeTryInlineMemoryMaintenanceFallback(

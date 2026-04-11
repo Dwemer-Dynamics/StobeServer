@@ -37,6 +37,9 @@ $tickTimestamp = time();
 $tickGamets = stobeBackgroundLatestGamets();
 $tickPayload = '[background_processor_tick]';
 
+setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', strval($tickTimestamp), true);
+setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_GAMETS', strval($tickGamets), true);
+
 if ($tickGamets <= 0) {
     stobeLogDebug('Background manager skipped: no gamets yet');
     exit(0);
@@ -54,7 +57,9 @@ try {
     if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
         stobeMaybeRunDynamicProfileCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
+    setConfOpt('BACKGROUND_PROCESSOR_LAST_SUCCESS_TS', strval(time()), true);
 } catch (Throwable $exception) {
+    setConfOpt('BACKGROUND_PROCESSOR_LAST_ERROR_TS', strval(time()), true);
     stobeLogException($exception, 'Background manager tick failed', [
         'gamets' => $tickGamets,
         'event_type' => $tickEventType,

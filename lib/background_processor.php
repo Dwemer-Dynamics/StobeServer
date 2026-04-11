@@ -13,6 +13,37 @@ function stobeBackgroundProcessorPort(): int
     return 12346;
 }
 
+function stobeBackgroundProcessorStaleThresholdSeconds(): int
+{
+    $seconds = parseIntLike(getSetting('BACKGROUND_PROCESSOR_STALE_SECONDS', '30'), 30);
+    if ($seconds < 10) {
+        $seconds = 10;
+    } elseif ($seconds > 300) {
+        $seconds = 300;
+    }
+    return $seconds;
+}
+
+function stobeBackgroundProcessorLastTickTs(): int
+{
+    return intval(getConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', '0'));
+}
+
+function stobeBackgroundProcessorNeedsInlineFallback(): bool
+{
+    if (!stobeBackgroundProcessorIsRunning(0.1)) {
+        return true;
+    }
+
+    $lastTickTs = stobeBackgroundProcessorLastTickTs();
+    if ($lastTickTs <= 0) {
+        return true;
+    }
+
+    $staleAfter = stobeBackgroundProcessorStaleThresholdSeconds();
+    return (time() - $lastTickTs) > $staleAfter;
+}
+
 function stobeBackgroundProcessorStartScriptPath(): string
 {
     $enginePath = $GLOBALS['ENGINE_PATH'] ?? (dirname(__DIR__) . DIRECTORY_SEPARATOR);
