@@ -217,11 +217,12 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         $defaultMetadata = json_encode([
             'DYNAMIC_PROFILE_ENABLED' => false,
             'MIDDLE_TERM_MEMORY_ENABLED' => false,
+            'AUTO_DIARY_ENABLED' => false,
             'DIARY_DAYS' => 1,
             'DYNAMIC_PROFILE_FIELDS' => ['personality', 'occupation', 'speechstyle', 'goals'],
             'RECHAT_RESPONSES' => 3,
             'RECHAT_PROBABILITY' => 66,
-            'DIARY_PROMPT' => "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+            'DIARY_PROMPT' => "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
             'DIARY_COOLDOWN' => 120,
             'CONTEXT_HISTORY' => 75,
             'CONTEXT_HISTORY_DIARY' => 100,

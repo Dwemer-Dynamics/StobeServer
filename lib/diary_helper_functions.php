@@ -18,6 +18,230 @@ function stobeBuildDiaryCooldownKey(string $npcName): string {
     return 'DIARY_LAST_TIMESTAMP_' . $normalized;
 }
 
+function stobeAutoDiaryDaysSinceLastDiary(int $currentGamets, int $lastDiaryGamets): int {
+    $currentDay = stobeResolveKenshiDayFromGamets($currentGamets);
+    if ($currentDay < 0) {
+        return 1;
+    }
+    if ($lastDiaryGamets <= 0) {
+        return 1;
+    }
+
+    $lastDay = stobeResolveKenshiDayFromGamets($lastDiaryGamets);
+    if ($lastDay < 0) {
+        return 1;
+    }
+
+    return max(1, $currentDay - $lastDay);
+}
+
+function stobeDiaryBuildPromptTimeSpanBlock(
+    int $summaryDayIndex,
+    int $daysSinceLastDiary,
+    int $summaryStartGamets,
+    int $summaryEndGamets
+): string {
+    $startParts = stobeBuildKenshiDateFromGamets($summaryStartGamets);
+    $endParts = stobeBuildKenshiDateFromGamets($summaryEndGamets);
+    $dayNumber = intval($startParts['day_number'] ?? ($summaryDayIndex + 1));
+
+    return "<diary_time_span>\n"
+        . "  <summary_day_index>" . strval($summaryDayIndex) . "</summary_day_index>\n"
+        . "  <summary_day_number>" . strval($dayNumber) . "</summary_day_number>\n"
+        . "  <summary_start>" . stobePromptXmlEscape(strval($startParts['date_label'] ?? '')) . "</summary_start>\n"
+        . "  <summary_end>" . stobePromptXmlEscape(strval($endParts['date_label'] ?? '')) . "</summary_end>\n"
+        . "  <days_since_last_diary>" . strval(max(1, $daysSinceLastDiary)) . "</days_since_last_diary>\n"
+        . "</diary_time_span>";
+}
+
+function stobeDiaryDayGametsRange(int $dayIndex): array {
+    if ($dayIndex <= 0) {
+        return [
+            'start' => 0,
+            'end' => 172799,
+        ];
+    }
+
+    $start = ($dayIndex + 1) * 86400;
+    return [
+        'start' => $start,
+        'end' => $start + 86399,
+    ];
+}
+
+function stobeAutoDiaryRelevantEventExcludeTypes(): array {
+    return [
+        'prechat',
+        'setconf',
+        'status_msg',
+        'user_input',
+        'infonpc',
+        'infoloc',
+        'init',
+        'inputtext',
+        'inputtext_s',
+        'diary',
+        'auto_diary',
+        'auto_diary_day',
+        'backgroundlife_diary',
+    ];
+}
+
+function stobeAutoDiaryEventTypeSqlList(array $types): string {
+    $quoted = [];
+    foreach ($types as $type) {
+        $normalized = strtolower(trim(strval($type)));
+        if ($normalized === '') {
+            continue;
+        }
+        $quoted[] = "'" . str_replace("'", "''", $normalized) . "'";
+    }
+    if (count($quoted) === 0) {
+        return "''";
+    }
+    return implode(',', array_values(array_unique($quoted)));
+}
+
+function stobeBuildDiaryHistoryTextForGametsRange(
+    string $npcName,
+    int $startGamets,
+    int $endGamets,
+    int $historyLimit
+): string {
+    $safeNpcName = normalizeParticipantNameToken($npcName);
+    if ($safeNpcName === '' || $endGamets < $startGamets) {
+        return '';
+    }
+
+    $limit = max(1, min(400, $historyLimit));
+    $db = $GLOBALS["db"];
+    $excludeSql = stobeAutoDiaryEventTypeSqlList(stobeAutoDiaryRelevantEventExcludeTypes());
+    $like = '%' . $safeNpcName . '%';
+    $rows = $db->fetchAll(
+        "SELECT *
+         FROM eventlog
+         WHERE gamets >= $1
+           AND gamets <= $2
+           AND LOWER(COALESCE(type, '')) NOT IN ($excludeSql)
+           AND (people LIKE $3 OR data LIKE $3)
+         ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) ASC, ts ASC, rowid ASC
+         LIMIT " . intval($limit),
+        [$startGamets, $endGamets, $like]
+    );
+    $rows = stobeFilterNarratorRowsForContext($rows, $safeNpcName, 'diary');
+    if (count($rows) === 0) {
+        return '';
+    }
+
+    $historyLines = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if (function_exists('stobeEventRowActorHasAwarenessSuppressedTag')
+            && stobeEventRowActorHasAwarenessSuppressedTag($row, $safeNpcName)) {
+            continue;
+        }
+        $line = stobeFormatEventHistoryLine($row, true);
+        if ($line === '') {
+            continue;
+        }
+        $historyLines[] = $line;
+    }
+    return implode("\n", $historyLines);
+}
+
+function stobeCountRelevantDiaryEventsForGametsRange(string $npcName, int $startGamets, int $endGamets): int {
+    $safeNpcName = normalizeParticipantNameToken($npcName);
+    if ($safeNpcName === '' || $endGamets < $startGamets) {
+        return 0;
+    }
+
+    $db = $GLOBALS["db"];
+    $excludeSql = stobeAutoDiaryEventTypeSqlList(stobeAutoDiaryRelevantEventExcludeTypes());
+    $like = '%' . $safeNpcName . '%';
+    $row = $db->fetchOne(
+        "SELECT COUNT(*) AS total
+         FROM eventlog
+         WHERE gamets >= $1
+           AND gamets <= $2
+           AND LOWER(COALESCE(type, '')) NOT IN ($excludeSql)
+           AND (people LIKE $3 OR data LIKE $3)",
+        [$startGamets, $endGamets, $like]
+    );
+
+    return intval($row['total'] ?? 0);
+}
+
+function stobeAutoDiaryState(array|false $npcData): array {
+    $extended = normalizeCoreNpcExtendedData($npcData['extended_data'] ?? []);
+    $state = $extended['auto_diary_state'] ?? [];
+    if (!is_array($state)) {
+        $state = [];
+    }
+    return [
+        'last_evaluated_day' => intval($state['last_evaluated_day'] ?? -1),
+        'last_written_day' => intval($state['last_written_day'] ?? -1),
+    ];
+}
+
+function stobeUpdateAutoDiaryState(array $npcData, ?int $evaluatedDay = null, ?int $writtenDay = null): void {
+    $npcId = intval($npcData['id'] ?? 0);
+    if ($npcId <= 0) {
+        return;
+    }
+
+    $extended = normalizeCoreNpcExtendedData($npcData['extended_data'] ?? []);
+    $state = $extended['auto_diary_state'] ?? [];
+    if (!is_array($state)) {
+        $state = [];
+    }
+    if ($evaluatedDay !== null) {
+        $state['last_evaluated_day'] = intval($evaluatedDay);
+    }
+    if ($writtenDay !== null) {
+        $state['last_written_day'] = intval($writtenDay);
+    }
+    $extended['auto_diary_state'] = $state;
+    updateNpcById($npcId, ['extended_data' => $extended]);
+}
+
+function stobeNpcIsDeadForAutoDiary(array|false $npcData): bool {
+    if (!is_array($npcData)) {
+        return true;
+    }
+
+    $state = stobeResolveNpcAwarenessState($npcData);
+    if ($state === 'dead') {
+        return true;
+    }
+
+    $metadata = normalizeCoreNpcMetadata($npcData['metadata'] ?? []);
+    $currentAction = strtolower(trim(strval($metadata['current_action'] ?? '')));
+    if ($currentAction !== '' && preg_match('/\bdead\b/iu', $currentAction) === 1) {
+        return true;
+    }
+
+    return false;
+}
+
+function stobeAutoDiaryFetchCandidates(int $limit = 512): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return [];
+    }
+
+    $safeLimit = max(1, min(1024, $limit));
+    return $db->fetchAll(
+        "SELECT id, name, profile_id, metadata, extended_data, gamets_last_updated
+         FROM core_npc
+         WHERE COALESCE(TRIM(name), '') <> ''
+           AND LOWER(name) <> 'the narrator'
+         ORDER BY COALESCE(gamets_last_updated, 0) DESC, updated_at DESC
+         LIMIT " . intval($safeLimit)
+    );
+}
+
 function stobeResolveKenshiDayFromGamets(int $gamets): int {
     $normalizedGamets = stobeGametsNormalize($gamets);
     if ($normalizedGamets <= 0) {
@@ -107,7 +331,8 @@ function stobeGenerateDiaryEntryForNpc(
     string $triggerType = 'diary',
     bool $respectAutoFlags = false,
     bool $enforceDiaryDays = false,
-    bool $skipCooldown = false
+    bool $skipCooldown = false,
+    array $options = []
 ): array {
     $safeNpcName = normalizeParticipantNameToken($npcName);
     if ($safeNpcName === '') {
@@ -209,13 +434,28 @@ function stobeGenerateDiaryEntryForNpc(
             400
         );
     }
+    $historyLimitOverride = intval($options['history_limit_override'] ?? 0);
+    if ($historyLimitOverride > 0) {
+        $historyLimit = max(1, min(400, $historyLimitOverride));
+    }
 
-    $historyText = stobeBuildDiaryHistoryText($safeNpcName, $historyLimit);
-    $kenshiDate = stobeBuildKenshiDateFromGamets($gamets);
+    $historyText = trim(strval($options['history_text'] ?? ''));
+    if ($historyText === '') {
+        $historyText = stobeBuildDiaryHistoryText($safeNpcName, $historyLimit);
+    }
+    $kenshiDate = is_array($options['kenshi_date_override'] ?? null)
+        ? $options['kenshi_date_override']
+        : stobeBuildKenshiDateFromGamets($gamets);
     $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
     if ($playerName === '') {
         $playerName = 'Drifter';
     }
+
+    $lastDiaryGametsForSpan = intval($options['last_diary_gamets'] ?? stobeGetLastDiaryGametsForNpc($safeNpcName));
+    $daysSinceLastDiary = intval($options['days_since_last_diary'] ?? stobeAutoDiaryDaysSinceLastDiary($gamets, $lastDiaryGametsForSpan));
+    $summaryDayIndex = intval($options['summary_day_index'] ?? ($kenshiDate['day_index'] ?? -1));
+    $summaryStartGamets = intval($options['summary_start_gamets'] ?? $gamets);
+    $summaryEndGamets = intval($options['summary_end_gamets'] ?? $gamets);
 
     $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
         . "\n\n"
@@ -236,8 +476,14 @@ function stobeGenerateDiaryEntryForNpc(
         '#CURRENT_INGAME_DATETIME#' => stobePromptXmlEscape(strval($kenshiDate['date_label'] ?? '')),
     ]);
     $systemPrompt .= "\n\n" . $diaryModeRules;
+    $systemPrompt .= "\n\n" . stobeDiaryBuildPromptTimeSpanBlock(
+        $summaryDayIndex,
+        $daysSinceLastDiary,
+        $summaryStartGamets,
+        $summaryEndGamets
+    );
 
-    $defaultDiaryPrompt = "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with exactly this header: \"#KENSHI_DIARY_HEADER#\".";
+    $defaultDiaryPrompt = "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with exactly this header: \"#KENSHI_DIARY_HEADER#\".";
     $diaryPromptTemplate = getNpcProfileStringSetting(
         $npcData,
         ['DIARY_PROMPT'],
@@ -253,6 +499,7 @@ function stobeGenerateDiaryEntryForNpc(
         '#KENSHI_TIME_24#' => strval($kenshiDate['clock_24'] ?? '00:00'),
         '#KENSHI_TIME_12#' => strval($kenshiDate['clock_12'] ?? '12:00 AM'),
         '#KENSHI_DATE_LABEL#' => strval($kenshiDate['date_label'] ?? 'Day 1, Midday (00:00)'),
+        '#DAYS_SINCE_LAST_DIARY#' => strval($daysSinceLastDiary),
         '#KENSHI_DIARY_HEADER#' => 'Day ' . strval(intval($kenshiDate['day_number'] ?? 1))
             . ', ' . strval($kenshiDate['time_label'] ?? 'Midday') . '.',
     ]);
@@ -299,7 +546,10 @@ function stobeGenerateDiaryEntryForNpc(
     }
     $diaryContent = stobeApplyKenshiDiaryHeader($diaryContent, $kenshiDate);
 
-    $location = stobeResolveDiaryLocationText($safeNpcName);
+    $location = trim(strval($options['location_text'] ?? ''));
+    if ($location === '') {
+        $location = stobeResolveDiaryLocationText($safeNpcName);
+    }
     $tags = 'diary,' . strtolower(trim($triggerType));
     $topic = 'Diary Entry';
     $db = $GLOBALS["db"];
@@ -327,6 +577,7 @@ function stobeGenerateDiaryEntryForNpc(
         'gamets' => intval($gamets),
         'kenshi_date' => strval($kenshiDate['date_label'] ?? ''),
         'history_limit' => $historyLimit,
+        'days_since_last_diary' => $daysSinceLastDiary,
         'content_length' => strlen($diaryContent),
     ]);
 
@@ -335,89 +586,187 @@ function stobeGenerateDiaryEntryForNpc(
         'npc_name' => $safeNpcName,
         'content_length' => strlen($diaryContent),
         'history_limit' => $historyLimit,
+        'days_since_last_diary' => $daysSinceLastDiary,
     ];
 }
 
-function stobeMaybeTriggerAutoDiaryOnNewDay(
-    string $eventType,
-    int $timestamp,
-    int $gamets,
-    string $eventData
-): void {
-    $normalizedType = strtolower(trim($eventType));
-    if ($normalizedType === 'diary' || $normalizedType === 'diary_nearby') {
-        return;
+function stobeAutoDiaryTryLock(): bool {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return false;
     }
+    $row = $db->fetchOne("SELECT pg_try_advisory_lock(937463) AS locked");
+    return !empty($row['locked']);
+}
+
+function stobeAutoDiaryUnlock(): void {
+    $db = $GLOBALS['db'] ?? null;
+    if ($db) {
+        $db->exec("SELECT pg_advisory_unlock(937463)");
+    }
+}
+
+function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
     if ($gamets <= 0) {
         return;
     }
 
     $currentDay = stobeResolveKenshiDayFromGamets($gamets);
-    if ($currentDay < 0) {
+    if ($currentDay <= 0) {
         return;
     }
 
-    $dayKey = 'AUTO_DIARY_LAST_GAMEDAY';
-    $lastProcessedDay = intval(getConfOpt($dayKey, '-1'));
-    if ($lastProcessedDay === $currentDay) {
+    $summaryDay = $currentDay - 1;
+    if ($summaryDay < 0) {
         return;
     }
 
-    $candidates = stobeExtractDiaryCandidates($normalizedType, $eventData);
-    if (count($candidates) === 0) {
+    if (!stobeAutoDiaryTryLock()) {
         return;
     }
 
-    $attempted = 0;
-    $generated = 0;
-    $skipped = 0;
-    $failed = 0;
-    $results = [];
+    try {
+        $summaryDayRange = stobeDiaryDayGametsRange($summaryDay);
+        $candidates = stobeAutoDiaryFetchCandidates(512);
+        $processed = 0;
+        $attempted = 0;
+        $generated = 0;
+        $skipped = 0;
+        $failed = 0;
 
-    foreach ($candidates as $candidateName) {
-        $attempted++;
-        $result = stobeGenerateDiaryEntryForNpc(
-            strval($candidateName),
-            intval($timestamp),
-            intval($gamets),
-            'auto_diary_day',
-            true,
-            true,
-            true
-        );
-        $results[] = $result;
-        if (boolval($result['ok'] ?? false)) {
-            $generated++;
-            continue;
+        foreach ($candidates as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+            if ($processed >= 5) {
+                break;
+            }
+
+            $npcName = normalizeParticipantNameToken(strval($candidate['name'] ?? ''));
+            if ($npcName === '') {
+                continue;
+            }
+            $npcData = getNpcData($npcName);
+            if (!is_array($npcData)) {
+                continue;
+            }
+
+            $state = stobeAutoDiaryState($npcData);
+            if (intval($state['last_evaluated_day'] ?? -1) >= $summaryDay) {
+                continue;
+            }
+
+            $attempted++;
+
+            if (!getNpcProfileBoolSetting($npcData, ['AUTO_DIARY_ENABLED'], 'AUTO_DIARY_ENABLED', false)) {
+                stobeUpdateAutoDiaryState($npcData, $summaryDay, null);
+                $skipped++;
+                $processed++;
+                continue;
+            }
+
+            if (stobeNpcIsDeadForAutoDiary($npcData)) {
+                stobeUpdateAutoDiaryState($npcData, $summaryDay, null);
+                $skipped++;
+                $processed++;
+                continue;
+            }
+
+            $relevantEventCount = stobeCountRelevantDiaryEventsForGametsRange($npcName, $summaryDayRange['start'], $summaryDayRange['end']);
+            if ($relevantEventCount < 50) {
+                stobeUpdateAutoDiaryState($npcData, $summaryDay, null);
+                $skipped++;
+                $processed++;
+                continue;
+            }
+
+            $lastDiaryGamets = stobeGetLastDiaryGametsForNpc($npcName);
+            $windowDays = stobeAutoDiaryDaysSinceLastDiary($summaryDayRange['end'], $lastDiaryGamets);
+            $historyStartDay = max(0, $summaryDay - ($windowDays - 1));
+            $historyEndDay = $summaryDay;
+            $historyStartRange = stobeDiaryDayGametsRange($historyStartDay);
+            $historyEndRange = stobeDiaryDayGametsRange($historyEndDay);
+            $historyRange = [
+                'start' => intval($historyStartRange['start'] ?? 0),
+                'end' => intval($historyEndRange['end'] ?? 0),
+            ];
+
+            $historyLimit = getNpcProfileIntegerSetting($npcData, ['CONTEXT_HISTORY_DIARY'], '', 100, 0, 400);
+            if ($historyLimit <= 0) {
+                $historyLimit = getNpcProfileIntegerSetting($npcData, ['CONTEXT_HISTORY'], '', 75, 10, 400);
+            }
+
+            $historyText = stobeBuildDiaryHistoryTextForGametsRange($npcName, $historyRange['start'], $historyRange['end'], $historyLimit);
+            if ($historyText === '') {
+                stobeUpdateAutoDiaryState($npcData, $summaryDay, null);
+                $skipped++;
+                $processed++;
+                continue;
+            }
+
+            $summaryGamets = $summaryDayRange['end'];
+            $result = stobeGenerateDiaryEntryForNpc(
+                $npcName,
+                $timestamp,
+                $summaryGamets,
+                'auto_diary_day',
+                true,
+                true,
+                true,
+                [
+                    'history_text' => $historyText,
+                    'history_limit_override' => $historyLimit,
+                    'kenshi_date_override' => stobeBuildKenshiDateFromGamets($summaryGamets),
+                    'summary_day_index' => $summaryDay,
+                    'summary_start_gamets' => $historyRange['start'],
+                    'summary_end_gamets' => $historyRange['end'],
+                    'last_diary_gamets' => $lastDiaryGamets,
+                    'days_since_last_diary' => $windowDays,
+                ]
+            );
+
+            if (boolval($result['ok'] ?? false)) {
+                stobeUpdateAutoDiaryState($npcData, $summaryDay, $summaryDay);
+                $generated++;
+            } else {
+                stobeUpdateAutoDiaryState($npcData, $summaryDay, null);
+                $reason = strtolower(trim(strval($result['reason'] ?? 'unknown')));
+                if (
+                    $reason === 'auto_diary_disabled' ||
+                    $reason === 'diary_days_not_elapsed' ||
+                    $reason === 'cooldown_active' ||
+                    $reason === 'missing_gamets'
+                ) {
+                    $skipped++;
+                } else {
+                    $failed++;
+                }
+            }
+
+            $processed++;
         }
 
-        $reason = strtolower(trim(strval($result['reason'] ?? 'unknown')));
-        if (
-            $reason === 'auto_diary_disabled' ||
-            $reason === 'diary_days_not_elapsed' ||
-            $reason === 'cooldown_active' ||
-            $reason === 'missing_gamets'
-        ) {
-            $skipped++;
-        } else {
-            $failed++;
+        setConfOpt('AUTO_DIARY_LAST_RUN_TS', strval(time()), true);
+        setConfOpt('AUTO_DIARY_LAST_RUN_GAMETS', strval($gamets), true);
+
+        if ($attempted > 0 || $generated > 0 || $failed > 0) {
+            stobeLogInfo('Auto diary cycle processed', [
+                'summary_day' => $summaryDay,
+                'summary_range' => $summaryDayRange,
+                'attempted' => $attempted,
+                'generated' => $generated,
+                'skipped' => $skipped,
+                'failed' => $failed,
+                'processed' => $processed,
+            ]);
         }
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Auto diary cycle failed', [
+            'gamets' => $gamets,
+        ]);
+    } finally {
+        stobeAutoDiaryUnlock();
     }
-
-    if ($attempted > 0) {
-        setConfOpt($dayKey, strval($currentDay), true);
-    }
-
-    stobeLogInfo('Auto diary day check processed', [
-        'event_type' => $normalizedType,
-        'current_day' => $currentDay,
-        'last_processed_day' => $lastProcessedDay,
-        'attempted' => $attempted,
-        'generated' => $generated,
-        'skipped' => $skipped,
-        'failed' => $failed,
-        'results' => $results,
-    ]);
 }
 
 function stobeExtractDiaryCandidates(string $eventType, string $eventData): array {

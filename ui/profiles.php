@@ -85,15 +85,13 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
         }
         $base[$key] = coerceBoolean($metaVis[$key] ?? false);
     }
-    unset($base['AUTO_DIARY_ENABLED']);
-
     if (array_key_exists('DIARY_PROMPT', $metaVis)) {
         $prompt = trim(strval($metaVis['DIARY_PROMPT'] ?? ''));
         if ($prompt === '') {
@@ -691,6 +689,14 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                     </label>
                                     <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
                                 </div>
+                                <div class="toggle-card">
+                                    <label>
+                                        <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
+                                        <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
+                                        <span class="toggle-title">AUTO_DIARY_ENABLED</span>
+                                    </label>
+                                    <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
+                                </div>
                             </div>
                         </div>
 
@@ -852,6 +858,37 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                     <div class="range-pair">
                                         <input type="range" id="meta_context_history_dyn_range" min="0" max="300" step="1" value="<?= h($metaInt('CONTEXT_HISTORY_DYNAMIC_PROFILE')) ?>">
                                         <input type="number" id="meta_context_history_dyn_num" name="meta_vis[CONTEXT_HISTORY_DYNAMIC_PROFILE]" min="0" max="300" step="1" value="<?= h($metaInt('CONTEXT_HISTORY_DYNAMIC_PROFILE')) ?>">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="provider-card" id="meta_cat_diary">
+                            <div class="provider-head">
+                                <div class="provider-title">
+                                    <div class="provider-icon">&#x1F4D4;</div>
+                                    <div>Diary</div>
+                                </div>
+                            </div>
+                            <div class="provider-body">
+                                <div class="setting-row">
+                                    <div>
+                                        <div class="setting-key">DIARY_DAYS</div>
+                                        <div class="setting-desc">Auto Diary timer in in-game days. Auto diary only writes when this many days have passed since the NPC's last diary entry.</div>
+                                    </div>
+                                    <div class="range-pair">
+                                        <input type="range" id="meta_diary_days_range" min="0" max="60" step="1" value="<?= h($metaInt('DIARY_DAYS')) ?>">
+                                        <input type="number" id="meta_diary_days_num" name="meta_vis[DIARY_DAYS]" min="0" max="60" step="1" value="<?= h($metaInt('DIARY_DAYS')) ?>">
+                                    </div>
+                                </div>
+                                <div class="setting-row">
+                                    <div>
+                                        <div class="setting-key">DIARY_COOLDOWN</div>
+                                        <div class="setting-desc">Real-time cooldown in seconds between diary writes for the same NPC.</div>
+                                    </div>
+                                    <div class="range-pair">
+                                        <input type="range" id="meta_diary_cooldown_range" min="0" max="3600" step="1" value="<?= h($metaInt('DIARY_COOLDOWN')) ?>">
+                                        <input type="number" id="meta_diary_cooldown_num" name="meta_vis[DIARY_COOLDOWN]" min="0" max="3600" step="1" value="<?= h($metaInt('DIARY_COOLDOWN')) ?>">
                                     </div>
                                 </div>
                             </div>

@@ -57,6 +57,9 @@ try {
     if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
         stobeMaybeRunDynamicProfileCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
+    if (function_exists('stobeMaybeRunAutoDiaryCycle')) {
+        stobeMaybeRunAutoDiaryCycle($tickTimestamp, $tickGamets);
+    }
     setConfOpt('BACKGROUND_PROCESSOR_LAST_SUCCESS_TS', strval(time()), true);
 } catch (Throwable $exception) {
     setConfOpt('BACKGROUND_PROCESSOR_LAST_ERROR_TS', strval(time()), true);

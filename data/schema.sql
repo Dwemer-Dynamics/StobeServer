@@ -696,6 +696,7 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     metadata JSONB DEFAULT $${
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
+        "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -705,7 +706,7 @@ CREATE TABLE IF NOT EXISTS core_profiles (
         ],
         "RECHAT_RESPONSES": 3,
         "RECHAT_PROBABILITY": 66,
-        "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+        "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
         "DIARY_COOLDOWN": 120,
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
@@ -1496,6 +1497,7 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT DEFAULT '
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
+    "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
@@ -1505,7 +1507,7 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     ],
     "RECHAT_RESPONSES": 3,
     "RECHAT_PROBABILITY": 66,
-    "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+    "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
     "DIARY_COOLDOWN": 120,
     "CONTEXT_HISTORY": 75,
     "CONTEXT_HISTORY_DIARY": 100,
@@ -1515,6 +1517,7 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
+    "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
@@ -1524,7 +1527,7 @@ ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     ],
     "RECHAT_RESPONSES": 3,
     "RECHAT_PROBABILITY": 66,
-    "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+    "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
     "DIARY_COOLDOWN": 120,
     "CONTEXT_HISTORY": 75,
     "CONTEXT_HISTORY_DIARY": 100,
@@ -1537,6 +1540,7 @@ SET metadata = CASE
         THEN $${
             "DYNAMIC_PROFILE_ENABLED": false,
             "MIDDLE_TERM_MEMORY_ENABLED": false,
+            "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
             "DYNAMIC_PROFILE_FIELDS": [
                 "personality",
@@ -1546,7 +1550,7 @@ SET metadata = CASE
             ],
             "RECHAT_RESPONSES": 3,
             "RECHAT_PROBABILITY": 66,
-            "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+            "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
             "DIARY_COOLDOWN": 120,
             "CONTEXT_HISTORY": 75,
             "CONTEXT_HISTORY_DIARY": 100,
@@ -1556,6 +1560,7 @@ SET metadata = CASE
     ELSE $${
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
+        "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -1565,7 +1570,7 @@ SET metadata = CASE
         ],
         "RECHAT_RESPONSES": 3,
         "RECHAT_PROBABILITY": 66,
-        "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+        "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
         "DIARY_COOLDOWN": 120,
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
@@ -2467,7 +2472,7 @@ INSERT INTO core_profiles (
         ],
         "RECHAT_RESPONSES": 3,
         "RECHAT_PROBABILITY": 66,
-        "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#''s last dialogues and events written above into #NPC_NAME#''s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+        "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#''s dialogues and events written above into #NPC_NAME#''s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
         "DIARY_COOLDOWN": 120,
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
