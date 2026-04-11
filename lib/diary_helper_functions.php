@@ -69,6 +69,23 @@ function stobeDiaryDayGametsRange(int $dayIndex): array {
     ];
 }
 
+function stobeResolveAutoDiaryEligibleSummaryDay(int $currentGamets, int $triggerHour24): int {
+    $parts = stobeBuildKenshiDateFromGamets($currentGamets);
+    $currentDay = intval($parts['day_index'] ?? -1);
+    $currentHour = intval($parts['hour_24'] ?? -1);
+    $targetHour = max(0, min(23, $triggerHour24));
+
+    if ($currentDay < 0 || $currentHour < 0) {
+        return -1;
+    }
+
+    if ($currentHour >= $targetHour) {
+        return $currentDay - 1;
+    }
+
+    return $currentDay - 2;
+}
+
 function stobeAutoDiaryRelevantEventExcludeTypes(): array {
     return [
         'prechat',
@@ -484,11 +501,14 @@ function stobeGenerateDiaryEntryForNpc(
     );
 
     $defaultDiaryPrompt = "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with exactly this header: \"#KENSHI_DIARY_HEADER#\".";
+    $globalDiaryPrompt = function_exists('stobeGetPromptTemplateValue')
+        ? stobeGetPromptTemplateValue('DIARY_PROMPT', $defaultDiaryPrompt)
+        : $defaultDiaryPrompt;
     $diaryPromptTemplate = getNpcProfileStringSetting(
         $npcData,
         ['DIARY_PROMPT'],
         'DIARY_PROMPT',
-        $defaultDiaryPrompt
+        $globalDiaryPrompt
     );
     $diaryPrompt = strtr($diaryPromptTemplate, [
         '#PLAYER_NAME#' => $playerName,
@@ -611,13 +631,10 @@ function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
         return;
     }
 
-    $currentDay = stobeResolveKenshiDayFromGamets($gamets);
-    if ($currentDay <= 0) {
-        return;
-    }
-
-    $summaryDay = $currentDay - 1;
-    if ($summaryDay < 0) {
+    $currentParts = stobeBuildKenshiDateFromGamets($gamets);
+    $currentDay = intval($currentParts['day_index'] ?? -1);
+    $currentHour = intval($currentParts['hour_24'] ?? -1);
+    if ($currentDay <= 0 || $currentHour < 0) {
         return;
     }
 
@@ -626,7 +643,6 @@ function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
     }
 
     try {
-        $summaryDayRange = stobeDiaryDayGametsRange($summaryDay);
         $candidates = stobeAutoDiaryFetchCandidates(512);
         $processed = 0;
         $attempted = 0;
@@ -651,11 +667,25 @@ function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
                 continue;
             }
 
+            $autoDiaryHour = getNpcProfileIntegerSetting(
+                $npcData,
+                ['AUTO_DIARY_HOUR'],
+                'AUTO_DIARY_HOUR',
+                21,
+                0,
+                23
+            );
+            $summaryDay = stobeResolveAutoDiaryEligibleSummaryDay($gamets, $autoDiaryHour);
+            if ($summaryDay < 0) {
+                continue;
+            }
+
             $state = stobeAutoDiaryState($npcData);
             if (intval($state['last_evaluated_day'] ?? -1) >= $summaryDay) {
                 continue;
             }
 
+            $summaryDayRange = stobeDiaryDayGametsRange($summaryDay);
             $attempted++;
 
             if (!getNpcProfileBoolSetting($npcData, ['AUTO_DIARY_ENABLED'], 'AUTO_DIARY_ENABLED', false)) {
@@ -672,8 +702,16 @@ function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
                 continue;
             }
 
+            $minimumEvents = getNpcProfileIntegerSetting(
+                $npcData,
+                ['AUTO_DIARY_MIN_EVENTS'],
+                'AUTO_DIARY_MIN_EVENTS',
+                50,
+                1,
+                1000
+            );
             $relevantEventCount = stobeCountRelevantDiaryEventsForGametsRange($npcName, $summaryDayRange['start'], $summaryDayRange['end']);
-            if ($relevantEventCount < 50) {
+            if ($relevantEventCount < $minimumEvents) {
                 stobeUpdateAutoDiaryState($npcData, $summaryDay, null);
                 $skipped++;
                 $processed++;
@@ -751,13 +789,15 @@ function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
 
         if ($attempted > 0 || $generated > 0 || $failed > 0) {
             stobeLogInfo('Auto diary cycle processed', [
-                'summary_day' => $summaryDay,
-                'summary_range' => $summaryDayRange,
+                'current_day' => $currentDay,
+                'current_hour' => $currentHour,
                 'attempted' => $attempted,
                 'generated' => $generated,
                 'skipped' => $skipped,
                 'failed' => $failed,
                 'processed' => $processed,
+                'minimum_events_setting' => 'AUTO_DIARY_MIN_EVENTS',
+                'hour_setting' => 'AUTO_DIARY_HOUR',
             ]);
         }
     } catch (Throwable $exception) {

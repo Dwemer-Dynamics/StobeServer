@@ -62,6 +62,8 @@ function normalize_imported_fk_id(string $table, mixed $raw): ?int {
 function apply_visual_metadata_merge(array $base, array $metaVis): array {
     $intKeys = [
         'DIARY_DAYS',
+        'AUTO_DIARY_MIN_EVENTS',
+        'AUTO_DIARY_HOUR',
         'BORED_EVENT_CHANCE',
         'DIARY_COOLDOWN',
         'CONTEXT_HISTORY',
@@ -79,7 +81,11 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
             unset($base[$key]);
             continue;
         }
-        $base[$key] = intval($raw);
+        $value = intval($raw);
+        if ($key === 'AUTO_DIARY_HOUR') {
+            $value = max(0, min(23, $value));
+        }
+        $base[$key] = $value;
     }
     if (array_key_exists('BORED_EVENT_CHANCE', $metaVis)) {
         unset($base['BORED_EVENT']);
@@ -883,6 +889,26 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
+                                        <div class="setting-key">AUTO_DIARY_MIN_EVENTS</div>
+                                        <div class="setting-desc">Minimum number of relevant events required in the diary window before auto diary writes an entry.</div>
+                                    </div>
+                                    <div class="range-pair">
+                                        <input type="range" id="meta_auto_diary_min_events_range" min="1" max="500" step="1" value="<?= h($metaInt('AUTO_DIARY_MIN_EVENTS')) ?>">
+                                        <input type="number" id="meta_auto_diary_min_events_num" name="meta_vis[AUTO_DIARY_MIN_EVENTS]" min="1" max="500" step="1" value="<?= h($metaInt('AUTO_DIARY_MIN_EVENTS')) ?>">
+                                    </div>
+                                </div>
+                                <div class="setting-row">
+                                    <div>
+                                        <div class="setting-key">AUTO_DIARY_HOUR</div>
+                                        <div class="setting-desc">In-game 24-hour time when auto diary becomes eligible to write for the previous completed day.</div>
+                                    </div>
+                                    <div class="range-pair">
+                                        <input type="range" id="meta_auto_diary_hour_range" min="0" max="23" step="1" value="<?= h($metaInt('AUTO_DIARY_HOUR')) ?>">
+                                        <input type="number" id="meta_auto_diary_hour_num" name="meta_vis[AUTO_DIARY_HOUR]" min="0" max="23" step="1" value="<?= h($metaInt('AUTO_DIARY_HOUR')) ?>">
+                                    </div>
+                                </div>
+                                <div class="setting-row">
+                                    <div>
                                         <div class="setting-key">DIARY_COOLDOWN</div>
                                         <div class="setting-desc">Real-time cooldown in seconds between diary writes for the same NPC.</div>
                                     </div>
@@ -1080,6 +1106,8 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
         ['meta_context_history_diary_range', 'meta_context_history_diary_num', 0, 300],
         ['meta_context_history_dyn_range', 'meta_context_history_dyn_num', 0, 300],
         ['meta_diary_days_range', 'meta_diary_days_num', 0, 60],
+        ['meta_auto_diary_min_events_range', 'meta_auto_diary_min_events_num', 1, 500],
+        ['meta_auto_diary_hour_range', 'meta_auto_diary_hour_num', 0, 23],
         ['meta_diary_cooldown_range', 'meta_diary_cooldown_num', 0, 3600],
     ].forEach(function (pair) {
         bindRangePair(pair[0], pair[1], pair[2], pair[3]);

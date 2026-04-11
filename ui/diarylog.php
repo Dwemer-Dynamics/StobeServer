@@ -22,9 +22,14 @@ function sanitizeInt(mixed $value, int $default): int
 
 function parsePeopleList(mixed $rawPeople): string
 {
+    return implode(", ", parsePeopleArray($rawPeople));
+}
+
+function parsePeopleArray(mixed $rawPeople): array
+{
     $text = trim(strval($rawPeople ?? ""));
     if ($text === "") {
-        return "";
+        return [];
     }
 
     $decoded = json_decode($text, true);
@@ -37,7 +42,7 @@ function parsePeopleList(mixed $rawPeople): string
             }
         }
         if (count($names) > 0) {
-            return implode(", ", $names);
+            return array_values(array_unique($names));
         }
     }
 
@@ -47,11 +52,26 @@ function parsePeopleList(mixed $rawPeople): string
             return $item !== "";
         });
         if (count($parts) > 0) {
-            return implode(", ", $parts);
+            return array_values(array_unique($parts));
         }
     }
 
-    return $clean;
+    return ($clean !== "") ? [$clean] : [];
+}
+
+function diaryRowMatchesPerson(array $row, string $selectedPerson): bool
+{
+    if ($selectedPerson === "") {
+        return true;
+    }
+
+    foreach (parsePeopleArray($row["people"] ?? "") as $personName) {
+        if (strcasecmp($personName, $selectedPerson) === 0) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function processDiaryRow(array $row, bool $forCsv = false): array
@@ -92,8 +112,10 @@ function processDiaryRow(array $row, bool $forCsv = false): array
     }
 
     return [
+        "rowid" => intval($row["rowid"] ?? 0),
         "Topic" => $topic,
         "Diary Entry" => $content,
+        "Diary Entry Raw" => $forCsv ? $content : trim(strval($row["content"] ?? "")),
         "People" => $people,
         "Tags" => $tags,
         "Location & Kenshi Calendar" => $locationAndCalendar,
@@ -148,7 +170,7 @@ function renderCalendar(int $month, int $year, array $eventDates): string
     return $calendar;
 }
 
-function buildDiaryRows(sql $db, ?int $startLocalTs = null, ?int $endLocalTs = null): array
+function buildDiaryRows(sql $db, ?int $startLocalTs = null, ?int $endLocalTs = null, string $selectedPerson = ""): array
 {
     $params = [];
     $where = "1=1";
@@ -161,17 +183,57 @@ function buildDiaryRows(sql $db, ?int $startLocalTs = null, ?int $endLocalTs = n
     }
 
     $query = "
-        SELECT topic, content, tags, people, location, localts, gamets
+        SELECT rowid, topic, content, tags, people, location, localts, gamets
         FROM diarylog
         WHERE {$where}
         ORDER BY localts ASC, rowid ASC
     ";
 
     try {
-        return $db->fetchAll($query, $params);
+        $rows = $db->fetchAll($query, $params);
+        if ($selectedPerson === "") {
+            return $rows;
+        }
+
+        return array_values(array_filter($rows, static function (array $row) use ($selectedPerson) {
+            return diaryRowMatchesPerson($row, $selectedPerson);
+        }));
     } catch (Throwable $exception) {
         return [];
     }
+}
+
+function buildPeopleFilterOptions(sql $db): array
+{
+    try {
+        $rows = $db->fetchAll("SELECT people FROM diarylog WHERE COALESCE(TRIM(people), '') <> '' ORDER BY rowid ASC");
+    } catch (Throwable $exception) {
+        return [];
+    }
+
+    $counts = [];
+    foreach ($rows as $row) {
+        $people = parsePeopleArray($row["people"] ?? "");
+        foreach ($people as $personName) {
+            if (!isset($counts[$personName])) {
+                $counts[$personName] = 0;
+            }
+            $counts[$personName]++;
+        }
+    }
+
+    ksort($counts, SORT_NATURAL | SORT_FLAG_CASE);
+    arsort($counts, SORT_NUMERIC);
+
+    $options = [];
+    foreach ($counts as $personName => $entryCount) {
+        $options[] = [
+            "name" => $personName,
+            "count" => $entryCount,
+        ];
+    }
+
+    return $options;
 }
 
 function exportCsvIfRequested(sql $db): void
@@ -189,6 +251,7 @@ function exportCsvIfRequested(sql $db): void
 
     $rows = [];
     $fileName = "diary_log_full.csv";
+    $selectedPerson = trim(strval($_GET["person"] ?? ""));
 
     if ($isSpecificDateExport) {
         $selectedDate = trim(strval($_GET["date"] ?? ""));
@@ -202,10 +265,14 @@ function exportCsvIfRequested(sql $db): void
         $dtEnd = clone $dtStart;
         $dtEnd->modify("+1 day")->modify("-1 second");
         $endOfDay = $dtEnd->getTimestamp();
-        $rows = buildDiaryRows($db, $startOfDay, $endOfDay);
+        $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
         $fileName = "diary_log_" . $selectedDate . ".csv";
     } else {
-        $rows = buildDiaryRows($db);
+        $rows = buildDiaryRows($db, null, null, $selectedPerson);
+        if ($selectedPerson !== "") {
+            $safePerson = preg_replace('/[^A-Za-z0-9._-]+/', '_', $selectedPerson);
+            $fileName = "diary_log_" . trim($safePerson, "_") . ".csv";
+        }
     }
 
     header("Content-Type: text/csv; charset=utf-8");
@@ -247,6 +314,9 @@ function renderCsvButtons(): void
     if (isset($_GET["year"])) {
         $currentCsvParams["year"] = strval($_GET["year"]);
     }
+    if (isset($_GET["person"]) && trim(strval($_GET["person"])) !== "") {
+        $currentCsvParams["person"] = trim(strval($_GET["person"]));
+    }
     $currentCsvParams["export"] = "csv";
 
     $allCsvParams = [];
@@ -255,6 +325,9 @@ function renderCsvButtons(): void
     }
     if (isset($_GET["year"])) {
         $allCsvParams["year"] = strval($_GET["year"]);
+    }
+    if (isset($_GET["person"]) && trim(strval($_GET["person"])) !== "") {
+        $allCsvParams["person"] = trim(strval($_GET["person"]));
     }
     $allCsvParams["export"] = "all_csv";
     $currentCsvHref = diaryUrl($currentCsvParams);
@@ -291,6 +364,20 @@ $isEmbed = (isset($_GET["embed"]) && strval($_GET["embed"]) === "1");
 $db = $GLOBALS["db"];
 exportCsvIfRequested($db);
 
+$selectedPerson = trim(strval($_GET["person"] ?? ""));
+$peopleFilterOptions = buildPeopleFilterOptions($db);
+$selectedPersonKnown = false;
+foreach ($peopleFilterOptions as $option) {
+    if (strcasecmp($option["name"], $selectedPerson) === 0) {
+        $selectedPerson = $option["name"];
+        $selectedPersonKnown = true;
+        break;
+    }
+}
+if ($selectedPerson !== "" && !$selectedPersonKnown) {
+    $selectedPerson = "";
+}
+
 $month = isset($_GET["month"]) && isset($_GET["year"])
     ? sanitizeInt($_GET["month"], intval(date("n")))
     : intval(date("n"));
@@ -307,26 +394,14 @@ $dtEndOfMonth = clone $dtStartOfMonth;
 $dtEndOfMonth->modify("+1 month")->modify("-1 second");
 $endOfMonth = $dtEndOfMonth->getTimestamp();
 
-$allDateParams = [$startOfMonth, $endOfMonth];
-$allDates = [];
-try {
-    $allDates = $db->fetchAll(
-        "SELECT DISTINCT TO_CHAR(TO_TIMESTAMP(localts::double precision) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS event_date
-         FROM diarylog
-         WHERE localts BETWEEN $1 AND $2
-         ORDER BY event_date ASC",
-        $allDateParams
-    );
-} catch (Throwable $exception) {
-    $allDates = [];
-}
 $allEventDates = [];
-foreach ($allDates as $dateRow) {
-    $dateValue = trim(strval($dateRow["event_date"] ?? ""));
-    if ($dateValue !== "") {
-        $allEventDates[] = $dateValue;
+foreach (buildDiaryRows($db, $startOfMonth, $endOfMonth, $selectedPerson) as $dateRow) {
+    $timestamp = intval($dateRow["localts"] ?? 0);
+    if ($timestamp > 0) {
+        $allEventDates[] = gmdate("Y-m-d", $timestamp);
     }
 }
+$allEventDates = array_values(array_unique($allEventDates));
 
 $selectedDate = isset($_GET["date"]) ? trim(strval($_GET["date"])) : date("Y-m-d");
 if (preg_match("/^\\d{4}-\\d{2}-\\d{2}$/", $selectedDate) !== 1) {
@@ -339,7 +414,7 @@ $dtSelectedEnd = clone $dtSelected;
 $dtSelectedEnd->modify("+1 day")->modify("-1 second");
 $endOfDay = $dtSelectedEnd->getTimestamp();
 
-$rows = buildDiaryRows($db, $startOfDay, $endOfDay);
+$rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
 
 ?>
 <!DOCTYPE html>
@@ -428,6 +503,53 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay);
             margin: 0;
         }
 
+        .filter-toolbar {
+            display: flex;
+            justify-content: center;
+            margin: 20px auto;
+            width: 100%;
+        }
+
+        .filter-panel {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 14px;
+            width: 100%;
+            max-width: 520px;
+        }
+
+        .filter-panel label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .filter-panel small {
+            display: block;
+            color: #c9c9c9;
+            margin-top: 6px;
+        }
+
+        .filter-panel input,
+        .filter-panel select {
+            width: 100%;
+            border-radius: 6px;
+            border: 1px solid #555555;
+            background: #151515;
+            color: #ffffff;
+            padding: 10px 12px;
+        }
+        .selected-filter {
+            margin: 10px auto 0;
+            max-width: 860px;
+            color: #f8f9fa;
+        }
+
+        .selected-filter strong {
+            color: #ffcc00;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -435,9 +557,54 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay);
             font-size: 14px;
         }
 
+        tbody tr {
+            cursor: pointer;
+        }
+
+        tbody tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .entry-preview {
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            white-space: pre-wrap;
+        }
+
+        .diary-modal .modal-dialog {
+            max-width: 980px;
+        }
+
+        .diary-modal .modal-content {
+            background: #171717;
+            color: #f8f9fa;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .diary-modal .modal-header,
+        .diary-modal .modal-footer {
+            border-color: rgba(255, 255, 255, 0.08);
+        }
+
+        .diary-modal .modal-body {
+            padding: 24px;
+        }
+
+        .diary-modal-entry {
+            white-space: pre-wrap;
+            line-height: 1.75;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 18px;
+        }
+
         th a {
             color: yellow;
         }
+
     </style>
 </head>
 <body>
@@ -450,6 +617,31 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay);
         <h1>Diary Log</h1>
         <h2>All timestamps are UTC. Calendar labels use Kenshi game time (`gamets`).</h2>
         <h3>Filtered view of diary entries by day, with CSV export.</h3>
+
+        <form method="get" class="filter-toolbar">
+            <div class="filter-panel">
+                <label for="person">Filter By Person</label>
+                <input type="text" id="person" name="person" list="diary-people-list" value="<?= h($selectedPerson) ?>" placeholder="Start typing a name">
+                <datalist id="diary-people-list">
+                    <?php foreach ($peopleFilterOptions as $option): ?>
+                        <option value="<?= h($option["name"]) ?>"><?= h($option["name"] . " (" . strval($option["count"]) . " entries)") ?></option>
+                    <?php endforeach; ?>
+                </datalist>
+                <small><?= h(strval(count($peopleFilterOptions))) ?> people with diary entries.</small>
+            </div>
+            <input type="hidden" name="month" value="<?= h(strval($month)) ?>">
+            <input type="hidden" name="year" value="<?= h(strval($year)) ?>">
+            <input type="hidden" name="date" value="<?= h($selectedDate) ?>">
+            <?php if ($isEmbed): ?>
+                <input type="hidden" name="embed" value="1">
+            <?php endif; ?>
+        </form>
+
+        <?php if ($selectedPerson !== ""): ?>
+            <div class="selected-filter">
+                Showing diary entries involving <strong><?= h($selectedPerson) ?></strong>.
+            </div>
+        <?php endif; ?>
 
         <?php renderCsvButtons(); ?>
 
@@ -501,24 +693,115 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay);
                 <th>Location & Kenshi Calendar</th>
                 <th>Time(UTC)</th>
             </tr>
-            <?php foreach ($rows as $row): ?>
-                <?php $processedRow = processDiaryRow($row, false); ?>
+            <?php if (count($rows) === 0): ?>
                 <tr>
-                    <td><?= $processedRow["Topic"] ?></td>
-                    <td><?= $processedRow["Diary Entry"] ?></td>
-                    <td><?= $processedRow["People"] ?></td>
-                    <td><?= $processedRow["Tags"] ?></td>
-                    <td><?= $processedRow["Location & Kenshi Calendar"] ?></td>
-                    <td><?= $processedRow["Time(UTC)"] ?></td>
+                    <td colspan="6" style="text-align: center; padding: 24px;">
+                        No diary entries found for this date<?= ($selectedPerson !== "") ? " and person" : "" ?>.
+                    </td>
                 </tr>
-            <?php endforeach; ?>
+            <?php else: ?>
+                <?php foreach ($rows as $row): ?>
+                    <?php $processedRow = processDiaryRow($row, false); ?>
+                    <?php
+                    $modalPayload = [
+                        "topic" => trim(strval($row["topic"] ?? "Diary Entry")),
+                        "content" => trim(strval($row["content"] ?? "")),
+                        "people" => parsePeopleList($row["people"] ?? ""),
+                        "tags" => trim(strval($row["tags"] ?? "")),
+                        "location" => trim(strval($row["location"] ?? "")),
+                        "timeUtc" => $processedRow["Time(UTC)"],
+                        "kenshiCalendar" => stobeGametsDisplayWithRaw($row["gamets"] ?? 0),
+                    ];
+                    $modalPayloadJson = h(json_encode($modalPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                    ?>
+                    <tr class="diary-row" data-entry="<?= $modalPayloadJson ?>">
+                        <td><?= $processedRow["Topic"] ?></td>
+                        <td><div class="entry-preview"><?= $processedRow["Diary Entry"] ?></div></td>
+                        <td><?= $processedRow["People"] ?></td>
+                        <td><?= $processedRow["Tags"] ?></td>
+                        <td><?= $processedRow["Location & Kenshi Calendar"] ?></td>
+                        <td><?= $processedRow["Time(UTC)"] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </table>
 
         <?php renderCsvButtons(); ?>
     </div>
 </main>
 
+<div class="modal fade diary-modal" id="diaryEntryModal" tabindex="-1" aria-labelledby="diaryEntryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="diaryEntryModalLabel">Diary Entry</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="diary-modal-entry" id="diaryModalContent"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="button" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const diaryEntryModalElement = document.getElementById('diaryEntryModal');
+    const diaryEntryModal = diaryEntryModalElement ? new bootstrap.Modal(diaryEntryModalElement) : null;
+    const personFilterInput = document.getElementById('person');
+    const personFilterForm = personFilterInput ? personFilterInput.form : null;
+    let personFilterSubmitTimer = null;
+
+    function submitPersonFilter() {
+        if (!personFilterForm) {
+            return;
+        }
+        personFilterForm.submit();
+    }
+
+    if (personFilterInput && personFilterForm) {
+        personFilterInput.addEventListener('input', () => {
+            window.clearTimeout(personFilterSubmitTimer);
+            personFilterSubmitTimer = window.setTimeout(submitPersonFilter, 350);
+        });
+
+        personFilterInput.addEventListener('change', () => {
+            window.clearTimeout(personFilterSubmitTimer);
+            submitPersonFilter();
+        });
+
+        personFilterInput.addEventListener('search', () => {
+            window.clearTimeout(personFilterSubmitTimer);
+            submitPersonFilter();
+        });
+    }
+
+    document.querySelectorAll('.diary-row').forEach((row) => {
+        row.addEventListener('click', () => {
+            if (!diaryEntryModal) {
+                return;
+            }
+
+            const rawPayload = row.getAttribute('data-entry') || '{}';
+            let entry = {};
+            try {
+                entry = JSON.parse(rawPayload);
+            } catch (error) {
+                entry = {};
+            }
+
+            const contentElement = document.getElementById('diaryModalContent');
+            if (contentElement) {
+                contentElement.textContent = String(entry.content || '').trim() || '(empty)';
+            }
+
+            diaryEntryModal.show();
+        });
+    });
+</script>
 </body>
 </html>
 

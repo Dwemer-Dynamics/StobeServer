@@ -10846,6 +10846,8 @@ function getDefaultCoreProfileMetadata(): array {
         'MIDDLE_TERM_MEMORY_ENABLED' => false,
         'AUTO_DIARY_ENABLED' => false,
         'DIARY_DAYS' => 1,
+        'AUTO_DIARY_MIN_EVENTS' => 50,
+        'AUTO_DIARY_HOUR' => 21,
         'DYNAMIC_PROFILE_FIELDS' => [
             'personality',
             'occupation',
