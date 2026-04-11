@@ -93,7 +93,7 @@ function normalizeDialogueMode(string $mode): string {
         return 'talk';
     }
 
-    $allowed = ['talk', 'shout', 'whisper', 'autochat', 'cheat'];
+    $allowed = ['talk', 'shout', 'whisper', 'autochat', 'cheat', 'narrator'];
     if (!in_array($normalized, $allowed, true)) {
         return 'talk';
     }
@@ -113,6 +113,30 @@ function setDialogueMode(string $mode): string {
 function stobeStringIsTruthy(string $value): bool {
     $normalized = strtolower(trim($value));
     return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+}
+
+function stobeIsRelationshipSystemEnabled(): bool {
+    static $cached = null;
+    if (is_bool($cached)) {
+        return $cached;
+    }
+
+    $missingSentinel = '__STOBE_RELATIONSHIP_SYSTEM_MISSING__';
+
+    $primary = getSetting('RELATIONSHIP_SYSTEM', $missingSentinel);
+    if ($primary !== $missingSentinel) {
+        $cached = stobeStringIsTruthy(strval($primary));
+        return $cached;
+    }
+
+    $legacy = getSetting('RELATIONSHIP_SYSTEM_ENABLED', $missingSentinel);
+    if ($legacy !== $missingSentinel) {
+        $cached = stobeStringIsTruthy(strval($legacy));
+        return $cached;
+    }
+
+    $cached = true;
+    return $cached;
 }
 
 function stobeMarkQuickstartCompleted(bool $completed = true): void {

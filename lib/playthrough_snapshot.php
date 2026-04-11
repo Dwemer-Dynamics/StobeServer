@@ -45,10 +45,10 @@ function stobeDragonBreakBuildName(int $prevGamets, int $incomingGamets): string
     $toDay = intval($incomingParts['day_number'] ?? 0);
 
     if ($fromDay > 0 && $toDay > 0) {
-        return 'Dragon Break (Day ' . $fromDay . ' -> Day ' . $toDay . ')';
+        return 'STOBE Rollback (Day ' . $fromDay . ' -> Day ' . $toDay . ')';
     }
 
-    return 'Dragon Break (' . stobeGametsDateLabel($prevGamets) . ' -> ' . stobeGametsDateLabel($incomingGamets) . ')';
+    return 'STOBE Rollback (' . stobeGametsDateLabel($prevGamets) . ' -> ' . stobeGametsDateLabel($incomingGamets) . ')';
 }
 
 function stobeDragonBreakCreateSnapshot(string $name, string $notes, array $meta = []): int
@@ -64,7 +64,7 @@ function stobeDragonBreakCreateSnapshot(string $name, string $notes, array $meta
 
     $snapshot = stobePlaythroughCreateSchemaSnapshot($name, $notes, $options);
     if (!boolval($snapshot['success'] ?? false)) {
-        stobeLogWarn('DragonBreak: Snapshot creation failed', [
+        stobeLogWarn('STOBE Rollback: Snapshot creation failed', [
             'name' => $name,
             'error' => strval($snapshot['error'] ?? 'unknown'),
         ]);
@@ -93,7 +93,7 @@ function stobeDragonBreakSnapshotIfNeeded(mixed $prevGamets, mixed $incomingGame
     }
 
     $name = stobeDragonBreakBuildName($prev, $incoming);
-    $notes = 'Auto snapshot due to rollback of '
+    $notes = 'Auto STOBE rollback snapshot due to rollback of '
         . strval($daysRollback)
         . ' Kenshi day(s) ('
         . strval($incoming)
@@ -108,7 +108,7 @@ function stobeDragonBreakSnapshotIfNeeded(mixed $prevGamets, mixed $incomingGame
     ]);
 
     if ($snapshotId > 0) {
-        stobeLogInfo('DragonBreak: Snapshot created', [
+        stobeLogInfo('STOBE Rollback: Snapshot created', [
             'snapshot_id' => $snapshotId,
             'days_rollback' => $daysRollback,
             'from_gamets' => $prev,

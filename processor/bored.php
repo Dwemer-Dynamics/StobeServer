@@ -123,7 +123,12 @@ if ($listener === '') {
     }
 }
 if ($listener === '') {
-    $listener = $playerName !== '' ? $playerName : 'Nearby Wanderer';
+    stobeLogInfo('Bored event skipped: no eligible NPC listener', [
+        'speaker' => $speakerNpc,
+        'candidate_count' => count($candidateNames),
+    ]);
+    echo "ok";
+    return;
 }
 
 $cuePool = [
@@ -147,6 +152,7 @@ $contextHistory = getNpcProfileIntegerSetting(
     120
 );
 $eventHistory = DataEventLog($contextHistory, $speakerNpc, $campaign);
+$eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $speakerNpc, 'bored');
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
@@ -157,17 +163,23 @@ foreach (array_reverse($eventHistory) as $row) {
 }
 $historyText = implode("\n", $historyLines);
 $historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$memoryContextMessages = stobeBuildMemoryEventContextMessages(
+    is_array($speakerData) ? $speakerData : [],
+    $speakerNpc,
+    $cue,
+    intval($gamets)
+);
+if (count($memoryContextMessages) > 0) {
+    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
+}
 
-$systemPrompt = stobeBuildGameTimePromptBlock($gamets)
+$systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($speakerData) ? $speakerData : [])
     . "\n\n"
     . buildSystemPrompt($speakerNpc, is_array($speakerData) ? $speakerData : [], $listener, '', false, 'bored', intval($gamets));
-$systemPrompt .= "\n\n<bored_event_mode>\n"
-    . "  <rule>Start a spontaneous nearby NPC conversation.</rule>\n"
-    . "  <listener>" . stobePromptXmlEscape($listener) . "</listener>\n"
-    . "  <rule>Keep it one short spoken line (max 20 words).</rule>\n"
-    . "  <rule>No stage directions or action tags.</rule>\n"
-    . "  <theme_seed>" . stobePromptXmlEscape($cue) . "</theme_seed>\n"
-    . "</bored_event_mode>";
+$nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($speakerData, $speakerNpc);
+if ($nearbyPartyPrompt !== '') {
+    $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
+}
 $messages = [
     [
         'role' => 'system',
@@ -182,7 +194,7 @@ $messages[] = [
     'content' => "<bored_event_request>\n"
         . "  <speaker>" . stobePromptXmlEscape($speakerNpc) . "</speaker>\n"
         . "  <listener>" . stobePromptXmlEscape($listener) . "</listener>\n"
-        . "  <instruction>Start a brief spontaneous line to the listener.</instruction>\n"
+        . "  <instruction>Start a brief spontaneous conversation to the listener about the current situation.</instruction>\n"
         . "</bored_event_request>",
 ];
 $messages[] = [

@@ -22,7 +22,11 @@
  *    - Adds #REL: command instructions for conversation model
  */
 
-// Master toggle - if disabled, skip everything in this file
+// Master toggle - if disabled in global settings, skip everything in this file.
+if (function_exists('stobeIsRelationshipSystemEnabled') && !stobeIsRelationshipSystemEnabled()) {
+    return;
+}
+// Legacy runtime toggle fallback.
 if (empty($GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'])) {
     return;
 }
@@ -161,11 +165,17 @@ if ($npcName) {
         // Get this NPC's known relationships to check for mentions
         $knownRels = RelationshipManager::getRelationships($npcName);
         $knownNames = array_keys($knownRels);
+        $playerNameToken = '';
+        if (function_exists('getSetting')) {
+            $playerNameToken = strtolower(trim(strval(getSetting('PLAYER_NAME', 'Drifter'))));
+        }
 
         // Scan recent context for mentions of known NPCs
         $contextLower = strtolower($GLOBALS["HERIKA_CONTEXT"]);
         foreach ($knownNames as $knownNpc) {
-            if (in_array(strtolower(trim($knownNpc)), ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) continue;
+            $knownNpcLower = strtolower(trim($knownNpc));
+            if (in_array($knownNpcLower, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) continue;
+            if ($playerNameToken !== '' && $knownNpcLower === $playerNameToken) continue;
             if (stripos($contextLower, strtolower($knownNpc)) !== false) {
                 $mentionedNpcs[] = $knownNpc;
             }

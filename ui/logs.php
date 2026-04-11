@@ -1138,9 +1138,8 @@ $auditRequestRows = safeFetchAll(
         <?php renderLogSection("llm_output", "LLM Output (output_from_llm.log)", $logDir . "output_from_llm.log", false); ?>
         <?php renderLogSection("llm_context", "LLM Context (context_sent_to_llm.log)", $logDir . "context_sent_to_llm.log", false); ?>
         <?php renderLogSection("llm_context_fast", "LLM Context Fast (context_sent_to_llm_fast.log)", $logDir . "context_sent_to_llm_fast.log", false); ?>
-        <?php renderLogSection("plugin_output", "Output To Plugin (output_to_plugin.log)", $logDir . "output_to_plugin.log", true); ?>
         <?php renderLogSection("stt_input", "STT Input (stt.log)", $logDir . "stt.log", true); ?>
-        <?php renderLogSection("audit_request_file", "Audit Request File (audit_request.log)", $logDir . "audit_request.log", true); ?>
+        <?php renderLogSection("bg_service", "Background Processor (service.log)", $logDir . "service.log", true); ?>
         <?php if (is_file($logDir . "relationship_worker.log")): ?>
             <?php renderLogSection("rel_worker", "Relationship Worker (relationship_worker.log)", $logDir . "relationship_worker.log", false); ?>
         <?php endif; ?>

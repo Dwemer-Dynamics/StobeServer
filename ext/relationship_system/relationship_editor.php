@@ -7,7 +7,7 @@
  *
  * Features:
  * - Visual table editor for relationships
- * - "Build with AI" button to intelligently parse TEXT relationships
+ * - "Build with AI" button to infer relationships from recent event history
  * - Manual add/edit/delete
  *
  * INSTALLATION:
@@ -49,13 +49,37 @@ if (!class_exists('RelationshipManager')) {
 // Get existing JSONB relationships
 $extendedData = json_decode($editItem['extended_data'] ?? '{}', true) ?: [];
 $jsonbRelationships = $extendedData['relationships'] ?? [];
+if ((!is_array($jsonbRelationships) || count($jsonbRelationships) === 0) && !empty($editItem['relationships'])) {
+    $legacyRelationships = json_decode(strval($editItem['relationships']), true);
+    if (is_array($legacyRelationships)) {
+        $jsonbRelationships = $legacyRelationships;
+    }
+}
+if (!is_array($jsonbRelationships)) {
+    $jsonbRelationships = [];
+}
+$playerNameToken = '';
+if (function_exists('getSetting')) {
+    $playerNameToken = strtolower(trim(strval(getSetting('PLAYER_NAME', 'Drifter'))));
+}
+$filteredRelationships = [];
+foreach ($jsonbRelationships as $target => $payload) {
+    $targetToken = strtolower(trim(strval($target)));
+    if ($targetToken === '') {
+        continue;
+    }
+    if (in_array($targetToken, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) {
+        continue;
+    }
+    if ($playerNameToken !== '' && $targetToken === $playerNameToken) {
+        continue;
+    }
+    $filteredRelationships[$target] = $payload;
+}
+$jsonbRelationships = $filteredRelationships;
 
-// Get TEXT relationships field and NPC name for AI analysis
-$textRelationships = $editItem['relationships'] ?? '';
+// NPC name for AI analysis
 $npcName = $editItem['npc_name'] ?? 'Unknown';
-
-// Check if there's TEXT data but no JSONB data (candidate for AI analysis)
-$hasTextNoJsonb = empty($jsonbRelationships) && !empty(trim($textRelationships));
 
 // NOTE: Auto-initialization is handled via the "Build with AI" button
 // or during gameplay in postrequest.php - NOT on UI load
@@ -133,9 +157,7 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
         <div style="font-weight:700; color:#e6b76c; margin-bottom:8px;">Relationship Affinities</div>
         <small class="hint" style="display:block; margin:8px 0; color:#888;">
             Tracked relationships with affinity scores (-100 to +100) and types.
-            <?php if ($hasTextNoJsonb): ?>
-                <br><strong style="color:#fde68a;">Tip:</strong> Click "Build with AI" to convert the text relationships above into scored affinities.
-            <?php endif; ?>
+            <br><strong style="color:#fde68a;">Tip:</strong> "Build with AI" analyzes the latest event history for this NPC (up to 200 entries).
             <?php if (!empty($autoInitMessage)): ?>
                 <br><strong style="color:#4ade80;">&#x2713; <?= htmlspecialchars($autoInitMessage) ?></strong>
             <?php endif; ?>
@@ -243,10 +265,38 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
 
             <!-- Build with AI Modal -->
             <div id="build-ai-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:10000; align-items:center; justify-content:center;">
+                <div style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:8px; padding:20px; max-width:560px; width:92%;">
+                    <h3 style="margin:0 0 12px 0; color:#86efac;">Build Relationships from Events</h3>
+                    <p style="color:#888; font-size:0.9em; margin-bottom:12px;">
+                        Uses recent event history (up to 200 entries) involving this NPC to infer affinity scores, relationship types, and optional notes.
+                    </p>
+                    <div style="margin-bottom:12px;">
+                        <label style="color:#ccc; font-size:0.85em;">Optional Direction</label>
+                        <textarea id="build-ai-direction" placeholder="Optional guidance (example: prioritize recent betrayals over old alliances)."
+                                  style="width:100%; margin-top:4px; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px; min-height:80px; resize:vertical;"></textarea>
+                    </div>
+                    <p style="color:#7a8a9a; font-size:0.8em; margin:0;">
+                        This only updates the editor table. Click "Save NPC" to store the changes.
+                    </p>
+                    <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
+                        <button type="button" onclick="closeBuildModal()"
+                                style="background:#2a2a2a; border:1px solid #4a4a4a; border-radius:4px; color:#888; padding:8px 16px; cursor:pointer;">
+                            Cancel
+                        </button>
+                        <button type="button" id="btn-build-confirm" onclick="buildWithAI()"
+                                style="background:#2a2a2a; border:1px solid #4a4a4a; border-radius:4px; color:#86efac; padding:8px 16px; cursor:pointer; font-weight:500;">
+                            Build
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Custom Type Modal -->
+            <div id="custom-type-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:10000; align-items:center; justify-content:center;">
                 <div style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:8px; padding:20px; max-width:500px; width:90%;">
                     <h3 style="margin:0 0 12px 0; color:#e6b76c;">Add Custom Relationship Type</h3>
                     <p style="color:#888; font-size:0.9em; margin-bottom:12px;">
-                        Create a custom type (e.g., "client", "mentor", "servant"). The AI can later change to this type using #TYPE: commands.
+                        Create a custom type (e.g., "client", "mentor", "servant"). The AI can use these during future relationship builds.
                     </p>
                     <div style="margin-bottom:12px;">
                         <label style="color:#ccc; font-size:0.85em;">Type Name (one word):</label>
@@ -684,17 +734,22 @@ function saveDetailsToRow(row) {
 
 // Modal functions
 function openBuildModal() {
-    const textArea = document.getElementById('relationships');
-    if (!textArea || !textArea.value.trim()) {
-        alert('No text in the relationships field to analyze. Add some relationship descriptions first.');
+    const modal = document.getElementById('build-ai-modal');
+    if (!modal) {
         return;
     }
-    document.getElementById('build-ai-modal').style.display = 'flex';
+    modal.style.display = 'flex';
 }
 
 function closeBuildModal() {
-    document.getElementById('build-ai-modal').style.display = 'none';
-    document.getElementById('build-ai-direction').value = '';
+    const modal = document.getElementById('build-ai-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    const directionInput = document.getElementById('build-ai-direction');
+    if (directionInput) {
+        directionInput.value = '';
+    }
 }
 
 function openCustomTypeModal() {
@@ -754,26 +809,30 @@ function addCustomType() {
 }
 
 async function buildWithAI() {
-    const textArea = document.getElementById('relationships');
-    const text = textArea.value.trim();
-    const direction = document.getElementById('build-ai-direction').value.trim();
+    const directionInput = document.getElementById('build-ai-direction');
+    const direction = directionInput ? directionInput.value.trim() : '';
 
     const npcName = document.getElementById('rel-npc-name').value;
     const npcId = document.getElementById('rel-npc-id').value;
     const btn = document.getElementById('btn-build-confirm');
-    const originalText = btn.textContent;
+    const originalText = btn ? btn.textContent : 'Build';
 
     closeBuildModal();
 
     try {
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Building...';
+        }
         document.getElementById('btn-build-ai').disabled = true;
         document.getElementById('btn-build-ai').textContent = 'Building...';
-        showStatus('Sending to AI for analysis (using profile LLM)...', '#86efac');
+        showStatus('Analyzing recent event history...', '#86efac');
 
         const formData = new FormData();
         formData.append('npc_id', npcId);
         formData.append('npc_name', npcName);
-        formData.append('relationships_text', text);
+        formData.append('source', 'events');
+        formData.append('event_limit', '200');
         if (direction) {
             formData.append('direction', direction);
         }
@@ -783,7 +842,7 @@ async function buildWithAI() {
             formData.append('custom_types', JSON.stringify(customTypes));
         }
 
-            const response = await fetch('../ext/relationship_system/analyze_relationships.php', {
+        const response = await fetch('../ext/relationship_system/analyze_relationships.php', {
             method: 'POST',
             body: formData
         });
@@ -798,7 +857,7 @@ async function buildWithAI() {
             rebuildRelTable(result.relationships);
 
             // Show success with model info
-            let statusMsg = `AI built ${result.count} relationship(s)`;
+            let statusMsg = `AI built ${result.count} relationship(s) from ${result.event_count || 0} event(s)`;
             if (result.model) {
                 statusMsg += ` using ${result.model}`;
             }
@@ -814,6 +873,10 @@ async function buildWithAI() {
         showStatus(`Request failed: ${e.message}`, '#ef4444');
         console.error('AI build error:', e);
     } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
         document.getElementById('btn-build-ai').disabled = false;
         document.getElementById('btn-build-ai').textContent = 'Build with AI';
     }

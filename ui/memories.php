@@ -110,6 +110,15 @@ function formatPeopleLabel(mixed $value): string
     return $raw;
 }
 
+function formatScopeLabel(mixed $value): string
+{
+    $raw = trim((string)($value ?? ""));
+    if ($raw === "") {
+        return "global";
+    }
+    return $raw;
+}
+
 function memoriesUrl(int $page, int $limit): string
 {
     return "memories.php?page=" . max(1, $page) . "&limit=" . max(10, $limit);
@@ -131,9 +140,10 @@ if (isset($_GET["delete_memory"])) {
     }
 }
 
-if (isset($_GET["reset"]) && $_GET["reset"]) {
+if (in_array(strtolower(trim((string)($_GET["reset"] ?? ""))), ["true", "1"], true)) {
     safeExec($db, "DELETE FROM memory_summary");
-    header("Location: memories.php?reset=1");
+    safeExec($db, "DELETE FROM conf_opts WHERE id LIKE 'MEMORY_CURSOR_ID_%'");
+    header("Location: " . memoriesUrl(1, $limit) . "&reset_done=1");
     exit;
 }
 
@@ -147,16 +157,46 @@ if (isset($_POST["save_memory_edit"])) {
     }
 }
 
+$scopeColumnAvailable = false;
+if (function_exists("stobeRegularMemorySummaryScopeColumnAvailable")) {
+    $scopeColumnAvailable = stobeRegularMemorySummaryScopeColumnAvailable();
+}
+
+if (isset($_POST["run_memory_sync"])) {
+    $gametsRow = safeFetchOne($db, "SELECT COALESCE(MAX(gamets), 0) AS v FROM eventlog");
+    $syncGamets = is_array($gametsRow) ? intval($gametsRow["v"] ?? 0) : 0;
+    if ($syncGamets <= 0 && function_exists("getConfOpt")) {
+        $syncGamets = intval(getConfOpt("MEMORY_LAST_RUN_GAMETS", "0"));
+    }
+
+    $sync = ["passes" => 0, "global" => 0, "individual" => 0];
+    if (function_exists("stobeRunRegularMemorySyncNow")) {
+        $sync = stobeRunRegularMemorySyncNow($syncGamets, 24);
+    }
+
+    $redirect = memoriesUrl($page, $limit)
+        . "&synced=1"
+        . "&sync_passes=" . intval($sync["passes"] ?? 0)
+        . "&sync_global=" . intval($sync["global"] ?? 0)
+        . "&sync_individual=" . intval($sync["individual"] ?? 0);
+    header("Location: " . $redirect);
+    exit;
+}
+
 $memoryEnabled = getGeneralSettingBool($db, "MEMORY_ENABLED", true);
-$memoryTimeDelay = getGeneralSetting($db, "MEMORY_TIME_DELAY", "12");
-$memoryContextSize = getGeneralSetting($db, "MEMORY_CONTEXT_SIZE", "1");
+$memorySummaryInterval = getGeneralSetting($db, "MEMORY_AUTO_CREATE_SUMMARY_INTERVAL", "6");
+$individualSummaryThreshold = getGeneralSetting($db, "INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD", "3");
 $txtaiUrl = function_exists("getMemoryTxtaiUrl") ? getMemoryTxtaiUrl() : "http://127.0.0.1:8082";
 $useText2Vec = function_exists("getMemoryUseText2Vec") ? getMemoryUseText2Vec() : true;
+
+$scopeSelect = $scopeColumnAvailable
+    ? "COALESCE(NULLIF(BTRIM(scope), ''), 'global') AS scope"
+    : "'global' AS scope";
 
 
 $rows = safeFetchAll(
     $db,
-    "SELECT id, people, summary, period_start, period_end, created_at
+    "SELECT id, people, {$scopeSelect}, summary, period_start, period_end, created_at
      FROM memory_summary
      ORDER BY created_at DESC, id DESC
      LIMIT $1 OFFSET $2",
@@ -388,8 +428,18 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
             <?php if (isset($_GET["deleted"])): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">Memory summary deleted successfully.</div>
             <?php endif; ?>
-            <?php if (isset($_GET["reset"])): ?>
+            <?php if (isset($_GET["reset_done"]) || intval($_GET["reset"] ?? 0) === 1): ?>
                 <div style="background: #dc3545; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">All memory summaries deleted.</div>
+            <?php endif; ?>
+            <?php if (isset($_GET["synced"])): ?>
+                <?php
+                $syncPasses = intval($_GET["sync_passes"] ?? 0);
+                $syncGlobal = intval($_GET["sync_global"] ?? 0);
+                $syncIndividual = intval($_GET["sync_individual"] ?? 0);
+                ?>
+                <div style="background: #176529; color: white; padding: 10px; border-radius: 5px; margin: 10px 0;">
+                    Memory sync complete. Passes: <?= $syncPasses ?>, Global summaries: <?= $syncGlobal ?>, Individual summaries: <?= $syncIndividual ?>.
+                </div>
             <?php endif; ?>
 
             <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 12px 15px; border-radius: 5px; margin: 15px 0; font-size: 0.9em;">
@@ -423,26 +473,31 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                     </div>
 
                     <div style="background: #2a2a2a; padding: 15px; border-radius: 5px; border: 1px solid #3a3a3a;">
-                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">Context Settings</div>
-                        <div style="font-size: 12px; color: #f8f9fa;">Time Delay: <?= h($memoryTimeDelay) ?> minutes</div>
-                        <div style="font-size: 12px; color: #f8f9fa; margin-top: 4px;">Context Size: <?= h($memoryContextSize) ?> memories</div>
+                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">Summary Settings</div>
+                        <div style="font-size: 12px; color: #f8f9fa;">Auto Summary Interval: <?= h($memorySummaryInterval) ?> (in-game hours)</div>
+                        <div style="font-size: 12px; color: #f8f9fa; margin-top: 4px;">Individual Summary Threshold: <?= h($individualSummaryThreshold) ?></div>
                     </div>
                 </div>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; margin: 15px 0;">
-                <button onclick="deleteAllMemoriesConfirm()" class="btn-base btn-danger" style="background-color: #dc2626; font-weight: bold;">Delete All Memory Summaries</button>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 15px 0; flex-wrap: wrap;">
+                <form method="post" action="<?= h(memoriesUrl($page, $limit)) ?>" style="margin: 0;">
+                    <input type="hidden" name="run_memory_sync" value="1">
+                    <button type="submit" class="btn-base action-button add-new" style="font-weight: bold;">Sync Memory Summaries Now</button>
+                </form>
+                <button type="button" onclick="deleteAllMemoriesConfirm()" class="btn-base btn-danger" style="background-color: #dc2626; font-weight: bold;">Delete All Memory Summaries</button>
             </div>
 
             <div class="table-container">
                 <table>
                     <thead>
                     <tr>
-                        <th style="width:7%">ID</th>
-                        <th style="width:15%">People</th>
-                        <th style="width:17%">Period</th>
-                        <th style="width:49%">Summary</th>
-                        <th style="width:12%">Created (UTC)</th>
+                        <th style="width:6%">ID</th>
+                        <th style="width:14%">Scope</th>
+                        <th style="width:14%">People</th>
+                        <th style="width:16%">Period</th>
+                        <th style="width:40%">Summary</th>
+                        <th style="width:10%">Created (UTC)</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -455,6 +510,7 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                             ?>
                             <tr>
                                 <td><?= $memoryId ?></td>
+                                <td><?= h(formatScopeLabel($row["scope"] ?? "global")) ?></td>
                                 <td><?= h(formatPeopleLabel($row["people"] ?? "")) ?></td>
                                 <td><?= h(formatPeriod($row["period_start"] ?? "", $row["period_end"] ?? "")) ?></td>
                                 <td>
@@ -481,7 +537,7 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="5">No memory summary rows found.</td></tr>
+                        <tr><td colspan="6">No memory summary rows found.</td></tr>
                     <?php endif; ?>
                     </tbody>
                 </table>
@@ -529,10 +585,11 @@ function deleteOneMemory(memoryId) {
 
 function deleteAllMemoriesConfirm() {
     const userInput = prompt("THIS WILL DELETE ALL SUMMARIZED MEMORIES!\n\nThis action cannot be undone.\n\nTo confirm this operation, type exactly: Delete");
-    if (userInput === "Delete") {
-        window.location.href = "memories.php?reset=true";
+    const normalized = (userInput === null) ? null : String(userInput).trim().toLowerCase();
+    if (normalized === "delete") {
+        window.location.href = "<?= h(memoriesUrl(1, $limit)) ?>&reset=1";
     } else if (userInput !== null) {
-        alert("Operation cancelled. You must type exactly \"Delete\" to confirm.");
+        alert("Operation cancelled. You must type \"Delete\" to confirm.");
     }
 }
 </script>

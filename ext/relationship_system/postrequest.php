@@ -36,7 +36,11 @@
  *   require_once(__DIR__."/../ext/relationship_system/postrequest.php");
  */
 
-// Master toggle - if disabled, skip everything in this file
+// Master toggle - if disabled in global settings, skip everything in this file.
+if (function_exists('stobeIsRelationshipSystemEnabled') && !stobeIsRelationshipSystemEnabled()) {
+    return;
+}
+// Legacy runtime toggle fallback.
 if (empty($GLOBALS['RELATIONSHIP_SYSTEM_ENABLED'])) {
     return;
 }
@@ -69,7 +73,14 @@ function _relIsValidNpcTarget($name) {
     $trimmed = trim(strval($name));
     if ($trimmed === '' || strcasecmp($trimmed, "The Narrator") === 0) return false;
     $lower = strtolower($trimmed);
+    $playerName = '';
+    if (function_exists('getSetting')) {
+        $playerName = strtolower(trim(strval(getSetting('PLAYER_NAME', 'Drifter'))));
+    }
     if (in_array($lower, ['player', 'the player', '#player_name#', 'dragonborn', 'the dragonborn'], true)) {
+        return false;
+    }
+    if ($playerName !== '' && $lower === $playerName) {
         return false;
     }
     return true;

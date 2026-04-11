@@ -1,7 +1,7 @@
 <?php
 /**
  * StobeServer Playthrough Manager.
- * Schema-clone snapshot manager with rollback/dragonbreak visibility.
+ * Schema-clone snapshot manager with rollback autosnapshot visibility.
  */
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
@@ -366,7 +366,7 @@ $webRoot = rtrim($webRoot, '/');
     <div class="indent5">
         <div class="panel" style="margin-bottom: 12px;">
             <h1>Playthrough Manager</h1>
-            <p class="subtitle">Schema-clone snapshots for StobeServer timelines and rollback safety. Dragonbreak autosnapshot threshold is set to 1 Kenshi day.</p>
+            <p class="subtitle">Schema-clone snapshots for StobeServer timelines and rollback safety. STOBE rollback autosnapshot threshold is set to 1 Kenshi day.</p>
             <?php if ($status !== ''): ?>
                 <div class="status <?= h($statusClass) ?>"><?= h($status) ?></div>
             <?php endif; ?>
@@ -454,6 +454,11 @@ $webRoot = rtrim($webRoot, '/');
                                     <?php
                                         $id = intval($row['id'] ?? 0);
                                         $isActive = boolish($row['is_active'] ?? false);
+                                        $snapshotName = strval($row['name'] ?? '');
+                                        $snapshotNameDisplay = preg_replace('/^Dragon Break\\s*\\(/i', 'STOBE Rollback (', $snapshotName, 1);
+                                        if (!is_string($snapshotNameDisplay) || $snapshotNameDisplay === '') {
+                                            $snapshotNameDisplay = $snapshotName;
+                                        }
                                         $createdAt = trim(strval($row['created_at'] ?? ''));
                                         $sizeBytes = intval($row['size_bytes'] ?? 0);
                                         $lastGamets = intval($row['last_gamets'] ?? 0);
@@ -462,6 +467,10 @@ $webRoot = rtrim($webRoot, '/');
                                         $playerFactionMembers = decodeSnapshotMemberNames($row['player_faction_members'] ?? '[]');
                                         $storageType = trim(strval($row['storage_type'] ?? 'schema'));
                                         $schemaName = trim(strval($row['schema_name'] ?? ''));
+                                        $schemaNameDisplay = $schemaName;
+                                        if (strtolower(substr($schemaNameDisplay, 0, 13)) === 'chim_profile_') {
+                                            $schemaNameDisplay = 'stobe_profile_' . substr($schemaNameDisplay, 13);
+                                        }
                                         $rollbackDays = intval($row['rollback_delta_days'] ?? 0);
                                         $rollbackFrom = intval($row['rollback_from_gamets'] ?? 0);
                                         $rollbackTo = intval($row['rollback_to_gamets'] ?? 0);
@@ -469,7 +478,7 @@ $webRoot = rtrim($webRoot, '/');
                                     <tr>
                                         <td><?= $id ?></td>
                                         <td>
-                                            <strong><?= h(strval($row['name'] ?? '')) ?></strong>
+                                            <strong><?= h($snapshotNameDisplay) ?></strong>
                                             <?php if ($isActive): ?>
                                                 <span class="badge-active">ACTIVE</span>
                                             <?php endif; ?>
@@ -491,7 +500,7 @@ $webRoot = rtrim($webRoot, '/');
                                         </td>
                                         <td>
                                             <div><?= h($storageType) ?></div>
-                                            <div class="small-muted"><?= h($schemaName !== '' ? $schemaName : '-') ?></div>
+                                            <div class="small-muted"><?= h($schemaNameDisplay !== '' ? $schemaNameDisplay : '-') ?></div>
                                         </td>
                                         <td>
                                             <?php if ($rollbackDays > 0): ?>

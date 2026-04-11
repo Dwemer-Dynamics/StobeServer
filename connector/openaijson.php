@@ -136,7 +136,7 @@ function stobeBuildLlmRequestHeaders(
     $disableBrandingHeaders = boolval($connectorConfig['disable_branding_headers'] ?? false);
     if (!$disableBrandingHeaders) {
         $headers[] = "HTTP-Referer: https://dwemerdynamics.com";
-        $headers[] = "X-Title: Stobe AI Mod";
+        $headers[] = "X-Title: Dwemer Dynamics";
     }
 
     $player2Key = trim(strval(
@@ -381,7 +381,6 @@ function stobeIsFastLlmEventType(string $eventType): bool {
     }
 
     $knownFastTypes = [
-        'rechat_target_picker',
         'autochat_rewrite',
         'relationship_eval',
         'relationship_llm',
@@ -396,10 +395,10 @@ function stobeIsFastLlmEventType(string $eventType): bool {
     return strpos($normalized, 'fast') !== false || strpos($normalized, 'relationship') === 0;
 }
 
-function stobeAppendContextRequestLog(string $label, array $payload): void {
+function stobeAppendContextRequestLog(string $label, array $payload, bool $forceFastLog = false): void {
     stobeAppendLlmDebugLog('context_sent_to_llm.log', $label, $payload);
     $eventType = strval($payload['event_type'] ?? '');
-    if (stobeIsFastLlmEventType($eventType)) {
+    if ($forceFastLog || stobeIsFastLlmEventType($eventType)) {
         stobeAppendLlmDebugLog('context_sent_to_llm_fast.log', $label, $payload);
     }
 }
@@ -614,6 +613,7 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
             : '',
     ]);
 
+    $forceFastLog = boolval($meta['__stobe_force_fast_log'] ?? false);
     stobeAppendContextRequestLog('llm_request', [
         'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
         'event_type' => strval($meta['event_type'] ?? ''),
@@ -623,7 +623,7 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
         'base_url' => $baseUrl,
         'url' => $url,
         'payload' => $payload,
-    ]);
+    ], $forceFastLog);
 
     $headers = stobeBuildLlmRequestHeaders($apiKey, $connectorConfig, $connectorType, false);
 
@@ -669,7 +669,7 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
                 'base_url' => $baseUrl,
                 'url' => $url,
                 'payload' => $payload,
-            ]);
+            ], $forceFastLog);
 
             $retryCh = curl_init($url);
             curl_setopt_array($retryCh, [
@@ -959,6 +959,7 @@ function callLLMStream(
             : '',
     ]);
 
+    $forceFastLog = boolval($meta['__stobe_force_fast_log'] ?? false);
     stobeAppendContextRequestLog('llm_stream_request', [
         'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
         'event_type' => strval($meta['event_type'] ?? ''),
@@ -968,7 +969,7 @@ function callLLMStream(
         'base_url' => $baseUrl,
         'url' => $url,
         'payload' => $payload,
-    ]);
+    ], $forceFastLog);
     $headers = stobeBuildLlmRequestHeaders($apiKey, $connectorConfig, $connectorType, true);
 
     $timeoutSeconds = function_exists('getSettingInt') ? getSettingInt('HTTP_TIMEOUT', 60) : 60;

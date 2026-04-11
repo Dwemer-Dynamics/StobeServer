@@ -78,12 +78,13 @@ function stobeResolveDiaryLocationText(string $npcName): string {
     $geo = ['location' => '', 'city' => '', 'region' => ''];
     $geo = mergeEventGeoContext($geo, getEventGeoFromNpcName($npcName));
     $geo = mergeEventGeoContext($geo, getEventGeoFromPlayerSnapshot());
-    $geo = mergeEventGeoContext($geo, getRecentEventGeoFallback($npcName, 1800));
+    $geo = mergeEventGeoContext($geo, getRecentEventGeoFallback($npcName, 86400));
     return composeEventLocationText($geo);
 }
 
 function stobeBuildDiaryHistoryText(string $npcName, int $historyLimit): string {
     $rows = DataEventLog($historyLimit, $npcName);
+    $rows = stobeFilterNarratorRowsForContext($rows, $npcName, 'diary');
     if (count($rows) === 0) {
         return '';
     }
@@ -216,7 +217,7 @@ function stobeGenerateDiaryEntryForNpc(
         $playerName = 'Drifter';
     }
 
-    $systemPrompt = stobeBuildGameTimePromptBlock($gamets)
+    $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
         . "\n\n"
         . buildSystemPrompt($safeNpcName, $npcData, $playerName, '', false, 'chat', intval($gamets));
     $defaultDiaryModeRules = "<diary_mode>\n"

@@ -85,13 +85,37 @@ function relationshipTypeFilter(string $type): array
     if (!in_array($type, ["eval", "analyze", "npc2npc"], true)) {
         return ["", []];
     }
-    $prefix = $type . "_";
-    return [" AND request LIKE $1", ['%"type":"' . $prefix . '%']];
+    if ($type === "eval") {
+        return [
+            " AND (LOWER(COALESCE(event_type, '')) LIKE 'relationship_eval%' OR request LIKE $1)",
+            ['%"type":"eval_%']
+        ];
+    }
+    if ($type === "analyze") {
+        return [
+            " AND (LOWER(COALESCE(event_type, '')) LIKE 'relationship_analyze%' OR request LIKE $1)",
+            ['%"type":"analyze_%']
+        ];
+    }
+    return [
+        " AND (LOWER(COALESCE(event_type, '')) LIKE 'relationship_npc2npc%' OR request LIKE $1)",
+        ['%"type":"npc2npc_%']
+    ];
 }
 
 function relationshipTypeLabel(string $rawType): array
 {
     $rawType = trim($rawType);
+    $rawTypeLower = strtolower($rawType);
+    if ($rawTypeLower === "relationship_eval" || str_starts_with($rawTypeLower, "relationship_eval")) {
+        return ["eval", "rel-type-eval", ""];
+    }
+    if ($rawTypeLower === "relationship_analyze" || str_starts_with($rawTypeLower, "relationship_analyze")) {
+        return ["analyze", "rel-type-analyze", ""];
+    }
+    if ($rawTypeLower === "relationship_npc2npc" || str_starts_with($rawTypeLower, "relationship_npc2npc")) {
+        return ["npc2npc", "rel-type-npc2npc", ""];
+    }
     if (str_starts_with($rawType, "eval_")) {
         return ["eval", "rel-type-eval", trim(substr($rawType, 5))];
     }
@@ -130,6 +154,37 @@ function extractContextText(array $requestData): string
     return implode("\n\n", $parts);
 }
 
+function extractRelationshipTagFromMessages(array $requestData, string $tagName): string
+{
+    if ($tagName === "") {
+        return "";
+    }
+
+    $messages = $requestData["messages"] ?? null;
+    if (!is_array($messages) && isset($requestData["full"]) && is_array($requestData["full"])) {
+        $messages = $requestData["full"]["messages"] ?? null;
+    }
+    if (!is_array($messages)) {
+        return "";
+    }
+
+    $pattern = '/<' . preg_quote($tagName, '/') . '>\s*([^<]+?)\s*<\/' . preg_quote($tagName, '/') . '>/i';
+    foreach ($messages as $message) {
+        if (!is_array($message)) {
+            continue;
+        }
+        $content = strval($message["content"] ?? "");
+        if ($content === "") {
+            continue;
+        }
+        if (preg_match($pattern, $content, $matches) === 1) {
+            return trim(strval($matches[1] ?? ""));
+        }
+    }
+
+    return "";
+}
+
 function extractChanges(string $resultRaw, string $speakerName = "", string $listenerName = ""): array
 {
     $parsed = decodeJsonLoose($resultRaw);
@@ -137,18 +192,95 @@ function extractChanges(string $resultRaw, string $speakerName = "", string $lis
         return [];
     }
 
-    if (isset($parsed["changes"]) && is_array($parsed["changes"])) {
-        return $parsed["changes"];
+    $candidates = [$parsed];
+    $nestedTextKeys = ["response_text", "output_text", "content", "result", "response"];
+    foreach ($nestedTextKeys as $nestedKey) {
+        if (!isset($parsed[$nestedKey]) || !is_string($parsed[$nestedKey])) {
+            continue;
+        }
+        $nested = decodeJsonLoose($parsed[$nestedKey]);
+        if (is_array($nested)) {
+            $candidates[] = $nested;
+        }
+    }
+    if (isset($parsed["data"]) && is_array($parsed["data"])) {
+        $candidates[] = $parsed["data"];
     }
 
     $changes = [];
-    if (isset($parsed["speaker"]) && is_array($parsed["speaker"]) && isset($parsed["speaker"]["delta"])) {
-        $name = $speakerName !== "" ? $speakerName : "speaker";
-        $changes[$name] = $parsed["speaker"];
+    $appendUpdate = static function (array $entry) use (&$changes): void {
+        $target = trim(strval($entry["target"] ?? ($entry["name"] ?? ($entry["listener"] ?? ($entry["npc"] ?? "")))));
+        if ($target === "") {
+            return;
+        }
+
+        $delta = 0;
+        if (isset($entry["delta"])) {
+            $delta = intval($entry["delta"]);
+        } elseif (isset($entry["aff_delta"])) {
+            $delta = intval($entry["aff_delta"]);
+        } elseif (isset($entry["change"])) {
+            $delta = intval($entry["change"]);
+        } elseif (isset($entry["new_aff"]) && isset($entry["old_aff"])) {
+            $delta = intval($entry["new_aff"]) - intval($entry["old_aff"]);
+        }
+
+        $reason = trim(strval($entry["reason"] ?? ($entry["note"] ?? ($entry["summary"] ?? ""))));
+        $changes[$target] = [
+            "delta" => $delta,
+            "reason" => $reason,
+        ];
+    };
+
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate)) {
+            continue;
+        }
+
+        if (isset($candidate["changes"]) && is_array($candidate["changes"])) {
+            foreach ($candidate["changes"] as $target => $changePayload) {
+                if (is_array($changePayload)) {
+                    if (!isset($changePayload["target"]) && is_string($target)) {
+                        $changePayload["target"] = $target;
+                    }
+                    $appendUpdate($changePayload);
+                }
+            }
+        }
+
+        $rawUpdates = [];
+        if (isset($candidate["updates"]) && is_array($candidate["updates"])) {
+            $rawUpdates = $candidate["updates"];
+        } elseif (isset($candidate["relationships"]) && is_array($candidate["relationships"])) {
+            $rawUpdates = $candidate["relationships"];
+        } elseif (array_keys($candidate) === range(0, count($candidate) - 1)) {
+            $rawUpdates = $candidate;
+        }
+        foreach ($rawUpdates as $update) {
+            if (is_array($update)) {
+                $appendUpdate($update);
+            }
+        }
+
+        if (isset($candidate["speaker"]) && is_array($candidate["speaker"]) && isset($candidate["speaker"]["delta"])) {
+            $name = $speakerName !== "" ? $speakerName : "speaker";
+            $speakerPayload = $candidate["speaker"];
+            if (!isset($speakerPayload["target"])) {
+                $speakerPayload["target"] = $name;
+            }
+            $appendUpdate($speakerPayload);
+        }
+        if (isset($candidate["listener"]) && is_array($candidate["listener"]) && isset($candidate["listener"]["delta"])) {
+            $name = $listenerName !== "" ? $listenerName : "listener";
+            $listenerPayload = $candidate["listener"];
+            if (!isset($listenerPayload["target"])) {
+                $listenerPayload["target"] = $name;
+            }
+            $appendUpdate($listenerPayload);
+        }
     }
-    if (isset($parsed["listener"]) && is_array($parsed["listener"]) && isset($parsed["listener"]["delta"])) {
-        $name = $listenerName !== "" ? $listenerName : "listener";
-        $changes[$name] = $parsed["listener"];
+    if (count($changes) > 0) {
+        return $changes;
     }
 
     return $changes;
@@ -245,6 +377,7 @@ $rows = safeFetchAll(
         result,
         connector,
         model,
+        npc_name,
         event_type,
         status,
         error
@@ -583,7 +716,7 @@ $rows = safeFetchAll(
                     <tr>
                         <th style="width:120px;">Time (UTC)</th>
                         <th style="width:90px;">Type</th>
-                        <th style="width:180px;">NPC / Pair</th>
+                        <th style="width:180px;">NPC</th>
                         <th>Changes & Context</th>
                     </tr>
                     </thead>
@@ -594,23 +727,37 @@ $rows = safeFetchAll(
                             $resultRaw = strval($row["result"] ?? "");
                             $requestData = decodeJsonLoose($requestRaw);
                             $rawType = is_array($requestData) ? strval($requestData["type"] ?? "") : "";
+                            if ($rawType === "") {
+                                $rawType = strval($row["event_type"] ?? "");
+                            }
                             [$typeLabel, $typeClass, $npcDisplay] = relationshipTypeLabel($rawType);
-                            $speakerName = "";
+                            $speakerName = trim(strval($row["npc_name"] ?? ""));
                             $listenerName = "";
-                            if (str_starts_with($rawType, "npc2npc_")) {
+                            if ($speakerName === "" && is_array($requestData)) {
+                                $speakerName = extractRelationshipTagFromMessages($requestData, "speaker");
+                            }
+                            if (is_array($requestData)) {
+                                $listenerName = extractRelationshipTagFromMessages($requestData, "listener");
+                            }
+                            if (str_starts_with(strtolower($rawType), "npc2npc_")) {
                                 $rest = trim(substr($rawType, 8));
                                 $parts = explode("_", $rest, 2);
-                                $speakerName = trim($parts[0] ?? "");
-                                $listenerName = trim($parts[1] ?? "");
+                                if ($speakerName === "") {
+                                    $speakerName = trim($parts[0] ?? "");
+                                }
+                                if ($listenerName === "") {
+                                    $listenerName = trim($parts[1] ?? "");
+                                }
                             }
                             $changes = extractChanges($resultRaw, $speakerName, $listenerName);
                             $contextText = is_array($requestData) ? extractContextText($requestData) : "";
                             $rowKey = "ctx_" . intval($row["id"] ?? 0);
+                            $npcDisplay = $speakerName !== "" ? $speakerName : "unknown";
                         ?>
                         <tr>
                             <td><?= h(formatLocalTs($row["localts"] ?? 0)) ?></td>
                             <td><span class="rel-type <?= h($typeClass) ?>"><?= h($typeLabel) ?></span></td>
-                            <td class="mono"><?= h($npcDisplay !== "" ? $npcDisplay : strval($row["event_type"] ?? "unknown")) ?></td>
+                            <td class="mono"><?= h($npcDisplay) ?></td>
                             <td>
                                 <?php if (count($changes) === 0): ?>
                                     <div class="rel-change-item">No parsed change payload.</div>

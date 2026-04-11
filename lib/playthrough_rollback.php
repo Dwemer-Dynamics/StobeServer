@@ -9,6 +9,32 @@ function stobePlaythroughRollbackToleranceGamets(): int
     return 5;
 }
 
+function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
+{
+    $event = strtolower(trim($eventType));
+    if ($event === '') {
+        return false;
+    }
+
+    // Keep regression tests exercising rollback paths.
+    if (strpos($event, 'test_') === 0) {
+        return true;
+    }
+
+    static $authoritativeEvents = [
+        'init' => true,
+        'gamedata' => true,
+        'npc_snapshot' => true,
+        'world_state' => true,
+        'chat_json' => true,
+        'item_image_upload' => true,
+        'portrait_upload' => true,
+        'faction_relations' => true,
+    ];
+
+    return isset($authoritativeEvents[$event]);
+}
+
 function stobePlaythroughRollbackLockKey(): int
 {
     return 937463;
@@ -201,6 +227,175 @@ function stobePlaythroughPruneFutureTimeline(int $cutoffGamets): array
     return $counts;
 }
 
+function stobePlaythroughNormalizeRollbackJsonObject(mixed $value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
+    if (is_string($value)) {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return [];
+        }
+        $decoded = json_decode($trimmed, true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+    return [];
+}
+
+function stobePlaythroughShouldClearCharacterState(mixed $value): bool
+{
+    $state = strtolower(trim(strval($value ?? '')));
+    if ($state === '') {
+        return false;
+    }
+    return in_array(
+        $state,
+        ['unconscious', 'ko', 'knockedout', 'knocked_out', 'incapacitated', 'passed_out', 'blackout'],
+        true
+    );
+}
+
+function stobePlaythroughSanitizeVolatileNpcState(array &$payload): bool
+{
+    $changed = false;
+    $volatileKeys = [
+        'is_drunk',
+        'drunk_level',
+        'drunk_status',
+        'drunk_seconds_remaining',
+        'is_high',
+        'high_status',
+        'high_seconds_remaining',
+        'high_hunger_rate_multiplier',
+    ];
+
+    foreach ($volatileKeys as $key) {
+        if (array_key_exists($key, $payload)) {
+            unset($payload[$key]);
+            $changed = true;
+        }
+    }
+
+    if (array_key_exists('character_state', $payload) && stobePlaythroughShouldClearCharacterState($payload['character_state'])) {
+        unset($payload['character_state']);
+        $changed = true;
+    }
+
+    if (isset($payload['medical']) && is_array($payload['medical'])) {
+        $medical = $payload['medical'];
+        foreach (['is_unconscious', 'is_knocked_out', 'is_knockedout'] as $medicalKey) {
+            if (array_key_exists($medicalKey, $medical)) {
+                unset($medical[$medicalKey]);
+                $changed = true;
+            }
+        }
+        if (count($medical) === 0) {
+            unset($payload['medical']);
+            $changed = true;
+        } else {
+            $payload['medical'] = $medical;
+        }
+    }
+
+    foreach ($payload as $key => $value) {
+        if (!is_array($value)) {
+            continue;
+        }
+        $child = $value;
+        if (stobePlaythroughSanitizeVolatileNpcState($child)) {
+            $payload[$key] = $child;
+            $changed = true;
+        }
+    }
+
+    return $changed;
+}
+
+function stobePlaythroughClearFutureVolatileNpcStates(int $cutoffGamets): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobePlaythroughTableExists('core_npc')) {
+        return ['scanned' => 0, 'updated' => 0, 'errors' => 0];
+    }
+
+    $cutoff = max(0, intval($cutoffGamets));
+    $rows = $db->fetchAll(
+        'SELECT id, metadata, extended_data
+         FROM core_npc
+         WHERE COALESCE(gamets_last_updated, 0) > $1
+         ORDER BY id ASC',
+        [$cutoff]
+    );
+    if (!is_array($rows) || count($rows) === 0) {
+        return ['scanned' => 0, 'updated' => 0, 'errors' => 0];
+    }
+
+    $counts = ['scanned' => 0, 'updated' => 0, 'errors' => 0];
+    foreach ($rows as $row) {
+        $npcId = intval($row['id'] ?? 0);
+        if ($npcId <= 0) {
+            continue;
+        }
+        $counts['scanned']++;
+
+        $metadata = function_exists('normalizeCoreNpcMetadata')
+            ? normalizeCoreNpcMetadata($row['metadata'] ?? '{}')
+            : stobePlaythroughNormalizeRollbackJsonObject($row['metadata'] ?? '{}');
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+
+        $extended = function_exists('normalizeCoreNpcExtendedData')
+            ? normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}')
+            : stobePlaythroughNormalizeRollbackJsonObject($row['extended_data'] ?? '{}');
+        if (!is_array($extended)) {
+            $extended = [];
+        }
+
+        $metadataChanged = stobePlaythroughSanitizeVolatileNpcState($metadata);
+        $extendedChanged = stobePlaythroughSanitizeVolatileNpcState($extended);
+        if (!$metadataChanged && !$extendedChanged) {
+            continue;
+        }
+
+        $metadataJson = function_exists('normalizeJsonString')
+            ? normalizeJsonString($metadata)
+            : json_encode($metadata);
+        $extendedJson = function_exists('normalizeJsonString')
+            ? normalizeJsonString($extended)
+            : json_encode($extended);
+        if (!is_string($metadataJson) || trim($metadataJson) === '') {
+            $metadataJson = '{}';
+        }
+        if (!is_string($extendedJson) || trim($extendedJson) === '') {
+            $extendedJson = '{}';
+        }
+
+        $ok = $db->exec(
+            'UPDATE core_npc
+             SET metadata = $1::jsonb,
+                 extended_data = $2::jsonb,
+                 gamets_last_updated = CASE
+                    WHEN COALESCE(gamets_last_updated, 0) > $3 THEN $3
+                    ELSE COALESCE(gamets_last_updated, 0)
+                 END,
+                 updated_at = NOW()
+             WHERE id = $4',
+            [$metadataJson, $extendedJson, $cutoff, $npcId]
+        );
+        if ($ok === false) {
+            $counts['errors']++;
+        } else {
+            $counts['updated']++;
+        }
+    }
+
+    return $counts;
+}
+
 function stobePlaythroughClearRelationshipQueues(): array
 {
     $db = $GLOBALS['db'] ?? null;
@@ -261,7 +456,6 @@ function stobePlaythroughMapHistoryRowToCoreNpcFields(array $historyRow): array
         'tags' => strval($historyRow['tags'] ?? ''),
         'is_animal' => stobePlaythroughToBool($historyRow['is_animal'] ?? false),
         'is_slave' => stobePlaythroughToBool($historyRow['is_slave'] ?? false),
-        'knowledge_tags' => strval($historyRow['knowledge_tags'] ?? ''),
         'world_knowledge_tags' => strval($historyRow['world_knowledge_tags'] ?? ''),
     ];
 }
@@ -393,7 +587,6 @@ function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): b
         'tags' => ['value' => $fields['tags'], 'type' => 'text'],
         'is_animal' => ['value' => $fields['is_animal'], 'type' => 'bool'],
         'is_slave' => ['value' => $fields['is_slave'], 'type' => 'bool'],
-        'knowledge_tags' => ['value' => $fields['knowledge_tags'], 'type' => 'text'],
         'world_knowledge_tags' => ['value' => $fields['world_knowledge_tags'], 'type' => 'text'],
     ];
 
@@ -429,6 +622,124 @@ function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): b
     return $result !== false;
 }
 
+function stobePlaythroughFindHistoryRowForNpcIdentityAtCutoff(int $cutoffGamets, array $npcRow): array|false
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    $cutoff = max(0, intval($cutoffGamets));
+    $rowName = trim(strval($npcRow['name'] ?? ''));
+    $rowOriginalName = trim(strval($npcRow['original_name'] ?? ''));
+    $rowMetadata = function_exists('normalizeCoreNpcMetadata')
+        ? normalizeCoreNpcMetadata($npcRow['metadata'] ?? '{}')
+        : stobePlaythroughNormalizeRollbackJsonObject($npcRow['metadata'] ?? '{}');
+    $rowStorageId = function_exists('normalizeStorageIdToken')
+        ? normalizeStorageIdToken($rowMetadata['storage_id'] ?? '')
+        : trim(strval($rowMetadata['storage_id'] ?? ''));
+
+    $params = [$cutoff];
+    $paramIndex = 2;
+    $identityClauses = [];
+
+    $storageClause = '';
+    if ($rowStorageId !== '') {
+        $storageClause = "LOWER(COALESCE(metadata->>'storage_id', '')) = LOWER($" . $paramIndex . ")";
+        $params[] = $rowStorageId;
+        $paramIndex++;
+        $identityClauses[] = $storageClause;
+    }
+
+    $nameClause = '';
+    if ($rowName !== '') {
+        $nameClause = "LOWER(name) = LOWER($" . $paramIndex . ")";
+        $params[] = $rowName;
+        $paramIndex++;
+        $identityClauses[] = $nameClause;
+    }
+
+    $originalClause = '';
+    if ($rowOriginalName !== '') {
+        $originalClause = "LOWER(COALESCE(original_name, '')) = LOWER($" . $paramIndex . ")";
+        $params[] = $rowOriginalName;
+        $paramIndex++;
+        $identityClauses[] = $originalClause;
+    }
+
+    if (count($identityClauses) === 0) {
+        return false;
+    }
+
+    $priorityWhen = [];
+    if ($storageClause !== '') {
+        $priorityWhen[] = 'WHEN ' . $storageClause . ' THEN 0';
+    }
+    if ($nameClause !== '') {
+        $priorityWhen[] = 'WHEN ' . $nameClause . ' THEN 1';
+    }
+    if ($originalClause !== '') {
+        $priorityWhen[] = 'WHEN ' . $originalClause . ' THEN 2';
+    }
+    $priorityCase = 'CASE ' . implode(' ', $priorityWhen) . ' ELSE 3 END';
+
+    $historyColumns = stobePlaythroughHistoryColumns();
+    $worldKnowledgeSelect = isset($historyColumns['world_knowledge_tags'])
+        ? 'world_knowledge_tags'
+        : "''::text AS world_knowledge_tags";
+
+    $query = 'SELECT
+            history_id,
+            npc_id,
+            name,
+            original_name,
+            npc_favorite,
+            lock_profile,
+            prompt_head,
+            personality,
+            backstory,
+            emote_moods,
+            occupation,
+            appearance,
+            equipment,
+            inventory,
+            skills,
+            speechstyle,
+            goals,
+            relationships,
+            voiceid,
+            metadata,
+            race,
+            faction,
+            gender,
+            profile_id,
+            dynamic_profile,
+            extended_data,
+            md5,
+            gamets_last_updated,
+            bounty,
+            limbs,
+            blood,
+            hunger,
+            tags,
+            is_animal,
+            is_slave,
+            ' . $worldKnowledgeSelect . ',
+            snapshot_reason,
+            snapshot_hash
+         FROM core_npc_master_history
+         WHERE gamets_last_updated <= $1
+           AND (' . implode(' OR ', $identityClauses) . ')
+         ORDER BY ' . $priorityCase . ',
+                  gamets_last_updated DESC,
+                  CASE WHEN snapshot_reason = \'rollback_restore_applied\' THEN 1 ELSE 0 END ASC,
+                  history_id DESC
+         LIMIT 1';
+
+    $row = $db->fetchOne($query, $params);
+    return is_array($row) ? $row : false;
+}
+
 function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
 {
     $db = $GLOBALS['db'] ?? null;
@@ -446,9 +757,6 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
     }
 
     $historyColumns = stobePlaythroughHistoryColumns();
-    $knowledgeSelect = isset($historyColumns['knowledge_tags'])
-        ? 'knowledge_tags'
-        : "''::text AS knowledge_tags";
     $worldKnowledgeSelect = isset($historyColumns['world_knowledge_tags'])
         ? 'world_knowledge_tags'
         : "''::text AS world_knowledge_tags";
@@ -490,7 +798,6 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
             tags,
             is_animal,
             is_slave,
-            ' . $knowledgeSelect . ',
             ' . $worldKnowledgeSelect . ',
             snapshot_reason,
             snapshot_hash
@@ -524,6 +831,19 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
         }
 
         if (array_key_exists($npcId, $historyByNpcId)) {
+            continue;
+        }
+
+        $fallbackHistory = stobePlaythroughFindHistoryRowForNpcIdentityAtCutoff($cutoff, $row);
+        if (is_array($fallbackHistory)) {
+            $historyByNpcId[$npcId] = $fallbackHistory;
+            stobeLogInfo('PLAYTHROUGH: rollback identity fallback matched history', [
+                'npc_id' => $npcId,
+                'name' => strval($row['name'] ?? ''),
+                'history_npc_id' => intval($fallbackHistory['npc_id'] ?? 0),
+                'history_name' => strval($fallbackHistory['name'] ?? ''),
+                'history_gamets' => intval($fallbackHistory['gamets_last_updated'] ?? 0),
+            ]);
             continue;
         }
 
@@ -1069,6 +1389,10 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
     $incoming = stobeGametsNormalize($incomingGamets);
     $event = strtolower(trim($eventType));
 
+    if (!stobePlaythroughRollbackEventIsAuthoritative($event)) {
+        return ['triggered' => false, 'reason' => 'event_not_authoritative'];
+    }
+
     if ($incoming <= 0) {
         return ['triggered' => false, 'reason' => 'no_gamets'];
     }
@@ -1154,6 +1478,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             : stobePlaythroughZeroPruneCounts();
         $restoreCounts = stobePlaythroughRestoreUnlockedNpcs($incoming);
         $queueCounts = stobePlaythroughClearRelationshipQueues();
+        $volatileStateCounts = stobePlaythroughClearFutureVolatileNpcStates($incoming);
 
         if (!$pruneEnabled) {
             stobeLogWarn('PLAYTHROUGH: prune skipped by setting PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED=false', [
@@ -1186,6 +1511,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             'pruned' => $pruneCounts,
             'restored' => $restoreCounts,
             'queues_cleared' => $queueCounts,
+            'volatile_state_cleared' => $volatileStateCounts,
         ]);
 
         return [

@@ -21,7 +21,7 @@ if (isset($locationPayload['environment']) && is_array($locationPayload['environ
     $locationEnvironment = $locationPayload['environment'];
 }
 if (!array_key_exists('zone_name', $locationEnvironment)) {
-    $fallbackZone = trim(strval($geo['region'] ?? ''));
+    $fallbackZone = trim(strval($geo['zone'] ?? ''));
     if ($fallbackZone === '') {
         $fallbackZone = trim(strval($geo['city'] ?? ''));
     }
@@ -31,7 +31,7 @@ if (!array_key_exists('region', $locationEnvironment)) {
     $locationEnvironment['region'] = trim(strval($geo['region'] ?? ''));
 }
 if (!array_key_exists('town_name', $locationEnvironment)) {
-    $locationEnvironment['town_name'] = trim(strval($geo['city'] ?? ''));
+    $locationEnvironment['town_name'] = trim(strval($geo['zone'] ?? ($geo['city'] ?? '')));
 }
 foreach (['x', 'y', 'z'] as $axis) {
     if (!array_key_exists($axis, $locationEnvironment) && isset($_GET[$axis])) {

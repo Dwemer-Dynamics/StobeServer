@@ -67,6 +67,87 @@ function stobeUiResolveMtmOverride(array $metadata, array $extended): ?bool
     return null;
 }
 
+function stobeUiResolveIndividualMemoryEnabled(array $extended): bool
+{
+    if (!array_key_exists('individual_memory_enabled', $extended)) {
+        return false;
+    }
+    $raw = $extended['individual_memory_enabled'];
+    if ($raw === '' || $raw === null) {
+        return false;
+    }
+    return coerceBoolean($raw);
+}
+
+function stobeUiAutoLockProfileEnabled(): bool
+{
+    if (function_exists('getSettingBool')) {
+        try {
+            return getSettingBool('AUTO_LOCK_PROFILE', true);
+        } catch (Throwable $exception) {
+        }
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if ($db && method_exists($db, 'fetchOne')) {
+        try {
+            $row = $db->fetchOne("SELECT value FROM general_settings WHERE id = 'AUTO_LOCK_PROFILE' LIMIT 1");
+            if (is_array($row) && array_key_exists('value', $row)) {
+                return coerceBoolean($row['value']);
+            }
+        } catch (Throwable $exception) {
+        }
+    }
+
+    return true;
+}
+
+function stobeUiHasCombinedBioTemplatesView(): bool
+{
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !method_exists($db, 'fetchOne')) {
+        $cached = false;
+        return $cached;
+    }
+
+    try {
+        $row = $db->fetchOne("SELECT to_regclass('combined_bio_templates') AS reg_name");
+        $cached = trim(strval($row['reg_name'] ?? '')) !== '';
+    } catch (Throwable $exception) {
+        $cached = false;
+    }
+
+    return $cached;
+}
+
+function stobeUiGetBioTemplateSourceParts(): array
+{
+    if (stobeUiHasCombinedBioTemplatesView()) {
+        return [
+            'from_sql' => 'combined_bio_templates cbt',
+            'name_col' => 'npc_name',
+            'core_col' => 'core',
+            'refid_expr' => "COALESCE(refid, '')",
+            'bio_expr' => "COALESCE(npc_static_bio, '')",
+            'world_knowledge_expr' => "COALESCE(NULLIF(to_jsonb(cbt)->>'world_knowledge_tags', ''), '')",
+        ];
+    }
+
+    return [
+        'from_sql' => 'core_npc cbt',
+        'name_col' => 'name',
+        'core_col' => 'prompt_head',
+        'refid_expr' => "COALESCE(cbt.metadata->>'storage_id', '')",
+        'bio_expr' => "COALESCE(cbt.backstory, '')",
+        'world_knowledge_expr' => "COALESCE(NULLIF(cbt.world_knowledge_tags, ''), '')",
+    ];
+}
+
 $TITLE = "Stobe - NPC Master";
 ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
@@ -327,6 +408,71 @@ if (!function_exists('gender_icon_class')) {
     }
 }
 
+if (!function_exists('stobe_ui_resolve_portrait_url')) {
+    function stobe_ui_resolve_portrait_url(array $metadata, string $webRoot = ''): string {
+        $candidate = '';
+        if (isset($metadata['portrait']) && is_array($metadata['portrait'])) {
+            $portrait = $metadata['portrait'];
+            foreach (['web_path', 'url', 'path'] as $key) {
+                $value = trim(strval($portrait[$key] ?? ''));
+                if ($value !== '') {
+                    $candidate = $value;
+                    break;
+                }
+            }
+        }
+        if ($candidate === '') {
+            foreach (['portrait_url', 'portrait_path'] as $key) {
+                $value = trim(strval($metadata[$key] ?? ''));
+                if ($value !== '') {
+                    $candidate = $value;
+                    break;
+                }
+            }
+        }
+        if ($candidate === '') {
+            return '';
+        }
+
+        $candidate = str_replace('\\', '/', $candidate);
+        if (preg_match('/^https?:\\/\\//i', $candidate) === 1) {
+            return $candidate;
+        }
+        if (strpos($candidate, '/StobeServer/') === 0) {
+            return $candidate;
+        }
+        if (strpos($candidate, '/data/portraits/') === 0) {
+            return '/StobeServer' . $candidate;
+        }
+        if (strpos($candidate, 'data/portraits/') === 0) {
+            return '/StobeServer/' . ltrim($candidate, '/');
+        }
+
+        $prefix = rtrim($webRoot, '/');
+        if ($prefix !== '') {
+            if ($candidate[0] !== '/') {
+                $candidate = '/' . $candidate;
+            }
+            return $prefix . $candidate;
+        }
+        return ($candidate[0] === '/') ? $candidate : ('/' . $candidate);
+    }
+}
+
+if (!function_exists('stobe_ui_portrait_fallback_char')) {
+    function stobe_ui_portrait_fallback_char(string $name): string {
+        $trimmed = trim($name);
+        if ($trimmed === '') {
+            return '?';
+        }
+        $ch = strtoupper(substr($trimmed, 0, 1));
+        if ($ch === '') {
+            return '?';
+        }
+        return $ch;
+    }
+}
+
 if (!function_exists('stobe_ui_format_bounty_summary')) {
     function stobe_ui_format_bounty_summary(mixed $bountyValue, mixed $bountyPayloadValue, array $metadata): array {
         $bountyPayload = stobeNormalizeBountyPayload($bountyPayloadValue);
@@ -436,8 +582,263 @@ if (!function_exists('stobe_ui_format_bounty_summary')) {
     }
 }
 
+if (!function_exists('stobeUiNpcIsInPlayerFaction')) {
+    function stobeUiParseFactionIdentity(string $rawFaction): array {
+        if (function_exists('parseFactionIdentityToken')) {
+            return parseFactionIdentityToken($rawFaction);
+        }
+        $raw = trim($rawFaction);
+        if ($raw === '') {
+            return ['name' => '', 'id' => ''];
+        }
+
+        $name = $raw;
+        $id = '';
+        if (preg_match('/^(.*?)\s*\[([^\]]+)\]\s*$/u', $raw, $matches) === 1) {
+            $parsedName = trim(strval($matches[1] ?? ''));
+            $parsedId = trim(strval($matches[2] ?? ''));
+            if ($parsedId !== '') {
+                $id = $parsedId;
+                $name = $parsedName !== '' ? $parsedName : $raw;
+            }
+        }
+        $name = trim(strval(preg_replace('/\s*\[[^\]]+\]\s*$/u', '', $name)));
+        return ['name' => $name, 'id' => $id];
+    }
+
+    function stobeUiExtractFactionIdentityFromRow(array $npcRow): array {
+        $identity = stobeUiParseFactionIdentity(strval($npcRow['faction'] ?? ''));
+
+        $metadata = $npcRow['metadata'] ?? [];
+        if (!is_array($metadata) && function_exists('normalizeNpcMetadataPayload')) {
+            $metadata = normalizeNpcMetadataPayload($metadata);
+        }
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+
+        $metadataFactionId = trim(strval($metadata['faction_id'] ?? ($metadata['factionID'] ?? '')));
+        if ($identity['id'] === '' && $metadataFactionId !== '') {
+            $identity['id'] = $metadataFactionId;
+        }
+
+        if ($identity['name'] === '') {
+            $metadataFaction = trim(strval($metadata['faction'] ?? ''));
+            if ($metadataFaction !== '') {
+                $metaIdentity = stobeUiParseFactionIdentity($metadataFaction);
+                if ($metaIdentity['name'] !== '') {
+                    $identity['name'] = $metaIdentity['name'];
+                }
+                if ($identity['id'] === '' && $metaIdentity['id'] !== '') {
+                    $identity['id'] = $metaIdentity['id'];
+                }
+            }
+        }
+
+        return $identity;
+    }
+
+    function stobeUiGetPlayerFactionMemberSet(): array {
+        static $cached = null;
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $members = [];
+        $addMember = static function (string $rawName) use (&$members): void {
+            $name = function_exists('normalizeParticipantNameToken')
+                ? normalizeParticipantNameToken($rawName)
+                : trim($rawName);
+            if ($name === '') {
+                return;
+            }
+            $key = strtolower($name);
+            if (!isset($members[$key])) {
+                $members[$key] = $name;
+            }
+        };
+
+        if (function_exists('getPlayerSquadMembershipSnapshot')) {
+            try {
+                $snapshot = getPlayerSquadMembershipSnapshot();
+                $squads = is_array($snapshot['squad_members'] ?? null) ? $snapshot['squad_members'] : [];
+                foreach ($squads as $squadMembers) {
+                    if (!is_array($squadMembers)) {
+                        continue;
+                    }
+                    foreach ($squadMembers as $memberName) {
+                        $addMember(strval($memberName));
+                    }
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+
+        $playerName = trim(strval(getSetting('PLAYER_NAME', '')));
+        if ($playerName !== '') {
+            $addMember($playerName);
+        }
+
+        $cached = $members;
+        return $cached;
+    }
+
+    function stobeUiResolvePlayerFactionIdentity(): array {
+        static $cached = null;
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $identity = ['name' => '', 'id' => ''];
+        if (function_exists('getCurrentPlayerFactionIdentity')) {
+            try {
+                $candidate = getCurrentPlayerFactionIdentity();
+                if (is_array($candidate)) {
+                    $identity = [
+                        'name' => trim(strval($candidate['name'] ?? '')),
+                        'id' => trim(strval($candidate['id'] ?? '')),
+                    ];
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+        if ($identity['name'] !== '' || $identity['id'] !== '') {
+            $cached = $identity;
+            return $cached;
+        }
+
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || !method_exists($db, 'fetchOne')) {
+            $cached = $identity;
+            return $cached;
+        }
+
+        $members = stobeUiGetPlayerFactionMemberSet();
+        if (count($members) === 0) {
+            $cached = $identity;
+            return $cached;
+        }
+
+        $bestGamets = -1;
+        foreach ($members as $memberName) {
+            $safeMember = trim(strval($memberName));
+            if ($safeMember === '') {
+                continue;
+            }
+            $row = $db->fetchOne(
+                "SELECT faction, metadata, gamets_last_updated
+                 FROM core_npc
+                 WHERE LOWER(name) = LOWER($1)
+                 ORDER BY gamets_last_updated DESC, updated_at DESC
+                 LIMIT 1",
+                [$safeMember]
+            );
+            if (!$row) {
+                continue;
+            }
+
+            $candidateIdentity = stobeUiExtractFactionIdentityFromRow($row);
+            if ($candidateIdentity['name'] === '' && $candidateIdentity['id'] === '') {
+                continue;
+            }
+
+            $rowGamets = intval($row['gamets_last_updated'] ?? 0);
+            if ($rowGamets >= $bestGamets) {
+                $identity = $candidateIdentity;
+                $bestGamets = $rowGamets;
+            }
+        }
+
+        $cached = $identity;
+        return $cached;
+    }
+
+    function stobeUiNpcIsInPlayerFaction(array $npcRow): bool {
+        if (function_exists('npcIsInPlayerFaction')) {
+            try {
+                if (npcIsInPlayerFaction($npcRow)) {
+                    return true;
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+
+        $playerFaction = stobeUiResolvePlayerFactionIdentity();
+        $npcFaction = stobeUiExtractFactionIdentityFromRow($npcRow);
+        $playerFactionId = trim(strval($playerFaction['id'] ?? ''));
+        $npcFactionId = trim(strval($npcFaction['id'] ?? ''));
+        if ($playerFactionId !== '' && $npcFactionId !== '') {
+            if (strcasecmp($playerFactionId, $npcFactionId) === 0) {
+                return true;
+            }
+        }
+
+        $playerFactionName = trim(strval($playerFaction['name'] ?? ''));
+        $npcFactionName = trim(strval($npcFaction['name'] ?? ''));
+        if ($playerFactionName !== '' && $npcFactionName !== '') {
+            if (strcasecmp($playerFactionName, $npcFactionName) === 0) {
+                return true;
+            }
+        }
+
+        $npcName = strval($npcRow['npc_name'] ?? ($npcRow['name'] ?? ''));
+        $npcName = function_exists('normalizeParticipantNameToken')
+            ? normalizeParticipantNameToken($npcName)
+            : trim($npcName);
+        if ($npcName === '') {
+            return false;
+        }
+        $members = stobeUiGetPlayerFactionMemberSet();
+        return isset($members[strtolower($npcName)]);
+    }
+}
+
+if (!function_exists('stobeUiSortNpcRows')) {
+    function stobeUiSortNpcRows(array $rows, string $alpha = 'asc'): array {
+        $direction = strtolower(trim($alpha)) === 'desc' ? 'desc' : 'asc';
+        usort($rows, static function (array $a, array $b) use ($direction): int {
+            $aLocked = coerceBoolean($a['lock_profile'] ?? false) ? 1 : 0;
+            $bLocked = coerceBoolean($b['lock_profile'] ?? false) ? 1 : 0;
+            if ($aLocked !== $bLocked) {
+                return $bLocked <=> $aLocked;
+            }
+
+            $aFavorite = coerceBoolean($a['npc_favorite'] ?? false) ? 1 : 0;
+            $bFavorite = coerceBoolean($b['npc_favorite'] ?? false) ? 1 : 0;
+            if ($aFavorite !== $bFavorite) {
+                return $bFavorite <=> $aFavorite;
+            }
+
+            $aPlayerFaction = stobeUiNpcIsInPlayerFaction($a) ? 1 : 0;
+            $bPlayerFaction = stobeUiNpcIsInPlayerFaction($b) ? 1 : 0;
+            if ($aPlayerFaction !== $bPlayerFaction) {
+                return $bPlayerFaction <=> $aPlayerFaction;
+            }
+
+            $aGamets = intval($a['gamets_last_updated'] ?? 0);
+            $bGamets = intval($b['gamets_last_updated'] ?? 0);
+            if ($aGamets !== $bGamets) {
+                return $bGamets <=> $aGamets;
+            }
+
+            $aName = strtolower(trim(strval($a['npc_name'] ?? ($a['name'] ?? ''))));
+            $bName = strtolower(trim(strval($b['npc_name'] ?? ($b['name'] ?? ''))));
+            $nameCmp = strcmp($aName, $bName);
+            if ($nameCmp !== 0) {
+                return $direction === 'desc' ? (0 - $nameCmp) : $nameCmp;
+            }
+
+            return intval($a['id'] ?? 0) <=> intval($b['id'] ?? 0);
+        });
+        return $rows;
+    }
+}
+
 // Handle Create
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
+    if (stobeUiAutoLockProfileEnabled()) {
+        $_POST['lock_profile'] = 1;
+    }
     $npc->create($_POST);
     header("Location: npc_master.php");
     exit;
@@ -445,6 +846,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
 
 // Handle Update
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
+    if (stobeUiAutoLockProfileEnabled()) {
+        $_POST['lock_profile'] = 1;
+    }
     $_POST["md5"]=md5($_POST["npc_name"]);
     $npc->update($_POST["id"], $_POST);
     header("Location: npc_master.php");
@@ -463,19 +867,25 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
             include(__DIR__."/../ext/relationship_system/npc_save_handler.php");
         }
 
-        // Ensure extended_data is valid JSON (feature toggles now persist in metadata).
+        // Ensure extended_data is valid JSON and sync NPC-only toggles.
         try {
             $postedExt = isset($_POST['extended_data']) ? (string)$_POST['extended_data'] : '';
+            $tmp = [];
             if ($postedExt !== '') {
-                $tmp = json_decode($postedExt, true);
-                if (!is_array($tmp)) {
-                    $_POST['extended_data'] = '{}';
-                } else {
-                    $_POST['extended_data'] = json_encode($tmp);
+                $decoded = json_decode($postedExt, true);
+                if (is_array($decoded)) {
+                    $tmp = $decoded;
                 }
-            } else {
-                $_POST['extended_data'] = '{}';
             }
+            if (array_key_exists('individual_memory_enabled', $_POST)) {
+                $imbVal = $_POST['individual_memory_enabled'];
+                if ($imbVal === '' || $imbVal === null || !coerceBoolean($imbVal)) {
+                    unset($tmp['individual_memory_enabled']);
+                } else {
+                    $tmp['individual_memory_enabled'] = 1;
+                }
+            }
+            $_POST['extended_data'] = json_encode($tmp);
         } catch (Throwable $e) {
             $_POST['extended_data'] = '{}';
         }
@@ -504,6 +914,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
             if (!isset($_POST['metadata']) || trim((string)$_POST['metadata']) === '') {
                 $_POST['metadata'] = '{}';
             }
+        }
+        if (stobeUiAutoLockProfileEnabled()) {
+            $_POST['lock_profile'] = 1;
         }
         if ($id <= 0) {
             $newId = $npc->create($_POST);
@@ -595,6 +1008,83 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["bulk_delete_npcs"])) 
         $row = $GLOBALS['db']->fetchOne($sql);
         $deleted = intval($row['c'] ?? 0);
         echo json_encode(["ok"=>true, "deleted"=>$deleted]);
+    } catch (Throwable $e) {
+        echo json_encode(["ok"=>false, "error"=>$e->getMessage()]);
+    }
+    exit;
+}
+
+// Bulk switch NPC profile assignment by source profile (AJAX)
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["bulk_switch_profile"])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $confirm = trim((string)($_POST['confirm'] ?? ''));
+        if ($confirm !== 'Switch') { echo json_encode(["ok"=>false, "error"=>"Confirmation text mismatch"]); exit; }
+
+        $sourceProfileId = intval($_POST['source_profile_id'] ?? 0);
+        $targetProfileId = intval($_POST['target_profile_id'] ?? 0);
+        if ($sourceProfileId <= 0 || $targetProfileId <= 0) {
+            echo json_encode(["ok"=>false, "error"=>"Invalid source or target profile"]);
+            exit;
+        }
+        if ($sourceProfileId === $targetProfileId) {
+            echo json_encode(["ok"=>false, "error"=>"Source and target profiles must be different"]);
+            exit;
+        }
+
+        $includeLockedRaw = $_POST['include_locked'] ?? '';
+        $includeLocked = (
+            $includeLockedRaw === '1' ||
+            $includeLockedRaw === 1 ||
+            $includeLockedRaw === true ||
+            $includeLockedRaw === 'true'
+        );
+
+        $sourceRow = $GLOBALS['db']->fetchOne("SELECT id, label FROM core_profiles WHERE id = {$sourceProfileId} LIMIT 1");
+        $targetRow = $GLOBALS['db']->fetchOne("SELECT id, label FROM core_profiles WHERE id = {$targetProfileId} LIMIT 1");
+        if (!is_array($sourceRow) || empty($sourceRow['id'])) {
+            echo json_encode(["ok"=>false, "error"=>"Source profile not found"]);
+            exit;
+        }
+        if (!is_array($targetRow) || empty($targetRow['id'])) {
+            echo json_encode(["ok"=>false, "error"=>"Target profile not found"]);
+            exit;
+        }
+
+        $baseWhere = "profile_id = {$sourceProfileId} and trim(lower(name)) <> 'the narrator'";
+        $countRow = $GLOBALS['db']->fetchOne("SELECT COUNT(*) AS c FROM core_npc WHERE {$baseWhere}");
+        $totalMatched = intval($countRow['c'] ?? 0);
+
+        $skippedLocked = 0;
+        if (!$includeLocked) {
+            $skippedRow = $GLOBALS['db']->fetchOne("SELECT COUNT(*) AS c FROM core_npc WHERE {$baseWhere} AND COALESCE(lock_profile,FALSE)=TRUE");
+            $skippedLocked = intval($skippedRow['c'] ?? 0);
+        }
+
+        $lockClause = $includeLocked ? "TRUE" : "COALESCE(lock_profile,FALSE)=FALSE";
+        $sql = "WITH upd AS (
+                    UPDATE core_npc
+                    SET profile_id = {$targetProfileId}
+                    WHERE {$baseWhere}
+                      AND {$lockClause}
+                    RETURNING 1
+                )
+                SELECT COUNT(*) AS c FROM upd";
+        $row = $GLOBALS['db']->fetchOne($sql);
+        $updated = intval($row['c'] ?? 0);
+
+        echo json_encode([
+            "ok" => true,
+            "updated" => $updated,
+            "total_matched" => $totalMatched,
+            "skipped_locked" => $skippedLocked,
+            "include_locked" => $includeLocked,
+            "source_profile_id" => $sourceProfileId,
+            "target_profile_id" => $targetProfileId,
+            "source_profile_label" => (string)($sourceRow['label'] ?? ('Profile #'.$sourceProfileId)),
+            "target_profile_label" => (string)($targetRow['label'] ?? ('Profile #'.$targetProfileId)),
+        ]);
     } catch (Throwable $e) {
         echo json_encode(["ok"=>false, "error"=>$e->getMessage()]);
     }
@@ -795,6 +1285,16 @@ $profileIdFilter = isset($_GET['profile_id']) ? trim((string)$_GET['profile_id']
 $favOnly = (isset($_GET['fav']) && $_GET['fav'] === '1');
 $dynOnly = (isset($_GET['dyn']) && $_GET['dyn'] === '1');
 $mtmOnly = (isset($_GET['mtm']) && $_GET['mtm'] === '1');
+$lockOnly = (isset($_GET['lock']) && $_GET['lock'] === '1');
+$playerFactionOnly = (isset($_GET['pf']) && $_GET['pf'] === '1');
+
+$playerFactionIdentity = stobeUiResolvePlayerFactionIdentity();
+$playerFactionName = trim(strval($playerFactionIdentity['name'] ?? ''));
+$playerFactionId = trim(strval($playerFactionIdentity['id'] ?? ''));
+$hasPlayerFactionIdentity = ($playerFactionName !== '' || $playerFactionId !== '');
+$playerFactionMembers = stobeUiGetPlayerFactionMemberSet();
+$hasPlayerFactionMembers = count($playerFactionMembers) > 0;
+$hasPlayerFactionSignal = ($hasPlayerFactionIdentity || $hasPlayerFactionMembers);
 
 // Preload profiles for filter dropdown
 $profileRows = $GLOBALS["db"]->fetchAll("SELECT id, label, metadata FROM core_profiles ORDER BY label ASC");
@@ -823,6 +1323,15 @@ $profilesById = [];
 foreach (($profileRows ?? []) as $pr) {
     $pid = (string)($pr['id'] ?? '');
     if ($pid !== '') $profilesById[$pid] = $pr['label'] ?? ('Profile #'.$pid);
+}
+$profileOptions = [];
+foreach (($profileRows ?? []) as $pr) {
+    $pid = (string)($pr['id'] ?? '');
+    if ($pid === '') continue;
+    $profileOptions[] = [
+        'id' => $pid,
+        'label' => (string)($pr['label'] ?? ('Profile #'.$pid)),
+    ];
 }
 // Build profile metadata lookup for inherited settings
 $profileMetaById = [];
@@ -861,6 +1370,8 @@ foreach (($llmRows ?? []) as $lr) {
 }
 
 $where = "1=1";
+// Narrator is managed in the dedicated Narrator menu and should not appear as a regular NPC card.
+$where .= " and lower(npc_name) <> lower('The Narrator')";
 if ($q !== ''){
     $qEsc = "%".$GLOBALS['db']->escape($q)."%";
     // Match by name primarily; include a few related fields
@@ -880,17 +1391,31 @@ if ($mtmOnly) {
     // Prefer metadata override key, keep legacy extended_data compatibility.
     $where .= " and ((coalesce(metadata::text,'') ~ '\"MIDDLE_TERM_MEMORY_ENABLED\"\\s*:\\s*(true|1)') or (coalesce(extended_data::text,'') ~ '\"middle_term_enabled\"\\s*:\\s*(true|1)'))";
 }
+if ($lockOnly) {
+    $where .= " and coalesce(lock_profile,0)=1";
+}
 
-// Default: The Narrator first, then favorites, then alphabetical by name
-$order = "order by (case when npc_name = 'The Narrator' then 0 else 1 end), coalesce(npc_favorite,0) desc, coalesce(gamets_last_updated,0) desc, lower(npc_name) ".$alpha.", id asc";
+$fetchOrder = "order by lower(npc_name) " . $alpha . ", id asc";
+$allFilteredRows = $npc->getAll("{$where} {$fetchOrder}");
 
-// Count with filters
-$totalRows = $npc->countAll($where);
+if ($playerFactionOnly) {
+    if (!$hasPlayerFactionSignal) {
+        $allFilteredRows = [];
+    } else {
+        $allFilteredRows = array_values(array_filter(
+            $allFilteredRows,
+            static fn(array $row): bool => stobeUiNpcIsInPlayerFaction($row)
+        ));
+    }
+}
+$allFilteredRows = stobeUiSortNpcRows($allFilteredRows, $alpha);
+$totalRows = count($allFilteredRows);
 $totalPages = max(1, (int)ceil($totalRows / max(1, $perPage)));
-if ($page > $totalPages) $page = $totalPages;
+if ($page > $totalPages) {
+    $page = $totalPages;
+}
 $offset = ($page - 1) * $perPage;
-error_log("{$where} {$order} limit {$perPage} offset {$offset}");
-$data = $npc->getAll("{$where} {$order} limit {$perPage} offset {$offset}");
+$data = array_slice($allFilteredRows, $offset, $perPage);
 $editItem = null;
 
 if (isset($_GET["edit"])) {
@@ -910,6 +1435,8 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_fav" <?= $favOnly?'checked':'' ?>> Favorites</label>
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
             <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
+            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock" <?= $lockOnly?'checked':'' ?>> Locked</label>
+            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_pf" <?= $playerFactionOnly?'checked':'' ?>> Player faction only</label>
           </div>
         </div>
         <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
@@ -932,7 +1459,8 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
       <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
       <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
       <button id="npc_import_btn" type="button" title="Import NPC from JSON file">Import NPC</button>
-      <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from World Knowledge text data for all NPCs">Build Relationships</button>
+          <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
+      <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
       <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
     </div>
     <div class="npc-grid">
@@ -976,6 +1504,9 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
         if ($mtmOverride !== null) {
             $mtmEnabled = $mtmOverride;
         }
+
+        // Individual memory bank is NPC-only (no profile inheritance).
+        $imbEnabled = stobeUiResolveIndividualMemoryEnabled($extTmp);
         
         // Background Life Commands: check extended_data override, otherwise inherit from profile
         $blcEnabled = $profileMeta['blc']; // default to profile
@@ -991,8 +1522,14 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
         
         $tagsVal = trim((string)($row['tags'] ?? '')); 
         $tagsDisp = ($tagsVal === '') ? '' : $tagsVal; 
+        $npcNameCard = strval($row["npc_name"] ?? '');
+        $portraitUrl = stobe_ui_resolve_portrait_url($metaTmp, $webRoot);
+        $portraitInitial = stobe_ui_portrait_fallback_char($npcNameCard);
+        $isPlayerFactionNpc = stobeUiNpcIsInPlayerFaction($row);
+        $currentActionCard = strtolower(trim(strval($metaTmp['current_action'] ?? ($row['current_action'] ?? ''))));
+        $isDeadCard = ($currentActionCard === 'dead');
         ?>
-        <div class="npc-card" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>">
+        <div class="npc-card<?= $isPlayerFactionNpc ? ' npc-card-player-faction' : '' ?><?= $isDeadCard ? ' npc-card-dead' : '' ?>" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>" data-player-faction="<?= $isPlayerFactionNpc ? '1' : '0' ?>" data-current-action="<?= htmlspecialchars($currentActionCard) ?>">
             <div class="npc-title">
                 <div class="npc-title-left"><?php 
                     // Use already-parsed $metaTmp to avoid re-decoding
@@ -1000,8 +1537,14 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                     if (isset($metaTmp['stats']) && is_array($metaTmp['stats']) && isset($metaTmp['stats']['level'])) {
                         $levelDisp = ' ('.intval($metaTmp['stats']['level']).')';
                     }
-                ?><span class="npc-name"><?= htmlspecialchars(($row["npc_name"] ?? '').$levelDisp) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
+                ?><span class="npc-name"><?= htmlspecialchars($npcNameCard.$levelDisp) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
             <div class="npc-title-actions">
+                    <?php if ($isDeadCard): ?>
+                    <span class="npc-dead-badge" title="Current action: dead">Dead</span>
+                    <?php endif; ?>
+                    <?php if ($isPlayerFactionNpc): ?>
+                    <span class="npc-player-faction-badge" title="Aligned with the player faction">Player Faction</span>
+                    <?php endif; ?>
                     <?php if ($tagsDisp !== ''): ?>
                     <span class="npc-tags-top" title="<?= htmlspecialchars($tagsDisp) ?>"><?= htmlspecialchars($tagsDisp) ?></span>
                     <?php endif; ?>
@@ -1012,6 +1555,13 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
             </div>
             <div class="npc-divider"></div>
             <div class="npc-row">
+                <div class="npc-portrait-col">
+                    <?php if ($portraitUrl !== ''): ?>
+                    <img class="npc-portrait-img" src="<?= htmlspecialchars($portraitUrl) ?>" alt="<?= htmlspecialchars($npcNameCard) ?> portrait" loading="lazy">
+                    <?php else: ?>
+                    <div class="npc-portrait-fallback"><?= htmlspecialchars($portraitInitial) ?></div>
+                    <?php endif; ?>
+                </div>
                 <div class="npc-fields">
                     <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
@@ -1096,13 +1646,12 @@ if (isset($_GET['history'])) {
                     CASE WHEN COALESCE(h.dynamic_profile, FALSE) THEN 1 ELSE 0 END AS dynamic_profile,
                     h.md5,
                     h.gamets_last_updated,
-                    h.created,
                     ''::text AS core,
                     ''::text AS base,
                     h.tags
                 FROM core_npc_master_history h
                 WHERE h.npc_id = {$id}
-                ORDER BY COALESCE(h.gamets_last_updated,0) DESC, h.created DESC, h.history_id DESC
+                ORDER BY COALESCE(h.gamets_last_updated,0) DESC, h.history_id DESC
                 OFFSET 1";
         $rows = $GLOBALS['db']->fetchAll($sel) ?: [];
         $entries = [];
@@ -1110,13 +1659,11 @@ if (isset($_GET['history'])) {
             $g = isset($r['gamets_last_updated']) ? floatval($r['gamets_last_updated']) : 0.0;
             $tam = $g > 0 ? convert_gamets2skyrim_long_date2($g) : '';
             $greg = $g > 0 ? gamets2str_format_gregorian_date($g, 'Y-m-d H:i') : '';
-            $created = (string)($r['created'] ?? '');
             $entries[] = [
                 'history_id' => (int)($r['history_id'] ?? 0),
                 'gamets' => $g,
                 'when_tamrielic' => $tam,
                 'when_gregorian' => $greg,
-                'created' => $created,
                 'fields' => [
                     'npc_name' => $r['npc_name'] ?? '',
                     'profile_id' => isset($r['profile_id']) ? (string)$r['profile_id'] : '',
@@ -1238,6 +1785,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["restore_from_history"
 if (isset($_GET['bio_search'])) {
     try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
     header('Content-Type: application/json');
+    $bioSource = stobeUiGetBioTemplateSourceParts();
+    $bioFromSql = strval($bioSource['from_sql'] ?? 'core_npc cbt');
+    $bioNameCol = strval($bioSource['name_col'] ?? 'name');
+    $bioCoreCol = strval($bioSource['core_col'] ?? 'prompt_head');
+    $bioRefIdExpr = strval($bioSource['refid_expr'] ?? "COALESCE(cbt.metadata->>'storage_id', '')");
+    $bioExpr = strval($bioSource['bio_expr'] ?? "COALESCE(cbt.backstory, '')");
+    $bioWorldKnowledgeExpr = strval($bioSource['world_knowledge_expr'] ?? "COALESCE(NULLIF(cbt.world_knowledge_tags, ''), '')");
     $search = trim((string)($_GET['search'] ?? ''));
     $letter = trim((string)($_GET['letter'] ?? ''));
     $page = max(1, intval($_GET['page'] ?? 1));
@@ -1245,17 +1799,37 @@ if (isset($_GET['bio_search'])) {
     $where = [];
     if ($search !== '') {
         $q = '%'.$GLOBALS['db']->escape($search).'%';
-        $where[] = "(lower(npc_name) like lower('{$q}') or lower(core) like lower('{$q}'))";
+        $where[] = "(lower({$bioNameCol}) like lower('{$q}') or lower({$bioCoreCol}) like lower('{$q}'))";
     }
     if ($letter !== '' && preg_match('/^[A-Za-z]$/', $letter)) {
         $l = $GLOBALS['db']->escape(strtolower($letter));
-        $where[] = "lower(npc_name) like '{$l}%'";
+        $where[] = "lower({$bioNameCol}) like '{$l}%'";
     }
     $whereSql = count($where) ? ('where '.implode(' and ', $where)) : '';
-    $cntRow = $GLOBALS['db']->fetchOne("select count(*) as c from combined_bio_templates {$whereSql}");
+    $cntRow = $GLOBALS['db']->fetchOne("select count(*) as c from {$bioFromSql} {$whereSql}");
     $total = intval($cntRow['c'] ?? 0);
     $offset = ($page - 1) * $pageSize;
-    $rows = $GLOBALS['db']->fetchAll("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), nullif(to_jsonb(cbt)->>'knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt {$whereSql} order by lower(npc_name) asc limit {$pageSize} offset {$offset}");
+    $rows = $GLOBALS['db']->fetchAll(
+        "select {$bioNameCol} as npc_name,
+                {$bioCoreCol} as core,
+                voiceid,
+                gender,
+                race,
+                {$bioRefIdExpr} as refid,
+                {$bioExpr} as npc_static_bio,
+                personality,
+                appearance,
+                relationships,
+                occupation,
+                skills,
+                speechstyle,
+                goals,
+                {$bioWorldKnowledgeExpr} as world_knowledge_tags
+         from {$bioFromSql}
+         {$whereSql}
+         order by lower({$bioNameCol}) asc
+         limit {$pageSize} offset {$offset}"
+    );
     $items = [];
     foreach (($rows ?? []) as $r) {
         $extFields = ['npc_static_bio','personality','appearance','relationships','occupation','skills','speechstyle','goals'];
@@ -1284,11 +1858,37 @@ if (isset($_GET['bio_search'])) {
 if (isset($_GET['bio_detail'])) {
     try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
     header('Content-Type: application/json');
+    $bioSource = stobeUiGetBioTemplateSourceParts();
+    $bioFromSql = strval($bioSource['from_sql'] ?? 'core_npc cbt');
+    $bioNameCol = strval($bioSource['name_col'] ?? 'name');
+    $bioCoreCol = strval($bioSource['core_col'] ?? 'prompt_head');
+    $bioRefIdExpr = strval($bioSource['refid_expr'] ?? "COALESCE(cbt.metadata->>'storage_id', '')");
+    $bioExpr = strval($bioSource['bio_expr'] ?? "COALESCE(cbt.backstory, '')");
+    $bioWorldKnowledgeExpr = strval($bioSource['world_knowledge_expr'] ?? "COALESCE(NULLIF(cbt.world_knowledge_tags, ''), '')");
     $name = trim((string)($_GET['name'] ?? ''));
     if ($name === '') { echo json_encode(['ok'=>false,'error'=>'Missing name']); exit; }
     $esc = $GLOBALS['db']->escape($name);
     // Case-insensitive exact match on npc_name to tolerate capitalization differences
-    $r = $GLOBALS['db']->fetchOne("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), nullif(to_jsonb(cbt)->>'knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt where lower(npc_name) = lower('{$esc}') limit 1");
+    $r = $GLOBALS['db']->fetchOne(
+        "select {$bioNameCol} as npc_name,
+                {$bioCoreCol} as core,
+                voiceid,
+                gender,
+                race,
+                {$bioRefIdExpr} as refid,
+                {$bioExpr} as npc_static_bio,
+                personality,
+                appearance,
+                relationships,
+                occupation,
+                skills,
+                speechstyle,
+                goals,
+                {$bioWorldKnowledgeExpr} as world_knowledge_tags
+         from {$bioFromSql}
+         where lower({$bioNameCol}) = lower('{$esc}')
+         limit 1"
+    );
     if (!$r) { echo json_encode(['ok'=>false,'error'=>'Not found']); exit; }
     echo json_encode(['ok'=>true,'data'=>$r]);
     exit;
@@ -1299,6 +1899,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
     header('Content-Type: application/json');
     try {
+        $bioSource = stobeUiGetBioTemplateSourceParts();
+        $bioFromSql = strval($bioSource['from_sql'] ?? 'core_npc cbt');
+        $bioNameCol = strval($bioSource['name_col'] ?? 'name');
+        $bioCoreCol = strval($bioSource['core_col'] ?? 'prompt_head');
+        $bioRefIdExpr = strval($bioSource['refid_expr'] ?? "COALESCE(cbt.metadata->>'storage_id', '')");
+        $bioExpr = strval($bioSource['bio_expr'] ?? "COALESCE(cbt.backstory, '')");
+        $bioWorldKnowledgeExpr = strval($bioSource['world_knowledge_expr'] ?? "COALESCE(NULLIF(cbt.world_knowledge_tags, ''), '')");
         $name = trim((string)($_POST['name'] ?? ''));
         if ($name === '') { echo json_encode(['ok'=>false,'error'=>'Missing name']); exit; }
         $includeCore = ($_POST['include_core'] ?? '') ? true : false;
@@ -1308,7 +1915,26 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         $profileId   = isset($_POST['profile_id']) && $_POST['profile_id']!=='' ? intval($_POST['profile_id']) : null;
 
         $esc = $GLOBALS['db']->escape($name);
-        $r = $GLOBALS['db']->fetchOne("select npc_name, core, voiceid, gender, race, refid, npc_static_bio, personality, appearance, relationships, occupation, skills, speechstyle, goals, coalesce(nullif(to_jsonb(cbt)->>'world_knowledge_tags',''), nullif(to_jsonb(cbt)->>'knowledge_tags',''), '') as world_knowledge_tags from combined_bio_templates cbt where npc_name = '{$esc}' limit 1");
+        $r = $GLOBALS['db']->fetchOne(
+            "select {$bioNameCol} as npc_name,
+                    {$bioCoreCol} as core,
+                    voiceid,
+                    gender,
+                    race,
+                    {$bioRefIdExpr} as refid,
+                    {$bioExpr} as npc_static_bio,
+                    personality,
+                    appearance,
+                    relationships,
+                    occupation,
+                    skills,
+                    speechstyle,
+                    goals,
+                    {$bioWorldKnowledgeExpr} as world_knowledge_tags
+             from {$bioFromSql}
+             where lower({$bioNameCol}) = lower('{$esc}')
+             limit 1"
+        );
         if (!$r) { echo json_encode(['ok'=>false,'error'=>'Template not found']); exit; }
 
         $data = [ 'npc_name' => $r['npc_name'] ?? $name ];
@@ -1509,7 +2135,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <div class="form-item span-2">
             <label for="npc_name">NPC Name</label>
             <input type="text" id="npc_name" name="npc_name" placeholder="e.g. Aela the Huntress" value="<?= htmlspecialchars($editItem["npc_name"] ?? "") ?>">
-            <small class="hint">The character's name. Must match their Skyrim in-game name!</small>
+            <small class="hint">The character's name. Must match their Kenshi in-game name!</small>
         </div>
 
         <div class="form-item">
@@ -1561,6 +2187,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             <small class="hint">Voice ID for TTS.</small>
         </div>
 
+        <div class="form-item">
+            <label for="faction">Faction</label>
+            <input type="text" id="faction" name="faction" placeholder="e.g. Holy Nation, UC, Shek Kingdom" value="<?= htmlspecialchars($editItem["faction"] ?? "") ?>">
+            <small class="hint">Primary faction alignment used by prompts and rule matching.</small>
+        </div>
+
         <?php
         // Check profile-level settings for these features
         $profileDynEnabled = false;
@@ -1599,6 +2231,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         // Middle Term Memory: check extended_data override or fall back to profile default
         $mtmChecked = $profileMtmEnabled;
         $mtmFromProfile = false;
+        $imbChecked = false;
         try {
             $hasNpcOverride = false;
             if (is_array($editItem) && !empty($editItem['metadata'])) {
@@ -1613,6 +2246,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 if (is_array($tmpEd) && array_key_exists('middle_term_enabled', $tmpEd) && $tmpEd['middle_term_enabled'] !== null && $tmpEd['middle_term_enabled'] !== '') {
                     $mtmChecked = coerceBoolean($tmpEd['middle_term_enabled']);
                     $hasNpcOverride = true;
+                }
+                if (is_array($tmpEd)) {
+                    $imbChecked = stobeUiResolveIndividualMemoryEnabled($tmpEd);
                 }
             }
             if (!$hasNpcOverride) {
@@ -1634,6 +2270,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <input type="checkbox" id="middle_term_enabled" name="middle_term_enabled" value="1" <?= $mtmChecked ? "checked" : "" ?> data-profile-default="<?= $profileMtmEnabled ? '1' : '0' ?>">
             </label>
             <small class="hint">Saves a list of recent events after every 10 memory summaries. Will be used for NPC context.<?= $mtmFromProfile ? ' <strong style="color:#e6b76c;">(Inherited from profile)</strong>' : '' ?></small>
+        </div>
+
+        <div class="form-item">
+            <label for="individual_memory_enabled" class="label-with-toggle">Individual Memory Bank
+                <input type="hidden" name="individual_memory_enabled" value="0">
+                <input type="checkbox" id="individual_memory_enabled" name="individual_memory_enabled" value="1" <?= $imbChecked ? "checked" : "" ?>>
+            </label>
+            <small class="hint">Enable NPC-scoped memory summaries for this character only. Scoped summaries are generated from conversations where this NPC is present.</small>
         </div>
 
         <div class="form-item span-2">
@@ -1709,8 +2353,32 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             if (!empty($editItem['extended_data'])){
                 $ed = json_decode((string)$editItem['extended_data'], true);
                 if (is_array($ed) && !empty($ed['middle_term_memory']) && is_array($ed['middle_term_memory'])){
-                    $arr = array_values($ed['middle_term_memory']);
-                    if (!empty($arr)) { $mtmLatest = (string)end($arr); }
+                    $mtmRaw = $ed['middle_term_memory'];
+                    if (array_keys($mtmRaw) === range(0, count($mtmRaw) - 1)) {
+                        $arr = array_values($mtmRaw);
+                        if (!empty($arr)) {
+                            $mtmLatest = (string)end($arr);
+                        }
+                    } else {
+                        $numericMap = [];
+                        foreach ($mtmRaw as $k => $v) {
+                            if (!is_scalar($v) || $v === null) {
+                                continue;
+                            }
+                            if (preg_match('/^-?\d+$/', strval($k)) === 1) {
+                                $numericMap[intval($k)] = strval($v);
+                            }
+                        }
+                        if (count($numericMap) > 0) {
+                            ksort($numericMap, SORT_NUMERIC);
+                            $mtmLatest = strval(end($numericMap));
+                        } else {
+                            $arr = array_values($mtmRaw);
+                            if (!empty($arr)) {
+                                $mtmLatest = strval(end($arr));
+                            }
+                        }
+                    }
                 }
             }
         } catch (Throwable $e) { $mtmLatest = ''; }
@@ -1861,7 +2529,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         </div>
 
         <div class="form-item span-2">
-            <label for="extended_data">Setting Overrides</label>
+            <label for="extended_data">Character Data</label>
             <small class="hint">Override global and profile settings for this specific NPC. Changes here take precedence over all other configurations.</small>
             <textarea id="extended_data" name="extended_data" placeholder="{}"><?= htmlspecialchars($editItem["extended_data"] ?? "") ?></textarea>
         </div>
@@ -1887,6 +2555,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 try {
                   const mtm = form.querySelector('#middle_term_enabled');
                   const dyn = form.querySelector('#dynamic_profile');
+                  const imb = form.querySelector('#individual_memory_enabled');
                   if (form.metadata){
                     let metadataObj = {};
                     try { metadataObj = JSON.parse(String(form.metadata.value||'')||'{}')||{}; } catch(_e){ metadataObj = {}; }
@@ -1917,6 +2586,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                     
                     // Keep legacy extended_data key removed; metadata is source of truth.
                     delete obj.middle_term_enabled;
+                    if (imb) {
+                      if (imb.checked) {
+                        obj.individual_memory_enabled = 1;
+                      } else {
+                        delete obj.individual_memory_enabled;
+                      }
+                    }
                     form.extended_data.value = JSON.stringify(obj);
                   }
                   
@@ -2061,12 +2737,36 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     transition: all 0.2s ease; 
     cursor: pointer; 
 }
+.npc-card.npc-card-player-faction {
+    border-color: rgba(230, 183, 108, 0.95);
+    box-shadow: 0 0 0 1px rgba(230, 183, 108, 0.28),
+                0 4px 14px rgba(230, 183, 108, 0.18),
+                inset 0 1px rgba(255, 255, 255, 0.05);
+}
 .npc-card:hover { 
     transform: translateY(-2px); 
     background: linear-gradient(180deg, rgba(48, 48, 48, 0.95), rgba(40, 40, 40, 0.98)); 
     border-color: #4a4a4a;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25),
                 inset 0 1px rgba(255, 255, 255, 0.05);
+}
+.npc-card.npc-card-player-faction:hover {
+    border-color: #ffd277;
+    box-shadow: 0 0 0 1px rgba(255, 210, 119, 0.45),
+                0 6px 18px rgba(230, 183, 108, 0.3),
+                inset 0 1px rgba(255, 255, 255, 0.08);
+}
+.npc-card.npc-card-dead {
+    border-color: rgba(232, 82, 82, 0.98);
+    box-shadow: 0 0 0 1px rgba(232, 82, 82, 0.4),
+                0 5px 16px rgba(120, 18, 18, 0.34),
+                inset 0 1px rgba(255, 255, 255, 0.05);
+}
+.npc-card.npc-card-dead:hover {
+    border-color: #ff8a8a;
+    box-shadow: 0 0 0 1px rgba(255, 138, 138, 0.5),
+                0 7px 20px rgba(130, 20, 20, 0.42),
+                inset 0 1px rgba(255, 255, 255, 0.08);
 }
 .npc-title { font-weight:800; color:#e9efff; font-size:18px; text-align:center; letter-spacing:0.3px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .npc-title-left { flex:1 1 auto; text-align:left; }
@@ -2077,6 +2777,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .npc-gender-icon.gender-nb { color:#ffd166; }
 .npc-dyn-icon { margin-left:6px; color:#65d46e; opacity:0.95; }
 .npc-mtm-icon { margin-left:6px; color:#9fb1ff; opacity:0.95; }
+.npc-imb-icon { margin-left:6px; color:#70d4d4; opacity:0.95; }
 .npc-blc-icon { margin-left:6px; color:#8db4e2; opacity:0.95; }
 .npc-gps-icon { margin-left:6px; color:#ff6b6b; opacity:0.95; }
 .npc-divider { height:1px; background: linear-gradient(90deg, transparent, rgba(230, 183, 108, 0.3) 50%, transparent); margin:6px 0 10px; }
@@ -2124,11 +2825,65 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .btn-toggle.active[data-favorite-id] { color:#ffd700; }
 .btn-trash { background:transparent; border:none; padding:6px; color:#e9efff; font-size:20px; line-height:1; text-decoration:none; transition: color .15s ease, text-shadow .15s ease; }
 .btn-trash:hover, .btn-trash:focus-visible { color:#ff6b6b; text-shadow: 0 0 6px rgba(255, 107, 107, 0.7), 0 0 12px rgba(255, 107, 107, 0.45); }
+.npc-player-faction-badge {
+    display:inline-flex;
+    align-items:center;
+    font-size:11px;
+    font-weight:700;
+    color:#2b2000;
+    background:linear-gradient(180deg, #ffd77f, #e6b76c);
+    border:1px solid rgba(255, 225, 150, 0.95);
+    border-radius:999px;
+    padding:2px 8px;
+    box-shadow:0 0 8px rgba(230, 183, 108, 0.35);
+    white-space:nowrap;
+}
+.npc-dead-badge {
+    display:inline-flex;
+    align-items:center;
+    font-size:11px;
+    font-weight:800;
+    color:#fff3f3;
+    background:linear-gradient(180deg, #c83d3d, #932323);
+    border:1px solid rgba(255, 132, 132, 0.95);
+    border-radius:999px;
+    padding:2px 8px;
+    box-shadow:0 0 8px rgba(200, 61, 61, 0.4);
+    white-space:nowrap;
+}
 .npc-tags-label { font-size:11px; color:#9fb1c9; margin-right:4px; }
 .npc-tags-top { font-size:11px; color:#9fb1c9; border:1px solid #4a4a4a; border-radius:999px; padding:2px 6px; max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .npc-row { display:flex; gap:10px; align-items:flex-start; }
+.npc-portrait-col { flex:0 0 74px; width:74px; display:flex; align-items:flex-start; justify-content:center; }
+.npc-portrait-img,
+.npc-portrait-fallback {
+    width:74px;
+    height:92px;
+    border-radius:8px;
+    border:1px solid #4a4a4a;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.npc-portrait-img {
+    display:block;
+    object-fit:cover;
+    background:#1d1d1d;
+}
+.npc-portrait-fallback {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:28px;
+    font-weight:800;
+    color:#d6dff0;
+    background:linear-gradient(160deg, #3a424f, #242a34);
+}
 .npc-right { margin-left:auto; flex:0 0 auto; }
-@media (max-width: 720px){ .npc-right { display:none; } }
+@media (max-width: 720px){
+    .npc-portrait-col { flex:0 0 64px; width:64px; }
+    .npc-portrait-img,
+    .npc-portrait-fallback { width:64px; height:80px; }
+    .npc-right { display:none; }
+}
 /* Dynamic profile grouping */
 .dynamic-profile-section { 
     border:1px solid #3a3a3a; 
@@ -2391,6 +3146,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_fav_top" <?= $favOnly?'checked':'' ?>> Favorites</label>
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn_top" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
         <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm_top" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
+        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock_top" <?= $lockOnly?'checked':'' ?>> Locked</label>
+        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_pf_top" <?= $playerFactionOnly?'checked':'' ?>> Player faction only</label>
       </div>
     </div>
     <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
@@ -2412,7 +3169,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   <span style="border:none; background:transparent; color:#e6b76c;">Page <?= $page ?> / <?= $totalPages ?></span>
   <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
   <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
-  <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from World Knowledge text data for all NPCs">Build Relationships</button>
+        <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
+  <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
   <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
 </div>
 <div style="margin:10px 0; padding:10px 14px; background:rgba(230, 183, 108,0.08); border:1px solid rgba(230, 183, 108,0.25); border-radius:8px; font-size:12.5px; color:#cfd9ea; line-height:1.5;">
@@ -2467,6 +3225,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     if ($mtmOverride !== null) {
         $mtmEnabled = $mtmOverride;
     }
+
+    // Individual memory bank is NPC-only (no profile inheritance).
+    $imbEnabled = stobeUiResolveIndividualMemoryEnabled($extTmp);
     
     // Background Life Commands: check extended_data override, otherwise inherit from profile
     $blcEnabled = $profileMeta['blc']; // default to profile
@@ -2479,17 +3240,29 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     if (array_key_exists('gps_track', $metaTmp) && $metaTmp['gps_track'] !== null && $metaTmp['gps_track'] !== '') {
         $gpsEnabled = !empty($metaTmp['gps_track']);
     }
+    $npcNameCard = strval($row["npc_name"] ?? '');
+    $portraitUrl = stobe_ui_resolve_portrait_url($metaTmp, $webRoot);
+    $portraitInitial = stobe_ui_portrait_fallback_char($npcNameCard);
+    $isPlayerFactionNpc = stobeUiNpcIsInPlayerFaction($row);
+    $currentActionCard = strtolower(trim(strval($metaTmp['current_action'] ?? ($row['current_action'] ?? ''))));
+    $isDeadCard = ($currentActionCard === 'dead');
     
     ?>
-    <div class="npc-card" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>">
+    <div class="npc-card<?= $isPlayerFactionNpc ? ' npc-card-player-faction' : '' ?><?= $isDeadCard ? ' npc-card-dead' : '' ?>" id="npc_card_<?= htmlspecialchars($row["id"]) ?>" data-id="<?= htmlspecialchars($row["id"]) ?>" data-player-faction="<?= $isPlayerFactionNpc ? '1' : '0' ?>" data-current-action="<?= htmlspecialchars($currentActionCard) ?>">
             <div class="npc-title">
             <div class="npc-title-left"><?php 
                 $levelDisp2 = '';
                 if (isset($metaTmp['stats']) && is_array($metaTmp['stats']) && isset($metaTmp['stats']['level'])) {
                     $levelDisp2 = ' ('.intval($metaTmp['stats']['level']).')';
                 }
-                ?><span class="npc-name"><?= htmlspecialchars(($row["npc_name"] ?? '').$levelDisp2) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
+                ?><span class="npc-name"><?= htmlspecialchars($npcNameCard.$levelDisp2) ?></span> <?php $gch = gender_icon_char($row['gender'] ?? ''); $gcl = gender_icon_class($row['gender'] ?? ''); if ($gch!==''): ?><span class="npc-gender-icon <?= htmlspecialchars($gcl) ?>" title="<?= htmlspecialchars($row['gender'] ?? '') ?>"><?= $gch ?></span><?php endif; ?><?php if (!empty($dynEnabled)): ?><span class="npc-dyn-icon" title="Dynamic profile enabled">&#x267B;&#xFE0F;</span><?php endif; ?><?php if (!empty($mtmEnabled)): ?><span class="npc-mtm-icon" title="Middle-term memory enabled">&#x1F4C3;</span><?php endif; ?><?php if (!empty($imbEnabled)): ?><span class="npc-imb-icon" title="Individual memory bank enabled">&#x1F9E0;</span><?php endif; ?><?php if (!empty($blcEnabled)): ?><span class="npc-blc-icon" title="Background life commands enabled">&#x1F3AE;</span><?php endif; ?><?php if (!empty($gpsEnabled)): ?><span class="npc-gps-icon" title="GPS track enabled">&#x1F4CD;</span><?php endif; ?></div>
             <div class="npc-title-actions">
+                <?php if ($isDeadCard): ?>
+                <span class="npc-dead-badge" title="Current action: dead">Dead</span>
+                <?php endif; ?>
+                <?php if ($isPlayerFactionNpc): ?>
+                <span class="npc-player-faction-badge" title="Aligned with the player faction">Player Faction</span>
+                <?php endif; ?>
                 <?php if ($tagsDisp !== ''): ?>
                 <span class="npc-tags-label">Tags:</span>
                 <span class="npc-tags-top" title="Use Search to filter by these tags: <?= htmlspecialchars($tagsDisp) ?>"><?= htmlspecialchars($tagsDisp) ?></span>
@@ -2501,6 +3274,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         </div>
         <div class="npc-divider"></div>
         <div class="npc-row">
+            <div class="npc-portrait-col">
+                <?php if ($portraitUrl !== ''): ?>
+                <img class="npc-portrait-img" src="<?= htmlspecialchars($portraitUrl) ?>" alt="<?= htmlspecialchars($npcNameCard) ?> portrait" loading="lazy">
+                <?php else: ?>
+                <div class="npc-portrait-fallback"><?= htmlspecialchars($portraitInitial) ?></div>
+                <?php endif; ?>
+            </div>
             <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
@@ -2615,7 +3395,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       <h2 class="modal-title">NPC History</h2>
       <div class="modal-actions">
         <button id="history_close" class="btn-cancel">Close</button>
-        <button id="history_generation" class="btn-cancel" title="Note: Will do a LLM request.">Evolution report (AI request)</button>
       </div>
     </div>
     <div class="modal-body" style="height:75vh; display:flex; gap:10px;">
@@ -2640,7 +3419,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <!-- Info Box -->
         <div style="background:#2a2a3a; border:1px solid #5a5a6a; border-radius:8px; padding:12px; margin-bottom:16px; text-align:left;">
           <div style="color:#9fb1c9; font-size:0.85em; line-height:1.4;">
-            Building runs in the background while you play. You can adjust any NPC individually by clicking their profile and editing <strong>Relationship Affinities</strong>.
+            Building runs in the background while you play, using each NPC's recent event history as baseline evidence. You can adjust any NPC individually by clicking their profile and editing <strong>Relationship Affinities</strong>.
           </div>
         </div>
 
@@ -2717,8 +3496,173 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 <script>
 (function(){
   const PROFILES_BY_ID = <?= json_encode($profilesById ?? [], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PROFILE_OPTIONS = <?= json_encode($profileOptions ?? [], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_NAME = <?= json_encode(strtolower($playerFactionName), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_ID = <?= json_encode(strtolower($playerFactionId), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_MEMBERS = <?= json_encode(array_values(stobeUiGetPlayerFactionMemberSet()), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_MEMBER_SET = (() => {
+    const set = Object.create(null);
+    (PLAYER_FACTION_MEMBERS || []).forEach((name) => {
+      const key = String(name || '').trim().toLowerCase();
+      if (key) {
+        set[key] = true;
+      }
+    });
+    return set;
+  })();
   const modal = document.getElementById('npc_modal');
   const iframe = document.getElementById('npc_modal_iframe');
+  function stobeParseFactionIdentity(rawFaction){
+    const raw = String(rawFaction || '').trim();
+    if (!raw) {
+      return { name: '', id: '' };
+    }
+
+    let name = raw;
+    let id = '';
+    let match = raw.match(/^(.*?)\s*\[\[([^\]]+)\]\]\s*$/u);
+    if (!match) {
+      match = raw.match(/^(.*?)\s*\[([^\]]+)\]\s*$/u);
+    }
+    if (match) {
+      const parsedName = String(match[1] || '').trim();
+      const parsedId = String(match[2] || '').trim();
+      if (parsedId) {
+        id = parsedId;
+        name = parsedName || raw;
+      }
+    }
+
+    name = String(name)
+      .replace(/\s*\[\[[^\]]+\]\]\s*$/u, '')
+      .replace(/\s*\[[^\]]+\]\s*$/u, '')
+      .trim();
+
+    const nameLower = name.toLowerCase();
+    if (nameLower === 'unknown' || nameLower === 'neutral' || nameLower === 'none' || nameLower === 'n/a') {
+      name = '';
+    }
+
+    return { name, id };
+  }
+  function stobePayloadMetadataObject(payload){
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    const rawMeta = data.metadata;
+    if (rawMeta && typeof rawMeta === 'object') {
+      return rawMeta;
+    }
+    if (typeof rawMeta === 'string' && rawMeta.trim() !== '') {
+      try {
+        const parsed = JSON.parse(rawMeta);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      } catch (_e) {}
+    }
+    return {};
+  }
+  function stobeExtractFactionIdentityFromPayload(payload){
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    const directIdentity = stobeParseFactionIdentity(data.faction || '');
+    const meta = stobePayloadMetadataObject(data);
+
+    let factionName = String(directIdentity.name || '').trim();
+    let factionId = String(directIdentity.id || '').trim();
+
+    if (!factionName) {
+      const metaFaction = String(meta.faction || '').trim();
+      if (metaFaction) {
+        factionName = stobeParseFactionIdentity(metaFaction).name;
+      }
+    }
+    if (!factionId) {
+      factionId = String(meta.faction_id || meta.factionID || '').trim();
+    }
+
+    return { name: factionName, id: factionId };
+  }
+  function stobePayloadIsPlayerFaction(payload){
+    const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
+    const playerFactionId = String(PLAYER_FACTION_ID || '').trim();
+    const npcFaction = stobeExtractFactionIdentityFromPayload(payload);
+    const npcFactionName = String(npcFaction.name || '').trim().toLowerCase();
+    const npcFactionId = String(npcFaction.id || '').trim().toLowerCase();
+
+    if (playerFactionId && npcFactionId) {
+      return playerFactionId === npcFactionId;
+    }
+    if (playerFactionName && npcFactionName) {
+      return playerFactionName === npcFactionName;
+    }
+    const npcName = String((payload && (payload.npc_name || payload.name)) || '').trim().toLowerCase();
+    if (npcName && PLAYER_FACTION_MEMBER_SET[npcName]) {
+      return true;
+    }
+    return false;
+  }
+  function stobeApplyPlayerFactionCardState(card, payload){
+    if (!card) {
+      return;
+    }
+    const isPlayerFaction = stobePayloadIsPlayerFaction(payload);
+    card.classList.toggle('npc-card-player-faction', !!isPlayerFaction);
+    card.setAttribute('data-player-faction', isPlayerFaction ? '1' : '0');
+    const actions = card.querySelector('.npc-title-actions');
+    if (!actions) {
+      return;
+    }
+    let badge = actions.querySelector('.npc-player-faction-badge');
+    if (isPlayerFaction) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'npc-player-faction-badge';
+        badge.title = 'Aligned with the player faction';
+        badge.textContent = 'Player Faction';
+        actions.prepend(badge);
+      }
+    } else if (badge) {
+      badge.remove();
+    }
+  }
+  function stobeExtractCurrentActionState(payload){
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    if (Object.prototype.hasOwnProperty.call(data, 'current_action')) {
+      return String(data.current_action || '').trim().toLowerCase();
+    }
+    const meta = stobePayloadMetadataObject(data);
+    if (Object.prototype.hasOwnProperty.call(meta, 'current_action')) {
+      return String(meta.current_action || '').trim().toLowerCase();
+    }
+    return null;
+  }
+  function stobeApplyCardActionState(card, payload){
+    if (!card) {
+      return;
+    }
+    const actionState = stobeExtractCurrentActionState(payload);
+    if (actionState === null) {
+      return;
+    }
+    const isDead = actionState === 'dead';
+    card.classList.toggle('npc-card-dead', isDead);
+    card.setAttribute('data-current-action', actionState);
+    const actions = card.querySelector('.npc-title-actions');
+    if (!actions) {
+      return;
+    }
+    let badge = actions.querySelector('.npc-dead-badge');
+    if (isDead) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'npc-dead-badge';
+        badge.title = 'Current action: dead';
+        badge.textContent = 'Dead';
+        actions.prepend(badge);
+      }
+    } else if (badge) {
+      badge.remove();
+    }
+  }
   function openModal(url){
     iframe.src = url;
     modal.style.display = 'flex';
@@ -2991,7 +3935,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     const listBox = document.getElementById('history_list');
     const detailBox = document.getElementById('history_detail');
     const closeBtn = document.getElementById('history_close');
-    const reportBtn = document.getElementById('history_generation');
 
     const LABELS = {
 
@@ -3000,6 +3943,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       gender: 'Gender',
       race: 'Race',
       voiceid: 'Voice ID',
+      faction: 'Faction',
       npc_static_bio: 'Backstory',
       appearance: 'Appearance',
       personality: 'Personality',
@@ -3018,15 +3962,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     };
     function close(){ if (overlay) overlay.style.display='none'; }
     if (closeBtn) closeBtn.addEventListener('click', function(e){ e.preventDefault(); close(); });
-    if (reportBtn) reportBtn.addEventListener('click', function(e){ window.open("npc_report.php?npcid="+ String(window.CURRENT_NPC_ID||'').trim()) });
     if (overlay) overlay.addEventListener('click', function(e){ if (e.target===overlay) close(); });
     function renderDetail(entry, prev){
       if (!entry){ detailBox.innerHTML = '<div style="color:#9fb1c9">No data</div>'; return; }
       const f = entry.fields||{}; const prevF = (prev && prev.fields) ? prev.fields : {};
-      const order = ['npc_name','profile_id','gender','race','voiceid','npc_static_bio','appearance','personality','relationships','occupation','skills','speechstyle','goals','world_knowledge_tags','emote_moods','prompt_head','dynamic_profile','npc_favorite','lock_profile','tags'];
+      const order = ['npc_name','profile_id','gender','race','voiceid','faction','npc_static_bio','appearance','personality','relationships','occupation','skills','speechstyle','goals','world_knowledge_tags','emote_moods','prompt_head','dynamic_profile','npc_favorite','lock_profile','tags'];
       let html = '';
       html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">';
-      html += '<div style="color:#cfd9ea;">'+(entry.when_tamrielic || (entry.created?('Created '+entry.created):'Unknown time'))+(entry.created?(' <span style="color:#9fb1c9">('+entry.created+')</span>'):'')+'</div>';
+      html += '<div style="color:#cfd9ea;">'+(entry.when_tamrielic || (entry.gamets ? ('GameTS '+String(entry.gamets)) : 'Unknown in-game time'))+'</div>';
       html += '<button class="btn-restore-history" data-history-id="'+String(entry.history_id||'')+'" style="background:#e6b76c; color:#111; border:1px solid #e6b76c; border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:700;">Restore this version</button>';
       html += '</div>';
       html += '<div style="display:grid; grid-template-columns: 220px 1fr; gap:6px;">';
@@ -3095,9 +4038,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             entries.forEach((e, idx)=>{
               const div = document.createElement('div');
               div.style.border='1px solid #4a4a4a'; div.style.borderRadius='8px'; div.style.padding='8px'; div.style.cursor='pointer'; div.style.marginBottom='6px';
-              const label = e.when_tamrielic || (e.created?('Created '+e.created):('Snapshot #'+String(e.history_id||idx+1)));
-              const second = e.created?('<div style="color:#9fb1c9; font-size:11px;">'+e.created+'</div>') : '';
-              div.innerHTML = '<div style="font-weight:700; color:#e9efff;">'+label+'</div>'+second;
+              const label = e.when_tamrielic || (e.gamets ? ('GameTS '+String(e.gamets)) : ('Snapshot #'+String(e.history_id||idx+1)));
+              div.innerHTML = '<div style="font-weight:700; color:#e9efff;">'+label+'</div>';
               div.addEventListener('click', function(){
                 listBox.querySelectorAll('.active').forEach(n=>{ n.classList.remove('active'); n.style.background=''; });
                 this.classList.add('active'); this.style.background='#333333';
@@ -3335,6 +4277,122 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     window.bindNpcBulkDelete = bindBulk;
     bindBulk(document.getElementById('npc_bulk_delete_btn'));
   })();
+  // Bulk profile switch wiring
+  (function(){
+    const profileOptions = Array.isArray(PROFILE_OPTIONS) ? PROFILE_OPTIONS : [];
+    function escHtml(v){
+      return String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+    }
+    function buildOptions(selectedValue){
+      const selected = String(selectedValue || '');
+      let html = '';
+      profileOptions.forEach(function(pr){
+        const id = String(pr && pr.id ? pr.id : '');
+        if (!id) return;
+        const label = String(pr && pr.label ? pr.label : ('Profile #' + id));
+        const sel = (id === selected) ? ' selected' : '';
+        html += '<option value="' + escHtml(id) + '"' + sel + '>' + escHtml(label) + '</option>';
+      });
+      return html;
+    }
+    function bindBulkSwitch(btn){
+      if (!btn) return;
+      btn.addEventListener('click', function(){
+        if (!profileOptions.length) { alert('No profiles found.'); return; }
+        const filterSel = document.getElementById('npc_profile_filter');
+        const sourcePref = (filterSel && filterSel.value) ? String(filterSel.value) : String((profileOptions[0] && profileOptions[0].id) || '');
+        let targetPref = '';
+        for (let i = 0; i < profileOptions.length; i++) {
+          const pid = String(profileOptions[i] && profileOptions[i].id ? profileOptions[i].id : '');
+          if (pid !== '' && pid !== sourcePref) { targetPref = pid; break; }
+        }
+        if (!targetPref) targetPref = sourcePref;
+
+        const box = document.createElement('div');
+        box.style.position='fixed'; box.style.inset='0'; box.style.zIndex='10050'; box.style.display='flex'; box.style.alignItems='center'; box.style.justifyContent='center'; box.style.background='rgba(0,0,0,0.65)';
+        box.innerHTML = '<div style="background:#2a2a2a; border:1px solid #4a4a4a; border-radius:10px; padding:16px; max-width:560px; width:92%; color:#e9efff;">\
+          <div style="font-weight:700; color:#e6b76c; margin-bottom:8px;">Mass Switch NPC Profiles</div>\
+          <div style="font-size:13px; color:#cfd9ea; margin-bottom:12px;">Move every NPC currently on one profile to another profile in one pass. The Narrator is always excluded.</div>\
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:8px;">\
+            <label style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:#cfd9ea;">From profile\
+              <select id="bulk_switch_source" style="padding:8px; border-radius:6px; border:1px solid #4a4a4a; background:#2a2a2a; color:#e9efff;">' + buildOptions(sourcePref) + '</select>\
+            </label>\
+            <label style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:#cfd9ea;">To profile\
+              <select id="bulk_switch_target" style="padding:8px; border-radius:6px; border:1px solid #4a4a4a; background:#2a2a2a; color:#e9efff;">' + buildOptions(targetPref) + '</select>\
+            </label>\
+          </div>\
+          <label style="display:flex; align-items:center; gap:8px; margin:8px 0 12px 0; color:#cfd9ea; font-size:13px;"><input id="bulk_switch_include_locked" type="checkbox" /> Include locked NPCs</label>\
+          <label style="display:block; font-size:13px; margin:6px 0; color:#cfd9ea;">Type <b style="color:#ffd166">Switch</b> to confirm:</label>\
+          <input id="bulk_switch_confirm" type="text" style="width:100%; padding:8px; border-radius:6px; border:1px solid #4a4a4a; background:#2a2a2a; color:#e9efff;"/>\
+          <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">\
+            <button id="bulk_switch_cancel" class="btn-cancel">Cancel</button>\
+            <button id="bulk_switch_ok" class="btn-rel-build" disabled>Switch Profiles</button>\
+          </div></div>';
+        document.body.appendChild(box);
+
+        const sourceEl = box.querySelector('#bulk_switch_source');
+        const targetEl = box.querySelector('#bulk_switch_target');
+        const includeLockedEl = box.querySelector('#bulk_switch_include_locked');
+        const confirmEl = box.querySelector('#bulk_switch_confirm');
+        const okEl = box.querySelector('#bulk_switch_ok');
+        const cancelEl = box.querySelector('#bulk_switch_cancel');
+
+        function updateState(){
+          const confirmOk = String(confirmEl.value || '').trim() === 'Switch';
+          const hasSource = !!(sourceEl && sourceEl.value);
+          const hasTarget = !!(targetEl && targetEl.value);
+          const different = hasSource && hasTarget && String(sourceEl.value) !== String(targetEl.value);
+          okEl.disabled = !(confirmOk && hasSource && hasTarget && different);
+        }
+        confirmEl.addEventListener('input', updateState);
+        sourceEl.addEventListener('change', updateState);
+        targetEl.addEventListener('change', updateState);
+        updateState();
+        confirmEl.focus();
+
+        cancelEl.addEventListener('click', function(){ document.body.removeChild(box); });
+        okEl.addEventListener('click', async function(){
+          okEl.disabled = true;
+          try {
+            const fd = new FormData();
+            fd.append('bulk_switch_profile', '1');
+            fd.append('source_profile_id', String(sourceEl.value || ''));
+            fd.append('target_profile_id', String(targetEl.value || ''));
+            fd.append('include_locked', includeLockedEl && includeLockedEl.checked ? '1' : '0');
+            fd.append('confirm', String(confirmEl.value || ''));
+            const res = await fetch('npc_master.php', { method:'POST', body: fd });
+            let j = {};
+            try { j = await res.json(); } catch(_){ j = { ok:false, error:'Invalid JSON response' }; }
+            document.body.removeChild(box);
+            if (j && j.ok){
+              let msg = 'Switched ' + String(j.updated || 0) + ' NPCs';
+              if (j.source_profile_label && j.target_profile_label) {
+                msg += ' (' + String(j.source_profile_label) + ' -> ' + String(j.target_profile_label) + ')';
+              }
+              if (!j.include_locked && Number(j.skipped_locked || 0) > 0) {
+                msg += '; skipped ' + String(j.skipped_locked) + ' locked';
+              }
+              try {
+                const toast = document.getElementById('toast');
+                if (toast) {
+                  toast.querySelector('.message').textContent = msg;
+                  toast.classList.add('show');
+                  setTimeout(() => toast.classList.remove('show'), 2400);
+                }
+              } catch(_){}
+              refreshList(1);
+            } else {
+              alert('Mass switch failed: ' + (j && j.error ? j.error : 'Unknown'));
+            }
+          } catch(_e){
+            okEl.disabled = false;
+          }
+        });
+      });
+    }
+    window.bindNpcBulkSwitchProfile = bindBulkSwitch;
+    bindBulkSwitch(document.getElementById('npc_bulk_switch_profile_btn'));
+  })();
   let listAbort = null;
   async function refreshList(page){
     const params = new URLSearchParams(window.location.search);
@@ -3350,9 +4408,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       const fav = (document.getElementById('npc_filter_fav_top')||document.getElementById('npc_filter_fav'));
       const dyn = (document.getElementById('npc_filter_dyn_top')||document.getElementById('npc_filter_dyn'));
       const mtm = (document.getElementById('npc_filter_mtm_top')||document.getElementById('npc_filter_mtm'));
+      const locked = (document.getElementById('npc_filter_lock_top')||document.getElementById('npc_filter_lock'));
+      const playerFaction = (document.getElementById('npc_filter_pf_top')||document.getElementById('npc_filter_pf'));
       params.set('fav', fav && fav.checked ? '1' : '');
       params.set('dyn', dyn && dyn.checked ? '1' : '');
       params.set('mtm', mtm && mtm.checked ? '1' : '');
+      params.set('lock', locked && locked.checked ? '1' : '');
+      params.set('pf', playerFaction && playerFaction.checked ? '1' : '');
     } catch(_e){}
     params.set('alpha', 'asc');
     if (page) params.set('page', String(page));
@@ -3412,6 +4474,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       if (newCreate){ newCreate.addEventListener('click', function(){ openModal('npc_master.php?partial=1'); }); }
       // rebind bulk delete in refreshed DOM
       try { if (window.bindNpcBulkDelete) window.bindNpcBulkDelete(document.getElementById('npc_bulk_delete_btn')); } catch(_){}
+      // rebind mass switch in refreshed DOM
+      try { if (window.bindNpcBulkSwitchProfile) window.bindNpcBulkSwitchProfile(document.getElementById('npc_bulk_switch_profile_btn')); } catch(_){}
       // rebind Build Relationships button in refreshed DOM
       try { if (window.bindRelBuildButton) window.bindRelBuildButton(document.getElementById('rel_bulk_build_btn')); } catch(_){}
       // Hook pagination links to AJAX
@@ -3554,6 +4618,89 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         if (href) window.location.href = href;
     }
   });
+  function stobeParseObject(raw){
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    const txt = String(raw).trim();
+    if (!txt) return null;
+    try {
+      const parsed = JSON.parse(txt);
+      return (parsed && typeof parsed === 'object') ? parsed : null;
+    } catch(_e){
+      return null;
+    }
+  }
+  function stobePortraitInitial(name){
+    const v = String(name == null ? '' : name).trim();
+    if (!v) return '?';
+    const first = v.charAt(0).toUpperCase();
+    return first || '?';
+  }
+  function stobeResolvePortraitUrl(payload){
+    if (!payload || typeof payload !== 'object') return '';
+    const metadata = stobeParseObject(payload.metadata);
+    const candidates = [];
+    const pushCandidate = (val) => {
+      const s = String(val == null ? '' : val).trim();
+      if (s) candidates.push(s);
+    };
+
+    if (metadata && typeof metadata === 'object') {
+      if (metadata.portrait && typeof metadata.portrait === 'object') {
+        pushCandidate(metadata.portrait.web_path);
+        pushCandidate(metadata.portrait.url);
+        pushCandidate(metadata.portrait.path);
+      }
+      pushCandidate(metadata.portrait_url);
+      pushCandidate(metadata.portrait_path);
+    }
+    if (payload.portrait && typeof payload.portrait === 'object') {
+      pushCandidate(payload.portrait.web_path);
+      pushCandidate(payload.portrait.url);
+      pushCandidate(payload.portrait.path);
+    }
+    pushCandidate(payload.portrait_url);
+    pushCandidate(payload.portrait_path);
+
+    if (!candidates.length) return '';
+    let candidate = String(candidates[0] || '').replace(/\\/g, '/');
+    if (!candidate) return '';
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    if (candidate.indexOf('/StobeServer/') === 0) return candidate;
+    if (candidate.indexOf('/data/portraits/') === 0) return '/StobeServer' + candidate;
+    if (candidate.indexOf('data/portraits/') === 0) return '/StobeServer/' + candidate.replace(/^\/+/, '');
+    if (candidate.charAt(0) === '/') return candidate;
+    return '/' + candidate;
+  }
+  function stobeApplyPortraitToCard(card, payload){
+    if (!card) return;
+    const row = card.querySelector('.npc-row');
+    if (!row) return;
+    let portraitCol = row.querySelector('.npc-portrait-col');
+    if (!portraitCol){
+      portraitCol = document.createElement('div');
+      portraitCol.className = 'npc-portrait-col';
+      const fields = row.querySelector('.npc-fields');
+      if (fields) row.insertBefore(portraitCol, fields);
+      else row.prepend(portraitCol);
+    }
+    portraitCol.textContent = '';
+    const npcName = String((payload && payload.npc_name) || '');
+    const portraitUrl = stobeResolvePortraitUrl(payload || {});
+    if (portraitUrl){
+      const img = document.createElement('img');
+      img.className = 'npc-portrait-img';
+      img.loading = 'lazy';
+      img.src = portraitUrl;
+      img.alt = npcName ? (npcName + ' portrait') : 'NPC portrait';
+      portraitCol.appendChild(img);
+      return;
+    }
+    const fallback = document.createElement('div');
+    fallback.className = 'npc-portrait-fallback';
+    fallback.textContent = stobePortraitInitial(npcName);
+    portraitCol.appendChild(fallback);
+  }
   // Receive save events from iframe and update the card inline
   window.addEventListener('message', async function(e){
     const d = e.data || {};
@@ -3569,6 +4716,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
           div.className = 'npc-card';
           div.id = 'npc_card_'+id;
           div.setAttribute('data-id', id);
+          div.setAttribute('data-player-faction', '0');
+          div.setAttribute('data-current-action', '');
           div.innerHTML = `
             <div class="npc-title">
               <div class="npc-title-left"><span class="npc-name"></span></div>
@@ -3581,6 +4730,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             </div>
             <div class="npc-divider"></div>
             <div class="npc-row">
+              <div class="npc-portrait-col">
+                <div class="npc-portrait-fallback">?</div>
+              </div>
               <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"></span></div>
@@ -3607,6 +4759,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         setText('.npc-gender', data.gender);
         setText('.npc-race', data.race);
         setText('.npc-voiceid', data.voiceid);
+        stobeApplyPlayerFactionCardState(card, data);
+        stobeApplyCardActionState(card, data);
+        stobeApplyPortraitToCard(card, data);
         try {
           const normalizeObj = (raw) => {
             if (!raw) return null;
@@ -3771,6 +4926,35 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             let icon = left.querySelector('.npc-mtm-icon');
             if (mtm){ if (!icon){ icon = document.createElement('span'); icon.className='npc-mtm-icon'; icon.title='Middle-term memory enabled'; icon.textContent='\u{1F4C3}'; left.appendChild(icon); } }
             else { if (icon){ icon.remove(); } }
+          }
+        } catch(_e){}
+        // Toggle Individual memory bank icon based on extended_data flag.
+        try {
+          const left = card.querySelector('.npc-title-left');
+          if (left){
+            let imbEnabled = 0;
+            const rawExt = String(data.extended_data || '').trim();
+            if (rawExt) {
+              try {
+                const ext = JSON.parse(rawExt);
+                if (ext && typeof ext === 'object' && Object.prototype.hasOwnProperty.call(ext, 'individual_memory_enabled')) {
+                  const raw = ext.individual_memory_enabled;
+                  imbEnabled = (raw === true || Number(raw) === 1 || String(raw).toLowerCase() === 'true') ? 1 : 0;
+                }
+              } catch(_e){}
+            }
+            let icon = left.querySelector('.npc-imb-icon');
+            if (imbEnabled){
+              if (!icon){
+                icon = document.createElement('span');
+                icon.className = 'npc-imb-icon';
+                icon.title = 'Individual memory bank enabled';
+                icon.textContent = '\u{1F9E0}';
+                left.appendChild(icon);
+              }
+            } else if (icon) {
+              icon.remove();
+            }
           }
         } catch(_e){}
       }

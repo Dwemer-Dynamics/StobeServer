@@ -3,11 +3,10 @@
 /**
  * Middle-term memory generation for StobeServer.
  *
- * Herika-style behavior:
- * - Runs periodically from live traffic (no dedicated daemon required).
- * - Builds summary chunks from new eventlog rows for enabled NPCs.
- * - Persists summary rows into memory_summary.
- * - Appends latest summaries into core_npc.extended_data.middle_term_memory.
+ * Herika-aligned behavior:
+ * - Runs periodically from live traffic.
+ * - Consumes completed global memory_summary rows (not raw eventlog rows).
+ * - Updates NPC extended_data.middle_term_memory as the source of truth.
  */
 
 function stobeMiddleTermNormalizeKeyToken(string $value): string
@@ -23,6 +22,7 @@ function stobeMiddleTermNormalizeKeyToken(string $value): string
 
 function stobeMiddleTermCursorKey(string $npcName): string
 {
+    // Legacy conf cursor key retained for backwards compatibility.
     return 'MIDDLETERM_CURSOR_ROWID_' . stobeMiddleTermNormalizeKeyToken($npcName);
 }
 
@@ -44,17 +44,6 @@ function stobeMiddleTermAllowedEventType(string $eventType): bool
     return !in_array($type, $blocked, true);
 }
 
-function stobeMiddleTermRunIntervalGamets(): int
-{
-    $minutes = getSettingInt('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', 10);
-    if ($minutes < 1) {
-        $minutes = 1;
-    } elseif ($minutes > 1440) {
-        $minutes = 1440;
-    }
-    return $minutes * 60;
-}
-
 function stobeMiddleTermShouldRunCycle(string $eventType, int $gamets): bool
 {
     if (!getSettingBool('MEMORY_ENABLED', true)) {
@@ -64,22 +53,8 @@ function stobeMiddleTermShouldRunCycle(string $eventType, int $gamets): bool
         return false;
     }
 
-    $lastRunTs = intval(getConfOpt('MIDDLETERM_LAST_RUN_TS', '0'));
-    $nowTs = time();
-    if ($lastRunTs > 0 && ($nowTs - $lastRunTs) < 15) {
-        return false;
-    }
-
     if ($gamets <= 0) {
         return false;
-    }
-
-    $lastRunGamets = intval(getConfOpt('MIDDLETERM_LAST_RUN_GAMETS', '0'));
-    if ($lastRunGamets > 0) {
-        $intervalGamets = stobeMiddleTermRunIntervalGamets();
-        if ($gamets >= $lastRunGamets && ($gamets - $lastRunGamets) < $intervalGamets) {
-            return false;
-        }
     }
 
     return true;
@@ -117,11 +92,22 @@ function stobeMiddleTermUnlock(): void
 
 function stobeMiddleTermNpcEnabled(array $npcData): bool
 {
+    $extended = normalizeCoreNpcExtendedData($npcData['extended_data'] ?? []);
+    foreach (['middle_term_enabled', 'MIDDLE_TERM_MEMORY_ENABLED'] as $key) {
+        if (!array_key_exists($key, $extended)) {
+            continue;
+        }
+        $raw = $extended[$key];
+        if ($raw !== '' && $raw !== null) {
+            return coerceBoolean($raw);
+        }
+    }
+
     return getNpcProfileBoolSetting(
         $npcData,
         ['middle_term_enabled', 'MIDDLE_TERM_MEMORY_ENABLED'],
         'MIDDLE_TERM_MEMORY_ENABLED',
-        true
+        false
     );
 }
 
@@ -137,50 +123,103 @@ function stobeMiddleTermFetchCandidates(int $limit = 64): array
         $limit = 256;
     }
 
+    // Fetch a bounded candidate set and apply enablement logic in PHP.
+    // This preserves profile-level fallback behavior in stobeMiddleTermNpcEnabled()
+    // instead of requiring per-NPC extended_data flags to be pre-seeded.
     return $db->fetchAll(
         "SELECT id, name, profile_id, metadata, extended_data, gamets_last_updated
          FROM core_npc
          WHERE COALESCE(TRIM(name), '') <> ''
-           AND LOWER(name) <> 'the narrator'
+            AND LOWER(name) <> 'the narrator'
          ORDER BY gamets_last_updated DESC, updated_at DESC
          LIMIT " . intval($limit)
     );
 }
 
-function stobeMiddleTermFetchNpcEventChunk(string $npcName, int $afterRowid, int $limit = 140): array
+function stobeMiddleTermFetchNpcSummaryChunk(string $npcName, array $npcData, int $afterGamets, int $limit = 100): array
 {
     $db = $GLOBALS['db'] ?? null;
-    if (!$db) {
+    if (
+        !$db
+        || !function_exists('stobeRegularMemoryTableAvailable')
+        || !stobeRegularMemoryTableAvailable()
+        || !function_exists('stobeRegularMemorySummaryTableAvailable')
+        || !stobeRegularMemorySummaryTableAvailable()
+    ) {
         return [];
     }
+
     $safeNpcName = normalizeParticipantNameToken($npcName);
     if ($safeNpcName === '') {
         return [];
     }
 
-    if ($limit < 10) {
-        $limit = 10;
-    } elseif ($limit > 400) {
-        $limit = 400;
+    if ($limit < 5) {
+        $limit = 5;
+    } elseif ($limit > 300) {
+        $limit = 300;
     }
 
-    $excludeTypes = "'prechat','setconf','status_msg','user_input','npc_snapshot','playerinfo'";
-    return $db->fetchAll(
-        "SELECT rowid, type, data, gamets, localts, ts, people, location
-         FROM eventlog
-         WHERE rowid > $1
-           AND type NOT IN ({$excludeTypes})
+    $peopleExact = json_encode([$safeNpcName], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($peopleExact) || trim($peopleExact) === '') {
+        $peopleExact = '["' . addslashes($safeNpcName) . '"]';
+    }
+
+    $jsonQuotedNpc = strtolower(json_encode($safeNpcName, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
+    if ($jsonQuotedNpc === '') {
+        $jsonQuotedNpc = '"' . strtolower($safeNpcName) . '"';
+    }
+
+    $scopeClause = '';
+    $params = [
+        max(0, $afterGamets),
+        $peopleExact,
+        $jsonQuotedNpc,
+    ];
+    if (function_exists('stobeRegularMemorySummaryScopeColumnAvailable') && stobeRegularMemorySummaryScopeColumnAvailable()) {
+        $individualEnabled = function_exists('stobeRegularMemoryIndividualEnabledForNpc')
+            ? stobeRegularMemoryIndividualEnabledForNpc($npcData)
+            : false;
+        if ($individualEnabled) {
+            $scopeClause = "AND LOWER(COALESCE(scope, '')) = LOWER($4)";
+            $params[] = $safeNpcName;
+        } else {
+            $scopeClause = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
+        }
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT
+            id,
+            people,
+            summary,
+            packed_message,
+            localts,
+            gamets_start,
+            gamets_end,
+            source_from_memory_id,
+            source_to_memory_id,
+            created_at
+         FROM memory_summary
+         WHERE summary IS NOT NULL
+           AND BTRIM(summary) <> ''
+           AND COALESCE(gamets_end, 0) > $1
            AND (
-                LOWER(COALESCE(people, '')) LIKE LOWER($2)
-                OR LOWER(COALESCE(data, '')) LIKE LOWER($2)
-           )
-         ORDER BY rowid ASC
+                LOWER(people) = LOWER($2)
+                OR POSITION($3 IN LOWER(COALESCE(people, ''))) > 0
+            )
+            {$scopeClause}
+         ORDER BY COALESCE(gamets_end, 0) DESC, created_at DESC, id DESC
          LIMIT " . intval($limit),
-        [
-            $afterRowid,
-            '%' . $safeNpcName . '%',
-        ]
+        $params
     );
+
+    if (!is_array($rows) || count($rows) === 0) {
+        return [];
+    }
+
+    // Herika query is newest-first, then consumed oldest->newest.
+    return array_values(array_reverse($rows));
 }
 
 function stobeMiddleTermLastSummaryFromExtended(array $npcData): string
@@ -191,84 +230,164 @@ function stobeMiddleTermLastSummaryFromExtended(array $npcData): string
         return '';
     }
 
-    $values = array_values($rawList);
-    $last = end($values);
-    if (!is_scalar($last) || $last === null) {
-        return '';
+    $maxGamets = stobeMiddleTermLastGametsFromExtended($npcData);
+    if ($maxGamets > 0) {
+        $entry = $rawList[strval($maxGamets)] ?? null;
+        if (is_scalar($entry) && $entry !== null) {
+            $text = trim(sanitizeForKenshi(strval($entry)));
+            if ($text !== '') {
+                return $text;
+            }
+        }
     }
-    return trim(sanitizeForKenshi(strval($last)));
+
+    $values = array_reverse(array_values($rawList));
+    foreach ($values as $entry) {
+        if (!is_scalar($entry) || $entry === null) {
+            continue;
+        }
+        $text = trim(sanitizeForKenshi(strval($entry)));
+        if ($text !== '') {
+            return $text;
+        }
+    }
+
+    return '';
 }
 
-function stobeMiddleTermBuildContextHistory(array $eventRows): string
+function stobeMiddleTermLastGametsFromExtended(array $npcData): int
 {
-    $lines = [];
-    foreach ($eventRows as $row) {
+    $extended = normalizeCoreNpcExtendedData($npcData['extended_data'] ?? []);
+    $rawList = $extended['middle_term_memory'] ?? [];
+    if (!is_array($rawList) || count($rawList) === 0) {
+        return 0;
+    }
+
+    $maxGamets = 0;
+    foreach ($rawList as $key => $entry) {
+        if (!is_scalar($entry) || $entry === null) {
+            continue;
+        }
+        $text = trim(sanitizeForKenshi(strval($entry)));
+        if ($text === '') {
+            continue;
+        }
+        $keyText = trim(strval($key));
+        if ($keyText === '' || preg_match('/^-?\d+$/', $keyText) !== 1) {
+            continue;
+        }
+        $candidate = intval($keyText);
+        if ($candidate > $maxGamets) {
+            $maxGamets = $candidate;
+        }
+    }
+
+    return max(0, $maxGamets);
+}
+
+function stobeMiddleTermBuildContextHistory(array $summaryRows): string
+{
+    $chunks = [];
+    foreach ($summaryRows as $row) {
         if (!is_array($row)) {
             continue;
         }
-        $line = stobeFormatEventHistoryLine($row, true);
-        if ($line === '') {
+        $summary = trim(sanitizeForKenshi(strval($row['summary'] ?? '')));
+        if ($summary === '') {
             continue;
         }
-        $lines[] = $line;
+        $gamets = intval($row['gamets_end'] ?? ($row['gamets_start'] ?? 0));
+        $chunks[] = "===\nMemory entry, date " . stobeGametsDateLabel($gamets) . "\n" . $summary;
     }
-    return implode("\n", $lines);
+
+    return implode("\n\n", $chunks);
 }
 
-function stobeMiddleTermGenerateSummary(string $npcName, array $npcData, array $eventRows): array
+function stobeMiddleTermResolvePromptTemplate(array $keys, string $fallback): string
+{
+    if (!function_exists('stobeGetPromptTemplateValue')) {
+        return $fallback;
+    }
+
+    foreach ($keys as $candidateKey) {
+        $key = trim(strval($candidateKey));
+        if ($key === '') {
+            continue;
+        }
+        $candidateValue = stobeGetPromptTemplateValue($key, '');
+        if (trim($candidateValue) !== '') {
+            return $candidateValue;
+        }
+    }
+
+    return $fallback;
+}
+
+function stobeMiddleTermGenerateSummary(string $npcName, array $npcData, array $summaryRows): array
 {
     $safeNpcName = normalizeParticipantNameToken($npcName);
     if ($safeNpcName === '') {
         return ['ok' => false, 'reason' => 'missing_npc_name'];
     }
-    if (count($eventRows) === 0) {
-        return ['ok' => false, 'reason' => 'no_event_rows'];
+    if (count($summaryRows) === 0) {
+        return ['ok' => false, 'reason' => 'no_summary_rows'];
     }
 
-    $history = stobeMiddleTermBuildContextHistory($eventRows);
+    $history = stobeMiddleTermBuildContextHistory($summaryRows);
     if ($history === '') {
         return ['ok' => false, 'reason' => 'empty_history'];
     }
 
     $previousSummary = stobeMiddleTermLastSummaryFromExtended($npcData);
 
-    $defaultSystemPrompt = "<middle_term_memory_summarizer>\n"
-        . "  <rule>You summarize longer-term narrative continuity for one Kenshi NPC.</rule>\n"
-        . "  <rule>Maintain strict in-world continuity. Do not invent events not present in the inputs.</rule>\n"
-        . "  <rule>Prefer compact continuity notes over verbose retelling.</rule>\n"
-        . "  <rule>Preserve major relationship shifts, injuries, faction conflicts, goals, and unresolved tensions.</rule>\n"
-        . "  <rule>Output plain text only, no XML wrappers or JSON.</rule>\n"
-        . "</middle_term_memory_summarizer>";
-    $systemPrompt = function_exists('stobeGetPromptTemplateValue')
-        ? stobeGetPromptTemplateValue('middleterm_memory_summarizer', $defaultSystemPrompt)
-        : $defaultSystemPrompt;
+    $defaultSystemPrompt
+        = "You are a long-term narrative continuity summarizer for an improvised Kenshi universe chronicle.\n"
+        . "- Always read ALL provided materials.\n"
+        . "- Treat any **Previous Context History Summary** as the canonical prior unless anything in the new Context History explicitly supersedes it.\n"
+        . "- Maintain in-universe tone and correct chronology. Do not invent facts outside the supplied context.\n"
+        . "- When combining prior and new histories, you may compress the earlier parts of the prior summary.\n"
+        . "- Maintain roughly 20-25 bullet points total in **Notable Events**. Older portions should be condensed into broader, grouped statements unless they describe major quest milestones, major character life events (e.g., death, intimacy, severe injury, transformation), or other pivotal story turns.\n"
+        . "- Preserve continuity and references to major quests even when compressing earlier material.";
+    $systemPrompt = stobeMiddleTermResolvePromptTemplate(
+        ['middleterm_narrative_summarizer', 'middleterm_memory_summarizer'],
+        $defaultSystemPrompt
+    );
 
-    $previousSummaryBlock = '';
+    $defaultRequestPrompt
+        = "Main character in this logbook is {HERIKA_NAME}.\n"
+        . "Task: Read **Context History** (newest session) and, if present, the **Previous Context History Summary** (prior canon). "
+        . "Integrate them to produce an updated broad narrative strokes summary that preserves continuity. Summary sections:\n\n"
+        . "- **Notable Events in Chronological Order:**\n"
+        . "  - Provide ~10 bullet points from earliest to latest, reflecting the story so far.\n"
+        . "  - Prefer facts already established in the previous summary; only revise if the new context clearly changes them.\n\n"
+        . "- **Current Quest Progression and background:**\n"
+        . "  - Name questlines, stages/milestones if stated, objectives completed/active, and motivations.\n"
+        . "When generating entries, ensure that {HERIKA_NAME} - the protagonist - is actively present in the scene. "
+        . "Any narrative content that occurs before {HERIKA_NAME}'s arrival or outside {HERIKA_NAME}'s perspective should be omitted, "
+        . "reflect only events {HERIKA_NAME} directly witness or participate in.\n"
+        . "If the resulting summary would exceed roughly 25 bullet points, merge or generalise older entries into broader grouped events. "
+        . "Always retain explicit entries for major quest milestones, major character life events, or turning points.";
+    $requestPromptTemplate = stobeMiddleTermResolvePromptTemplate(
+        ['middleterm_narrative_request', 'middleterm_memory_request'],
+        $defaultRequestPrompt
+    );
+    $requestPrompt = str_replace(['{HERIKA_NAME}', '#NPC_NAME#'], $safeNpcName, $requestPromptTemplate);
+    $requestPrompt = str_replace('#CONTEXT_HISTORY#', $history, $requestPrompt);
+    $requestPrompt = str_replace('#PREVIOUS_SUMMARY_BLOCK#', $previousSummary, $requestPrompt);
+
+    $messages = [];
+    $messages[] = ['role' => 'system', 'content' => $systemPrompt];
     if ($previousSummary !== '') {
-        $previousSummaryBlock = "  <previous_summary>" . stobePromptXmlEscape($previousSummary) . "</previous_summary>\n";
+        $messages[] = ['role' => 'user', 'content' => "# Previous Context History Summary:\n{$previousSummary}"];
     }
-    $defaultUserPrompt = "<middle_term_memory_request>\n"
-        . "  <npc_name>#NPC_NAME#</npc_name>\n"
-        . "#PREVIOUS_SUMMARY_BLOCK#"
-        . "  <context_history>#CONTEXT_HISTORY#</context_history>\n"
-        . "  <instruction>Create an updated continuity summary for this NPC using previous summary plus new context.</instruction>\n"
-        . "  <instruction>Keep it concise and durable for future prompt injection.</instruction>\n"
-        . "</middle_term_memory_request>";
-    $userPromptTemplate = function_exists('stobeGetPromptTemplateValue')
-        ? stobeGetPromptTemplateValue('middleterm_memory_request', $defaultUserPrompt)
-        : $defaultUserPrompt;
-    $userPrompt = strtr($userPromptTemplate, [
-        '#NPC_NAME#' => stobePromptXmlEscape($safeNpcName),
-        '#PREVIOUS_SUMMARY_BLOCK#' => $previousSummaryBlock,
-        '#CONTEXT_HISTORY#' => stobePromptXmlEscape($history),
-    ]);
-
-    $messages = [
-        ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user', 'content' => $userPrompt],
+    $messages[] = ['role' => 'user', 'content' => "# Context History\n{$history}"];
+    $messages[] = ['role' => 'user', 'content' => $requestPrompt];
+    $messages[] = [
+        'role' => 'user',
+        'content' => 'Begin your answer with `### Notable Events in Chronological Order` and complete sections as instructed.',
     ];
 
-    $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
+    $enginePath = $GLOBALS['ENGINE_PATH'] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
     require_once($enginePath . 'connector' . DIRECTORY_SEPARATOR . 'llm_dispatcher.php');
 
     $llmConfig = getLlmConfigForNpcPurpose($npcData, 'middleterm');
@@ -288,7 +407,6 @@ function stobeMiddleTermGenerateSummary(string $npcName, array $npcData, array $
     if ($summary === '') {
         return ['ok' => false, 'reason' => 'llm_empty'];
     }
-    $summary = truncatePromptValue($summary, 3500);
 
     return [
         'ok' => true,
@@ -297,68 +415,78 @@ function stobeMiddleTermGenerateSummary(string $npcName, array $npcData, array $
     ];
 }
 
-function stobeMiddleTermPersistSummary(string $npcName, array $npcData, array $eventRows, string $summary): bool
+function stobeMiddleTermPersistSummary(string $npcName, array $npcData, array $summaryRows, string $summary): bool
 {
     $safeNpcName = normalizeParticipantNameToken($npcName);
-    if ($safeNpcName === '' || trim($summary) === '') {
-        return false;
-    }
-    if (count($eventRows) === 0) {
+    if ($safeNpcName === '' || trim($summary) === '' || count($summaryRows) === 0) {
         return false;
     }
 
-    $first = $eventRows[0];
-    $last = $eventRows[count($eventRows) - 1];
-    $firstLocalTs = intval($first['localts'] ?? time());
-    $lastLocalTs = intval($last['localts'] ?? $firstLocalTs);
-    if ($firstLocalTs <= 0) {
-        $firstLocalTs = time();
-    }
+    $last = $summaryRows[count($summaryRows) - 1];
+    $lastLocalTs = intval($last['localts'] ?? time());
     if ($lastLocalTs <= 0) {
-        $lastLocalTs = $firstLocalTs;
+        $lastLocalTs = time();
     }
 
-    $periodStart = gmdate('Y-m-d H:i:s', $firstLocalTs);
-    $periodEnd = gmdate('Y-m-d H:i:s', $lastLocalTs);
-    $db = $GLOBALS['db'] ?? null;
-    if (!$db) {
-        return false;
+    $gametsEnd = intval($last['gamets_end'] ?? ($last['gamets_start'] ?? 0));
+    if ($gametsEnd < 0) {
+        $gametsEnd = 0;
     }
-
-    $peopleKey = json_encode([$safeNpcName], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($peopleKey) || trim($peopleKey) === '') {
-        $peopleKey = '["' . addslashes($safeNpcName) . '"]';
-    }
-
-    $db->exec(
-        "INSERT INTO memory_summary (people, summary, period_start, period_end, created_at)
-         VALUES ($1, $2, $3, $4, NOW())",
-        [
-            $peopleKey,
-            $summary,
-            $periodStart,
-            $periodEnd,
-        ]
-    );
 
     $npcId = intval($npcData['id'] ?? 0);
     if ($npcId <= 0) {
-        return true;
+        $lookup = getNpcData($safeNpcName);
+        if (is_array($lookup)) {
+            $npcId = intval($lookup['id'] ?? 0);
+            if (!is_array($npcData) || count($npcData) === 0) {
+                $npcData = $lookup;
+            }
+        }
+    }
+    if ($npcId <= 0) {
+        stobeLogWarn('Middle-term summary generated but NPC id missing for extended_data update', [
+            'npc_name' => $safeNpcName,
+            'gamets_end' => $gametsEnd,
+        ]);
+        return false;
     }
 
     $extended = normalizeCoreNpcExtendedData($npcData['extended_data'] ?? []);
-    $memoryList = $extended['middle_term_memory'] ?? [];
-    if (!is_array($memoryList)) {
-        $memoryList = [];
+    $existing = $extended['middle_term_memory'] ?? [];
+    $memoryMap = [];
+    if (is_array($existing)) {
+        foreach ($existing as $key => $entry) {
+            if (!is_scalar($entry) || $entry === null) {
+                continue;
+            }
+            $text = trim(sanitizeForKenshi(strval($entry)));
+            if ($text === '') {
+                continue;
+            }
+            $entryKey = strval($key);
+            if ($entryKey === '' || strtolower($entryKey) === 'null') {
+                $entryKey = strval(count($memoryMap) + 1);
+            }
+            $memoryMap[$entryKey] = truncatePromptValue($text, 3500);
+        }
     }
-    $memoryList[] = $summary;
-    if (count($memoryList) > 20) {
-        $memoryList = array_slice($memoryList, -20);
-    }
-    $extended['middle_term_memory'] = array_values($memoryList);
 
+    $summaryText = truncatePromptValue(trim(sanitizeForKenshi($summary)), 3500);
+    $newKey = strval($gametsEnd > 0 ? $gametsEnd : max($lastLocalTs, time()));
+    $memoryMap[$newKey] = $summaryText;
+
+    $extended['middle_term_memory'] = $memoryMap;
     updateNpcById($npcId, ['extended_data' => $extended]);
+
     return true;
+}
+
+function stobeRunMiddleTermDaemonEntrypoint(
+    int $timestamp,
+    int $gamets,
+    string $eventData = '[background_processor_tick]'
+): void {
+    stobeMaybeRunMiddleTermCycle('middleterm_daemon', $timestamp, $gamets, $eventData);
 }
 
 function stobeMaybeRunMiddleTermCycle(
@@ -376,15 +504,15 @@ function stobeMaybeRunMiddleTermCycle(
     }
 
     try {
-        $minEvents = 8;
-        $maxRows = 140;
-        $processed = false;
+        $processedCount = 0;
+        $maxRows = 100;
         $candidates = stobeMiddleTermFetchCandidates(64);
 
         foreach ($candidates as $candidate) {
             if (!is_array($candidate)) {
                 continue;
             }
+
             $npcName = normalizeParticipantNameToken(strval($candidate['name'] ?? ''));
             if ($npcName === '') {
                 continue;
@@ -398,20 +526,20 @@ function stobeMaybeRunMiddleTermCycle(
                 continue;
             }
 
-            $cursorKey = stobeMiddleTermCursorKey($npcName);
-            $cursorRowid = intval(getConfOpt($cursorKey, '0'));
-            $eventRows = stobeMiddleTermFetchNpcEventChunk($npcName, $cursorRowid, $maxRows);
-            if (count($eventRows) < $minEvents) {
+            $lastGamets = stobeMiddleTermLastGametsFromExtended($npcData);
+            $summaryRows = stobeMiddleTermFetchNpcSummaryChunk($npcName, $npcData, $lastGamets, $maxRows);
+            $requiredRows = $lastGamets > 0 ? 10 : 5;
+            if (count($summaryRows) < $requiredRows) {
                 continue;
             }
 
-            $gen = stobeMiddleTermGenerateSummary($npcName, $npcData, $eventRows);
+            $gen = stobeMiddleTermGenerateSummary($npcName, $npcData, $summaryRows);
             if (!boolval($gen['ok'] ?? false)) {
                 stobeLogWarn('Middle-term summary generation skipped', [
                     'npc_name' => $npcName,
                     'reason' => strval($gen['reason'] ?? 'unknown'),
-                    'event_rows' => count($eventRows),
-                    'cursor_rowid' => $cursorRowid,
+                    'summary_rows' => count($summaryRows),
+                    'last_gamets' => $lastGamets,
                 ]);
                 continue;
             }
@@ -421,47 +549,46 @@ function stobeMaybeRunMiddleTermCycle(
                 continue;
             }
 
-            $persisted = stobeMiddleTermPersistSummary($npcName, $npcData, $eventRows, $summary);
+            $persisted = stobeMiddleTermPersistSummary($npcName, $npcData, $summaryRows, $summary);
             if (!$persisted) {
                 stobeLogWarn('Middle-term summary persist failed', [
                     'npc_name' => $npcName,
-                    'event_rows' => count($eventRows),
-                    'cursor_rowid' => $cursorRowid,
+                    'summary_rows' => count($summaryRows),
+                    'last_gamets' => $lastGamets,
                 ]);
                 continue;
             }
 
-            $lastRow = $eventRows[count($eventRows) - 1];
-            $lastRowid = intval($lastRow['rowid'] ?? 0);
-            if ($lastRowid > 0) {
-                setConfOpt($cursorKey, strval($lastRowid), true);
-            }
+            $lastSummaryRow = $summaryRows[count($summaryRows) - 1];
+            $lastSummaryGamets = intval($lastSummaryRow['gamets_end'] ?? 0);
 
             stobeLogInfo('Middle-term summary generated', [
                 'npc_name' => $npcName,
-                'event_rows' => count($eventRows),
-                'cursor_before' => $cursorRowid,
-                'cursor_after' => $lastRowid,
+                'summary_rows' => count($summaryRows),
+                'required_rows' => $requiredRows,
+                'cursor_before' => $lastGamets,
+                'cursor_after' => $lastSummaryGamets,
                 'summary_length' => strlen($summary),
                 'history_length' => intval($gen['history_length'] ?? 0),
                 'event_type' => $eventType,
                 'gamets' => $gamets,
             ]);
 
-            $processed = true;
-            break; // One NPC per cycle to keep latency bounded.
+            $processedCount++;
         }
 
-        setConfOpt('MIDDLETERM_LAST_RUN_TS', strval(time()), true);
-        if ($gamets > 0) {
-            setConfOpt('MIDDLETERM_LAST_RUN_GAMETS', strval($gamets), true);
-        }
-
-        if (!$processed) {
+        if ($processedCount === 0) {
             stobeLogDebug('Middle-term cycle completed with no eligible NPC work', [
                 'event_type' => $eventType,
                 'gamets' => $gamets,
                 'candidate_count' => count($candidates),
+            ]);
+        } else {
+            stobeLogInfo('Middle-term cycle processed enabled NPCs', [
+                'event_type' => $eventType,
+                'gamets' => $gamets,
+                'candidate_count' => count($candidates),
+                'processed_count' => $processedCount,
             ]);
         }
     } catch (Throwable $exception) {

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS eventlog (
     localts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()),
     ts BIGINT,
     people TEXT,
-    location TEXT
+    location TEXT,
+    geo JSONB DEFAULT '{}'::jsonb
 );
 
 CREATE INDEX IF NOT EXISTS idx_eventlog_type ON eventlog (type);
@@ -141,6 +142,17 @@ CREATE TABLE IF NOT EXISTS descriptions_custom (
     description TEXT
 );
 
+CREATE TABLE IF NOT EXISTS description_images (
+    stringid VARCHAR(128) PRIMARY KEY,
+    image_path TEXT NOT NULL DEFAULT '',
+    image_hash VARCHAR(64) DEFAULT '',
+    format VARCHAR(16) DEFAULT '',
+    width INT DEFAULT 0,
+    height INT DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_description_images_stringid_lower ON description_images (LOWER(stringid));
+
 CREATE OR REPLACE VIEW combined_descriptions AS
 SELECT
     c.stringid,
@@ -177,6 +189,57 @@ CREATE TABLE IF NOT EXISTS location_zones (
 CREATE INDEX IF NOT EXISTS idx_location_zones_zone_name_lower ON location_zones (LOWER(zone_name));
 CREATE INDEX IF NOT EXISTS idx_location_zones_first_game_ts ON location_zones (first_game_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_location_zones_last_seen_ts ON location_zones (last_seen_ts DESC);
+-- ----------------------------------------------------------
+-- WORLD_STATE - Row-level WorldEventStateQuery entries
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state (
+    id BIGSERIAL PRIMARY KEY,
+    merge_key TEXT NOT NULL DEFAULT '',
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    source VARCHAR(64) NOT NULL DEFAULT 'world_event_state_query',
+    query_name TEXT NOT NULL DEFAULT '',
+    query_string_id TEXT NOT NULL DEFAULT '',
+    query_numeric_id INT NOT NULL DEFAULT 0,
+    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+    rule_category VARCHAR(64) NOT NULL,
+    entity_name TEXT NOT NULL DEFAULT '',
+    entity_string_id TEXT NOT NULL DEFAULT '',
+    entity_numeric_id INT NOT NULL DEFAULT 0,
+    state_value VARCHAR(32) NOT NULL DEFAULT '',
+    bool_value BOOLEAN,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_world_state_merge_key ON world_state (merge_key);
+CREATE INDEX IF NOT EXISTS idx_world_state_game_ts ON world_state (game_ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_state_created_at ON world_state (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_world_state_source ON world_state (source);
+CREATE INDEX IF NOT EXISTS idx_world_state_rule_category ON world_state (rule_category);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWER(query_name));
+CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
+
+-- ----------------------------------------------------------
+-- FACTION_RELATIONS - global faction-to-faction current state
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS faction_relation_state (
+    id BIGSERIAL PRIMARY KEY,
+    merge_key TEXT NOT NULL UNIQUE,
+    source_name TEXT NOT NULL DEFAULT '',
+    source_string_id TEXT NOT NULL DEFAULT '',
+    source_numeric_id INT NOT NULL DEFAULT 0,
+    target_name TEXT NOT NULL DEFAULT '',
+    target_string_id TEXT NOT NULL DEFAULT '',
+    target_numeric_id INT NOT NULL DEFAULT 0,
+    relation DOUBLE PRECISION NOT NULL DEFAULT 0,
+    alliance BOOLEAN NOT NULL DEFAULT FALSE,
+    war BOOLEAN NOT NULL DEFAULT FALSE,
+    coexists BOOLEAN NOT NULL DEFAULT FALSE,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_game_ts ON faction_relation_state (game_ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_source_lower ON faction_relation_state (LOWER(source_name));
+CREATE INDEX IF NOT EXISTS idx_faction_relation_state_target_lower ON faction_relation_state (LOWER(target_name));
 
 -- ----------------------------------------------------------
 -- rename_global — DB-backed rename pools
@@ -536,6 +599,7 @@ CREATE TABLE IF NOT EXISTS core_npc (
     faction VARCHAR(128) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     profile_id INT,
+    profile_id_before_player_faction INT,
     extended_data JSONB DEFAULT '{}',
     md5 TEXT DEFAULT '',
     gamets_last_updated BIGINT DEFAULT 0,
@@ -546,7 +610,6 @@ CREATE TABLE IF NOT EXISTS core_npc (
     tags TEXT DEFAULT '',
     is_animal BOOLEAN DEFAULT FALSE,
     is_slave BOOLEAN DEFAULT FALSE,
-    knowledge_tags TEXT DEFAULT '',
     world_knowledge_tags TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -600,7 +663,6 @@ CREATE TABLE IF NOT EXISTS core_npc_master_history (
     tags TEXT DEFAULT '',
     is_animal BOOLEAN DEFAULT FALSE,
     is_slave BOOLEAN DEFAULT FALSE,
-    knowledge_tags TEXT DEFAULT '',
     world_knowledge_tags TEXT DEFAULT '',
     snapshot_reason VARCHAR(64) DEFAULT 'snapshot',
     snapshot_hash TEXT DEFAULT '',
@@ -620,6 +682,7 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     id SERIAL PRIMARY KEY,
     label VARCHAR(128) UNIQUE NOT NULL,
     is_default_npc BOOLEAN DEFAULT FALSE,
+    is_player_faction_profile BOOLEAN DEFAULT FALSE,
     prompt_head TEXT DEFAULT '',
     profile_prompt TEXT DEFAULT '',
     response_connector INT,
@@ -631,8 +694,8 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     relationship_connector INT,
     tts_connector_id INT,
     metadata JSONB DEFAULT $${
-        "DYNAMIC_PROFILE_ENABLED": true,
-        "MIDDLE_TERM_MEMORY_ENABLED": true,
+        "DYNAMIC_PROFILE_ENABLED": false,
+        "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -656,6 +719,10 @@ CREATE TABLE IF NOT EXISTS core_profiles (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_default_npc
     ON core_profiles (is_default_npc)
     WHERE is_default_npc = TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_core_profiles_single_player_faction
+    ON core_profiles (is_player_faction_profile)
+    WHERE is_player_faction_profile = TRUE;
 
 -- ----------------------------------------------------------
 -- SPEECH — TTS audio cache
@@ -772,6 +839,7 @@ CREATE TABLE IF NOT EXISTS memory (
     event_type VARCHAR(64) DEFAULT '',
     gamets BIGINT DEFAULT 0,
     localts BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()),
+    location TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -782,6 +850,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_localts ON memory (localts DESC, id DESC);
 CREATE TABLE IF NOT EXISTS memory_summary (
     id SERIAL PRIMARY KEY,
     people TEXT NOT NULL DEFAULT '[]',
+    scope TEXT,
     summary TEXT NOT NULL,
     embedding vector(384),
     period_start TIMESTAMP,
@@ -797,6 +866,7 @@ CREATE TABLE IF NOT EXISTS memory_summary (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_summary_people_created ON memory_summary (LOWER(people), created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_summary_people_gamets ON memory_summary (LOWER(people), gamets_end DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC);
 
 DO $$
 BEGIN
@@ -849,10 +919,16 @@ BEGIN
         ALTER TABLE memory_summary DROP COLUMN IF EXISTS npc_name;
     END IF;
 
+    ALTER TABLE memory_summary ADD COLUMN IF NOT EXISTS scope TEXT;
+    UPDATE memory_summary
+    SET scope = 'global'
+    WHERE scope IS NULL OR BTRIM(scope) = '';
+
     DROP INDEX IF EXISTS idx_memory_summary_npc_created;
     DROP INDEX IF EXISTS idx_memory_summary_npc_gamets;
     CREATE INDEX IF NOT EXISTS idx_memory_summary_people_created ON memory_summary (LOWER(people), created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_memory_summary_people_gamets ON memory_summary (LOWER(people), gamets_end DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC);
 END $$;
 
 -- ----------------------------------------------------------
@@ -1418,8 +1494,8 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS relationship_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS prompt_head TEXT DEFAULT '';
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT DEFAULT '';
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
-    "DYNAMIC_PROFILE_ENABLED": true,
-    "MIDDLE_TERM_MEMORY_ENABLED": true,
+    "DYNAMIC_PROFILE_ENABLED": false,
+    "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
@@ -1437,8 +1513,8 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "BORED_EVENT_CHANCE": 50
 }$$::jsonb;
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
-    "DYNAMIC_PROFILE_ENABLED": true,
-    "MIDDLE_TERM_MEMORY_ENABLED": true,
+    "DYNAMIC_PROFILE_ENABLED": false,
+    "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
@@ -1459,8 +1535,8 @@ UPDATE core_profiles
 SET metadata = CASE
     WHEN metadata IS NULL OR metadata = '[]'::jsonb OR jsonb_typeof(metadata) <> 'object'
         THEN $${
-            "DYNAMIC_PROFILE_ENABLED": true,
-            "MIDDLE_TERM_MEMORY_ENABLED": true,
+            "DYNAMIC_PROFILE_ENABLED": false,
+            "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
             "DYNAMIC_PROFILE_FIELDS": [
                 "personality",
@@ -1478,8 +1554,8 @@ SET metadata = CASE
             "BORED_EVENT_CHANCE": 50
         }$$::jsonb
     ELSE $${
-        "DYNAMIC_PROFILE_ENABLED": true,
-        "MIDDLE_TERM_MEMORY_ENABLED": true,
+        "DYNAMIC_PROFILE_ENABLED": false,
+        "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -1889,20 +1965,21 @@ VALUES
 ON CONFLICT (name, type) DO NOTHING;
 
 INSERT INTO core_action (command, action_name, description, is_activated) VALUES
-('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name.', TRUE),
+('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.', TRUE),
 ('SUICIDE', 'Suicide', 'Die immediately on the spot.', TRUE),
 ('FOLLOW', 'Follow', 'Move to and follow the specified target actor.', TRUE),
 ('STOP_FOLLOW', 'StopFollow', 'Stop following and return to normal behavior.', TRUE),
-('JOIN_PARTY', 'JoinParty', 'Join the player''s squad.', TRUE),
-('LEAVE', 'Leave', 'Leave the player''s squad.', TRUE),
+('JOIN_PARTY', 'JoinParty', 'Join the target''s squad.', TRUE),
+('LEAVE', 'Leave', 'Leave the target''s squad.', TRUE),
 ('IDLE', 'Idle', 'Stop current action and idle.', TRUE),
 ('STOP_CARRYING', 'StopCarrying', 'Put down what you are currently carrying.', TRUE),
-('GIVE_CATS', 'GiveCats', 'Give cats to the player. Put amount in item field.', TRUE),
-('TAKE_CATS', 'TakeCats', 'Take cats from the player. Put amount in item field.', TRUE),
-('TAKE_ITEM', 'TakeItem', 'Take a specific item from the player. Put exact item name in item field.', TRUE),
-('GIVE_ITEM', 'GiveItem', 'Give a specific item to the player. Put exact item name in item field.', TRUE),
-('DROP_ITEM', 'DropItem', 'Drop a specific item. Put exact item name in item field.', TRUE),
-('ROLEPLAY_ACTION', 'RoleplayAction', 'Display a descriptive roleplay action as a world notification. Put action text in target or message field.', TRUE),
+('PICKUP_NPC', 'PickupNpc', 'Pick up a nearby helpless target and carry them. Use target as the actor name. Only valid when you are not already carrying someone.', TRUE),
+('GIVE_CATS', 'GiveCats', 'Give cats to the target. Put amount in item field.', TRUE),
+('TAKE_CATS', 'TakeCats', 'Take cats from the target. Put amount in item field.', TRUE),
+('TAKE_ITEM', 'TakeItem', 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Item supports quantities and lists like GiveItem, plus equipment/all loot queries.', TRUE),
+('GIVE_ITEM', 'GiveItem', 'Give a specific item to the the target.', TRUE),
+('DROP_ITEM', 'DropItem', 'Drop a specific item.', TRUE),
+('ROLEPLAY_ACTION', 'RoleplayAction', 'Describe a roleplay action along with your dialogue.', TRUE),
 ('FACTION_RELATIONS', 'FactionRelations', 'Change relation between your faction and a nearby player-faction person''s faction. Put target person name in target and use item as -100 or 100.', TRUE),
 ('SET_BLOCK', 'SetBlock', 'Toggle defensive block behavior using ON/OFF in item or target.', TRUE),
 ('SET_HOLD', 'SetHold', 'Toggle hold position using ON/OFF in item or target.', TRUE),
@@ -1914,8 +1991,12 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('SET_RESOURCE', 'SetResource', 'Toggle resource-work behavior using ON/OFF in item or target.', TRUE),
 ('SET_MEDIC', 'SetMedic', 'Toggle medic behavior using ON/OFF in item or target.', TRUE),
 ('REMOVE_LIMB', 'RemoveLimb', 'Remove one limb from a helpless target. Requires a hacksaw in inventory. Use target and item as LEFT_ARM, RIGHT_ARM, LEFT_LEG, or RIGHT_LEG. Works only on knocked-out, unconscious, imprisoned, or carried targets.', TRUE),
+('KILL', 'Kill', 'Kill a helpless target immediately.', TRUE),
 ('USE_OBJECT', 'UseObject', 'Use a nearby point of interest such as a chair, turret, bed, throne, or work spot. Use target or item as an object name/refid, or leave blank to use the nearest usable free slot.', TRUE),
-('TRAVEL_LOCATION', 'TravelLocation', 'Travel to a previously visited location by name. Uses stored x/y/z coordinates from location_zones.', TRUE),
+('USE_DRUGS', 'UseDrugs', 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time.', TRUE),
+('DRINK', 'Drink', 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout.', TRUE),
+('FORCE_DRINK', 'ForceDrink', 'Force a helpless target to drink Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Use target as the victim and item/message as the drink name. Defaults to Cactus Rum.', TRUE),
+('TRAVEL_LOCATION', 'TravelLocation', 'Travel to a previously visited location by name.', TRUE),
 ('TALK', 'Talk', 'Speak normally without issuing an in-world action.', TRUE)
 ON CONFLICT (command) DO UPDATE SET
     action_name = EXCLUDED.action_name,
@@ -2045,12 +2126,7 @@ BONDED: Absolute trust, would die for them$$,
 ),
 (
     'regular_memory_summarizer',
-    $$<regular_memory_summarizer>
-  <rule>Summarize accumulated episodic memories for a Kenshi participant group.</rule>
-  <rule>Stay factual to the provided events. Do not invent new events.</rule>
-  <rule>Keep durable continuity: relationships, conflicts, injuries, objectives, and unresolved tensions among participants.</rule>
-  <rule>Output plain text only.</rule>
-</regular_memory_summarizer>$$,
+    $$Focus on key events, tagging characters, locations, and factions accurately. Ensure memories align and maintain chronological order while foreshadowing future arcs.$$,
     $$System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.$$
 ),
 (
@@ -2089,6 +2165,11 @@ Fields currently editable for this NPC: #ALLOWED_FIELDS#$$,
   </requirements>
 </bored_prompt_template>$$,
     $$Prompt template for bored-event generation. Supports #NPC_LIST#, #LOCATION#, #WORLD_EVENTS#. Used in lib/chat_helper_functions.php.$$
+),
+(
+    'random_narration_prompt',
+    $$Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.$$,
+    $$Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.$$
 )
 ON CONFLICT (prompt_key) DO UPDATE SET
     default_prompt = EXCLUDED.default_prompt,
@@ -2112,12 +2193,15 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
-('MEMORY_TIME_DELAY',    '12',           'Minutes before recent memories can be recalled'),
-('MEMORY_CONTEXT_SIZE',  '1',            'Max number of memory entries injected'),
-('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '10', 'Memory summary packing interval'),
-('MEMORY_BIAS_A',        '33',           'Recall threshold A (0-100)'),
-('MEMORY_BIAS_B',        '66',           'Recall threshold B (0-100)'),
+('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
+('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '6', 'Memory summary packing interval. Is measured in ingame hours.'),
+('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
+('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
 ('BRACKET_ORIGINAL_NAME','true',         'When true, auto-renames use New Name [Original Name]; when false, only New Name.'),
+('RELATIONSHIP_SYSTEM',  'true',         'Master toggle for relationship connector evaluation. When false, relationship LLM updates are skipped.'),
+('AUTO_LOCK_PROFILE',    'true',         'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.'),
+('PLAYER_FACTION_CUSTOM_NAME', '',       'Optional custom display name for the player faction in prompts.'),
+('PLAYER_FACTION_PROMPT', '',            'Optional player-faction instruction block injected into prompts.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
 
@@ -2372,8 +2456,8 @@ INSERT INTO core_profiles (
     ),
     (SELECT id FROM core_tts_connector WHERE LOWER(name) = 'pocket tts default' LIMIT 1),
     '{
-        "DYNAMIC_PROFILE_ENABLED": true,
-        "MIDDLE_TERM_MEMORY_ENABLED": true,
+        "DYNAMIC_PROFILE_ENABLED": false,
+        "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
@@ -2410,6 +2494,74 @@ ON CONFLICT (label) DO UPDATE SET
     END,
     updated_at = NOW();
 
+INSERT INTO core_profiles (
+    label,
+    is_default_npc,
+    is_player_faction_profile,
+    response_connector,
+    diary_connector,
+    autochat_connector,
+    middleterm_connector,
+    backgroundlife_connector,
+    dynamic_connector,
+    relationship_connector,
+    tts_connector_id,
+    metadata
+)
+SELECT
+    'Player Faction',
+    FALSE,
+    TRUE,
+    src.response_connector,
+    src.diary_connector,
+    src.autochat_connector,
+    src.middleterm_connector,
+    src.backgroundlife_connector,
+    src.dynamic_connector,
+    src.relationship_connector,
+    src.tts_connector_id,
+    CASE
+        WHEN src.metadata IS NULL
+          OR src.metadata = '[]'::jsonb
+          OR jsonb_typeof(src.metadata) <> 'object'
+        THEN '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true}'::jsonb
+        ELSE jsonb_set(
+            jsonb_set(src.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+            '{MIDDLE_TERM_MEMORY_ENABLED}',
+            'true'::jsonb,
+            true
+        )
+    END
+FROM core_profiles src
+WHERE LOWER(COALESCE(src.label, '')) = 'default profile'
+ORDER BY CASE WHEN COALESCE(src.is_default_npc, FALSE) = TRUE THEN 0 ELSE 1 END,
+         src.id ASC
+LIMIT 1
+ON CONFLICT (label) DO UPDATE SET
+    is_default_npc = FALSE,
+    is_player_faction_profile = TRUE,
+    response_connector = COALESCE(EXCLUDED.response_connector, core_profiles.response_connector),
+    diary_connector = COALESCE(EXCLUDED.diary_connector, core_profiles.diary_connector),
+    autochat_connector = COALESCE(EXCLUDED.autochat_connector, core_profiles.autochat_connector),
+    middleterm_connector = COALESCE(EXCLUDED.middleterm_connector, core_profiles.middleterm_connector),
+    backgroundlife_connector = COALESCE(EXCLUDED.backgroundlife_connector, core_profiles.backgroundlife_connector),
+    dynamic_connector = COALESCE(EXCLUDED.dynamic_connector, core_profiles.dynamic_connector),
+    relationship_connector = COALESCE(EXCLUDED.relationship_connector, core_profiles.relationship_connector),
+    tts_connector_id = COALESCE(EXCLUDED.tts_connector_id, core_profiles.tts_connector_id),
+    metadata = CASE
+        WHEN core_profiles.metadata IS NULL
+          OR core_profiles.metadata = '[]'::jsonb
+          OR jsonb_typeof(core_profiles.metadata) <> 'object'
+        THEN EXCLUDED.metadata
+        ELSE jsonb_set(
+            jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+            '{MIDDLE_TERM_MEMORY_ENABLED}',
+            'true'::jsonb,
+            true
+        )
+    END,
+    updated_at = NOW();
+
 UPDATE core_profiles
 SET is_default_npc = CASE
     WHEN LOWER(label) = 'default profile' THEN TRUE
@@ -2417,6 +2569,15 @@ SET is_default_npc = CASE
 END
 WHERE LOWER(label) = 'default profile'
    OR is_default_npc = TRUE;
+
+UPDATE core_profiles
+SET is_player_faction_profile = FALSE
+WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE
+  AND LOWER(COALESCE(label, '')) <> 'player faction';
+
+UPDATE core_profiles
+SET is_player_faction_profile = TRUE
+WHERE LOWER(COALESCE(label, '')) = 'player faction';
 
 UPDATE core_profiles
 SET response_connector = COALESCE(
@@ -2454,6 +2615,11 @@ WHERE COALESCE(
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ) IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS core_narrator (
+    id TEXT PRIMARY KEY,
+    value TEXT
+);
 
 
 

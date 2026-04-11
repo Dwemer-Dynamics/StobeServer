@@ -70,7 +70,7 @@ function stobeNormalizeContextValue($value)
     return stobeLimitString(strval($value));
 }
 
-function stobeLog(string $level, string $message, array $context = []): void
+function stobeBuildLogLine(string $level, string $message, array $context = []): string
 {
     $timestamp = gmdate('Y-m-d H:i:s');
     $normalizedLevel = stobeNormalizeLogLevel($level);
@@ -88,30 +88,51 @@ function stobeLog(string $level, string $message, array $context = []): void
         }
     }
 
-    $line .= PHP_EOL;
-    @file_put_contents(stobeGetLogPath('stobeserver.log'), $line, FILE_APPEND | LOCK_EX);
+    return $line . PHP_EOL;
+}
+
+function stobeAppendLogLine(string $filename, string $line): void
+{
+    @file_put_contents(stobeGetLogPath($filename), $line, FILE_APPEND | LOCK_EX);
+}
+
+function stobeLog(string $level, string $message, array $context = []): void
+{
+    $line = stobeBuildLogLine($level, $message, $context);
+    stobeAppendLogLine('stobeserver.log', $line);
 }
 
 function stobeLogImport(string $message, array $context = [], string $level = 'INFO'): void
 {
-    $timestamp = gmdate('Y-m-d H:i:s');
-    $normalizedLevel = stobeNormalizeLogLevel($level);
-    if (!array_key_exists('request_id', $context) && !empty($GLOBALS['__stobe_request_id'])) {
-        $context['request_id'] = strval($GLOBALS['__stobe_request_id']);
-    }
+    $line = stobeBuildLogLine($level, $message, $context);
+    stobeAppendLogLine('stobe_import.log', $line);
+    stobeAppendLogLine('stobeserver.log', $line);
+}
 
-    $line = '[' . $timestamp . '] [' . $normalizedLevel . '] ' . trim($message);
-    if (!empty($context)) {
-        $normalized = stobeNormalizeContextValue($context);
-        $contextJson = json_encode($normalized, JSON_UNESCAPED_SLASHES);
-        if ($contextJson !== false) {
-            $line .= ' | ' . $contextJson;
-        }
-    }
-    $line .= PHP_EOL;
+function stobeLogRelationship(string $level, string $message, array $context = []): void
+{
+    $line = stobeBuildLogLine($level, $message, $context);
+    stobeAppendLogLine('relationship_worker.log', $line);
+}
 
-    @file_put_contents(stobeGetLogPath('stobe_import.log'), $line, FILE_APPEND | LOCK_EX);
-    @file_put_contents(stobeGetLogPath('stobeserver.log'), $line, FILE_APPEND | LOCK_EX);
+function stobeLogRelationshipDebug(string $message, array $context = []): void
+{
+    stobeLogRelationship('DEBUG', $message, $context);
+}
+
+function stobeLogRelationshipInfo(string $message, array $context = []): void
+{
+    stobeLogRelationship('INFO', $message, $context);
+}
+
+function stobeLogRelationshipWarn(string $message, array $context = []): void
+{
+    stobeLogRelationship('WARN', $message, $context);
+}
+
+function stobeLogRelationshipError(string $message, array $context = []): void
+{
+    stobeLogRelationship('ERROR', $message, $context);
 }
 
 function stobeLogDebug(string $message, array $context = []): void

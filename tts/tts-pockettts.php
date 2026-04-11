@@ -91,10 +91,55 @@ function stobeResolveNpcDataForTts(string $npcName, array|false $npcData = false
         return is_array($npcData) ? $npcData : false;
     }
     $db = $GLOBALS["db"];
+
+    $isNarrator = strcasecmp($safeName, 'The Narrator') === 0;
+    if (function_exists('stobeIsNarratorName')) {
+        $isNarrator = stobeIsNarratorName($safeName);
+    }
+    if ($isNarrator) {
+        $profileRow = $db->fetchOne(
+            "SELECT value
+             FROM core_narrator
+             WHERE id = 'profile_id'
+             LIMIT 1"
+        );
+        $voiceRow = $db->fetchOne(
+            "SELECT value
+             FROM core_narrator
+             WHERE id = 'voiceid'
+             LIMIT 1"
+        );
+        $profileId = intval(trim(strval($profileRow['value'] ?? '0')));
+        if ($profileId <= 0) {
+            $profileId = intval($npcData['profile_id'] ?? 0);
+        }
+        $voiceId = trim(strval($voiceRow['value'] ?? ''));
+        if ($voiceId === '') {
+            $voiceId = trim(strval($npcData['voiceid'] ?? ''));
+        }
+        $resolvedName = $safeName;
+        if (function_exists('stobeNarratorName')) {
+            $resolvedName = stobeNarratorName();
+        }
+        return [
+            'id' => 1,
+            'name' => $resolvedName,
+            'profile_id' => $profileId > 0 ? $profileId : 0,
+            'voiceid' => $voiceId,
+        ];
+    }
+
     $resolved = $db->fetchOne(
         "SELECT id, name, profile_id, voiceid
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
+         ORDER BY
+            CASE WHEN profile_id IS NOT NULL AND profile_id > 0 THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+            gamets_last_updated DESC,
+            updated_at DESC,
+            id DESC
          LIMIT 1",
         [$safeName]
     );
@@ -115,11 +160,33 @@ function stobeResolveNpcVoiceIdByName(string $npcName): string {
         return '';
     }
 
+    $isNarrator = strcasecmp($safeName, 'The Narrator') === 0;
+    if (function_exists('stobeIsNarratorName')) {
+        $isNarrator = stobeIsNarratorName($safeName);
+    }
+    if ($isNarrator) {
+        $narratorVoice = $db->fetchOne(
+            "SELECT value
+             FROM core_narrator
+             WHERE id = 'voiceid'
+             LIMIT 1"
+        );
+        $resolvedNarratorVoice = trim(strval($narratorVoice['value'] ?? ''));
+        if ($resolvedNarratorVoice !== '') {
+            return $resolvedNarratorVoice;
+        }
+    }
+
     $direct = $db->fetchOne(
         "SELECT voiceid
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
-         ORDER BY gamets_last_updated DESC, updated_at DESC
+         ORDER BY
+            CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
+            CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+            gamets_last_updated DESC,
+            updated_at DESC,
+            id DESC
          LIMIT 1",
         [$safeName]
     );
@@ -133,9 +200,11 @@ function stobeResolveNpcVoiceIdByName(string $npcName): string {
          FROM core_npc
          WHERE LOWER(COALESCE(original_name, '')) = LOWER($1)
          ORDER BY
+            CASE WHEN COALESCE(BTRIM(voiceid), '') <> '' THEN 0 ELSE 1 END,
             CASE WHEN COALESCE(metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
             gamets_last_updated DESC,
-            updated_at DESC
+            updated_at DESC,
+            id DESC
          LIMIT 1",
         [$safeName]
     );
@@ -407,11 +476,15 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
 
     $voiceId = '';
     $voiceSource = 'hard_default';
+    $isNarrator = strcasecmp(trim($npcName), 'The Narrator') === 0;
+    if (function_exists('stobeIsNarratorName')) {
+        $isNarrator = stobeIsNarratorName($npcName);
+    }
 
     $dbVoiceId = stobeResolveNpcVoiceIdByName($npcName);
     if ($dbVoiceId !== '') {
         $voiceId = $dbVoiceId;
-        $voiceSource = 'npc_db';
+        $voiceSource = $isNarrator ? 'narrator_db' : 'npc_db';
     } else {
         $resolvedVoice = trim(strval($resolvedNpcData['voiceid'] ?? ''));
         if ($resolvedVoice !== '') {
@@ -989,7 +1062,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         return false;
     }
 
-    $url = $endpoint . '/tts_to_audio';
+    $url = $endpoint . (in_array($provider, ['xtts', 'chatterbox'], true) ? '/tts_to_audio/' : '/tts_to_audio');
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -1004,7 +1077,8 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     curl_close($ch);
 
     if (!is_string($binary) || $binary === '' || $httpCode < 200 || $httpCode >= 300) {
-        if ($provider === 'chatterbox') {
+        $responseBody = is_string($binary) ? $binary : '';
+        if (in_array($provider, ['chatterbox', 'xtts'], true)) {
             $ch = curl_init($endpoint . '/tts_to_audio/');
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -1019,6 +1093,68 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
             if (is_string($retry) && $retry !== '' && $retryCode >= 200 && $retryCode < 300) {
                 return $retry;
             }
+            if (is_string($retry) && $retry !== '') {
+                $responseBody = $retry;
+            }
+            if ($retryCode > 0) {
+                $httpCode = $retryCode;
+            }
+        }
+
+        if ($provider === 'xtts') {
+            $responseDetail = '';
+            if ($responseBody !== '') {
+                $decodedError = json_decode($responseBody, true);
+                if (is_array($decodedError)) {
+                    $responseDetail = trim(strval($decodedError['detail'] ?? $decodedError['error'] ?? ''));
+                }
+                if ($responseDetail === '') {
+                    $responseDetail = trim($responseBody);
+                }
+            }
+
+            if (
+                $responseDetail !== '' &&
+                stripos($responseDetail, 'speaker') !== false &&
+                stripos($responseDetail, 'not found') !== false
+            ) {
+                $fallbackVoiceId = (stripos($voiceId, 'female') !== false) ? 'femalenord' : 'malenord';
+                if (strcasecmp($fallbackVoiceId, $voiceId) !== 0) {
+                    $fallbackPayload = json_encode([
+                        'text' => $speechText,
+                        'speaker_wav' => $fallbackVoiceId,
+                        'language' => $language,
+                    ], JSON_UNESCAPED_UNICODE);
+
+                    if (is_string($fallbackPayload) && $fallbackPayload !== '') {
+                        stobeLogWarn('XTTS speaker missing, retrying fallback voice', [
+                            'requested_voiceid' => $voiceId,
+                            'fallback_voiceid' => $fallbackVoiceId,
+                            'endpoint' => $endpoint,
+                        ]);
+                        $ch = curl_init($endpoint . '/tts_to_audio/');
+                        curl_setopt_array($ch, [
+                            CURLOPT_RETURNTRANSFER => true,
+                            CURLOPT_POST => true,
+                            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: audio/wav'],
+                            CURLOPT_POSTFIELDS => $fallbackPayload,
+                            CURLOPT_TIMEOUT => 45,
+                        ]);
+                        $fallbackBinary = curl_exec($ch);
+                        $fallbackCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+                        curl_close($ch);
+                        if (is_string($fallbackBinary) && $fallbackBinary !== '' && $fallbackCode >= 200 && $fallbackCode < 300) {
+                            return $fallbackBinary;
+                        }
+                        if (is_string($fallbackBinary) && $fallbackBinary !== '') {
+                            $responseBody = $fallbackBinary;
+                        }
+                        if ($fallbackCode > 0) {
+                            $httpCode = $fallbackCode;
+                        }
+                    }
+                }
+            }
         }
 
         stobeLogWarn('Local TTS synthesis failed', [
@@ -1026,6 +1162,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
             'endpoint' => $endpoint,
             'http_code' => $httpCode,
             'error' => $curlError,
+            'response' => substr(strval($responseBody), 0, 220),
         ]);
         return false;
     }
