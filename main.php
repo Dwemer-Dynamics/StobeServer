@@ -133,6 +133,9 @@ if (!function_exists('stobeTryInlineMemoryMaintenanceFallback')) {
                 // Keep dynamic profiles moving even when the daemon loop is unavailable.
                 stobeMaybeRunDynamicProfileCycle('chat', $timestamp, $gamets, $tickPayload);
             }
+            if (function_exists('stobeMaybeRunAutoDiaryCycle')) {
+                stobeMaybeRunAutoDiaryCycle($timestamp, $gamets);
+            }
         } catch (Throwable $exception) {
             stobeLogException($exception, 'Inline maintenance fallback failed', [
                 'gamets' => $gamets,
@@ -238,16 +241,8 @@ if ($eventType === 'inputtext_s') {
     ]);
 }
 
-// Auto-diary is intentionally disabled for now.
-// Manual in-game "Write Diary" button (event_type=diary) is the only trigger.
-// if (function_exists('stobeMaybeTriggerAutoDiaryOnNewDay')) {
-//     stobeMaybeTriggerAutoDiaryOnNewDay(
-//         strval($eventType),
-//         intval($timestamp),
-//         intval($gamets),
-//         strval($eventData)
-//     );
-// }
+// Auto-diary runs from the background manager / inline maintenance fallback.
+// Manual in-game "Write Diary" events still use the direct diary processor below.
 
 // Route event to appropriate processor
 try {

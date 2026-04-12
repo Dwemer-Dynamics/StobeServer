@@ -696,7 +696,10 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     metadata JSONB DEFAULT $${
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
+        "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
+        "AUTO_DIARY_MIN_EVENTS": 50,
+        "AUTO_DIARY_HOUR": 21,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
             "occupation",
@@ -705,7 +708,7 @@ CREATE TABLE IF NOT EXISTS core_profiles (
         ],
         "RECHAT_RESPONSES": 3,
         "RECHAT_PROBABILITY": 66,
-        "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+        "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
         "DIARY_COOLDOWN": 120,
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
@@ -1496,7 +1499,10 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT DEFAULT '
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
+    "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
+    "AUTO_DIARY_MIN_EVENTS": 50,
+    "AUTO_DIARY_HOUR": 21,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
         "occupation",
@@ -1505,7 +1511,7 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     ],
     "RECHAT_RESPONSES": 3,
     "RECHAT_PROBABILITY": 66,
-    "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+    "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
     "DIARY_COOLDOWN": 120,
     "CONTEXT_HISTORY": 75,
     "CONTEXT_HISTORY_DIARY": 100,
@@ -1515,7 +1521,10 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
+    "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
+    "AUTO_DIARY_MIN_EVENTS": 50,
+    "AUTO_DIARY_HOUR": 21,
     "DYNAMIC_PROFILE_FIELDS": [
         "personality",
         "occupation",
@@ -1524,7 +1533,7 @@ ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     ],
     "RECHAT_RESPONSES": 3,
     "RECHAT_PROBABILITY": 66,
-    "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+    "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
     "DIARY_COOLDOWN": 120,
     "CONTEXT_HISTORY": 75,
     "CONTEXT_HISTORY_DIARY": 100,
@@ -1537,7 +1546,10 @@ SET metadata = CASE
         THEN $${
             "DYNAMIC_PROFILE_ENABLED": false,
             "MIDDLE_TERM_MEMORY_ENABLED": false,
+            "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
+            "AUTO_DIARY_MIN_EVENTS": 50,
+            "AUTO_DIARY_HOUR": 21,
             "DYNAMIC_PROFILE_FIELDS": [
                 "personality",
                 "occupation",
@@ -1546,7 +1558,7 @@ SET metadata = CASE
             ],
             "RECHAT_RESPONSES": 3,
             "RECHAT_PROBABILITY": 66,
-            "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+            "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
             "DIARY_COOLDOWN": 120,
             "CONTEXT_HISTORY": 75,
             "CONTEXT_HISTORY_DIARY": 100,
@@ -1556,7 +1568,10 @@ SET metadata = CASE
     ELSE $${
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
+        "AUTO_DIARY_ENABLED": false,
         "DIARY_DAYS": 1,
+        "AUTO_DIARY_MIN_EVENTS": 50,
+        "AUTO_DIARY_HOUR": 21,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
             "occupation",
@@ -1565,7 +1580,7 @@ SET metadata = CASE
         ],
         "RECHAT_RESPONSES": 3,
         "RECHAT_PROBABILITY": 66,
-        "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+        "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
         "DIARY_COOLDOWN": 120,
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
@@ -2124,11 +2139,16 @@ BONDED: Absolute trust, would die for them$$,
 </middle_term_memory_request>$$,
     $$User prompt template for middle-term memory summarization. Supports #NPC_NAME#, #PREVIOUS_SUMMARY_BLOCK#, #CONTEXT_HISTORY#. Used in lib/middleterm_helper_functions.php.$$
 ),
-(
+  (
+    'DIARY_PROMPT',
+    $$Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with exactly this header: "#KENSHI_DIARY_HEADER#".$$,
+    $$Global default prompt for diary generation. Profile-level DIARY_PROMPT overrides this when set. Used in lib/diary_helper_functions.php.$$
+  ),
+  (
     'regular_memory_summarizer',
     $$Focus on key events, tagging characters, locations, and factions accurately. Ensure memories align and maintain chronological order while foreshadowing future arcs.$$,
     $$System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.$$
-),
+  ),
 (
     'dynamic_profile_generator',
     $$You generate Kenshi NPC profile fields for dynamic profile refresh.
@@ -2459,6 +2479,7 @@ INSERT INTO core_profiles (
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
         "DIARY_DAYS": 1,
+        "AUTO_DIARY_MIN_EVENTS": 50,
         "DYNAMIC_PROFILE_FIELDS": [
             "personality",
             "occupation",
@@ -2467,7 +2488,7 @@ INSERT INTO core_profiles (
         ],
         "RECHAT_RESPONSES": 3,
         "RECHAT_PROBABILITY": 66,
-        "DIARY_PROMPT": "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#''s last dialogues and events written above into #NPC_NAME#''s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+        "DIARY_PROMPT": "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#''s dialogues and events written above into #NPC_NAME#''s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
         "DIARY_COOLDOWN": 120,
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
@@ -2520,18 +2541,23 @@ SELECT
     src.dynamic_connector,
     src.relationship_connector,
     src.tts_connector_id,
-    CASE
-        WHEN src.metadata IS NULL
-          OR src.metadata = '[]'::jsonb
-          OR jsonb_typeof(src.metadata) <> 'object'
-        THEN '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true}'::jsonb
-        ELSE jsonb_set(
-            jsonb_set(src.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
-            '{MIDDLE_TERM_MEMORY_ENABLED}',
-            'true'::jsonb,
-            true
-        )
-    END
+      CASE
+          WHEN src.metadata IS NULL
+            OR src.metadata = '[]'::jsonb
+            OR jsonb_typeof(src.metadata) <> 'object'
+        THEN '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true,"AUTO_DIARY_ENABLED":true}'::jsonb
+          ELSE jsonb_set(
+             jsonb_set(
+                 jsonb_set(src.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+                 '{MIDDLE_TERM_MEMORY_ENABLED}',
+                  'true'::jsonb,
+                  true
+             ),
+             '{AUTO_DIARY_ENABLED}',
+             'true'::jsonb,
+             true
+          )
+      END
 FROM core_profiles src
 WHERE LOWER(COALESCE(src.label, '')) = 'default profile'
 ORDER BY CASE WHEN COALESCE(src.is_default_npc, FALSE) = TRUE THEN 0 ELSE 1 END,
@@ -2548,18 +2574,23 @@ ON CONFLICT (label) DO UPDATE SET
     dynamic_connector = COALESCE(EXCLUDED.dynamic_connector, core_profiles.dynamic_connector),
     relationship_connector = COALESCE(EXCLUDED.relationship_connector, core_profiles.relationship_connector),
     tts_connector_id = COALESCE(EXCLUDED.tts_connector_id, core_profiles.tts_connector_id),
-    metadata = CASE
-        WHEN core_profiles.metadata IS NULL
-          OR core_profiles.metadata = '[]'::jsonb
-          OR jsonb_typeof(core_profiles.metadata) <> 'object'
-        THEN EXCLUDED.metadata
-        ELSE jsonb_set(
-            jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
-            '{MIDDLE_TERM_MEMORY_ENABLED}',
-            'true'::jsonb,
-            true
-        )
-    END,
+      metadata = CASE
+          WHEN core_profiles.metadata IS NULL
+            OR core_profiles.metadata = '[]'::jsonb
+            OR jsonb_typeof(core_profiles.metadata) <> 'object'
+          THEN EXCLUDED.metadata
+          ELSE jsonb_set(
+             jsonb_set(
+                 jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+                 '{MIDDLE_TERM_MEMORY_ENABLED}',
+                  'true'::jsonb,
+                  true
+             ),
+             '{AUTO_DIARY_ENABLED}',
+             'true'::jsonb,
+             true
+          )
+      END,
     updated_at = NOW();
 
 UPDATE core_profiles
