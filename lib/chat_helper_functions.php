@@ -348,6 +348,7 @@ function getActionRuntimeConfig(string $eventType): array {
         'disallow_give_cats' => false,
         'disallow_take_cats' => false,
         'disallow_pickup_npc' => false,
+        'disallow_cut_horns' => false,
         'allow_travel_location' => true,
     ];
 }
@@ -357,6 +358,7 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config['disallow_stop_carrying'] = false;
     $config['disallow_pickup_npc'] = false;
     $config['disallow_remove_limb'] = true;
+    $config['disallow_cut_horns'] = true;
     $config['disallow_use_drugs'] = true;
     $config['disallow_drink_item'] = true;
     $config['disallow_force_drink'] = true;
@@ -375,6 +377,7 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     }
     if (is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData)) {
         $config['disallow_remove_limb'] = false;
+        $config['disallow_cut_horns'] = false;
     }
     if (is_array($npcData) && count($npcData) > 0 && !stobeNpcIsSkeletonRace($npcData)) {
         if (stobeNpcHasHashish($npcData)) {
@@ -448,6 +451,9 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
                 continue;
             }
             if ($command === 'REMOVE_LIMB' && boolval($config['disallow_remove_limb'] ?? false)) {
+                continue;
+            }
+            if ($command === 'CUT_HORNS' && boolval($config['disallow_cut_horns'] ?? false)) {
                 continue;
             }
             if ($command === 'USE_DRUGS' && boolval($config['disallow_use_drugs'] ?? false)) {
@@ -551,6 +557,9 @@ function stobeCanonicalizeActionCommand(string $command): string {
     }
     if (in_array($upper, ['REMOVELIMB'], true)) {
         return 'REMOVE_LIMB';
+    }
+    if (in_array($upper, ['CUTHORNS', 'CUT-HORNS'], true)) {
+        return 'CUT_HORNS';
     }
     if (in_array($upper, ['KILLTARGET', 'EXECUTE', 'MURDER'], true)) {
         return 'KILL';
@@ -992,6 +1001,7 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'SETRESOURCE' => 'SET_RESOURCE',
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
+        'CUTHORNS' => 'CUT_HORNS',
         'KILLTARGET' => 'KILL',
         'EXECUTE' => 'KILL',
         'MURDER' => 'KILL',
@@ -1040,6 +1050,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     }
     if (boolval($config['disallow_remove_limb'] ?? false) &&
         $command === 'REMOVE_LIMB') {
+        return '';
+    }
+    if (boolval($config['disallow_cut_horns'] ?? false) &&
+        $command === 'CUT_HORNS') {
         return '';
     }
     if (boolval($config['disallow_use_drugs'] ?? false) &&
@@ -1160,6 +1174,13 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return '';
         }
         return 'REMOVE_LIMB@' . $targetName . '@' . strval($limbAliases[$limbToken]);
+    }
+    if ($command === 'CUT_HORNS') {
+        $targetName = $sanitizeInlineText($argument, 120);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'CUT_HORNS@' . $targetName;
     }
     if ($command === 'KILL') {
         $targetName = $sanitizeInlineText($argument, 120);
@@ -3602,6 +3623,7 @@ function stobeBuildOutputContractUserPrompt(
     }
     $canStopCarrying = is_array($npcData) && count($npcData) > 0 && stobeNpcIsCarryingTarget($npcData);
     $canRemoveLimb = is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData);
+    $canCutHorns = $canRemoveLimb;
     $npcIsSkeleton = is_array($npcData) && count($npcData) > 0 && stobeNpcIsSkeletonRace($npcData);
     $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
     $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
@@ -3618,6 +3640,7 @@ function stobeBuildOutputContractUserPrompt(
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
+    $actionLine .= " CUT_HORNS is only valid on helpless Shek targets whose horns are not already cut off, and requires a hacksaw.";
 
     $actions = [
         'Talk',
@@ -3655,6 +3678,9 @@ function stobeBuildOutputContractUserPrompt(
     }
     if ($canRemoveLimb) {
         $actions[] = 'RemoveLimb';
+    }
+    if ($canCutHorns) {
+        $actions[] = 'CutHorns';
     }
     if ($canUseDrugs) {
         $actions[] = 'UseDrugs';
@@ -3735,6 +3761,7 @@ function stobeBuildOutputContractUserPrompt(
         $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@, ' : '';
         $examplePickupNpc = $canPickupNpc ? 'PICKUP_NPC@TargetName, ' : '';
         $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
+        $exampleCutHorns = $canCutHorns ? 'CUT_HORNS@TargetName, ' : '';
         $exampleKill = 'KILL@TargetName, ';
         $exampleUseObject = 'USE_OBJECT@ChairName, ';
         $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
@@ -3752,7 +3779,7 @@ function stobeBuildOutputContractUserPrompt(
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleCutHorns . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -4119,6 +4146,13 @@ function stobeBuildActionTagFromStructuredPayload(
             return '';
         }
         return 'REMOVE_LIMB@' . $targetName . '@' . $limbToken;
+    }
+    if ($actionUpper === 'CUT_HORNS') {
+        $targetName = trim($target !== '' ? $target : $item);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'CUT_HORNS@' . $targetName;
     }
     if ($actionUpper === 'KILL') {
         $targetName = trim($target !== '' ? $target : $item);

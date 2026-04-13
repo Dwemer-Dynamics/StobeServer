@@ -13,6 +13,7 @@ if (!function_exists('stobeNormalizeManualChatActionKey')) {
             'remove_limb_right_arm',
             'remove_limb_left_leg',
             'remove_limb_right_leg',
+            'cut_horns',
             'kill',
         ];
         if (!in_array($normalized, $allowed, true)) {
@@ -28,6 +29,9 @@ if (!function_exists('stobeManualChatActionType')) {
         $normalized = strtolower(trim($actionKey));
         if ($normalized === 'kill') {
             return 'kill';
+        }
+        if ($normalized === 'cut_horns') {
+            return 'cut_horns';
         }
         if (strpos($normalized, 'remove_limb_') === 0) {
             return 'remove_limb';
@@ -791,6 +795,10 @@ if ($deliveryStyleInstruction !== '') {
 if ($manualActionActive) {
     if ($manualActionType === 'kill') {
         $manualInstruction = 'Manual execution is happening now. The target is killed immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
+    } elseif ($manualActionType === 'cut_horns') {
+        $manualInstruction = $manualActionCannotSpeak
+            ? 'Manual horn cutting is happening now, and the target cannot speak. Do not invent coherent spoken dialogue for the target.'
+            : 'Manual horn cutting is happening now. The target should react with immediate extreme pain, humiliation, shock, and desperation as their horns are sawn off.';
     } else {
         $manualInstruction = $manualActionCannotSpeak
             ? 'Manual limb removal is happening now, and the target cannot speak. Do not invent coherent spoken dialogue for the target.'
@@ -806,6 +814,8 @@ if ($manualActionActive) {
     if ($manualActionType === 'remove_limb') {
         $systemPrompt .= "  <limb_token>" . stobePromptXmlEscape($manualActionLimbToken) . "</limb_token>\n"
             . "  <limb_label>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb_label>\n";
+    } elseif ($manualActionType === 'cut_horns') {
+        $systemPrompt .= "  <body_part>horns</body_part>\n";
     }
     $systemPrompt .= "</manual_action_context>";
 }
@@ -823,6 +833,8 @@ if ($manualActionActive) {
         . "  <target_can_speak>" . ($manualActionCannotSpeak ? 'false' : 'true') . "</target_can_speak>\n";
     if ($manualActionType === 'remove_limb') {
         $userContent .= "  <limb>" . stobePromptXmlEscape($manualActionLimbLabel) . "</limb>\n";
+    } elseif ($manualActionType === 'cut_horns') {
+        $userContent .= "  <body_part>horns</body_part>\n";
     }
     $userContent .= "</manual_action_event>";
 }

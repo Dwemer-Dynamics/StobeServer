@@ -7531,6 +7531,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
     }
     $historyEnabled = !coerceBoolean($options['skip_history'] ?? false);
     $deferVoiceAssignment = coerceBoolean($options['defer_voice_assignment'] ?? false);
+    $forceAppearanceUpdate = coerceBoolean($options['force_update_appearance'] ?? false);
     $historyReason = trim(strval($options['history_reason'] ?? 'profile_update'));
     if ($historyReason === '') {
         $historyReason = 'profile_update';
@@ -7691,7 +7692,11 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
                 ) THEN EXCLUDED.occupation
                 ELSE core_npc_master.occupation
             END,
-            appearance = COALESCE(NULLIF(core_npc_master.appearance, ''), EXCLUDED.appearance),
+            appearance = CASE
+                WHEN core_npc_master.appearance IS NULL OR BTRIM(core_npc_master.appearance) = '' THEN EXCLUDED.appearance
+                WHEN $24 THEN EXCLUDED.appearance
+                ELSE core_npc_master.appearance
+            END,
             equipment = CASE
                 WHEN NULLIF(EXCLUDED.equipment, '') IS NOT NULL THEN EXCLUDED.equipment
                 ELSE COALESCE(core_npc_master.equipment, '')
@@ -7764,6 +7769,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             $tags,
             $isAnimal,
             $world_knowledge,
+            $forceAppearanceUpdate,
         ]
     );
     if ($historyEnabled) {
@@ -9066,7 +9072,112 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $appearanceHeightNorm,
         $appearanceAgeNorm
     );
+    $parseHornAverageNormalized = static function (mixed $value): ?float {
+        if (is_int($value) || is_float($value)) {
+            $normalized = floatval($value);
+        } elseif (is_string($value)) {
+            $text = trim($value);
+            if ($text === '' || preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/', $text) !== 1) {
+                return null;
+            }
+            $normalized = floatval($text);
+        } else {
+            return null;
+        }
+        if ($normalized > 1.0) {
+            $normalized = $normalized / 100.0;
+        }
+        if ($normalized < 0.0) {
+            $normalized = 0.0;
+        } elseif ($normalized > 1.0) {
+            $normalized = 1.0;
+        }
+        return $normalized;
+    };
+    $extractHornAverageNormalized = static function (array $source) use ($parseHornAverageNormalized): ?float {
+        $hornPayload = $source['horn_sliders'] ?? null;
+        if (is_string($hornPayload) && trim($hornPayload) !== '') {
+            $decodedHornPayload = json_decode($hornPayload, true);
+            if (is_array($decodedHornPayload)) {
+                $hornPayload = $decodedHornPayload;
+            }
+        }
+        if (!is_array($hornPayload)) {
+            return null;
+        }
+
+        $averageValue = $parseHornAverageNormalized($hornPayload['average'] ?? null);
+        if ($averageValue !== null) {
+            return $averageValue;
+        }
+
+        $collected = [];
+        foreach (['body', 'upper', 'lower'] as $hornKey) {
+            $normalized = $parseHornAverageNormalized($hornPayload[$hornKey] ?? null);
+            if ($normalized === null) {
+                continue;
+            }
+            $collected[] = $normalized;
+        }
+        if (count($collected) === 0) {
+            return null;
+        }
+        return array_sum($collected) / count($collected);
+    };
+    $buildShekHornAppearanceSentence = static function (?float $averageNormalized): string {
+        if ($averageNormalized === null) {
+            return '';
+        }
+        if ($averageNormalized >= 0.999) {
+            return 'Their horns have been cut off.';
+        }
+        if ($averageNormalized <= 0.20) {
+            return 'They have very large horns.';
+        }
+        if ($averageNormalized <= 0.40) {
+            return 'They have large horns.';
+        }
+        if ($averageNormalized <= 0.60) {
+            return 'They have average horns.';
+        }
+        if ($averageNormalized <= 0.80) {
+            return 'They have small horns.';
+        }
+        return 'They have very small horns.';
+    };
+    $applyHornAppearanceSentence = static function (string $appearanceText, string $hornSentence): string {
+        $appearanceText = trim($appearanceText);
+        $hornSentence = trim($hornSentence);
+        if ($hornSentence === '') {
+            return $appearanceText;
+        }
+
+        $patterns = [
+            '/\bThey have very large horns\.\s*/i',
+            '/\bThey have large horns\.\s*/i',
+            '/\bThey have average horns\.\s*/i',
+            '/\bThey have small horns\.\s*/i',
+            '/\bThey have very small horns\.\s*/i',
+            '/\bTheir horns have been cut off\.\s*/i',
+        ];
+        $appearanceText = preg_replace($patterns, '', $appearanceText) ?? $appearanceText;
+        $appearanceText = preg_replace('/\s{2,}/', ' ', trim($appearanceText)) ?? trim($appearanceText);
+        if ($appearanceText === '') {
+            return $hornSentence;
+        }
+        if (preg_match('/[.!?]$/', $appearanceText) !== 1) {
+            $appearanceText .= '.';
+        }
+        return $appearanceText . ' ' . $hornSentence;
+    };
     $appearance = '';
+    $hornAverageNormalized = null;
+    $hornAppearanceSentence = '';
+    if (stripos($race, 'shek') !== false) {
+        $hornAverageNormalized = $extractHornAverageNormalized($snapshot);
+        $hornAppearanceSentence = $buildShekHornAppearanceSentence($hornAverageNormalized);
+    }
+    $forceAppearanceUpdate = false;
 
     $stats = $statsPayload;
     $skills = '';
@@ -9484,13 +9595,16 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $existingMasterMetadata = [];
     $existingMasterRow = $db->fetchOne(
         "SELECT metadata
+                , appearance
          FROM core_npc_master
          WHERE LOWER(name) = LOWER($1)
          LIMIT 1",
         [$name]
     );
+    $existingMasterAppearance = '';
     if ($existingMasterRow) {
         $existingMasterMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
+        $existingMasterAppearance = trim(strval($existingMasterRow['appearance'] ?? ''));
     }
 
     $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
@@ -9583,6 +9697,11 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $metadataForStorage['trader_shop_sources'] = $traderShopSourceSummaries;
         $metadataForStorage['trader_shop_source_count'] = $traderShopSourceCount;
         $metadataForStorage['trader_shop_item_count'] = $traderShopItemCount;
+    }
+    if ($hornAppearanceSentence !== '') {
+        $hornAppearanceBase = $existingMasterAppearance !== '' ? $existingMasterAppearance : $appearance;
+        $appearance = $applyHornAppearanceSentence($hornAppearanceBase, $hornAppearanceSentence);
+        $forceAppearanceUpdate = true;
     }
     if ($isLikelyTraderContext) {
         $mergeTraderEntry = static function (array &$bucket, array $entry): void {
@@ -9745,6 +9864,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     ], [
         'skip_history' => true,
         'defer_voice_assignment' => true,
+        'force_update_appearance' => $forceAppearanceUpdate,
     ]);
 
     $metadataJson = normalizeJsonString($metadataForStorage);
