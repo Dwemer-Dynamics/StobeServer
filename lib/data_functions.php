@@ -4121,6 +4121,48 @@ function ensureOriginalName(string $name, string $fallbackOriginal = ''): string
     return $fallback;
 }
 
+function stobeBuildNpcIdentityNameVariants(string $rawName): array {
+    $variants = [];
+    $append = static function (array &$target, string $candidate): void {
+        $normalized = normalizeParticipantNameToken($candidate);
+        if ($normalized === '') {
+            return;
+        }
+        $target[strtolower($normalized)] = true;
+        $base = normalizeParticipantNameToken(baseNameWithoutBracketSuffix($normalized));
+        if ($base !== '') {
+            $target[strtolower($base)] = true;
+        }
+    };
+
+    $append($variants, $rawName);
+    return $variants;
+}
+
+function stobeSnapshotIdentityNamesCompatible(
+    string $incomingName,
+    string $candidateName,
+    string $candidateOriginalName = ''
+): bool {
+    $incomingVariants = stobeBuildNpcIdentityNameVariants($incomingName);
+    if (count($incomingVariants) === 0) {
+        return false;
+    }
+
+    $candidateVariants = stobeBuildNpcIdentityNameVariants($candidateName);
+    foreach (array_keys(stobeBuildNpcIdentityNameVariants($candidateOriginalName)) as $variantKey) {
+        $candidateVariants[$variantKey] = true;
+    }
+
+    foreach (array_keys($incomingVariants) as $incomingVariantKey) {
+        if (isset($candidateVariants[$incomingVariantKey])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function resolveSnapshotTargetNpcName(string $incomingName, string $incomingStorageId = ''): array {
     $db = $GLOBALS["db"];
     $normalizedIncomingName = normalizeParticipantNameToken($incomingName);
@@ -4143,7 +4185,8 @@ function resolveSnapshotTargetNpcName(string $incomingName, string $incomingStor
         }
 
         $byStorageId = $db->fetchOne(
-            "SELECT name
+            "SELECT name,
+                    original_name
              FROM core_npc
              WHERE LOWER(COALESCE(metadata->>'storage_id', '')) IN (" . implode(',', $variantPlaceholders) . ")
              ORDER BY updated_at DESC, gamets_last_updated DESC
@@ -4152,11 +4195,22 @@ function resolveSnapshotTargetNpcName(string $incomingName, string $incomingStor
         );
         if ($byStorageId) {
             $resolvedName = normalizeParticipantNameToken(strval($byStorageId['name'] ?? ''));
+            $resolvedOriginalName = normalizeParticipantNameToken(strval($byStorageId['original_name'] ?? ''));
             if ($resolvedName !== '') {
-                return [
-                    'name' => $resolvedName,
-                    'matched_by' => 'storage_id',
-                ];
+                if (stobeSnapshotIdentityNamesCompatible($normalizedIncomingName, $resolvedName, $resolvedOriginalName)) {
+                    return [
+                        'name' => $resolvedName,
+                        'matched_by' => 'storage_id',
+                    ];
+                }
+
+                stobeLogImport('Snapshot storage_id match rejected as incompatible', [
+                    'incoming_name' => $normalizedIncomingName,
+                    'incoming_storage_id' => $incomingStorageId,
+                    'matched_name' => $resolvedName,
+                    'matched_original_name' => $resolvedOriginalName,
+                    'storage_id_variants' => $storageIdVariants,
+                ], 'WARN');
             }
         }
 
@@ -4402,17 +4456,46 @@ function ensureNpcProfilesFromParticipantIdentities(array $participantIdentities
     foreach ($entries as $entry) {
         $name = strval($entry['name']);
         $storageId = normalizeStorageIdToken(strval($entry['storage_id'] ?? ''));
+        $isBracketName = (strpos($name, '[') !== false || strpos($name, ']') !== false);
         $lookupOrder = [];
-        if ($storageId !== '') {
-            $lookupOrder[] = 'storage:' . strtolower($storageId);
+        if ($isBracketName) {
+            $lookupOrder[] = 'name:' . strtolower($name);
+            $lookupOrder[] = 'original:' . strtolower($name);
+            if ($storageId !== '') {
+                $lookupOrder[] = 'storage:' . strtolower($storageId);
+            }
+        } else {
+            if ($storageId !== '') {
+                $lookupOrder[] = 'storage:' . strtolower($storageId);
+            }
+            $lookupOrder[] = 'name:' . strtolower($name);
+            $lookupOrder[] = 'original:' . strtolower($name);
         }
-        $lookupOrder[] = 'name:' . strtolower($name);
-        $lookupOrder[] = 'original:' . strtolower($name);
 
         $matchedRow = null;
         foreach ($lookupOrder as $lookupKey) {
             if (isset($existingByLookup[$lookupKey])) {
-                $matchedRow = $existingByLookup[$lookupKey];
+                $candidateRow = $existingByLookup[$lookupKey];
+                if (
+                    strpos($lookupKey, 'storage:') === 0 &&
+                    !stobeSnapshotIdentityNamesCompatible(
+                        $name,
+                        strval($candidateRow['name'] ?? ''),
+                        strval($candidateRow['original_name'] ?? '')
+                    )
+                ) {
+                    if ($isBracketName) {
+                        stobeLogImport('Bracket participant JIT rejected incompatible storage_id match', [
+                            'name' => $name,
+                            'storage_id' => $storageId,
+                            'matched_name' => strval($candidateRow['name'] ?? ''),
+                            'matched_original_name' => strval($candidateRow['original_name'] ?? ''),
+                            'matched_storage_id' => normalizeStorageIdToken(strval($candidateRow['storage_id'] ?? '')),
+                        ], 'WARN');
+                    }
+                    continue;
+                }
+                $matchedRow = $candidateRow;
                 break;
             }
         }
@@ -7791,6 +7874,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             $raceAfter = trim(strval($rowAfter['race'] ?? ''));
             $factionAfter = trim(strval($rowAfter['faction'] ?? ''));
             $genderAfter = trim(strval($rowAfter['gender'] ?? ''));
+            $appearanceAfter = trim(strval($rowAfter['appearance'] ?? ''));
             $equipmentAfter = trim(strval($rowAfter['equipment'] ?? ''));
             $skillsAfter = trim(strval($rowAfter['skills'] ?? ''));
             $isUnresolved = (
@@ -7806,6 +7890,8 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
                 'race' => $raceAfter,
                 'faction' => $factionAfter,
                 'gender' => $genderAfter,
+                'appearance' => $appearanceAfter,
+                'force_update_appearance' => $forceAppearanceUpdate,
                 'equipment_len' => strlen($equipmentAfter),
                 'skills_len' => strlen($skillsAfter),
                 'gamets_last_updated' => intval($rowAfter['gamets_last_updated'] ?? 0),
@@ -9606,6 +9692,30 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $existingMasterMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
         $existingMasterAppearance = trim(strval($existingMasterRow['appearance'] ?? ''));
     }
+    $existingAppearanceShowsCutHorns = stripos($existingMasterAppearance, 'Their horns have been cut off.') !== false;
+    $existingHornsCut = coerceBoolean($existingMasterMetadata['horns_cut'] ?? false) || $existingAppearanceShowsCutHorns;
+    if (
+        stripos($race, 'shek') !== false &&
+        $hornAverageNormalized !== null &&
+        $hornAverageNormalized >= 0.999
+    ) {
+        $existingHornsCut = true;
+    }
+    if (stripos($race, 'shek') !== false && $existingHornsCut) {
+        $metadataForStorage['horns_cut'] = true;
+        if ($hornAverageNormalized === null || $hornAverageNormalized < 0.999) {
+            stobeLogImport('Preserving stored cut-horns appearance state', [
+                'name' => $name,
+                'gamets' => max(0, $gamets),
+                'incoming_horn_average_normalized' => $hornAverageNormalized,
+                'existing_metadata_horns_cut' => coerceBoolean($existingMasterMetadata['horns_cut'] ?? false),
+                'existing_appearance_has_cut_horns' => $existingAppearanceShowsCutHorns,
+                'source' => $snapshotSource,
+            ], 'DEBUG');
+        }
+        $hornAverageNormalized = 1.0;
+        $hornAppearanceSentence = $buildShekHornAppearanceSentence($hornAverageNormalized);
+    }
 
     $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
     $preservedMetadataApplied = [];
@@ -9702,6 +9812,15 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $hornAppearanceBase = $existingMasterAppearance !== '' ? $existingMasterAppearance : $appearance;
         $appearance = $applyHornAppearanceSentence($hornAppearanceBase, $hornAppearanceSentence);
         $forceAppearanceUpdate = true;
+        stobeLogImport('Horn appearance sentence applied', [
+            'name' => $name,
+            'gamets' => max(0, $gamets),
+            'horn_average_normalized' => $hornAverageNormalized,
+            'horn_sentence' => $hornAppearanceSentence,
+            'appearance_before' => $hornAppearanceBase,
+            'appearance_after' => $appearance,
+            'source' => $snapshotSource,
+        ], 'DEBUG');
     }
     if ($isLikelyTraderContext) {
         $mergeTraderEntry = static function (array &$bucket, array $entry): void {
