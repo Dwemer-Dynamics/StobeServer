@@ -55,7 +55,7 @@ if ($releaseDate === '') {
 }
 echo json_encode([
     'server' => 'StobeServer',
-    'version' => '0.8.2',
+    'version' => '0.8.4',
     'release_date' => $releaseDate,
     'game' => 'Kenshi',
     'status' => 'ok',
