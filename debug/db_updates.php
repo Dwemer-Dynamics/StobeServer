@@ -217,11 +217,14 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         $defaultMetadata = json_encode([
             'DYNAMIC_PROFILE_ENABLED' => false,
             'MIDDLE_TERM_MEMORY_ENABLED' => false,
+            'AUTO_DIARY_ENABLED' => false,
             'DIARY_DAYS' => 1,
+            'AUTO_DIARY_MIN_EVENTS' => 50,
+            'AUTO_DIARY_HOUR' => 21,
             'DYNAMIC_PROFILE_FIELDS' => ['personality', 'occupation', 'speechstyle', 'goals'],
             'RECHAT_RESPONSES' => 3,
             'RECHAT_PROBABILITY' => 66,
-            'DIARY_PROMPT' => "Please write a short summary of #PLAYER_NAME# and #NPC_NAME#'s last dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
+            'DIARY_PROMPT' => "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with the current date and time.",
             'DIARY_COOLDOWN' => 120,
             'CONTEXT_HISTORY' => 75,
             'CONTEXT_HISTORY_DIARY' => 100,
@@ -606,6 +609,12 @@ PROMPT;
             $desc = 'Remove one limb from a helpless target. Requires a hacksaw in inventory. Use target and item as LEFT_ARM, RIGHT_ARM, LEFT_LEG, or RIGHT_LEG. Works only on knocked-out, unconscious, imprisoned, or carried targets.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('REMOVE_LIMB','RemoveLimb',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_action', 202604120001, static function () use ($db): void {
+            $desc = "Cut off a helpless Shek target's horns with a hacksaw. Use target as the victim. Works only on dead, knocked-out, unconscious, imprisoned, or carried Shek whose horns are not already cut off.";
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('CUT_HORNS','CutHorns',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
         });
         $applyPatch('core_action', 202603140206, static function () use ($db): void {
@@ -1317,9 +1326,10 @@ PROMPT;
             }
             $playerMetadata['DYNAMIC_PROFILE_ENABLED'] = true;
             $playerMetadata['MIDDLE_TERM_MEMORY_ENABLED'] = true;
+            $playerMetadata['AUTO_DIARY_ENABLED'] = true;
             $playerMetadataJson = json_encode($playerMetadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if (!is_string($playerMetadataJson) || trim($playerMetadataJson) === '') {
-                $playerMetadataJson = '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true}';
+                $playerMetadataJson = '{"DYNAMIC_PROFILE_ENABLED":true,"MIDDLE_TERM_MEMORY_ENABLED":true,"AUTO_DIARY_ENABLED":true}';
             }
 
             $playerByLabel = $db->fetchOne(
@@ -1389,8 +1399,13 @@ PROMPT;
                               OR jsonb_typeof(core_profiles.metadata) <> 'object'
                             THEN EXCLUDED.metadata
                             ELSE jsonb_set(
-                                jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
-                                '{MIDDLE_TERM_MEMORY_ENABLED}',
+                                jsonb_set(
+                                    jsonb_set(core_profiles.metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+                                    '{MIDDLE_TERM_MEMORY_ENABLED}',
+                                    'true'::jsonb,
+                                    true
+                                ),
+                                '{AUTO_DIARY_ENABLED}',
                                 'true'::jsonb,
                                 true
                             )
@@ -1432,8 +1447,13 @@ PROMPT;
                               OR jsonb_typeof(metadata) <> 'object'
                             THEN $9::jsonb
                             ELSE jsonb_set(
-                                jsonb_set(metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
-                                '{MIDDLE_TERM_MEMORY_ENABLED}',
+                                jsonb_set(
+                                    jsonb_set(metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
+                                    '{MIDDLE_TERM_MEMORY_ENABLED}',
+                                    'true'::jsonb,
+                                    true
+                                ),
+                                '{AUTO_DIARY_ENABLED}',
                                 'true'::jsonb,
                                 true
                             )
@@ -1522,8 +1542,38 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                     'Herika-style middle-term narrative request prompt.'
                  )
                  ON CONFLICT (prompt_key) DO UPDATE SET
-                    default_prompt = EXCLUDED.default_prompt,
-                    description = EXCLUDED.description"
+                     default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description"
+            );
+        });
+        $applyPatch('prompts', 202604110101, static function () use ($db): void {
+            $prompt = 'Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#\'s dialogues and events written above into #NPC_NAME#\'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with exactly this header: "#KENSHI_DIARY_HEADER#".';
+            $description = 'Global default prompt for diary generation. Profile-level DIARY_PROMPT overrides this when set. Used in lib/diary_helper_functions.php.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('DIARY_PROMPT', $1, $2)
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt, $description]
+            );
+        });
+        $applyPatch('core_profiles', 202604110102, static function () use ($db): void {
+            $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = CASE
+                     WHEN metadata IS NULL OR metadata = '[]'::jsonb OR jsonb_typeof(metadata) <> 'object'
+                         THEN jsonb_build_object('AUTO_DIARY_HOUR', 21)
+                     WHEN NOT (metadata ? 'AUTO_DIARY_HOUR')
+                         THEN metadata || jsonb_build_object('AUTO_DIARY_HOUR', 21)
+                     ELSE metadata
+                 END,
+                 updated_at = NOW()
+                 WHERE metadata IS NULL
+                    OR metadata = '[]'::jsonb
+                    OR jsonb_typeof(metadata) <> 'object'
+                    OR NOT (metadata ? 'AUTO_DIARY_HOUR')"
             );
         });
 

@@ -909,6 +909,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
                     $meta['DYNAMIC_PROFILE_ENABLED'] = coerceBoolean($dynVal);
                 }
             }
+            if (array_key_exists('auto_diary_enabled', $_POST)) {
+                $autoDiaryVal = $_POST['auto_diary_enabled'];
+                if ($autoDiaryVal === '' || $autoDiaryVal === null) {
+                    unset($meta['AUTO_DIARY_ENABLED']);
+                } else {
+                    $meta['AUTO_DIARY_ENABLED'] = coerceBoolean($autoDiaryVal);
+                }
+            }
             $_POST['metadata'] = json_encode($meta);
         } catch (Throwable $e) {
             if (!isset($_POST['metadata']) || trim((string)$_POST['metadata']) === '') {
@@ -2197,6 +2205,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         // Check profile-level settings for these features
         $profileDynEnabled = false;
         $profileMtmEnabled = false;
+        $profileAutoDiaryEnabled = false;
         $currentProfileId = (string)(is_array($editItem) ? ($editItem['profile_id'] ?? '') : '');
         if ($currentProfileId !== '') {
             foreach (($profileConnRows ?? []) as $prow) {
@@ -2210,8 +2219,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                     } catch (Throwable $e) {}
                     $dynVal = isset($pmeta['DYNAMIC_PROFILE_ENABLED']) ? $pmeta['DYNAMIC_PROFILE_ENABLED'] : null;
                     $mtmVal = isset($pmeta['MIDDLE_TERM_MEMORY_ENABLED']) ? $pmeta['MIDDLE_TERM_MEMORY_ENABLED'] : null;
+                    $autoDiaryVal = isset($pmeta['AUTO_DIARY_ENABLED']) ? $pmeta['AUTO_DIARY_ENABLED'] : null;
                     $profileDynEnabled = ($dynVal === '1' || $dynVal === 1 || $dynVal === true);
                     $profileMtmEnabled = ($mtmVal === '1' || $mtmVal === 1 || $mtmVal === true);
+                    $profileAutoDiaryEnabled = ($autoDiaryVal === '1' || $autoDiaryVal === 1 || $autoDiaryVal === true);
                     break;
                 }
             }
@@ -2232,13 +2243,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         $mtmChecked = $profileMtmEnabled;
         $mtmFromProfile = false;
         $imbChecked = false;
+        $autoDiaryChecked = $profileAutoDiaryEnabled;
+        $autoDiaryFromProfile = false;
         try {
             $hasNpcOverride = false;
+            $hasAutoDiaryOverride = false;
             if (is_array($editItem) && !empty($editItem['metadata'])) {
                 $tmpMeta = json_decode((string)$editItem['metadata'], true);
                 if (is_array($tmpMeta) && array_key_exists('MIDDLE_TERM_MEMORY_ENABLED', $tmpMeta) && $tmpMeta['MIDDLE_TERM_MEMORY_ENABLED'] !== null && $tmpMeta['MIDDLE_TERM_MEMORY_ENABLED'] !== '') {
                     $mtmChecked = coerceBoolean($tmpMeta['MIDDLE_TERM_MEMORY_ENABLED']);
                     $hasNpcOverride = true;
+                }
+                if (is_array($tmpMeta) && array_key_exists('AUTO_DIARY_ENABLED', $tmpMeta) && $tmpMeta['AUTO_DIARY_ENABLED'] !== null && $tmpMeta['AUTO_DIARY_ENABLED'] !== '') {
+                    $autoDiaryChecked = coerceBoolean($tmpMeta['AUTO_DIARY_ENABLED']);
+                    $hasAutoDiaryOverride = true;
                 }
             }
             if (is_array($editItem) && !empty($editItem['extended_data'])) {
@@ -2253,6 +2271,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             }
             if (!$hasNpcOverride) {
                 $mtmFromProfile = true;
+            }
+            if (!$hasAutoDiaryOverride) {
+                $autoDiaryFromProfile = true;
             }
         } catch (Throwable $e) { }
         
@@ -2278,6 +2299,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <input type="checkbox" id="individual_memory_enabled" name="individual_memory_enabled" value="1" <?= $imbChecked ? "checked" : "" ?>>
             </label>
             <small class="hint">Enable NPC-scoped memory summaries for this character only. Scoped summaries are generated from conversations where this NPC is present.</small>
+        </div>
+
+        <div class="form-item">
+            <label for="auto_diary_enabled" class="label-with-toggle">Auto Diary
+                <input type="hidden" name="auto_diary_enabled" value="">
+                <input type="checkbox" id="auto_diary_enabled" name="auto_diary_enabled" value="1" <?= $autoDiaryChecked ? "checked" : "" ?> data-profile-default="<?= $profileAutoDiaryEnabled ? '1' : '0' ?>">
+            </label>
+            <small class="hint">Allow this NPC to write automatic diary entries from background day processing.<?= $autoDiaryFromProfile ? ' <strong style="color:#e6b76c;">(Inherited from profile)</strong>' : '' ?></small>
         </div>
 
         <div class="form-item span-2">
@@ -2555,6 +2584,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 try {
                   const mtm = form.querySelector('#middle_term_enabled');
                   const dyn = form.querySelector('#dynamic_profile');
+                  const autoDiary = form.querySelector('#auto_diary_enabled');
                   const imb = form.querySelector('#individual_memory_enabled');
                   if (form.metadata){
                     let metadataObj = {};
@@ -2575,6 +2605,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                         metadataObj.DYNAMIC_PROFILE_ENABLED = dyn.checked ? 1 : 0;
                       } else {
                         delete metadataObj.DYNAMIC_PROFILE_ENABLED;
+                      }
+                    }
+
+                    if (autoDiary) {
+                      const profileDefault = autoDiary.getAttribute('data-profile-default') === '1';
+                      if (autoDiary.checked !== profileDefault) {
+                        metadataObj.AUTO_DIARY_ENABLED = autoDiary.checked ? 1 : 0;
+                      } else {
+                        delete metadataObj.AUTO_DIARY_ENABLED;
                       }
                     }
                     form.metadata.value = JSON.stringify(metadataObj);
@@ -2608,6 +2647,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                       // Inherit: send empty/null to clear override
                       if (dynHidden) dynHidden.value = '';
                       dyn.value = '';
+                    }
+                  }
+
+                  if (autoDiary) {
+                    const profileDefault = autoDiary.getAttribute('data-profile-default') === '1';
+                    const autoDiaryHidden = form.querySelector('input[type="hidden"][name="auto_diary_enabled"]');
+                    if (autoDiary.checked !== profileDefault) {
+                      if (autoDiaryHidden) autoDiaryHidden.value = autoDiary.checked ? '1' : '0';
+                      autoDiary.value = autoDiary.checked ? '1' : '0';
+                    } else {
+                      if (autoDiaryHidden) autoDiaryHidden.value = '';
+                      autoDiary.value = '';
                     }
                   }
                 } catch(_e){ console.error('Failed to sync feature toggles:', _e); }

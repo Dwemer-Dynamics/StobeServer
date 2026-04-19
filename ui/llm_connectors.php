@@ -171,7 +171,7 @@ function stobe_llm_payload_to_save_fields(array $payload, ?array $existingDbRow 
         'api_key' => strval($existingDbRow['api_key'] ?? ''),
         'base_url' => trim(strval($payload['url'] ?? ($existingDbRow['base_url'] ?? ''))),
         'model' => trim(strval($payload['model'] ?? ($existingDbRow['model'] ?? ''))),
-        'max_tokens' => intval($payload['max_tokens'] ?? ($existingDbRow['max_tokens'] ?? 250)),
+        'max_tokens' => intval($payload['max_tokens'] ?? ($existingDbRow['max_tokens'] ?? 500)),
         'temperature' => floatval($payload['temperature'] ?? ($existingDbRow['temperature'] ?? 1)),
         'is_default' => stobe_llm_to_bool_int($payload['is_default'] ?? ($existingDbRow['is_default'] ?? 0)) === 1,
     ];
@@ -1475,7 +1475,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
     $payload['temperature'] = 1;
     $payload['url'] = 'https://openrouter.ai/api/v1/chat/completions';
     $payload['reasoning_model'] = 0;
-    $payload['max_tokens'] = 250;
+    $payload['max_tokens'] = 500;
     $payload['api_badge_id'] = stobe_llm_default_api_badge_id();
     $payload['enforce_json'] = 1;
     $payload['json_schema'] = 1;
@@ -1588,7 +1588,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["import"])) {
                 $payload['driver'] = ($svc==='openrouter') ? 'openrouterjson' : (($svc==='openai') ? 'openaijson' : (($svc==='google') ? 'google_openaijson' : (($svc==='groq') ? 'groqjson' : (($svc==='nanogpt') ? 'openrouterjson' : (($svc==='player2') ? 'player2json' : 'openaijson')))));
             }
             if (!isset($payload['temperature']) || $payload['temperature']===null) $payload['temperature'] = 1;
-            if (!isset($payload['max_tokens']) || $payload['max_tokens']===null) $payload['max_tokens'] = 250;
+            if (!isset($payload['max_tokens']) || $payload['max_tokens']===null) $payload['max_tokens'] = 500;
 
             // Ensure label present
             if ($payload['label'] === '') { $payload['label'] = 'Imported Connector'; }
@@ -1628,7 +1628,7 @@ if (isset($_GET["create_blank"])) {
         'temperature' => 1,
         'url' => 'https://openrouter.ai/api/v1/chat/completions',
         'reasoning_model' => 0,
-        'max_tokens' => 250,
+        'max_tokens' => 500,
         'api_badge_id' => stobe_llm_default_api_badge_id(),
         'enforce_json' => 1,
         'json_schema' => 1,

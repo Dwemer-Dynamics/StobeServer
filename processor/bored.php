@@ -107,7 +107,7 @@ $dialogueData = parseDialogueEventData($eventData);
 $suggestedTarget = normalizeParticipantNameToken(strval($dialogueData['target'] ?? ''));
 if ($suggestedTarget !== '' &&
     strcasecmp($suggestedTarget, $speakerNpc) !== 0 &&
-    ($playerName === '' || strcasecmp($suggestedTarget, $playerName) !== 0)) {
+    ($forceDirectorMode || $playerName === '' || strcasecmp($suggestedTarget, $playerName) !== 0)) {
     $listener = $suggestedTarget;
 }
 if ($listener === '') {
