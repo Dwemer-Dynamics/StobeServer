@@ -697,6 +697,26 @@ PROMPT;
                 VALUES ('KNOCKOUT','Knockout',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
+        $applyPatch('core_action', 202604200006, static function () use ($db): void {
+            $descriptions = [
+                'GIVE_CATS' => 'Give cats to the target. Put the recipient in target and the numeric amount in amount.',
+                'TAKE_CATS' => 'Take cats from the target. Put the victim in target and the numeric amount in amount.',
+                'TAKE_ITEM' => 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Put the item name in item and an optional stack count in amount. Equipment/all loot queries are still supported in item.',
+                'GIVE_ITEM' => 'Give a specific item to the target. Put the recipient in target, the exact item name in item, and an optional stack count in amount.',
+            ];
+            foreach ($descriptions as $command => $desc) {
+                $actionName = match ($command) {
+                    'GIVE_CATS' => 'GiveCats',
+                    'TAKE_CATS' => 'TakeCats',
+                    'TAKE_ITEM' => 'TakeItem',
+                    'GIVE_ITEM' => 'GiveItem',
+                    default => $command,
+                };
+                $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                    VALUES ($1,$2,$3,TRUE,NOW())
+                    ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$command, $actionName, $desc]);
+            }
+        });
         $applyPatch('core_action', 202603300001, static function () use ($db): void {
             $desc = 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)

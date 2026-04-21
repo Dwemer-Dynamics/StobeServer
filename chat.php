@@ -425,13 +425,16 @@ if ($llmConfig['api_key'] === '') {
     $responseText = 'No OpenRouter API key configured yet.';
     stobeLogWarn('JSON chat LLM call skipped because API key is missing', ['target_npc' => $targetNpc]);
 } else {
-    $rawResponse = callLLM($messages, $llmConfig, [
+    $llmMeta = [
         'npc_name' => $targetNpc,
         'event_type' => 'chat',
         'speaker' => $speaker,
         'mode' => $mode,
-        'response_format' => ['type' => 'json_object'],
-    ]);
+    ];
+    if (!$narratorMode) {
+        $llmMeta['response_format'] = ['type' => 'json_object'];
+    }
+    $rawResponse = callLLM($messages, $llmConfig, $llmMeta);
     if ($rawResponse === false || trim($rawResponse) === '') {
         $responseText = '...';
         stobeLogWarn('JSON chat LLM returned empty response', [
@@ -450,17 +453,9 @@ if ($llmConfig['api_key'] === '') {
         }
     }
 }
-
-$actionExtraction = extractAndNormalizeActionTags($responseText, 'chat', $actionConfig);
-$cleanText = sanitizeForKenshi(trim(strval($actionExtraction['text'] ?? $responseText)));
-$inlineActions = is_array($actionExtraction['actions'] ?? null) ? $actionExtraction['actions'] : [];
+$cleanText = sanitizeForKenshi(trim(strval($responseText)));
 if (!isset($actions) || !is_array($actions)) {
     $actions = [];
-}
-foreach ($inlineActions as $inlineAction) {
-    if (!in_array($inlineAction, $actions, true)) {
-        $actions[] = $inlineAction;
-    }
 }
 if ($narratorMode) {
     $actions = [];

@@ -887,7 +887,7 @@ $messages[] = [
         : stobeBuildOutputContractUserPrompt(
             $targetNpc,
             $dialogueMode === 'cheat',
-            true,
+            false,
             npcIsInPlayerFaction($npcData)
         ),
 ];
@@ -935,6 +935,7 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             'event_type' => 'chat',
             'speaker' => $speaker,
             'action_config' => $actionConfig,
+            'response_format' => $narratorMode ? null : ['type' => 'json_object'],
         ]
     );
 
@@ -955,45 +956,12 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             'actions_streamed' => $actionsStreamedInLlm,
         ]);
     } else {
-        $rawResponse = stobeCallLLM($messages, $llmConfig, [
-        'npc_name' => $targetNpc,
-        'event_type' => 'chat',
-        'speaker' => $speaker,
+        $responseText = '...';
+        stobeLogWarn('LLM stream response failed', [
+            'target_npc' => $targetNpc,
+            'model' => $llmConfig['model'] ?? '',
+            'narrator_mode' => $narratorMode,
         ]);
-        if ($rawResponse === false || trim($rawResponse) === '') {
-            $responseText = '...';
-            stobeLogWarn('LLM returned an empty response', [
-                'target_npc' => $targetNpc,
-                'model' => $llmConfig['model'] ?? '',
-            ]);
-        } else {
-            $structured = stobeParseStructuredDialogueResponse($rawResponse, 'chat');
-            $responseListener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
-            $responseText = sanitizeForKenshi(trim(strval($structured['message'] ?? '')));
-            $responseActions = [];
-            $structuredAction = trim(strval($structured['action_tag'] ?? ''));
-            if ($structuredAction !== '') {
-                $responseActions[] = $structuredAction;
-            }
-            if ($responseText !== '') {
-                $actionExtraction = extractAndNormalizeActionTags($responseText, 'chat', $actionConfig);
-                $responseText = sanitizeForKenshi(trim(strval($actionExtraction['text'] ?? $responseText)));
-                $inlineActions = is_array($actionExtraction['actions'] ?? null) ? $actionExtraction['actions'] : [];
-                foreach ($inlineActions as $inlineAction) {
-                    if (!in_array($inlineAction, $responseActions, true)) {
-                        $responseActions[] = $inlineAction;
-                    }
-                }
-            }
-            stobeLogInfo('LLM response generated (non-stream fallback)', [
-                'target_npc' => $targetNpc,
-                'model' => $llmConfig['model'] ?? '',
-                'response_length' => strlen($responseText),
-                'structured_json' => boolval($structured['is_structured'] ?? false),
-                'actions_count' => count($responseActions),
-                'actions' => $responseActions,
-            ]);
-        }
     }
 }
 $responseActions = stobeDedupeActionList($responseActions, 'chat', $actionConfig);

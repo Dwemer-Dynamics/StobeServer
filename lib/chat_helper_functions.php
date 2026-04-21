@@ -372,10 +372,8 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config['disallow_use_drugs'] = true;
     $config['disallow_drink_item'] = true;
     $config['disallow_force_drink'] = true;
-    // AI-generated money transfers are currently too error-prone in trade dialog.
-    // Keep cats transfer as manual-action only from the chatbox.
-    $config['disallow_give_cats'] = true;
-    $config['disallow_take_cats'] = true;
+    $config['disallow_give_cats'] = false;
+    $config['disallow_take_cats'] = false;
     $config['allow_travel_location'] = true;
     if (is_array($npcData) && count($npcData) > 0 && npcIsInPlayerFaction($npcData)) {
         $config['disallow_follow_for_player_faction'] = true;
@@ -1129,25 +1127,97 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         }
         return trim($clean);
     };
+    $splitActionSegments = static function (string $raw): array {
+        $segments = [];
+        foreach (explode('@', $raw) as $segment) {
+            $segment = trim(strval($segment));
+            if ($segment === '') {
+                continue;
+            }
+            $segments[] = $segment;
+        }
+        return $segments;
+    };
+    $parsePositiveAmount = static function (string $raw, int $max = 1000000): int {
+        if (preg_match('/-?\d+/', trim($raw), $m) !== 1) {
+            return 0;
+        }
+        $amount = abs(intval($m[0]));
+        if ($amount < 1) {
+            return 0;
+        }
+        if ($amount > $max) {
+            $amount = $max;
+        }
+        return $amount;
+    };
 
     if ($command === 'GIVE_CATS' || $command === 'TAKE_CATS') {
-        if (preg_match('/-?\d+/', $argument, $m) !== 1) {
+        $segments = $splitActionSegments($argument);
+        if (count($segments) === 0) {
             return '';
         }
-        $amount = intval($m[0]);
-        if ($amount < 0) {
-            $amount = -$amount;
+        $targetName = '';
+        $amount = 0;
+        if (count($segments) === 1) {
+            $amount = $parsePositiveAmount($segments[0]);
+        } else {
+            $tailAmount = $parsePositiveAmount($segments[count($segments) - 1]);
+            if ($tailAmount > 0) {
+                $amount = $tailAmount;
+                array_pop($segments);
+                $targetName = $sanitizeInlineText(implode(' ', $segments), 160);
+            } else {
+                $headAmount = $parsePositiveAmount($segments[0]);
+                if ($headAmount > 0) {
+                    $amount = $headAmount;
+                    array_shift($segments);
+                    $targetName = $sanitizeInlineText(implode(' ', $segments), 160);
+                }
+            }
         }
         if ($amount < 1) {
             return '';
         }
-        if ($amount > 1000000) {
-            $amount = 1000000;
+        if ($targetName !== '') {
+            return $command . '@' . $targetName . '@' . strval($amount);
         }
         return $command . '@' . strval($amount);
     }
 
-    if ($command === 'TAKE_ITEM' || $command === 'DROP_ITEM' || $command === 'GIVE_ITEM') {
+    if ($command === 'TAKE_ITEM' || $command === 'GIVE_ITEM') {
+        $segments = $splitActionSegments($argument);
+        if (count($segments) === 0) {
+            return '';
+        }
+        $amount = 0;
+        if (count($segments) >= 2) {
+            $tailAmount = $parsePositiveAmount($segments[count($segments) - 1], 100);
+            if ($tailAmount > 0) {
+                $amount = $tailAmount;
+                array_pop($segments);
+            }
+        }
+        $targetName = '';
+        if (count($segments) >= 2) {
+            $targetName = $sanitizeInlineText(array_shift($segments), 160);
+        }
+        $itemName = $sanitizeInlineText(implode(' ', $segments), 140);
+        if ($itemName === '') {
+            return '';
+        }
+        $normalized = $command . '@';
+        if ($targetName !== '') {
+            $normalized .= $targetName . '@';
+        }
+        $normalized .= $itemName;
+        if ($amount > 0) {
+            $normalized .= '@' . strval($amount);
+        }
+        return $normalized;
+    }
+
+    if ($command === 'DROP_ITEM') {
         $itemName = $sanitizeInlineText($argument, 140);
         if ($itemName === '') {
             return '';
@@ -3837,6 +3907,8 @@ function stobeBuildOutputContractUserPrompt(
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
     $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
+    $actionLine .= " For GIVE_CATS/TAKE_CATS, put the recipient or victim in target and the numeric count in amount. Do not put money in item.";
+    $actionLine .= " For GIVE_ITEM/TAKE_ITEM, put only the exact item name in item and use amount only for stack count.";
     $actionLine .= " KNOCKOUT leaves the target alive. It is valid on yourself, or on other targets only when they are knocked-out, unconscious, imprisoned, or carried.";
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
@@ -3953,53 +4025,21 @@ function stobeBuildOutputContractUserPrompt(
         ];
     }
 
-    $exampleAction = 'JOIN_PARTY@';
-    if ($inPlayerFaction === true) {
-        $exampleAction = 'LEAVE@';
-    }
-
-    if ($streamTextMode) {
-        $exampleFollow = $inPlayerFaction === true ? '' : 'FOLLOW@TargetName, STOP_FOLLOW@, ';
-        $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@, ' : '';
-        $examplePickupNpc = $canPickupNpc ? 'PICKUP_NPC@TargetName, ' : '';
-        $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
-        $exampleCutHorns = $canCutHorns ? 'CUT_HORNS@TargetName, ' : '';
-        $exampleKnockout = 'KNOCKOUT@TargetName, ';
-        $exampleKill = 'KILL@TargetName, ';
-        $exampleUseObject = 'USE_OBJECT@ChairName, ';
-        $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
-        $exampleDrink = $canDrinkItem ? 'DRINK@Sake, ' : '';
-        $exampleForceDrink = $canForceDrink ? 'FORCE_DRINK@TargetName@Cactus Rum, ' : '';
-        $exampleTravel = 'TRAVEL_LOCATION@LocationName, ';
-        $exampleCats = '';
-        if ($allowTakeCats) {
-            $exampleCats .= 'TAKE_CATS@50, ';
-        }
-        if ($allowGiveCats) {
-            $exampleCats .= 'GIVE_CATS@50, ';
-        }
-        return $actionLine
-            . " Use <speech_style> for reference.\n"
-            . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
-            . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleCutHorns . $exampleKnockout . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
-            . "If no action is needed, output dialogue text only.";
-    }
-
     $schema = [
         'character' => $safeNpc,
         'listener' => 'who ' . $safeNpc . ' is addressing',
         'mood' => implode('|', $moods),
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
-        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
+        'item' => 'exact item name for GIVE_ITEM/TAKE_ITEM, limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
+        'amount' => 'positive integer count for GIVE_CATS/TAKE_CATS and optional stack count for GIVE_ITEM/TAKE_ITEM',
         'message' => 'lines of dialogue',
     ];
 
     return $actionLine
         . " Use <speech_style> for reference.\n"
         . "Use ONLY this JSON object to give your answer. Do not send any other characters outside of this JSON structure:\n"
-        . json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        . json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
 }
 
 function stobeDecodeStructuredDialoguePayload(string $rawResponse): array {
@@ -4101,6 +4141,20 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
         }
         return '';
     };
+    $extractScalar = static function (string $key) use ($text): string {
+        $quotedKey = preg_quote($key, '/');
+        $patterns = [
+            '/"' . $quotedKey . '"\s*:\s*(-?\d+(?:\.\d+)?)/is',
+            '/\'' . $quotedKey . '\'\s*:\s*(-?\d+(?:\.\d+)?)/is',
+            '/(?:^|[,{]\s*)' . $quotedKey . '\s*:\s*(-?\d+(?:\.\d+)?)/is',
+        ];
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text, $m) === 1) {
+                return trim(strval($m[1]));
+            }
+        }
+        return '';
+    };
 
     $extractMaybeUnclosedMessage = static function (string $key) use ($text): string {
         $quotedKey = preg_quote($key, '/');
@@ -4158,6 +4212,7 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
         'action' => $extractQuoted('action'),
         'target' => $extractQuoted('target'),
         'item' => $item,
+        'amount' => $extractScalar('amount'),
         'listener' => $extractQuoted('listener'),
         'mood' => $extractQuoted('mood'),
     ];
@@ -4170,16 +4225,41 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
     return [];
 }
 
+function stobeParseStructuredPositiveAmount(string $rawValue, int $max = 1000000): int {
+    if (preg_match('/-?\d+/', trim($rawValue), $m) !== 1) {
+        return 0;
+    }
+    $amount = abs(intval($m[0]));
+    if ($amount < 1) {
+        return 0;
+    }
+    if ($amount > $max) {
+        $amount = $max;
+    }
+    return $amount;
+}
+
+function stobeStructuredItemLooksLikeCatsTransfer(string $rawValue): bool {
+    $value = strtolower(trim(preg_replace('/[\s_\-]+/', ' ', $rawValue) ?? ''));
+    if ($value === '') {
+        return false;
+    }
+    return preg_match('/\b(cats?|money|coins?)\b/', $value) === 1;
+}
+
 function stobeBuildActionTagFromStructuredPayload(
     string $action,
     string $target,
     string $item,
     string $message,
-    string $listener = ''
+    string $listener = '',
+    string $amount = ''
 ): string {
     $actionUpper = strtoupper(trim($action));
     $target = trim($target);
     $item = trim($item);
+    $listener = trim($listener);
+    $amount = trim($amount);
 
     if ($actionUpper === '' || $actionUpper === 'TALK') {
         return '';
@@ -4253,6 +4333,7 @@ function stobeBuildActionTagFromStructuredPayload(
         $actionUpper = $synonyms[$actionUpper];
     }
     $actionUpper = stobeCanonicalizeActionCommand($actionUpper);
+    $explicitAmount = stobeParseStructuredPositiveAmount($amount);
 
     if ($actionUpper === 'ATTACK') {
         return 'ATTACK@' . $target;
@@ -4321,22 +4402,74 @@ function stobeBuildActionTagFromStructuredPayload(
         return '';
     }
     if (in_array($actionUpper, ['GIVE_CATS', 'TAKE_CATS'], true)) {
-        $amountSource = $item !== '' ? $item : $target;
-        if (preg_match('/-?\d+/', $amountSource, $m) !== 1) {
+        $transferTarget = $target;
+        if ($transferTarget === '' && $actionUpper === 'GIVE_CATS' && $listener !== '') {
+            $transferTarget = $listener;
+        }
+
+        $amountValue = $explicitAmount;
+        if ($amountValue <= 0 && $item !== '') {
+            $amountValue = stobeParseStructuredPositiveAmount($item);
+        }
+        if ($amountValue <= 0 && $target !== '' && preg_match('/^\s*-?\d+\s*$/', $target) === 1) {
+            $amountValue = stobeParseStructuredPositiveAmount($target);
+            $transferTarget = '';
+        }
+        if ($amountValue <= 0) {
             return '';
         }
-        $amount = abs(intval($m[0]));
-        if ($amount <= 0) {
-            return '';
+        if ($transferTarget !== '') {
+            return $actionUpper . '@' . $transferTarget . '@' . strval($amountValue);
         }
-        return $actionUpper . '@' . strval($amount);
+        return $actionUpper . '@' . strval($amountValue);
     }
-    if (in_array($actionUpper, ['TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM'], true)) {
+    if (in_array($actionUpper, ['TAKE_ITEM', 'GIVE_ITEM'], true)) {
         $itemName = trim($item !== '' ? $item : $target);
         if ($itemName === '') {
             return '';
         }
-        return $actionUpper . '@' . $itemName;
+        $explicitTarget = '';
+        if ($item !== '') {
+            $explicitTarget = trim($target);
+        }
+        if ($actionUpper === 'GIVE_ITEM' && $explicitTarget === '' && $listener !== '') {
+            $explicitTarget = $listener;
+        }
+
+        if (stobeStructuredItemLooksLikeCatsTransfer($itemName)) {
+            $catsCommand = $actionUpper === 'GIVE_ITEM' ? 'GIVE_CATS' : 'TAKE_CATS';
+            $catsTarget = $explicitTarget;
+            if ($catsTarget === '' && $catsCommand === 'GIVE_CATS' && $listener !== '') {
+                $catsTarget = $listener;
+            }
+            $catsAmount = $explicitAmount > 0
+                ? $explicitAmount
+                : stobeParseStructuredPositiveAmount($itemName);
+            if ($catsAmount <= 0) {
+                return '';
+            }
+            if ($catsTarget !== '') {
+                return $catsCommand . '@' . $catsTarget . '@' . strval($catsAmount);
+            }
+            return $catsCommand . '@' . strval($catsAmount);
+        }
+
+        $normalized = $actionUpper . '@';
+        if ($explicitTarget !== '') {
+            $normalized .= $explicitTarget . '@';
+        }
+        $normalized .= $itemName;
+        if ($explicitAmount > 0) {
+            $normalized .= '@' . strval(min($explicitAmount, 100));
+        }
+        return $normalized;
+    }
+    if ($actionUpper === 'DROP_ITEM') {
+        $itemName = trim($item !== '' ? $item : $target);
+        if ($itemName === '') {
+            return '';
+        }
+        return 'DROP_ITEM@' . $itemName;
     }
     if ($actionUpper === 'REMOVE_LIMB') {
         $targetName = trim($target);
@@ -4463,9 +4596,6 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
         $heuristic = stobeHeuristicExtractStructuredFields($rawResponse);
         if (count($heuristic) > 0) {
             $heuristicMessage = trim(strval($heuristic['message'] ?? ''));
-            if ($heuristicMessage !== '') {
-                $fallbackMessage = $heuristicMessage;
-            }
             $heuristicAction = trim(strval($heuristic['action'] ?? ''));
             $heuristicTarget = trim(strval($heuristic['target'] ?? ''));
             $heuristicItem = trim(strval($heuristic['item'] ?? ''));
@@ -4474,8 +4604,9 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
                 $heuristicAction,
                 $heuristicTarget,
                 $heuristicItem,
-                $fallbackMessage,
-                $heuristicListener
+                $heuristicMessage,
+                $heuristicListener,
+                trim(strval($heuristic['amount'] ?? ''))
             );
             if ($fallbackActionTag !== '') {
                 $fallbackActionTag = normalizeActionTagToken(
@@ -4485,7 +4616,7 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
             }
             return [
                 'is_structured' => true,
-                'message' => trim($fallbackMessage),
+                'message' => $heuristicMessage,
                 'action_tag' => $fallbackActionTag,
                 'listener' => trim(strval($heuristic['listener'] ?? '')),
                 'mood' => trim(strval($heuristic['mood'] ?? '')),
@@ -4508,21 +4639,20 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
     if ($message === '') {
         $message = trim(strval($decoded['content'] ?? ''));
     }
-    if ($message === '') {
-        $message = $fallbackMessage;
-    }
     $action = trim(strval($decoded['action'] ?? 'Talk'));
     $target = trim(strval($decoded['target'] ?? ''));
     $item = trim(strval($decoded['item'] ?? ''));
     $listener = trim(strval($decoded['listener'] ?? ''));
     $mood = trim(strval($decoded['mood'] ?? ''));
+    $amount = trim(strval($decoded['amount'] ?? ''));
 
     $rawActionTag = stobeBuildActionTagFromStructuredPayload(
         $action,
         $target,
         $item,
         $message,
-        $listener
+        $listener,
+        $amount
     );
     $actionTag = '';
     if ($rawActionTag !== '') {
@@ -10473,8 +10603,8 @@ function stobeDedupeActionList(array $actions, string $eventType, ?array $config
 }
 
 if (!function_exists('stobeResolveDialogueListenerTarget')) {
-    function stobeResolveDialogueListenerTarget(string $listener, array $allowedNames, string $fallback = ''): string
-    {
+function stobeResolveDialogueListenerTarget(string $listener, array $allowedNames, string $fallback = ''): string
+{
         $listenerName = normalizeParticipantNameToken($listener);
         $fallbackName = normalizeParticipantNameToken($fallback);
 
@@ -10533,6 +10663,33 @@ if (!function_exists('stobeResolveDialogueListenerTarget')) {
     }
 }
 
+function stobeComputeStructuredStreamMessageDelta(string $previousMessage, string $currentMessage): string {
+    if ($currentMessage === '' || $currentMessage === $previousMessage) {
+        return '';
+    }
+    if ($previousMessage === '') {
+        return $currentMessage;
+    }
+    if (strpos($currentMessage, $previousMessage) === 0) {
+        return substr($currentMessage, strlen($previousMessage));
+    }
+
+    $maxPrefix = min(strlen($previousMessage), strlen($currentMessage));
+    $commonPrefixLength = 0;
+    while (
+        $commonPrefixLength < $maxPrefix
+        && $previousMessage[$commonPrefixLength] === $currentMessage[$commonPrefixLength]
+    ) {
+        $commonPrefixLength++;
+    }
+
+    if ($commonPrefixLength <= 0 || $commonPrefixLength < intval(strlen($previousMessage) / 2)) {
+        return '';
+    }
+
+    return substr($currentMessage, $commonPrefixLength);
+}
+
 function stobeStreamDialogueViaLlm(
     string $actor,
     array|false $actorData,
@@ -10561,13 +10718,182 @@ function stobeStreamDialogueViaLlm(
         ? $meta['action_config']
         : stobeBuildActionConfigForNpc($eventType, $actorData);
 
+    $streamMeta = $meta;
+    $structuredResponseFormat = is_array($streamMeta['response_format'] ?? null)
+        ? $streamMeta['response_format']
+        : null;
+
+    if (is_array($structuredResponseFormat)) {
+        $rawResponse = '';
+        $chunksEmitted = 0;
+        $messageStreamBuffer = '';
+        $lastStructuredMessage = '';
+        $structuredListener = '';
+        $structuredParsed = false;
+
+        $emitStructuredDialogue = function (string $deltaText = '', bool $flushRemainder = false) use (
+            &$messageStreamBuffer,
+            &$chunksEmitted,
+            $actor,
+            $actorData
+        ): void {
+            if ($deltaText !== '') {
+                $messageStreamBuffer .= $deltaText;
+            }
+
+            while (true) {
+                $position = stobeFindFastSentencePosition($messageStreamBuffer);
+                if ($position === false || $position < 0) {
+                    break;
+                }
+
+                $sentence = trim(substr($messageStreamBuffer, 0, $position + 1));
+                $remaining = substr($messageStreamBuffer, $position + 1);
+                $messageStreamBuffer = ltrim(strval($remaining));
+                if ($sentence === '') {
+                    continue;
+                }
+
+                $sentenceChunks = stobeSplitSentencesStream($sentence);
+                foreach ($sentenceChunks as $sentenceChunkRaw) {
+                    $sentenceChunk = stobeStripParentheticalDialogueText(
+                        sanitizeForKenshi(trim(strval($sentenceChunkRaw)))
+                    );
+                    if ($sentenceChunk === '') {
+                        continue;
+                    }
+                    streamResponse($actor, 'ScriptQueue', $sentenceChunk, $actorData, []);
+                    $chunksEmitted++;
+                }
+            }
+
+            if (!$flushRemainder) {
+                return;
+            }
+
+            $remainingText = stobeStripParentheticalDialogueText(
+                sanitizeForKenshi(trim($messageStreamBuffer))
+            );
+            $messageStreamBuffer = '';
+            if ($remainingText === '') {
+                return;
+            }
+
+            $remainingChunks = stobeSplitSentencesStream($remainingText);
+            foreach ($remainingChunks as $remainingChunkRaw) {
+                $remainingChunk = stobeStripParentheticalDialogueText(
+                    sanitizeForKenshi(trim(strval($remainingChunkRaw)))
+                );
+                if ($remainingChunk === '') {
+                    continue;
+                }
+                streamResponse($actor, 'ScriptQueue', $remainingChunk, $actorData, []);
+                $chunksEmitted++;
+            }
+        };
+
+        $processStructuredSnapshot = function (bool $flushRemainder = false) use (
+            &$rawResponse,
+            &$lastStructuredMessage,
+            &$structuredListener,
+            &$structuredParsed,
+            $eventType,
+            $emitStructuredDialogue
+        ): array {
+            $parsedSnapshot = stobeParseStructuredDialogueResponse($rawResponse, $eventType);
+            $isStructuredSnapshot = boolval($parsedSnapshot['is_structured'] ?? false);
+            $parsedMessage = '';
+            if ($isStructuredSnapshot) {
+                $parsedMessage = stobeStripParentheticalDialogueText(
+                    sanitizeForKenshi(trim(strval($parsedSnapshot['message'] ?? '')))
+                );
+            }
+            if ($parsedMessage !== '') {
+                $deltaText = stobeComputeStructuredStreamMessageDelta(
+                    $lastStructuredMessage,
+                    $parsedMessage
+                );
+                if (strlen($parsedMessage) >= strlen($lastStructuredMessage)) {
+                    $lastStructuredMessage = $parsedMessage;
+                }
+                if ($deltaText !== '') {
+                    $emitStructuredDialogue($deltaText, false);
+                }
+            }
+
+            $parsedListener = normalizeParticipantNameToken(
+                strval($parsedSnapshot['listener'] ?? '')
+            );
+            if ($parsedListener !== '') {
+                $structuredListener = $parsedListener;
+            }
+            if ($isStructuredSnapshot || $parsedListener !== '') {
+                $structuredParsed = true;
+            }
+
+            if ($flushRemainder) {
+                $emitStructuredDialogue('', true);
+            }
+
+            return $parsedSnapshot;
+        };
+
+        $streamed = stobeCallLLMStream(
+            $messages,
+            $llmConfig,
+            function (string $delta) use (&$rawResponse, $processStructuredSnapshot): void {
+                if ($delta === '') {
+                    return;
+                }
+                $rawResponse .= $delta;
+                $processStructuredSnapshot(false);
+            },
+            $streamMeta
+        );
+
+        if ($streamed === false) {
+            return $result;
+        }
+
+        if (is_string($streamed) && trim($streamed) !== '') {
+            $rawResponse = $streamed;
+        }
+
+        $finalSnapshot = $processStructuredSnapshot(true);
+        $finalMessage = stobeStripParentheticalDialogueText(
+            sanitizeForKenshi(trim(strval($finalSnapshot['message'] ?? '')))
+        );
+        if ($finalMessage === '' && $lastStructuredMessage !== '') {
+            $finalMessage = $lastStructuredMessage;
+        }
+
+        $finalActions = [];
+        $finalAction = trim(strval($finalSnapshot['action_tag'] ?? ''));
+        if ($finalAction !== '') {
+            $finalActions[] = $finalAction;
+        }
+        $finalActions = stobeDedupeActionList($finalActions, $eventType, $actionConfig);
+
+        $result['ok'] = true;
+        $result['used_streaming'] = true;
+        $result['raw_response'] = trim($rawResponse);
+        $result['response_text'] = $finalMessage;
+        $result['actions'] = $finalActions;
+        $result['actions_streamed'] = false;
+        $result['structured_json'] = boolval($finalSnapshot['is_structured'] ?? false) || $structuredParsed;
+        $result['listener'] = $structuredListener !== ''
+            ? $structuredListener
+            : normalizeParticipantNameToken(strval($finalSnapshot['listener'] ?? ''));
+        $result['chunks_emitted'] = $chunksEmitted;
+        return $result;
+    }
+
     $rawResponse = '';
     $streamBuffer = '';
     $chunksEmitted = 0;
     $streamActionSeen = [];
     $rawActions = [];
 
-    $streamMeta = $meta;
     unset($streamMeta['response_format']);
 
     $streamed = stobeCallLLMStream(
@@ -10728,9 +11054,7 @@ function streamResponse(
     $structuredFromMessage = stobeParseStructuredDialogueResponse($message, 'chat');
     if (boolval($structuredFromMessage['is_structured'] ?? false)) {
         $normalizedMessage = trim(strval($structuredFromMessage['message'] ?? ''));
-        if ($normalizedMessage !== '') {
-            $message = $normalizedMessage;
-        }
+        $message = $normalizedMessage;
         $structuredAction = trim(strval($structuredFromMessage['action_tag'] ?? ''));
         if ($structuredAction !== '' && !in_array($structuredAction, $actions, true)) {
             array_unshift($actions, $structuredAction);
