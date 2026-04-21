@@ -126,6 +126,7 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
     $hasUseObject = false;
     $hasUseDrugs = false;
     $hasDrinkItem = false;
+    $hasKnockout = false;
     $hasKill = false;
     $hasForceDrink = false;
     $hasPickupNpc = false;
@@ -139,6 +140,8 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             $hasUseDrugs = true;
         } elseif ($command === 'DRINK_ITEM') {
             $hasDrinkItem = true;
+        } elseif ($command === 'KNOCKOUT') {
+            $hasKnockout = true;
         } elseif ($command === 'KILL') {
             $hasKill = true;
         } elseif ($command === 'FORCE_DRINK') {
@@ -214,6 +217,13 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             'DRINK',
             'Drink',
             'Consume Bloodrum, Cactus Rum, Grog, or Sake from inventory/equipment.'
+        );
+    }
+    if (!$hasKnockout) {
+        $appendFallbackAction(
+            'KNOCKOUT',
+            'Knockout',
+            'Knock out a helpless target immediately without killing them.'
         );
     }
     if (!$hasKill) {
@@ -560,6 +570,9 @@ function stobeCanonicalizeActionCommand(string $command): string {
     }
     if (in_array($upper, ['CUTHORNS', 'CUT-HORNS'], true)) {
         return 'CUT_HORNS';
+    }
+    if (in_array($upper, ['KO', 'KNOCK_OUT', 'KNOCK-OUT'], true)) {
+        return 'KNOCKOUT';
     }
     if (in_array($upper, ['KILLTARGET', 'EXECUTE', 'MURDER'], true)) {
         return 'KILL';
@@ -1002,6 +1015,9 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
         'CUTHORNS' => 'CUT_HORNS',
+        'KO' => 'KNOCKOUT',
+        'KNOCK_OUT' => 'KNOCKOUT',
+        'KNOCK-OUT' => 'KNOCKOUT',
         'KILLTARGET' => 'KILL',
         'EXECUTE' => 'KILL',
         'MURDER' => 'KILL',
@@ -1181,6 +1197,13 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return '';
         }
         return 'CUT_HORNS@' . $targetName;
+    }
+    if ($command === 'KNOCKOUT') {
+        $targetName = $sanitizeInlineText($argument, 120);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'KNOCKOUT@' . $targetName;
     }
     if ($command === 'KILL') {
         $targetName = $sanitizeInlineText($argument, 120);
@@ -1485,13 +1508,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'DROPNPC', 'DROP_NPC', 'DROP-NPC', 'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC', 'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC', 'PICKUPNPC', 'PICKUP-NPC', 'KIDNAP', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KO', 'KNOCK_OUT', 'KNOCK-OUT', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -3637,6 +3660,7 @@ function stobeBuildOutputContractUserPrompt(
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
     $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
+    $actionLine .= " KNOCKOUT is only valid on knocked-out, unconscious, imprisoned, or carried targets, and leaves them alive.";
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
@@ -3650,6 +3674,7 @@ function stobeBuildOutputContractUserPrompt(
         'TakeItem',
         'GiveItem',
         'DropItem',
+        'Knockout',
         'Kill',
         'RoleplayAction',
         'FactionRelations',
@@ -3762,6 +3787,7 @@ function stobeBuildOutputContractUserPrompt(
         $examplePickupNpc = $canPickupNpc ? 'PICKUP_NPC@TargetName, ' : '';
         $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
         $exampleCutHorns = $canCutHorns ? 'CUT_HORNS@TargetName, ' : '';
+        $exampleKnockout = 'KNOCKOUT@TargetName, ';
         $exampleKill = 'KILL@TargetName, ';
         $exampleUseObject = 'USE_OBJECT@ChairName, ';
         $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
@@ -3779,7 +3805,7 @@ function stobeBuildOutputContractUserPrompt(
             . " Use <speech_style> for reference.\n"
             . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
             . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleCutHorns . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
+            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleCutHorns . $exampleKnockout . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
             . "If no action is needed, output dialogue text only.";
     }
 
@@ -4018,6 +4044,9 @@ function stobeBuildActionTagFromStructuredPayload(
         'SETRESOURCE' => 'SET_RESOURCE',
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
+        'KO' => 'KNOCKOUT',
+        'KNOCK_OUT' => 'KNOCKOUT',
+        'KNOCK-OUT' => 'KNOCKOUT',
         'KILLTARGET' => 'KILL',
         'EXECUTE' => 'KILL',
         'MURDER' => 'KILL',
@@ -4153,6 +4182,13 @@ function stobeBuildActionTagFromStructuredPayload(
             return '';
         }
         return 'CUT_HORNS@' . $targetName;
+    }
+    if ($actionUpper === 'KNOCKOUT') {
+        $targetName = trim($target !== '' ? $target : $item);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'KNOCKOUT@' . $targetName;
     }
     if ($actionUpper === 'KILL') {
         $targetName = trim($target !== '' ? $target : $item);
@@ -10206,12 +10242,12 @@ function stobeStripParentheticalDialogueText(string $text): string {
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'DROPNPC', 'DROP_NPC', 'DROP-NPC', 'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC', 'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC', 'PICKUPNPC', 'PICKUP-NPC', 'KIDNAP', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KO', 'KNOCK_OUT', 'KNOCK-OUT', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',

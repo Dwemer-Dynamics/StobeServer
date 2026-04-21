@@ -14,6 +14,7 @@ if (!function_exists('stobeNormalizeManualChatActionKey')) {
             'remove_limb_left_leg',
             'remove_limb_right_leg',
             'cut_horns',
+            'knockout',
             'kill',
         ];
         if (!in_array($normalized, $allowed, true)) {
@@ -27,6 +28,9 @@ if (!function_exists('stobeManualChatActionType')) {
     function stobeManualChatActionType(string $actionKey): string
     {
         $normalized = strtolower(trim($actionKey));
+        if ($normalized === 'knockout') {
+            return 'knockout';
+        }
         if ($normalized === 'kill') {
             return 'kill';
         }
@@ -70,7 +74,7 @@ if (!function_exists('stobeManualActionTargetCannotSpeak')) {
     function stobeManualActionTargetCannotSpeak(array $npcData, string $actionKey = ''): bool
     {
         $actionType = stobeManualChatActionType($actionKey);
-        if ($actionType === 'kill') {
+        if ($actionType === 'kill' || $actionType === 'knockout') {
             return true;
         }
 
@@ -132,9 +136,9 @@ if (!function_exists('stobeBuildManualActionPainFallback')) {
         $safeTarget = trim($targetNpc) !== '' ? trim($targetNpc) : 'The target';
         $safeActor = trim($actorName) !== '' ? trim($actorName) : 'the attacker';
         $actionType = stobeManualChatActionType($actionKey);
-        if ($actionType === 'kill') {
-            // For manual kill, avoid emitting a second world notification.
-            // The plugin kill execution message is the single source of truth.
+        if ($actionType === 'kill' || $actionType === 'knockout') {
+            // For manual kill/knockout, avoid emitting a second world notification.
+            // The plugin execution feedback is the single source of truth.
             return '';
         }
         $limbLabel = stobeManualChatActionLimbLabel($actionKey);
@@ -793,7 +797,9 @@ if ($deliveryStyleInstruction !== '') {
         . "</speech_mode>";
 }
 if ($manualActionActive) {
-    if ($manualActionType === 'kill') {
+    if ($manualActionType === 'knockout') {
+        $manualInstruction = 'Manual knockout is happening now. The target is knocked out immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
+    } elseif ($manualActionType === 'kill') {
         $manualInstruction = 'Manual execution is happening now. The target is killed immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
     } elseif ($manualActionType === 'cut_horns') {
         $manualInstruction = $manualActionCannotSpeak
