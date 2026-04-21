@@ -383,7 +383,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         });
         $applyPatch('general_settings', 202603190001, static function () use ($db): void {
             $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
-                ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD','3','How many global memory summaries involving an NPC are required before creating one NPC-scoped summary',NOW())
+                ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD','2','How many global memory summaries involving an NPC are required before creating one NPC-scoped summary',NOW())
                 ON CONFLICT (id) DO NOTHING");
         });
         $applyPatch('general_settings', 202603190002, static function () use ($db): void {

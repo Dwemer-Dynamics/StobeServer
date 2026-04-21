@@ -114,6 +114,9 @@ function stobeHideFromGlobalSettingsUi(string $id): bool
     if (in_array($idUpper, ['MEMORY_TIME_DELAY', 'MEMORY_CONTEXT_SIZE', 'MEMORY_BIAS_A', 'MEMORY_BIAS_B'], true)) {
         return true;
     }
+    if ($idUpper === 'INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD') {
+        return true;
+    }
     // Legacy relationship toggle key; RELATIONSHIP_SYSTEM is the canonical setting.
     if ($idUpper === 'RELATIONSHIP_SYSTEM_ENABLED') {
         return true;

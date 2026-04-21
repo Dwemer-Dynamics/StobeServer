@@ -2216,7 +2216,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
-('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
+('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '2', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
 ('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '6', 'Memory summary packing interval. Is measured in ingame hours.'),
 ('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
