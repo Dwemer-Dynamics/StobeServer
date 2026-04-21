@@ -32,6 +32,11 @@ try {
                 'value' => '',
                 'description' => 'Optional player-faction instruction block injected into prompts.',
             ],
+            [
+                'id' => 'ALWAYS_INSERT_RACE',
+                'value' => 'true',
+                'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
+            ],
         ];
 
         foreach ($requiredSettings as $requiredSetting) {
@@ -168,7 +173,7 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_')) {
         return 'Memory';
     }
-    if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_')) {
+    if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_') || $idUpper === 'ALWAYS_INSERT_RACE') {
         return 'World Knowledge';
     }
     if (str_starts_with($idUpper, 'BORED_EVENT_')) {
@@ -290,6 +295,7 @@ foreach ($grouped as $groupName => $rows) {
             'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
+            'ALWAYS_INSERT_RACE' => 1,
             'PLAYTHROUGH_AUTOLOAD_ENABLED' => 0,
             'PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED' => 1,
         ];

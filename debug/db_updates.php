@@ -1661,6 +1661,20 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      updated_at = NOW()"
             );
         });
+        $applyPatch('general_settings', 202604200002, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'ALWAYS_INSERT_RACE',
+                    'true',
+                    'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+        });
 
         stobeLogInfo('DB updates completed (release consolidator)');
     }

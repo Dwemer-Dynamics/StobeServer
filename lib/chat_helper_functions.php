@@ -1652,6 +1652,170 @@ function stobeWorldKnowledgeUniqueTerms(array $terms, int $max = 10): array {
     return array_values($unique);
 }
 
+function stobeWorldKnowledgeNormalizeLookupLabel(string $value): string {
+    $normalized = str_replace('_', ' ', strtolower(trim($value)));
+    $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function stobeWorldKnowledgeRaceInsertEnabled(): bool {
+    return getSettingBool('ALWAYS_INSERT_RACE', true);
+}
+
+function stobeWorldKnowledgeAddRaceSignal(array &$signals, mixed $rawRace): void {
+    $race = stobeWorldKnowledgeNormalizeLookupLabel(strval($rawRace));
+    if ($race === '') {
+        return;
+    }
+    if (in_array($race, ['unknown', 'none', 'n/a', 'na'], true)) {
+        return;
+    }
+    $signals[$race] = $race;
+}
+
+function stobeWorldKnowledgeCollectForcedRaceSignals(array $npcData, string $speakerName = ''): array {
+    if (!stobeWorldKnowledgeRaceInsertEnabled()) {
+        return [];
+    }
+
+    $signals = [];
+    stobeWorldKnowledgeAddRaceSignal($signals, $npcData['race'] ?? '');
+
+    $safeSpeakerName = normalizeParticipantNameToken($speakerName);
+    if ($safeSpeakerName !== '' && function_exists('getNpcData')) {
+        $speakerData = getNpcData($safeSpeakerName);
+        if (is_array($speakerData) && count($speakerData) > 0) {
+            stobeWorldKnowledgeAddRaceSignal($signals, $speakerData['race'] ?? '');
+        }
+    }
+
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $actors = stobeExtractSceneArray($extendedData, 'nearby_actors');
+    if (count($actors) === 0) {
+        $actors = stobeExtractSceneArray($extendedData, 'nearby');
+    }
+
+    foreach ($actors as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        if (stobeParseFlexibleBool($entry['is_animal'] ?? null) === true) {
+            continue;
+        }
+        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
+        stobeWorldKnowledgeAddRaceSignal($signals, $entry['race'] ?? '');
+    }
+
+    return array_values($signals);
+}
+
+function stobeWorldKnowledgeLookupTopicRowByLabel(string $label): ?array {
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return null;
+    }
+
+    $normalized = stobeWorldKnowledgeNormalizeLookupLabel($label);
+    if ($normalized === '') {
+        return null;
+    }
+
+    try {
+        $row = $db->fetchOne(
+            "SELECT
+                id,
+                topic,
+                topic_desc,
+                COALESCE(topic_desc_basic, '') AS topic_desc_basic,
+                COALESCE(knowledge_class, '') AS knowledge_class,
+                COALESCE(knowledge_class_basic, '') AS knowledge_class_basic,
+                COALESCE(tags, '') AS tags
+             FROM world_knowledge
+             WHERE LOWER(BTRIM(REPLACE(COALESCE(topic, ''), '_', ' '))) = $1
+                OR EXISTS (
+                    SELECT 1
+                    FROM regexp_split_to_table(COALESCE(aliases, ''), ',') AS alias_value(alias_token)
+                    WHERE LOWER(BTRIM(REPLACE(alias_token, '_', ' '))) = $1
+                )
+             ORDER BY
+                CASE
+                    WHEN LOWER(BTRIM(REPLACE(COALESCE(topic, ''), '_', ' '))) = $1 THEN 0
+                    ELSE 1
+                END,
+                id DESC
+             LIMIT 1",
+            [$normalized]
+        );
+    } catch (Throwable $exception) {
+        return null;
+    }
+
+    return is_array($row) ? $row : null;
+}
+
+function stobeWorldKnowledgeResolveForcedRaceHints(
+    string $npcName,
+    array $npcData,
+    string $speakerName = '',
+    string $eventType = 'chat'
+): array {
+    if (!stobeWorldKnowledgeRetrieverEnabled()) {
+        return [];
+    }
+
+    $normalizedEventType = strtolower(trim($eventType));
+    if ($normalizedEventType === '') {
+        $normalizedEventType = 'chat';
+    }
+    if (!stobeWorldKnowledgeEventAllowed($normalizedEventType)) {
+        return [];
+    }
+
+    if (!is_array($npcData) || count($npcData) === 0) {
+        $npcData = getNpcData($npcName);
+    }
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return [];
+    }
+
+    $raceSignals = stobeWorldKnowledgeCollectForcedRaceSignals($npcData, $speakerName);
+    if (count($raceSignals) === 0) {
+        return [];
+    }
+
+    $knowledgeTags = parseNpcKnowledgeTags($npcData, $npcName);
+    $isKnowAll = in_array('knowall', $knowledgeTags, true);
+    $hints = [];
+    $seenTopics = [];
+
+    foreach ($raceSignals as $raceSignal) {
+        $row = stobeWorldKnowledgeLookupTopicRowByLabel(strval($raceSignal));
+        if (!is_array($row) || count($row) === 0) {
+            continue;
+        }
+
+        $payload = stobeWorldKnowledgeSelectKnowledgePayload($row, $knowledgeTags, $isKnowAll);
+        if (!boolval($payload['allowed'] ?? false)) {
+            continue;
+        }
+
+        $topic = trim(strval($payload['topic'] ?? ''));
+        $desc = trim(preg_replace('/\s+/u', ' ', strval($payload['desc'] ?? '')) ?? '');
+        if ($topic === '' || $desc === '') {
+            continue;
+        }
+
+        $topicKey = stobeWorldKnowledgeNormalizeLookupLabel($topic);
+        if ($topicKey === '' || isset($seenTopics[$topicKey])) {
+            continue;
+        }
+        $seenTopics[$topicKey] = true;
+        $hints[] = $topic . ': ' . $desc;
+    }
+
+    return $hints;
+}
+
 function stobeWorldKnowledgeBuildNpcKey(string $npcName, array $npcData): string {
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
     $storageId = normalizeStorageIdToken(strval($metadata['storage_id'] ?? ''));
@@ -4508,7 +4672,7 @@ function queryWorldKnowledgeForNpc(
         }
 
         $topic = trim(strval($payload['topic'] ?? ''));
-        $desc = truncatePromptValue(strval($payload['desc'] ?? ''), 260);
+        $desc = trim(preg_replace('/\s+/u', ' ', strval($payload['desc'] ?? '')) ?? '');
         if ($topic === '' || $desc === '') {
             continue;
         }
@@ -9648,10 +9812,26 @@ function buildSystemPrompt(
     $playerFactionPromptBlock = stobeBuildPlayerFactionPromptBlock($npcData);
 
     $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
+    $forcedRaceHints = stobeWorldKnowledgeResolveForcedRaceHints($npcName, $npcData, $playerName, $eventType);
     $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
-    if (count($loreHints) > 0 || $playerFactionPromptBlock !== '') {
+    $knowledgeHints = [];
+    $seenKnowledgeHints = [];
+    foreach (array_merge($forcedRaceHints, $loreHints) as $hint) {
+        $line = trim(strval($hint));
+        if ($line === '') {
+            continue;
+        }
+        $lineKey = strtolower($line);
+        if (isset($seenKnowledgeHints[$lineKey])) {
+            continue;
+        }
+        $seenKnowledgeHints[$lineKey] = true;
+        $knowledgeHints[] = $line;
+    }
+
+    if (count($knowledgeHints) > 0 || $playerFactionPromptBlock !== '') {
         $prompt .= "\n\n<knowledge>";
-        foreach ($loreHints as $hint) {
+        foreach ($knowledgeHints as $hint) {
             $prompt .= "\n  <entry>" . stobePromptXmlEscape($hint) . "</entry>";
         }
         if ($playerFactionPromptBlock !== '') {

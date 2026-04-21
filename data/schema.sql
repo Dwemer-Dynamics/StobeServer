@@ -2208,6 +2208,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('EMOTEMOODS', 'sassy,assertive,sexy,smug,kindly,lovely,seductive,sarcastic,sardonic,smirking,amused,default,assisting,irritated,playful,neutral,teasing,mocking,desperate,distressed,pleading,sad', 'Default mood/emote list (comma-separated). Can be overridden per NPC in Stobe NPCs.'),
 
 ('WORLD_KNOWLEDGE_ENABLED',        'true',         'Enable world knowledge retrieval'),
+('ALWAYS_INSERT_RACE',             'true',         'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.'),
 ('WORLD_KNOWLEDGE_AMOUNT',         '2',            'Max extracted world knowledge topics per turn'),
 ('WORLD_KNOWLEDGE_CONTEXT_HISTORY','16',           'Recent event rows used for world knowledge keyword context'),
 ('WORLD_KNOWLEDGE_CONTEXT_KEYWORDS','8',           'Max world knowledge context keywords'),
