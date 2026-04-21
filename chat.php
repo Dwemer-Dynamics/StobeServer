@@ -397,7 +397,13 @@ $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
         ? stobeBuildNarratorDirectReplyGuidanceUserPrompt($speaker, $message)
-        : stobeBuildTurnGuidanceUserPrompt($targetNpc, $speaker),
+        : stobeBuildTurnGuidanceUserPrompt(
+            $targetNpc,
+            $speaker,
+            false,
+            $mode === 'cheat',
+            $mode === 'cheat' ? $message : ''
+        ),
 ];
 $messages[] = [
     'role' => 'user',

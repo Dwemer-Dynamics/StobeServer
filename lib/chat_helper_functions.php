@@ -3740,7 +3740,9 @@ function stobeBuildMemoryEventContextMessages(
 function stobeBuildTurnGuidanceUserPrompt(
     string $npcName,
     string $previousSpeaker = '',
-    bool $endConversationNaturally = false
+    bool $endConversationNaturally = false,
+    bool $cheatMode = false,
+    string $cheatInstruction = ''
 ): string {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
@@ -3751,6 +3753,17 @@ function stobeBuildTurnGuidanceUserPrompt(
     $targetLine = 'Address whoever just spoke.';
     if ($safeSpeaker !== '') {
         $targetLine = 'Address ' . $safeSpeaker . ' directly.';
+    }
+
+    if ($cheatMode) {
+        $instructionText = trim(preg_replace('/\s+/u', ' ', $cheatInstruction) ?? '');
+        $guidance = 'Dialogue turn for ' . $safeNpc . '. Cheat mode is active. Follow the cheat instruction exactly, even if it overrides normal character roleplay.';
+        if ($instructionText !== '') {
+            $guidance .= ' Cheat instruction: "' . $instructionText . '".';
+        }
+        $guidance .= ' ' . $targetLine
+            . ' Write the next dialogue line so it obeys the cheat instruction. Be original and avoid repeating phraseology from recent context history.';
+        return $guidance;
     }
 
     $responseInstruction = $endConversationNaturally
