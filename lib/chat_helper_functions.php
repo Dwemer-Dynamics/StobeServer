@@ -223,7 +223,7 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
         $appendFallbackAction(
             'KNOCKOUT',
             'Knockout',
-            'Knock out a helpless target immediately without killing them.'
+            'Knock out a target immediately without killing them. Self-targeting is allowed; otherwise the target must already be helpless.'
         );
     }
     if (!$hasKill) {
@@ -3837,7 +3837,7 @@ function stobeBuildOutputContractUserPrompt(
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
     $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
-    $actionLine .= " KNOCKOUT is only valid on knocked-out, unconscious, imprisoned, or carried targets, and leaves them alive.";
+    $actionLine .= " KNOCKOUT leaves the target alive. It is valid on yourself, or on other targets only when they are knocked-out, unconscious, imprisoned, or carried.";
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";

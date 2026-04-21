@@ -692,7 +692,7 @@ PROMPT;
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
         });
         $applyPatch('core_action', 202604200001, static function () use ($db): void {
-            $desc = 'Knock out a helpless target immediately without killing them.';
+            $desc = 'Knock out a target immediately without killing them. Self-targeting is allowed; otherwise the target must already be helpless.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('KNOCKOUT','Knockout',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
