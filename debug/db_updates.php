@@ -122,6 +122,36 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 throw new RuntimeException('Seed SQL execution failed: ' . $seedPath);
             }
         };
+        $runBioUniqueSeedBundle = static function (
+            string $missingPrefix = 'bio_unique seed file missing',
+            string $emptyPrefix = 'bio_unique seed file empty',
+            string $normalizedPrefix = 'bio_unique seed file normalized to empty SQL'
+        ) use ($runSqlSeedFile): void {
+            $seedSpecs = [
+                [
+                    'filename' => 'kenshi_boss_bio_unique_upsert.sql',
+                    'missing' => 'Boss ' . $missingPrefix,
+                    'empty' => 'Boss ' . $emptyPrefix,
+                    'normalized' => 'Boss ' . $normalizedPrefix,
+                ],
+                [
+                    'filename' => 'kenshi_unique_bio_unique_upsert.sql',
+                    'missing' => 'Unique ' . $missingPrefix,
+                    'empty' => 'Unique ' . $emptyPrefix,
+                    'normalized' => 'Unique ' . $normalizedPrefix,
+                ],
+                [
+                    'filename' => 'kenshi_animals_bio_unique_upsert.sql',
+                    'missing' => 'Animals personified ' . $missingPrefix,
+                    'empty' => 'Animals personified ' . $emptyPrefix,
+                    'normalized' => 'Animals personified ' . $normalizedPrefix,
+                ],
+            ];
+            foreach ($seedSpecs as $spec) {
+                $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . $spec['filename'];
+                $runSqlSeedFile($seedPath, $spec['missing'], $spec['empty'], $spec['normalized']);
+            }
+        };
         $importWorldKnowledgeCsv = static function (string $seedPath) use ($db): void {
             if (!is_file($seedPath)) {
                 stobeLogWarn('world_knowledge import skipped: seed file missing', ['path' => $seedPath]);
@@ -955,13 +985,8 @@ PROMPT;
             $runSqlSeedFile($occ, 'bio_random rename-token occupation seed file missing', 'bio_random rename-token occupation seed file empty', 'bio_random rename-token occupation seed normalized to empty SQL', true, true);
         });
 
-        $applyPatch('bio_unique', 202603130208, static function () use ($db, $runSqlSeedFile): void {
-            $boss = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_boss_bio_unique_upsert.sql';
-            $runSqlSeedFile($boss, 'Boss bio_unique seed file missing', 'Boss bio_unique seed file empty', 'Boss bio_unique seed file normalized to empty SQL');
-            $unique = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_unique_bio_unique_upsert.sql';
-            $runSqlSeedFile($unique, 'Unique bio_unique seed file missing', 'Unique bio_unique seed file empty', 'Unique bio_unique seed file normalized to empty SQL');
-            $animals = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_animals_bio_unique_upsert.sql';
-            $runSqlSeedFile($animals, 'Animals personified bio_unique seed file missing', 'Animals personified bio_unique seed file empty', 'Animals personified bio_unique seed file normalized to empty SQL');
+        $applyPatch('bio_unique', 202603130208, static function () use ($db, $runBioUniqueSeedBundle): void {
+            $runBioUniqueSeedBundle();
             $db->exec("DELETE FROM bio_unique WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
             $db->exec("DELETE FROM bio_unique_custom WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
         });

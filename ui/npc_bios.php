@@ -90,7 +90,7 @@ function npc_bios_read_uploaded_csv(string $tmpPath): array
 }
 
 $db = $GLOBALS["db"];
-$validTypes = ["personality", "backstory", "speechstyle", "occupation", "goals"];
+$validTypes = ["personality", "backstory", "speechstyle", "occupation", "appearance", "goals"];
 $isEmbed = isset($_GET["embed"]) && strval($_GET["embed"]) === "1";
 
 $activeTab = strtolower(npc_bios_trim($_GET["tab"] ?? "bio_random"));
@@ -148,7 +148,7 @@ if (isset($_GET["action"]) && $_GET["action"] === "download_example_bio_random")
     $out = fopen("php://output", "w");
     fputcsv($out, ["stringid", "name", "description"]);
     fputcsv($out, ["backstory", "Nomadic Bandit", "A drifter hardened by hunger, dust storms, and broken alliances."]);
-    fputcsv($out, ["speechstyle", "Nomadic Bandit", "Short, direct, and suspicious when speaking with strangers."]);
+    fputcsv($out, ["appearance", "Nomadic Bandit", "Sun-darkened skin, wind-burned cheeks, and a patched desert scarf."]);
     fputcsv($out, ["goals", "Nomadic Bandit", "Secure food, avoid patrols, and survive the next raid."]);
     fclose($out);
     exit;
@@ -182,7 +182,7 @@ if (isset($_GET["action"]) && $_GET["action"] === "download_example_bio_unique")
     $out = fopen("php://output", "w");
     fputcsv($out, ["stringid", "name", "description"]);
     fputcsv($out, ["personality", "Tinfist", "Measured, forceful, and deeply committed to anti-slavery ideals."]);
-    fputcsv($out, ["occupation", "Tinfist", "Leader of anti-slaver operations and mentor to resistance cells."]);
+    fputcsv($out, ["appearance", "Tinfist", "Heavy iron limbs and a battle-worn frame scarred by years of revolt."]);
     fputcsv($out, ["goals", "Tinfist", "Break slave systems and protect those fleeing bondage."]);
     fclose($out);
     exit;
@@ -990,7 +990,7 @@ $tokenRows = $db->fetchAll(
                 </div>
                 <div class="content-section info-panel">
                     <h2>Bio Random</h2>
-                    <p>This page manages reusable biography text pools applied to non-unique NPCs when they are imported. Match rules can be broad (type only) or constrained by name, race, gender, and faction.</p>
+                    <p>This page manages reusable biography text pools applied to non-unique NPCs when they are imported. Match rules can be broad (type only) or constrained by name, race, gender, and faction. Use <code>appearance</code> as the type when you want to append extra appearance text onto the generated NPC appearance.</p>
                 </div>
             </div>
 
@@ -1001,7 +1001,7 @@ $tokenRows = $db->fetchAll(
                     <input type="hidden" name="tab" value="bio_random">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <?php if ($letterRandom !== ""): ?><input type="hidden" name="letter_random" value="<?= h($letterRandom) ?>"><?php endif; ?>
-                    <input type="text" name="q_random" value="<?= h($qRandom) ?>" placeholder="Search">
+                    <input type="text" name="q_random" value="<?= h($qRandom) ?>" placeholder="Search type, description, name, race, gender, or faction">
                     <button type="submit" class="action-button edit">Search</button>
                     <a class="action-button" href="<?= h(npc_bios_build_url(["tab" => "bio_random"], $isEmbed)) ?>">Clear</a>
                 </form>
@@ -1107,6 +1107,7 @@ $tokenRows = $db->fetchAll(
                                 </div>
                                 <label>Description</label>
                                 <textarea name="description" required><?= h($editRandom["description"] ?? "") ?></textarea>
+                                <small class="hint">Use <code>appearance</code> as the type to append this text to the generated NPC appearance.</small>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn-cancel" data-bs-dismiss="modal">Close</button>
@@ -1133,7 +1134,7 @@ $tokenRows = $db->fetchAll(
                 </div>
                 <div class="content-section info-panel">
                     <h2>Bio Unique</h2>
-                    <p>This page stores biography overrides for specific named characters. When a matching unique NPC is imported, these entries take priority over random biography pools.</p>
+                    <p>This page stores biography overrides for specific named characters. When a matching unique NPC is imported, these entries take priority over random biography pools. Use <code>appearance</code> as the type when you want to append extra appearance text onto the generated NPC appearance.</p>
                 </div>
             </div>
 
@@ -1232,6 +1233,7 @@ $tokenRows = $db->fetchAll(
                                 </div>
                                 <label>Description</label>
                                 <textarea name="description" required><?= h($editUnique["description"] ?? "") ?></textarea>
+                                <small class="hint">Use <code>appearance</code> as the type to append this text to the generated NPC appearance.</small>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn-cancel" data-bs-dismiss="modal">Close</button>

@@ -455,7 +455,7 @@ CREATE TABLE IF NOT EXISTS bio_random (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_random_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_random_type_description_name_key UNIQUE (type, description, name)
 );
 
@@ -470,7 +470,7 @@ CREATE TABLE IF NOT EXISTS bio_random_custom (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_random_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_random_custom_type_description_name_key UNIQUE (type, description, name)
 );
 
@@ -525,7 +525,7 @@ CREATE TABLE IF NOT EXISTS bio_unique (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_unique_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_unique_name_type_key UNIQUE (name, type)
 );
 
@@ -537,7 +537,7 @@ CREATE TABLE IF NOT EXISTS bio_unique_custom (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_unique_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_unique_custom_name_type_key UNIQUE (name, type)
 );
 
@@ -1227,7 +1227,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_random
         ADD CONSTRAINT bio_random_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1273,7 +1273,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_random_custom
         ADD CONSTRAINT bio_random_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1356,7 +1356,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_unique
         ADD CONSTRAINT bio_unique_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1397,7 +1397,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_unique_custom
         ADD CONSTRAINT bio_unique_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
