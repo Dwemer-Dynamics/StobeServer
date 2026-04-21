@@ -86,6 +86,28 @@ function stobeParseConnectorExtras(mixed $rawConfig): array {
         $extras['presence_penalty'] = floatval($presencePenalty);
     }
 
+    $extraParametersEnabled = true;
+    if (array_key_exists('extra_parameters_enabled', $config)) {
+        $rawEnabled = $config['extra_parameters_enabled'];
+        if (is_bool($rawEnabled)) {
+            $extraParametersEnabled = $rawEnabled;
+        } elseif (is_numeric($rawEnabled)) {
+            $extraParametersEnabled = intval($rawEnabled) !== 0;
+        } else {
+            $normalizedEnabled = strtolower(trim(strval($rawEnabled)));
+            $extraParametersEnabled = in_array($normalizedEnabled, ['1', 'true', 'yes', 'on'], true);
+        }
+    }
+    if ($extraParametersEnabled && isset($config['extra_parameters']) && is_array($config['extra_parameters'])) {
+        foreach ($config['extra_parameters'] as $key => $value) {
+            $paramName = trim(strval($key));
+            if ($paramName === '') {
+                continue;
+            }
+            $extras[$paramName] = $value;
+        }
+    }
+
     return $extras;
 }
 

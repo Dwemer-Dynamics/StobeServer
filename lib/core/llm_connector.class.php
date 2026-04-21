@@ -146,6 +146,9 @@ if (!class_exists('LLMConnector')) {
             if (array_key_exists('remove_action_prompt', $config)) {
                 $metadata['remove_action_prompt'] = boolval($config['remove_action_prompt']);
             }
+            if (array_key_exists('extra_parameters_enabled', $config)) {
+                $metadata['extra_parameters_enabled'] = boolval($config['extra_parameters_enabled']);
+            }
             if (isset($config['extra_parameters']) && is_array($config['extra_parameters'])) {
                 $metadata['extra_parameters'] = $config['extra_parameters'];
             }
