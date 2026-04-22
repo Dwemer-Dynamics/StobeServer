@@ -148,12 +148,35 @@ function stobeUiGetBioTemplateSourceParts(): array
     ];
 }
 
+if (!function_exists('renderStobeNpcLetterFilter')) {
+    function renderStobeNpcLetterFilter(string $selectedLetter = ''): void
+    {
+        $selectedLetter = strtoupper(trim($selectedLetter));
+        if (!preg_match('/^[A-Z]$/', $selectedLetter)) {
+            $selectedLetter = '';
+        }
+        ?>
+        <div class="npc-letter-filter">
+          <input type="hidden" id="npc_letter_filter" value="<?= htmlspecialchars($selectedLetter, ENT_QUOTES) ?>" />
+          <button type="button" class="npc-letter-btn<?= $selectedLetter === '' ? ' active' : '' ?>" data-letter="">All</button>
+          <?php foreach (range('A', 'Z') as $char): ?>
+            <button type="button" class="npc-letter-btn<?= $selectedLetter === $char ? ' active' : '' ?>" data-letter="<?= htmlspecialchars($char, ENT_QUOTES) ?>"><?= htmlspecialchars($char) ?></button>
+          <?php endforeach; ?>
+        </div>
+        <?php
+    }
+}
+
 if (!function_exists('renderStobeNpcToolbar')) {
     function renderStobeNpcToolbar(array $args = []): void
     {
         $top = !empty($args['top']);
         $suffix = $top ? '_top' : '';
         $q = strval($args['q'] ?? '');
+        $nameLetterFilter = strtoupper(trim(strval($args['nameLetterFilter'] ?? '')));
+        if (!preg_match('/^[A-Z]$/', $nameLetterFilter)) {
+            $nameLetterFilter = '';
+        }
         $profileRows = is_array($args['profileRows'] ?? null) ? $args['profileRows'] : [];
         $profileIdFilter = strval($args['profileIdFilter'] ?? '');
         $page = max(1, intval($args['page'] ?? 1));
@@ -201,6 +224,7 @@ if (!function_exists('renderStobeNpcToolbar')) {
             </div>
           </div>
           <div class="npc-toolbar-letter-row">
+            <?php renderStobeNpcLetterFilter($nameLetterFilter); ?>
             <div class="npc-toolbar-summary">
               <div class="npc-filter-dropdown">
                 <button type="button" id="npc_filter_btn<?= $suffix ?>" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action npc-toolbar-filter-btn" title="Filters" aria-label="Filters">▾ Filters</button>
@@ -1340,6 +1364,8 @@ if ($page < 1) $page = 1;
 $q = trim($_GET['q'] ?? '');
 $alpha = strtolower($_GET['alpha'] ?? 'asc');
 if (!in_array($alpha, ['asc','desc'], true)) { $alpha = 'asc'; }
+$nameLetterFilter = strtoupper(trim((string)($_GET['letter'] ?? '')));
+if (!preg_match('/^[A-Z]$/', $nameLetterFilter)) { $nameLetterFilter = ''; }
 $profileIdFilter = isset($_GET['profile_id']) ? trim((string)$_GET['profile_id']) : '';
 // New: checkbox filters
 $favOnly = (isset($_GET['fav']) && $_GET['fav'] === '1');
@@ -1437,6 +1463,10 @@ if ($q !== ''){
     // Match by name primarily; include a few related fields
     $where .= " and (npc_name ilike '".$qEsc."' or coalesce(race,'') ilike '".$qEsc."' or coalesce(voiceid,'') ilike '".$qEsc."' or coalesce(refid,'') ilike '".$qEsc."' or coalesce(tags,'') ilike '".$qEsc."')";
 }
+if ($nameLetterFilter !== '') {
+    $letterEsc = $GLOBALS['db']->escape(strtolower($nameLetterFilter));
+    $where .= " and lower(npc_name) like '".$letterEsc."%'";
+}
 if ($profileIdFilter !== ''){
     $where .= " and profile_id = ".intval($profileIdFilter);
 }
@@ -1490,6 +1520,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
     <?php renderStobeNpcToolbar([
         'top' => false,
         'q' => $q,
+        'nameLetterFilter' => $nameLetterFilter,
         'profileRows' => $profileRows ?? [],
         'profileIdFilter' => $profileIdFilter,
         'page' => $page,
@@ -3174,6 +3205,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     border-color: #4a4a4a;
     transform: translateY(-1px);
 }
+.npc-letter-filter {
+    display:flex;
+    gap:6px;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:flex-start;
+    margin-top:10px;
+}
 .npc-letter-btn {
     background:#2a2a2a;
     border:1px solid #4a4a4a;
@@ -3244,6 +3283,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 }
 .pagination.npc-toolbar .npc-toolbar-letter-row {
     align-items:flex-end;
+}
+.pagination.npc-toolbar .npc-toolbar-letter-row .npc-letter-filter {
+    flex:1 1 auto;
+    width:auto;
+    margin-top:0;
 }
 .pagination.npc-toolbar .npc-toolbar-summary {
     margin-left:auto;
@@ -3441,6 +3485,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     .pagination.npc-toolbar .npc-toolbar-letter-row {
         align-items:flex-start;
     }
+    .pagination.npc-toolbar .npc-toolbar-letter-row .npc-letter-filter {
+        width:100%;
+    }
     .pagination.npc-toolbar .npc-toolbar-summary {
         margin-left:0;
         align-items:flex-start;
@@ -3450,6 +3497,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 <?php renderStobeNpcToolbar([
     'top' => true,
     'q' => $q,
+    'nameLetterFilter' => $nameLetterFilter,
     'profileRows' => $profileRows ?? [],
     'profileIdFilter' => $profileIdFilter,
     'page' => $page,
@@ -4699,6 +4747,21 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       });
     });
   }
+  function bindNpcLetterButtons(root){
+    const scope = root || document;
+    scope.querySelectorAll('.npc-letter-btn[data-letter]').forEach(btn=>{
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        const nextLetter = String(this.getAttribute('data-letter') || '').toUpperCase();
+        const hidden = document.getElementById('npc_letter_filter');
+        if (hidden) hidden.value = nextLetter;
+        document.querySelectorAll('.npc-letter-btn[data-letter]').forEach(other=>{
+          other.classList.toggle('active', other === this);
+        });
+        refreshList(1);
+      });
+    });
+  }
   let listAbort = null;
   async function refreshList(page){
     const params = new URLSearchParams(window.location.search);
@@ -4707,6 +4770,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     const caretStart = wasFocused && si && typeof si.selectionStart === 'number' ? si.selectionStart : null;
     const caretEnd = wasFocused && si && typeof si.selectionEnd === 'number' ? si.selectionEnd : null;
     if (si) params.set('q', si.value || '');
+    const lf = document.getElementById('npc_letter_filter');
+    params.set('letter', lf ? (lf.value || '') : '');
     const pf = document.getElementById('npc_profile_filter');
     if (pf) params.set('profile_id', pf.value || '');
     // Collect checkbox filters (prefer top bar if present else bottom)
@@ -4785,6 +4850,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       try { if (window.bindNpcBulkSwitchProfile) window.bindNpcBulkSwitchProfile(document.getElementById('npc_bulk_switch_profile_btn')); } catch(_){}
       // rebind Build Relationships button in refreshed DOM
       try { if (window.bindRelBuildButton) window.bindRelBuildButton(document.getElementById('rel_bulk_build_btn')); } catch(_){}
+      bindNpcLetterButtons(document);
       bindNpcToolbarPagination(document);
       const newSearch = document.getElementById('npc_search');
       if (newSearch){
@@ -4811,6 +4877,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   const profileSel = document.getElementById('npc_profile_filter');
   if (profileSel){ profileSel.addEventListener('change', function(){ refreshList(1); }); }
   // Removed alpha toggle; default remains ascending (favorites first)
+  bindNpcLetterButtons(document);
   bindNpcToolbarPagination(document);
   // Toggle buttons
   // Filter dropdown toggles
