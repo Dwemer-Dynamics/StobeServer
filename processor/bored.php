@@ -107,7 +107,7 @@ $dialogueData = parseDialogueEventData($eventData);
 $suggestedTarget = normalizeParticipantNameToken(strval($dialogueData['target'] ?? ''));
 if ($suggestedTarget !== '' &&
     strcasecmp($suggestedTarget, $speakerNpc) !== 0 &&
-    ($playerName === '' || strcasecmp($suggestedTarget, $playerName) !== 0)) {
+    ($forceDirectorMode || $playerName === '' || strcasecmp($suggestedTarget, $playerName) !== 0)) {
     $listener = $suggestedTarget;
 }
 if ($listener === '') {
@@ -206,7 +206,7 @@ $messages[] = [
     'content' => stobeBuildOutputContractUserPrompt(
         $speakerNpc,
         false,
-        true,
+        false,
         npcIsInPlayerFaction($speakerData)
     ),
 ];
@@ -238,6 +238,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'npc_name' => $speakerNpc,
         'event_type' => 'bored',
         'action_config' => $actionConfig,
+        'response_format' => ['type' => 'json_object'],
     ]
 );
 
@@ -248,33 +249,9 @@ if (boolval($streamResult['ok'] ?? false)) {
     $structuredJson = boolval($streamResult['structured_json'] ?? false);
     $actionsStreamedInLlm = boolval($streamResult['actions_streamed'] ?? false);
 } else {
-    $rawResponse = stobeCallLLM($messages, $llmConfig, [
-        'npc_name' => $speakerNpc,
-        'event_type' => 'bored',
-    ]);
-    if ($rawResponse === false || trim($rawResponse) === '') {
-        stobeLogWarn('Bored event LLM returned empty response', ['speaker' => $speakerNpc]);
-        echo "ok";
-        return;
-    }
-
-    $structured = stobeParseStructuredDialogueResponse($rawResponse, 'bored');
-    $responseText = sanitizeForKenshi(trim(strval($structured['message'] ?? '')));
-    $structuredJson = boolval($structured['is_structured'] ?? false);
-    $structuredAction = trim(strval($structured['action_tag'] ?? ''));
-    if ($structuredAction !== '') {
-        $responseActions[] = $structuredAction;
-    }
-    if ($responseText !== '') {
-        $actionExtraction = extractAndNormalizeActionTags($responseText, 'bored', $actionConfig);
-        $responseText = sanitizeForKenshi(trim(strval($actionExtraction['text'] ?? $responseText)));
-        $inlineActions = is_array($actionExtraction['actions'] ?? null) ? $actionExtraction['actions'] : [];
-        foreach ($inlineActions as $inlineAction) {
-            if (!in_array($inlineAction, $responseActions, true)) {
-                $responseActions[] = $inlineAction;
-            }
-        }
-    }
+    stobeLogWarn('Bored event LLM stream failed', ['speaker' => $speakerNpc]);
+    echo "ok";
+    return;
 }
 $responseActions = stobeDedupeActionList($responseActions, 'bored', $actionConfig);
 $relationshipEval = stobeEvaluateRelationshipsForTurn(

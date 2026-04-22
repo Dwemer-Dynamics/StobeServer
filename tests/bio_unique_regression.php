@@ -27,6 +27,13 @@ function assertSameText(string $expected, string $actual, string $message): void
     }
 }
 
+function assertContainsText(string $needle, string $haystack, string $message): void
+{
+    if ($needle === '' || stripos($haystack, $needle) === false) {
+        testFail($message . ' (needle="' . $needle . '", actual="' . $haystack . '")');
+    }
+}
+
 /**
  * @param callable():void $fn
  */
@@ -48,7 +55,7 @@ function fetchNpcTraits(string $name): array|false
 {
     $db = $GLOBALS['db'];
     return $db->fetchOne(
-        "SELECT name, personality, backstory, speechstyle, occupation, goals
+        "SELECT name, personality, backstory, speechstyle, occupation, appearance, goals
          FROM core_npc_master
          WHERE LOWER(name) = LOWER($1)
          LIMIT 1",
@@ -178,6 +185,55 @@ runInRollbackTransaction('storeNpcSnapshot resolves unique traits for bracketed 
     assertTrue(is_array($row), 'snapshot row should exist');
     assertSameText('UT snapshot unique goals', strval($row['goals'] ?? ''), 'snapshot should use unique goals');
     assertSameText('UT snapshot unique occupation', strval($row['occupation'] ?? ''), 'snapshot should use unique occupation');
+});
+
+runInRollbackTransaction('storeNpcProfile appends unique appearance type text to generated appearance', function () use ($seed): void {
+    $db = $GLOBALS['db'];
+    $name = 'UT_BIO_APPEARANCE_UNIQUE_' . $seed . '_Rust';
+    $appearanceExtra = 'A jagged scar runs across the left cheek.';
+
+    $db->exec(
+        "INSERT INTO bio_unique (name, type, description)
+         VALUES ($1, 'appearance', $2)",
+        [$name, $appearanceExtra]
+    );
+
+    storeNpcProfile($name, [
+        'appearance' => 'Tall and broad-shouldered.',
+        'race' => 'Scorchlander',
+        'gender' => 'male',
+        'faction' => 'Tech Hunters',
+    ]);
+
+    $row = fetchNpcTraits($name);
+    assertTrue(is_array($row), 'profile row should exist for unique appearance test');
+    assertContainsText('Tall and broad-shouldered.', strval($row['appearance'] ?? ''), 'base appearance should be preserved');
+    assertContainsText($appearanceExtra, strval($row['appearance'] ?? ''), 'unique appearance extra should be appended');
+});
+
+runInRollbackTransaction('storeNpcProfile appends random appearance type text to generated appearance', function () use ($seed): void {
+    $db = $GLOBALS['db'];
+    $name = 'UT_BIO_APPEARANCE_RANDOM_' . $seed . '_Dust';
+    $appearanceExtra = 'Their coat is dust-caked and sun-bleached.';
+    $raceToken = 'ut_random_race_' . $seed;
+
+    $db->exec(
+        "INSERT INTO bio_random (type, description, race, gender, faction)
+         VALUES ('appearance', $1, $2, 'female', 'Nomads')",
+        [$appearanceExtra, $raceToken]
+    );
+
+    storeNpcProfile($name, [
+        'appearance' => 'Lean frame with wary eyes.',
+        'race' => $raceToken,
+        'gender' => 'female',
+        'faction' => 'Nomads',
+    ]);
+
+    $row = fetchNpcTraits($name);
+    assertTrue(is_array($row), 'profile row should exist for random appearance test');
+    assertContainsText('Lean frame with wary eyes.', strval($row['appearance'] ?? ''), 'base random-test appearance should be preserved');
+    assertContainsText($appearanceExtra, strval($row['appearance'] ?? ''), 'random appearance extra should be appended');
 });
 
 echo 'All bio_unique regression tests passed.' . PHP_EOL;

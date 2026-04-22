@@ -50,6 +50,80 @@ function safeExec(sql $db, string $query, array $params = []): bool
     }
 }
 
+function normalizeAiResponseLogMarkup(mixed $value): string
+{
+    if ($value === null) {
+        return "";
+    }
+
+    $text = strval($value);
+    $text = str_replace(["<br />", "<br>", "<br/>"], "\n", $text);
+    $text = html_entity_decode($text, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8");
+    return trim($text);
+}
+
+function extractWorldKnowledgeTopics(mixed $rawPromptValue): array
+{
+    $text = normalizeAiResponseLogMarkup($rawPromptValue);
+    if ($text === "") {
+        return [];
+    }
+
+    $topics = [];
+    $seen = [];
+
+    if (preg_match_all('/<knowledge>\s*(.*?)\s*<\/knowledge>/is', $text, $knowledgeMatches) < 1) {
+        return [];
+    }
+
+    foreach ($knowledgeMatches[1] as $knowledgeBlock) {
+        if (!is_string($knowledgeBlock) || trim($knowledgeBlock) === "") {
+            continue;
+        }
+
+        if (preg_match_all('/<entry>\s*(.*?)\s*<\/entry>/is', $knowledgeBlock, $entryMatches) < 1) {
+            continue;
+        }
+
+        foreach ($entryMatches[1] as $entryText) {
+            $entry = trim(html_entity_decode(strip_tags(strval($entryText)), ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"));
+            if ($entry === "") {
+                continue;
+            }
+
+            $topic = $entry;
+            $colonPos = strpos($entry, ":");
+            if ($colonPos !== false) {
+                $topic = trim(substr($entry, 0, $colonPos));
+            }
+
+            if ($topic === "") {
+                continue;
+            }
+
+            $topicKey = strtolower($topic);
+            if (isset($seen[$topicKey])) {
+                continue;
+            }
+
+            $seen[$topicKey] = true;
+            $topics[] = $topic;
+        }
+    }
+
+    return $topics;
+}
+
+function formatWorldKnowledgeTopics(mixed $rawPromptValue): string
+{
+    $topics = extractWorldKnowledgeTopics($rawPromptValue);
+    if (count($topics) === 0) {
+        return "None";
+    }
+
+    return implode(", ", $topics);
+}
+
 $db = $GLOBALS["db"];
 $limit = isset($_GET["limit"]) ? intval($_GET["limit"]) : 50;
 $limit = max(10, min(500, $limit));
@@ -81,12 +155,13 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
     header("Content-Disposition: attachment; filename=\"stobe_ai_responses.csv\"");
     $out = fopen("php://output", "w");
     if ($out !== false) {
-        fputcsv($out, ["rowid", "time_utc", "response", "url", "prompt"]);
+        fputcsv($out, ["rowid", "time_utc", "response", "world_knowledge", "url", "prompt"]);
         foreach ($rows as $row) {
             fputcsv($out, [
                 intval($row["rowid"] ?? 0),
                 formatLocalTs($row["localts"] ?? 0),
                 strval($row["response"] ?? ""),
+                formatWorldKnowledgeTopics($row["prompt"] ?? ""),
                 strval($row["url"] ?? ""),
                 strval($row["prompt"] ?? ""),
             ]);
@@ -393,10 +468,11 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
                 <table>
                     <thead>
                     <tr>
-                        <th style="width:14%">Time (UTC)</th>
-                        <th style="width:42%">AI Response</th>
+                        <th style="width:12%">Time (UTC)</th>
+                        <th style="width:34%">AI Response</th>
+                        <th style="width:18%">World Knowledge</th>
                         <th style="width:14%">Prompt</th>
-                        <th style="width:30%">HTTP Request</th>
+                        <th style="width:22%">HTTP Request</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -408,10 +484,12 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
                             if ($promptRaw === "") {
                                 $promptRaw = "Prompt payload is empty for this row.";
                             }
+                            $worldKnowledgeDisplay = formatWorldKnowledgeTopics($row["prompt"] ?? "");
                             ?>
                             <tr>
                                 <td><?= h(formatLocalTs($row["localts"] ?? 0)) ?></td>
                                 <td><?= nl2br(h($row["response"] ?? "")) ?></td>
+                                <td><?= nl2br(h($worldKnowledgeDisplay)) ?></td>
                                 <td>
                                     <div id="<?= h($promptId) ?>" style="display:none;">
                                         <pre style="white-space: pre-wrap; word-wrap: break-word; font-family: Consolas, Monaco, monospace;"><?= h($promptRaw) ?></pre>
@@ -422,7 +500,7 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="4">No AI response rows found.</td></tr>
+                        <tr><td colspan="5">No AI response rows found.</td></tr>
                     <?php endif; ?>
                     </tbody>
                 </table>

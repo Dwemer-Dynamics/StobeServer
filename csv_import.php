@@ -254,7 +254,7 @@ if ($resolvedType === 'auto') {
 }
 
 $db = $GLOBALS['db'];
-$validBioTypes = ['personality', 'backstory', 'speechstyle', 'occupation', 'goals'];
+$validBioTypes = ['personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'];
 $imported = 0;
 $skipped = 0;
 

@@ -148,6 +148,105 @@ function stobeUiGetBioTemplateSourceParts(): array
     ];
 }
 
+if (!function_exists('renderStobeNpcLetterFilter')) {
+    function renderStobeNpcLetterFilter(string $selectedLetter = ''): void
+    {
+        $selectedLetter = strtoupper(trim($selectedLetter));
+        if (!preg_match('/^[A-Z]$/', $selectedLetter)) {
+            $selectedLetter = '';
+        }
+        ?>
+        <div class="npc-letter-filter">
+          <input type="hidden" id="npc_letter_filter" value="<?= htmlspecialchars($selectedLetter, ENT_QUOTES) ?>" />
+          <button type="button" class="npc-letter-btn<?= $selectedLetter === '' ? ' active' : '' ?>" data-letter="">All</button>
+          <?php foreach (range('A', 'Z') as $char): ?>
+            <button type="button" class="npc-letter-btn<?= $selectedLetter === $char ? ' active' : '' ?>" data-letter="<?= htmlspecialchars($char, ENT_QUOTES) ?>"><?= htmlspecialchars($char) ?></button>
+          <?php endforeach; ?>
+        </div>
+        <?php
+    }
+}
+
+if (!function_exists('renderStobeNpcToolbar')) {
+    function renderStobeNpcToolbar(array $args = []): void
+    {
+        $top = !empty($args['top']);
+        $suffix = $top ? '_top' : '';
+        $q = strval($args['q'] ?? '');
+        $nameLetterFilter = strtoupper(trim(strval($args['nameLetterFilter'] ?? '')));
+        if (!preg_match('/^[A-Z]$/', $nameLetterFilter)) {
+            $nameLetterFilter = '';
+        }
+        $profileRows = is_array($args['profileRows'] ?? null) ? $args['profileRows'] : [];
+        $profileIdFilter = strval($args['profileIdFilter'] ?? '');
+        $page = max(1, intval($args['page'] ?? 1));
+        $totalPages = max(1, intval($args['totalPages'] ?? 1));
+        $totalRows = max(0, intval($args['totalRows'] ?? 0));
+        $favOnly = !empty($args['favOnly']);
+        $dynOnly = !empty($args['dynOnly']);
+        $mtmOnly = !empty($args['mtmOnly']);
+        $lockOnly = !empty($args['lockOnly']);
+        $playerFactionOnly = !empty($args['playerFactionOnly']);
+        $pageWindow = min(10, $totalPages);
+        $pageStart = max(1, min($page - 4, $totalPages - $pageWindow + 1));
+        $pageEnd = min($totalPages, $pageStart + $pageWindow - 1);
+        ?>
+        <div class="pagination npc-toolbar">
+          <div class="npc-toolbar-main">
+            <div class="npc-toolbar-actions">
+              <button id="npc_create_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action">+ Create NPC</button>
+              <button id="npc_import_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action" title="Import NPC from JSON file">📥 Import NPC</button>
+              <button id="rel_bulk_build_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action" title="Build JSONB relationships from recent NPC event history">🔗 Build Relationships</button>
+              <button id="npc_bulk_switch_profile_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action npc-toolbar-btn-switch" title="Switch all NPCs from one profile to another">🔀 Mass Switch Profile</button>
+              <button id="npc_bulk_delete_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">❌ Delete All Profiles</button>
+            </div>
+            <div class="npc-toolbar-tools">
+              <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
+              <select id="npc_profile_filter" title="Filter by profile">
+                <option value="">All Profiles</option>
+                <?php foreach ($profileRows as $pr): ?>
+                  <?php $pid = strval($pr['id'] ?? ''); $lbl = $pr['label'] ?? ('Profile #' . $pid); ?>
+                  <option value="<?= htmlspecialchars($pid) ?>" <?= ($profileIdFilter !== '' && $profileIdFilter === $pid) ? 'selected' : '' ?>><?= htmlspecialchars($lbl) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+          </div>
+          <div class="npc-toolbar-subrow">
+            <div class="npc-toolbar-pager">
+              <button type="button" class="npc-letter-btn npc-page-link<?= $page <= 1 ? ' disabled' : '' ?>" data-page="1" <?= $page <= 1 ? 'disabled aria-disabled="true"' : '' ?>>First</button>
+              <button type="button" class="npc-letter-btn npc-page-link<?= $page <= 1 ? ' disabled' : '' ?>" data-page="<?= max(1, $page - 1) ?>" <?= $page <= 1 ? 'disabled aria-disabled="true"' : '' ?>>Prev</button>
+              <?php for ($p = $pageStart; $p <= $pageEnd; $p++): ?>
+                <button type="button" class="npc-letter-btn npc-page-link<?= $p === $page ? ' active' : '' ?>" data-page="<?= $p ?>" <?= $p === $page ? 'disabled aria-current="page"' : '' ?>><?= $p ?></button>
+              <?php endfor; ?>
+              <button type="button" class="npc-letter-btn npc-page-link<?= $page >= $totalPages ? ' disabled' : '' ?>" data-page="<?= min($totalPages, $page + 1) ?>" <?= $page >= $totalPages ? 'disabled aria-disabled="true"' : '' ?>>Next</button>
+              <button type="button" class="npc-letter-btn npc-page-link<?= $page >= $totalPages ? ' disabled' : '' ?>" data-page="<?= $totalPages ?>" <?= $page >= $totalPages ? 'disabled aria-disabled="true"' : '' ?>>Last</button>
+              <div class="npc-page-indicator" title="Current page"><?= $page ?>/<?= $totalPages ?></div>
+            </div>
+          </div>
+          <div class="npc-toolbar-letter-row">
+            <?php renderStobeNpcLetterFilter($nameLetterFilter); ?>
+            <div class="npc-toolbar-summary">
+              <div class="npc-filter-dropdown">
+                <button type="button" id="npc_filter_btn<?= $suffix ?>" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action npc-toolbar-filter-btn" title="Filters" aria-label="Filters">▾ Filters</button>
+                <div id="npc_filter_menu<?= $suffix ?>" class="npc-filter-menu" style="display:none;">
+                  <label><input type="checkbox" id="npc_filter_fav<?= $suffix ?>" <?= $favOnly ? 'checked' : '' ?>> ⭐ Favorites</label>
+                  <label><input type="checkbox" id="npc_filter_dyn<?= $suffix ?>" <?= $dynOnly ? 'checked' : '' ?>> ♻️ Dynamic profile</label>
+                  <label><input type="checkbox" id="npc_filter_mtm<?= $suffix ?>" <?= $mtmOnly ? 'checked' : '' ?>> 📃 Middle-term memory</label>
+                  <label><input type="checkbox" id="npc_filter_lock<?= $suffix ?>" <?= $lockOnly ? 'checked' : '' ?>> 🔒 Locked</label>
+                  <label><input type="checkbox" id="npc_filter_pf<?= $suffix ?>" <?= $playerFactionOnly ? 'checked' : '' ?>> 🛡️ Player faction only</label>
+                </div>
+              </div>
+              <div class="npc-total-pill" title="Total NPC profiles">
+                <div class="npc-total-pill-icon">👥</div>
+                <div class="npc-total-pill-value"><?= $totalRows ?></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <?php
+    }
+}
+
 $TITLE = "Stobe - NPC Master";
 ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
@@ -165,29 +264,6 @@ include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
 main { 
     padding-top: 40px; 
     padding-bottom: 40px; 
-}
-.page-header {
-    margin: 0 0 24px 0; 
-    padding: 24px;
-    background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(28, 28, 28, 0.98));
-    border-radius: 10px;
-    border: 1px solid #3a3a3a;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    text-align: center;
-}
-h1.api-title { 
-    margin: 0 0 8px 0; 
-    font-family: 'MagicCards', serif; 
-    word-spacing: 8px; 
-    font-size: 2em; 
-    color: #e6b76c; 
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.5); 
-}
-.page-subtitle {
-    color: #aaa;
-    font-size: 0.95em;
-    line-height: 1.5;
-    margin: 0;
 }
 
 /* Relationship Build Button - Gray/Orange theme to match UI */
@@ -1288,6 +1364,8 @@ if ($page < 1) $page = 1;
 $q = trim($_GET['q'] ?? '');
 $alpha = strtolower($_GET['alpha'] ?? 'asc');
 if (!in_array($alpha, ['asc','desc'], true)) { $alpha = 'asc'; }
+$nameLetterFilter = strtoupper(trim((string)($_GET['letter'] ?? '')));
+if (!preg_match('/^[A-Z]$/', $nameLetterFilter)) { $nameLetterFilter = ''; }
 $profileIdFilter = isset($_GET['profile_id']) ? trim((string)$_GET['profile_id']) : '';
 // New: checkbox filters
 $favOnly = (isset($_GET['fav']) && $_GET['fav'] === '1');
@@ -1385,6 +1463,10 @@ if ($q !== ''){
     // Match by name primarily; include a few related fields
     $where .= " and (npc_name ilike '".$qEsc."' or coalesce(race,'') ilike '".$qEsc."' or coalesce(voiceid,'') ilike '".$qEsc."' or coalesce(refid,'') ilike '".$qEsc."' or coalesce(tags,'') ilike '".$qEsc."')";
 }
+if ($nameLetterFilter !== '') {
+    $letterEsc = $GLOBALS['db']->escape(strtolower($nameLetterFilter));
+    $where .= " and lower(npc_name) like '".$letterEsc."%'";
+}
 if ($profileIdFilter !== ''){
     $where .= " and profile_id = ".intval($profileIdFilter);
 }
@@ -1435,42 +1517,21 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
     try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
     header('Content-Type: text/html; charset=utf-8');
     ?>
-    <div class="pagination">
-      <div class="filter-inline">
-        <div class="npc-filter-dropdown" style="position:relative;">
-          <button type="button" id="npc_filter_btn" class="btn" style="margin-right:6px;">Filters</button>
-          <div id="npc_filter_menu" class="npc-filter-menu" style="display:none; position:absolute; right:0; top:calc(100% + 6px); background:#2a2a2a; border:1px solid #4a4a4a; border-radius:8px; padding:8px; min-width:220px; box-shadow:0 6px 18px rgba(0,0,0,0.35); z-index:15;">
-            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_fav" <?= $favOnly?'checked':'' ?>> Favorites</label>
-            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
-            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
-            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock" <?= $lockOnly?'checked':'' ?>> Locked</label>
-            <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_pf" <?= $playerFactionOnly?'checked':'' ?>> Player faction only</label>
-          </div>
-        </div>
-        <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
-        <select id="npc_profile_filter" title="Filter by profile">
-          <option value="">All Profiles</option>
-          <?php foreach (($profileRows ?? []) as $pr): $pid=(string)($pr['id']??''); $lbl=$pr['label']??('Profile #'.$pid); ?>
-            <option value="<?= htmlspecialchars($pid) ?>" <?= ($profileIdFilter!=='' && (string)$profileIdFilter===$pid)?'selected':'' ?>><?= htmlspecialchars($lbl) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
-      <?php $qbase = strtok($_SERVER['REQUEST_URI'], '?'); $make = function($p) use ($qbase){ return htmlspecialchars($qbase.'?page='.$p); }; ?>
-      <a class="<?= $page<=1?'disabled':'' ?>" href="<?= $make(1) ?>">First</a>
-      <a class="<?= $page<=1?'disabled':'' ?>" href="<?= $make(max(1,$page-1)) ?>">Prev</a>
-      <?php for ($p=max(1,$page-2); $p<=min($totalPages,$page+2); $p++): ?>
-        <?php if ($p === $page): ?><span class="active"><?= $p ?></span><?php else: ?><a href="<?= $make($p) ?>"><?= $p ?></a><?php endif; ?>
-      <?php endfor; ?>
-      <a class="<?= $page>=$totalPages?'disabled':'' ?>" href="<?= $make(min($totalPages,$page+1)) ?>">Next</a>
-      <a class="<?= $page>=$totalPages?'disabled':'' ?>" href="<?= $make($totalPages) ?>">Last</a>
-      <span style="border:none; background:transparent; color:#e6b76c;">Page <?= $page ?> / <?= $totalPages ?></span>
-      <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
-      <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
-      <button id="npc_import_btn" type="button" title="Import NPC from JSON file">Import NPC</button>
-          <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
-      <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
-      <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
-    </div>
+    <?php renderStobeNpcToolbar([
+        'top' => false,
+        'q' => $q,
+        'nameLetterFilter' => $nameLetterFilter,
+        'profileRows' => $profileRows ?? [],
+        'profileIdFilter' => $profileIdFilter,
+        'page' => $page,
+        'totalPages' => $totalPages,
+        'totalRows' => $totalRows,
+        'favOnly' => $favOnly,
+        'dynOnly' => $dynOnly,
+        'mtmOnly' => $mtmOnly,
+        'lockOnly' => $lockOnly,
+        'playerFactionOnly' => $playerFactionOnly,
+    ]); ?>
     <div class="npc-grid">
     <?php foreach ($data as $row): ?>
         <?php 
@@ -1575,7 +1636,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                     <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"><?= htmlspecialchars($row["voiceid"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"><?= htmlspecialchars($profLabel) ?></span></div>
-                    <div class="npc-line"><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText) ?></span></div>
+                    <div class="npc-line npc-bounty-line"<?= $bountyAmountText === '0' ? ' style="display:none"' : '' ?>><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText === '0' ? '' : $bountyAmountText) ?></span></div>
                     <?php if (count($bountyBreakdownItems) > 0 || $bountyLegacyDetails !== ''): ?>
                     <div class="npc-bounty-section">
                         <div class="npc-bounty-heading">Bounty Breakdown</div>
@@ -3107,7 +3168,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 <?php if ($totalPages >= 1): ?>
 <style>
 .pagination { display:flex; gap:8px; align-items:center; justify-content:center; margin:16px 0 0 0; flex-wrap:wrap; }
-.pagination a, .pagination span { 
+.pagination:not(.npc-toolbar) a, .pagination:not(.npc-toolbar) span { 
     padding:8px 12px; 
     border-radius:6px; 
     border:1px solid #3a3a3a; 
@@ -3116,20 +3177,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     text-decoration:none; 
     transition: all 0.2s ease;
 }
-.pagination a:hover { 
+.pagination:not(.npc-toolbar) a:hover { 
     background: rgba(58, 58, 58, 0.9); 
     border-color: #4a4a4a;
     transform: translateY(-1px);
 }
-.pagination .active { 
+.pagination:not(.npc-toolbar) .active { 
     background: linear-gradient(135deg, rgba(230, 183, 108, 0.2), rgba(230, 183, 108, 0.1)); 
     color: #e6b76c; 
     border-color: rgba(230, 183, 108, 0.5); 
     font-weight:700; 
     box-shadow: inset 0 -2px 0 #e6b76c;
 }
-.pagination .disabled { opacity:0.4; pointer-events:none; }
-.pagination button { 
+.pagination:not(.npc-toolbar) .disabled { opacity:0.4; pointer-events:none; }
+.pagination:not(.npc-toolbar) button { 
     padding:8px 14px; 
     border-radius:6px; 
     border:1px solid #3a3a3a; 
@@ -3139,91 +3200,315 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     transition: all 0.2s ease;
     font-weight: 600;
 }
-.pagination button:hover { 
+.pagination:not(.npc-toolbar) button:hover { 
     background: rgba(58, 58, 58, 0.9); 
     border-color: #4a4a4a;
     transform: translateY(-1px);
 }
-.filter-inline { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.filter-inline input[type="text"] { 
+.npc-letter-filter {
+    display:flex;
+    gap:6px;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:flex-start;
+    margin-top:10px;
+}
+.npc-letter-btn {
+    background:#2a2a2a;
+    border:1px solid #4a4a4a;
+    color:#cfd9ea;
+    border-radius:6px;
+    padding:6px 10px;
+    cursor:pointer;
+    min-width:36px;
+    font-weight:700;
+    transition:all 0.18s ease;
+}
+.npc-letter-btn:hover {
+    background:#333333;
+    border-color:#5a5a5a;
+    transform: translateY(-1px);
+}
+.npc-letter-btn.active {
+    background:rgba(230,183,108,0.16);
+    border-color:rgba(230,183,108,0.7);
+    color:#e6b76c;
+    box-shadow: inset 0 0 0 1px rgba(230,183,108,0.18);
+}
+.pagination.npc-toolbar {
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    justify-content:flex-start;
+    gap:12px;
+    padding:14px;
+    margin:16px 0 0 0;
+    background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
+    border-radius: 10px;
+    border: 1px solid #3a3a3a;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.pagination.npc-toolbar .npc-toolbar-main,
+.pagination.npc-toolbar .npc-toolbar-subrow,
+.pagination.npc-toolbar .npc-toolbar-letter-row {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    flex-wrap:wrap;
+}
+.pagination.npc-toolbar .npc-toolbar-actions,
+.pagination.npc-toolbar .npc-toolbar-tools,
+.pagination.npc-toolbar .npc-toolbar-pager {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+}
+.pagination.npc-toolbar .npc-toolbar-actions {
+    flex:1 1 1192px;
+    min-width:1192px;
+    flex-wrap:nowrap;
+}
+.pagination.npc-toolbar .npc-toolbar-tools {
+    flex:0 0 320px;
+    width:320px;
+    min-width:320px;
+    flex-direction:column;
+    align-items:stretch;
+    justify-content:flex-start;
+}
+.pagination.npc-toolbar .npc-toolbar-pager {
+    flex:1 1 auto;
+}
+.pagination.npc-toolbar .npc-toolbar-letter-row {
+    align-items:flex-end;
+}
+.pagination.npc-toolbar .npc-toolbar-letter-row .npc-letter-filter {
+    flex:1 1 auto;
+    width:auto;
+    margin-top:0;
+}
+.pagination.npc-toolbar .npc-toolbar-summary {
+    margin-left:auto;
+    display:flex;
+    align-items:flex-end;
+    gap:8px;
+    flex-wrap:wrap;
+}
+.pagination.npc-toolbar .npc-toolbar-btn {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    box-sizing:border-box;
+    margin:0;
+    padding:8px 14px;
+    border-radius:8px;
+    border:1px solid rgba(230, 183, 108, 0.32);
+    font-size:14px;
+    font-weight:600;
+    line-height:1.2;
+    font-family:inherit;
+    cursor:pointer;
+    transition:background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+    white-space:nowrap;
+}
+.pagination.npc-toolbar .npc-toolbar-btn:hover {
+    transform:translateY(-1px);
+}
+.pagination.npc-toolbar .npc-toolbar-btn-uniform {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    flex:0 0 228px;
+    width:228px;
+    min-width:228px;
+    max-width:228px;
+    box-sizing:border-box;
+    margin:0;
+    padding:8px 14px;
+    text-align:center;
+}
+.pagination.npc-toolbar .npc-toolbar-btn-action {
+    background:rgba(42, 42, 42, 0.8);
+    border-color:rgba(230, 183, 108, 0.48);
+    color:#ffffff;
+    box-shadow:0 4px 10px rgba(0, 0, 0, 0.18);
+}
+.pagination.npc-toolbar .npc-toolbar-btn-action:hover {
+    background:rgba(54, 54, 54, 0.92);
+    border-color:rgba(230, 183, 108, 0.72);
+    color:#ffffff;
+}
+.pagination.npc-toolbar .npc-toolbar-btn-danger {
+    background: linear-gradient(135deg, rgba(150, 36, 36, 0.96), rgba(110, 22, 22, 0.96));
+    border-color: rgba(255, 115, 115, 0.45);
+    color: #fff1f1;
+    box-shadow: 0 4px 10px rgba(126, 24, 24, 0.22);
+}
+.pagination.npc-toolbar .npc-toolbar-btn-danger:hover {
+    background: linear-gradient(135deg, rgba(168, 42, 42, 1), rgba(126, 26, 26, 1));
+    border-color: rgba(255, 145, 145, 0.6);
+}
+.pagination.npc-toolbar .npc-filter-dropdown {
+    position:relative;
+    flex:0 0 228px;
+    width:228px;
+}
+.pagination.npc-toolbar .npc-toolbar-filter-btn {
+    width:100%;
+}
+.pagination.npc-toolbar .npc-filter-menu {
+    position:absolute;
+    left:0;
+    top:calc(100% + 6px);
+    min-width:220px;
+    display:none;
+    background:#2a2a2a;
+    border:1px solid #4a4a4a;
+    border-radius:8px;
+    padding:8px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.35);
+    z-index:15;
+}
+.pagination.npc-toolbar .npc-filter-menu label {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin:4px 0;
+    color:#e9efff;
+    font-size:13px;
+}
+.pagination.npc-toolbar .npc-toolbar-tools input[type="text"] { 
     padding:6px 10px; 
     border-radius:6px; 
     border:1px solid #3a3a3a; 
     background: rgba(26, 26, 26, 0.8); 
     color:#e9efff; 
-    height:32px; 
+    height:32px;
+    width:100%;
+    min-width:0;
+    max-width:none;
     transition: all 0.2s ease;
 }
-.filter-inline input[type="text"]:focus {
+.pagination.npc-toolbar .npc-toolbar-tools input[type="text"]:focus {
     border-color: rgba(230, 183, 108, 0.5);
     outline: none;
     box-shadow: 0 0 0 3px rgba(230, 183, 108, 0.1);
 }
-.filter-inline select { 
+.pagination.npc-toolbar .npc-toolbar-tools select { 
     padding:6px 10px; 
     border-radius:6px; 
     border:1px solid #3a3a3a; 
     background: rgba(26, 26, 26, 0.8); 
     color:#e9efff; 
-    height:32px; 
+    height:32px;
+    width:100%;
+    min-width:0;
+    max-width:none;
     transition: all 0.2s ease;
 }
-.filter-inline select:focus {
+.pagination.npc-toolbar .npc-toolbar-tools select:focus {
     border-color: rgba(230, 183, 108, 0.5);
     outline: none;
     box-shadow: 0 0 0 3px rgba(230, 183, 108, 0.1);
 }
-.filter-inline .btn { 
-    padding:8px 14px; 
-    border-radius:6px; 
-    border:1px solid #3a3a3a; 
-    background: rgba(42, 42, 42, 0.8); 
-    color:#e9efff; 
-    cursor:pointer; 
-    transition: all 0.2s ease;
-    font-weight: 600;
+.pagination.npc-toolbar .npc-page-link {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    box-sizing:border-box;
+    margin:0;
+    font-family:inherit;
+    appearance:none;
+    cursor:pointer;
 }
-.filter-inline .btn:hover { 
-    background: rgba(58, 58, 58, 0.9); 
-    border-color: #4a4a4a;
-    transform: translateY(-1px);
+.pagination.npc-toolbar .npc-page-link.disabled,
+.pagination.npc-toolbar .npc-page-link:disabled {
+    opacity:0.4;
+    pointer-events:none;
+    transform:none;
+}
+.pagination.npc-toolbar .npc-page-indicator {
+    color:#e6b76c;
+    font-weight:700;
+    padding:0 4px;
+}
+.pagination.npc-toolbar .npc-total-pill {
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:8px 12px;
+    border-radius:8px;
+    border:1px solid #3a3a3a;
+    background:rgba(26, 26, 26, 0.78);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+}
+.pagination.npc-toolbar .npc-total-pill-icon {
+    font-size:15px;
+    opacity:0.9;
+}
+.pagination.npc-toolbar .npc-total-pill-value {
+    color:#e9efff;
+    font-weight:700;
+    font-size:22px;
+    line-height:1;
+}
+@media (max-width: 1200px) {
+    .pagination.npc-toolbar .npc-toolbar-actions {
+        min-width:0;
+        flex-wrap:wrap;
+    }
+    .pagination.npc-toolbar .npc-toolbar-tools {
+        justify-content:flex-start;
+    }
+    .pagination.npc-toolbar .npc-total-pill {
+        margin-left:0;
+    }
+}
+@media (max-width: 780px) {
+    .pagination.npc-toolbar .npc-toolbar-tools,
+    .pagination.npc-toolbar .npc-toolbar-actions,
+    .pagination.npc-toolbar .npc-toolbar-pager,
+    .pagination.npc-toolbar .npc-toolbar-summary,
+    .pagination.npc-toolbar .npc-toolbar-letter-row {
+        width:100%;
+    }
+    .pagination.npc-toolbar .npc-toolbar-subrow {
+        align-items:flex-start;
+    }
+    .pagination.npc-toolbar .npc-toolbar-tools {
+        flex:1 1 100%;
+        width:100%;
+        min-width:0;
+    }
+    .pagination.npc-toolbar .npc-toolbar-letter-row {
+        align-items:flex-start;
+    }
+    .pagination.npc-toolbar .npc-toolbar-letter-row .npc-letter-filter {
+        width:100%;
+    }
+    .pagination.npc-toolbar .npc-toolbar-summary {
+        margin-left:0;
+        align-items:flex-start;
+    }
 }
 </style>
-<div class="pagination" style="padding: 14px; background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98)); border-radius: 10px; border: 1px solid #3a3a3a; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); margin-bottom: 16px;">
-  <div class="filter-inline">
-    <div class="npc-filter-dropdown" style="position:relative;">
-      <button type="button" id="npc_filter_btn_top" class="btn" style="margin-right:6px;">Filters</button>
-      <div id="npc_filter_menu_top" class="npc-filter-menu" style="display:none; position:absolute; right:0; top:calc(100% + 6px); background:#2a2a2a; border:1px solid #4a4a4a; border-radius:8px; padding:8px; min-width:220px; box-shadow:0 6px 18px rgba(0,0,0,0.35); z-index:15;">
-        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_fav_top" <?= $favOnly?'checked':'' ?>> Favorites</label>
-        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_dyn_top" <?= $dynOnly?'checked':'' ?>> Dynamic profile</label>
-        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_mtm_top" <?= $mtmOnly?'checked':'' ?>> Middle-term memory</label>
-        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_lock_top" <?= $lockOnly?'checked':'' ?>> Locked</label>
-        <label style="display:flex; align-items:center; gap:8px; margin:4px 0; color:#e9efff;"><input type="checkbox" id="npc_filter_pf_top" <?= $playerFactionOnly?'checked':'' ?>> Player faction only</label>
-      </div>
-    </div>
-    <input id="npc_search" type="text" placeholder="Search..." value="<?= htmlspecialchars($q) ?>" />
-    <select id="npc_profile_filter" title="Filter by profile">
-      <option value="">All Profiles</option>
-      <?php foreach (($profileRows ?? []) as $pr): $pid=(string)($pr['id']??''); $lbl=$pr['label']??('Profile #'.$pid); ?>
-        <option value="<?= htmlspecialchars($pid) ?>" <?= ($profileIdFilter!=='' && (string)$profileIdFilter===$pid)?'selected':'' ?>><?= htmlspecialchars($lbl) ?></option>
-      <?php endforeach; ?>
-    </select>
-  </div>
-  <?php $qbase = strtok($_SERVER['REQUEST_URI'], '?'); $make = function($p) use ($qbase){ return htmlspecialchars($qbase.'?page='.$p); }; ?>
-  <a class="<?= $page<=1?'disabled':'' ?>" href="<?= $make(1) ?>">First</a>
-  <a class="<?= $page<=1?'disabled':'' ?>" href="<?= $make(max(1,$page-1)) ?>">Prev</a>
-  <?php for ($p=max(1,$page-2); $p<=min($totalPages,$page+2); $p++): ?>
-    <?php if ($p === $page): ?><span class="active"><?= $p ?></span><?php else: ?><a href="<?= $make($p) ?>"><?= $p ?></a><?php endif; ?>
-  <?php endfor; ?>
-  <a class="<?= $page>=$totalPages?'disabled':'' ?>" href="<?= $make(min($totalPages,$page+1)) ?>">Next</a>
-  <a class="<?= $page>=$totalPages?'disabled':'' ?>" href="<?= $make($totalPages) ?>">Last</a>
-  <span style="border:none; background:transparent; color:#e6b76c;">Page <?= $page ?> / <?= $totalPages ?></span>
-  <span style="border:none; background:transparent; color:#e6b76c;">Total <?= $totalRows ?></span>
-  <button id="npc_create_btn" type="button" style="margin-left:8px;">+ Create NPC</button>
-        <button id="rel_bulk_build_btn" type="button" class="btn-rel-build" title="Build JSONB relationships from recent NPC event history">Build Relationships</button>
-  <button id="npc_bulk_switch_profile_btn" type="button" class="btn-rel-build" title="Switch all NPCs from one profile to another">Mass Switch Profile</button>
-  <button id="npc_bulk_delete_btn" type="button" class="btn-danger" title="Delete all unlocked NPCs (excludes The Narrator and locked)">Delete All Profiles</button>
-</div>
+<?php renderStobeNpcToolbar([
+    'top' => true,
+    'q' => $q,
+    'nameLetterFilter' => $nameLetterFilter,
+    'profileRows' => $profileRows ?? [],
+    'profileIdFilter' => $profileIdFilter,
+    'page' => $page,
+    'totalPages' => $totalPages,
+    'totalRows' => $totalRows,
+    'favOnly' => $favOnly,
+    'dynOnly' => $dynOnly,
+    'mtmOnly' => $mtmOnly,
+    'lockOnly' => $lockOnly,
+    'playerFactionOnly' => $playerFactionOnly,
+]); ?>
 <div style="margin:10px 0; padding:10px 14px; background:rgba(230, 183, 108,0.08); border:1px solid rgba(230, 183, 108,0.25); border-radius:8px; font-size:12.5px; color:#cfd9ea; line-height:1.5;">
   <strong style="color:#e6b76c;">Stobe Save Rollback:</strong>
   Every time a save is loaded, Stobe snapshots NPC profiles and restores <strong>unlocked</strong> NPCs to the state captured at that save's Kenshi game timestamp.
@@ -3337,7 +3622,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"><?= htmlspecialchars($row["voiceid"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"><?= htmlspecialchars($profLabel) ?></span></div>
-                <div class="npc-line"><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText) ?></span></div>
+                <div class="npc-line npc-bounty-line"<?= $bountyAmountText === '0' ? ' style="display:none"' : '' ?>><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText === '0' ? '' : $bountyAmountText) ?></span></div>
                 <?php if (count($bountyBreakdownItems) > 0 || $bountyLegacyDetails !== ''): ?>
                 <div class="npc-bounty-section">
                     <div class="npc-bounty-heading">Bounty Breakdown</div>
@@ -4444,6 +4729,39 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     window.bindNpcBulkSwitchProfile = bindBulkSwitch;
     bindBulkSwitch(document.getElementById('npc_bulk_switch_profile_btn'));
   })();
+  function bindNpcToolbarPagination(root){
+    const scope = root || document;
+    scope.querySelectorAll('.pagination.npc-toolbar .npc-page-link[data-page]').forEach(btn=>{
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        const nextPage = parseInt(this.getAttribute('data-page') || '1', 10);
+        refreshList(Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 1);
+      });
+    });
+    scope.querySelectorAll('.pagination.npc-toolbar a[href]').forEach(a=>{
+      a.addEventListener('click', function(e){
+        e.preventDefault();
+        const m = this.href.match(/page=(\d+)/);
+        const p = m ? parseInt(m[1], 10) : 1;
+        refreshList(p);
+      });
+    });
+  }
+  function bindNpcLetterButtons(root){
+    const scope = root || document;
+    scope.querySelectorAll('.npc-letter-btn[data-letter]').forEach(btn=>{
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        const nextLetter = String(this.getAttribute('data-letter') || '').toUpperCase();
+        const hidden = document.getElementById('npc_letter_filter');
+        if (hidden) hidden.value = nextLetter;
+        document.querySelectorAll('.npc-letter-btn[data-letter]').forEach(other=>{
+          other.classList.toggle('active', other === this);
+        });
+        refreshList(1);
+      });
+    });
+  }
   let listAbort = null;
   async function refreshList(page){
     const params = new URLSearchParams(window.location.search);
@@ -4452,6 +4770,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     const caretStart = wasFocused && si && typeof si.selectionStart === 'number' ? si.selectionStart : null;
     const caretEnd = wasFocused && si && typeof si.selectionEnd === 'number' ? si.selectionEnd : null;
     if (si) params.set('q', si.value || '');
+    const lf = document.getElementById('npc_letter_filter');
+    params.set('letter', lf ? (lf.value || '') : '');
     const pf = document.getElementById('npc_profile_filter');
     if (pf) params.set('profile_id', pf.value || '');
     // Collect checkbox filters (prefer top bar if present else bottom)
@@ -4475,10 +4795,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     const res = await fetch('npc_master.php?'+params.toString(), { signal: listAbort.signal });
     const html = await res.text();
     const temp = document.createElement('div'); temp.innerHTML = html;
-    const newPag = temp.querySelector('.pagination');
+    const newPag = temp.querySelector('.pagination.npc-toolbar');
     const newGrid = temp.querySelector('.npc-grid');
     if (newPag && newGrid){
-      const oldPag = document.querySelector('.pagination');
+      const oldPag = document.querySelector('.pagination.npc-toolbar');
       const oldGrid = document.querySelector('.npc-grid');
       if (oldPag && oldPag.parentElement) oldPag.parentElement.replaceChild(newPag, oldPag);
       if (oldGrid && oldGrid.parentElement) oldGrid.parentElement.replaceChild(newGrid, oldGrid);
@@ -4523,19 +4843,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       });
       const newCreate = document.getElementById('npc_create_btn');
       if (newCreate){ newCreate.addEventListener('click', function(){ openModal('npc_master.php?partial=1'); }); }
+      try { if (window.bindNpcToolbarImport) window.bindNpcToolbarImport(document.getElementById('npc_import_btn')); } catch(_){}
       // rebind bulk delete in refreshed DOM
       try { if (window.bindNpcBulkDelete) window.bindNpcBulkDelete(document.getElementById('npc_bulk_delete_btn')); } catch(_){}
       // rebind mass switch in refreshed DOM
       try { if (window.bindNpcBulkSwitchProfile) window.bindNpcBulkSwitchProfile(document.getElementById('npc_bulk_switch_profile_btn')); } catch(_){}
       // rebind Build Relationships button in refreshed DOM
       try { if (window.bindRelBuildButton) window.bindRelBuildButton(document.getElementById('rel_bulk_build_btn')); } catch(_){}
-      // Hook pagination links to AJAX
-      document.querySelectorAll('.pagination a[href]').forEach(a=>{
-        a.addEventListener('click', function(e){
-          e.preventDefault();
-          const m = this.href.match(/page=(\d+)/); const p = m?parseInt(m[1],10):1; refreshList(p);
-        });
-      });
+      bindNpcLetterButtons(document);
+      bindNpcToolbarPagination(document);
       const newSearch = document.getElementById('npc_search');
       if (newSearch){
         // Rebind with debounce and restore focus/caret
@@ -4561,10 +4877,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   const profileSel = document.getElementById('npc_profile_filter');
   if (profileSel){ profileSel.addEventListener('change', function(){ refreshList(1); }); }
   // Removed alpha toggle; default remains ascending (favorites first)
-  // Hook existing pagination for AJAX
-  document.querySelectorAll('.pagination a[href]').forEach(a=>{
-    a.addEventListener('click', function(e){ e.preventDefault(); const m = this.href.match(/page=(\d+)/); const p = m?parseInt(m[1],10):1; refreshList(p); });
-  });
+  bindNpcLetterButtons(document);
+  bindNpcToolbarPagination(document);
   // Toggle buttons
   // Filter dropdown toggles
   (function(){
@@ -4789,7 +5103,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"></span></div>
                 <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"></span></div>
                 <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"></span></div>
-                <div class="npc-line"><span class="npc-muted">Bounty:</span> <span class="npc-bounty">0</span></div>
+                <div class="npc-line npc-bounty-line" style="display:none"><span class="npc-muted">Bounty:</span> <span class="npc-bounty"></span></div>
                 <div class="npc-bounty-section" style="display:none">
                   <div class="npc-bounty-heading">Bounty Breakdown</div>
                   <div class="npc-bounty-breakdown"></div>
@@ -4880,7 +5194,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
           if (bountyTotal <= 0 && Object.prototype.hasOwnProperty.call(data, 'bounty')) {
             bountyTotal = parsePositiveInt(data.bounty);
           }
-          setText('.npc-bounty', bountyTotal > 0 ? (bountyTotal.toLocaleString() + ' cats') : '0');
+          const bountyLine = card.querySelector('.npc-bounty-line');
+          if (bountyLine) {
+            bountyLine.style.display = bountyTotal > 0 ? '' : 'none';
+          }
+          setText('.npc-bounty', bountyTotal > 0 ? (bountyTotal.toLocaleString() + ' cats') : '');
 
           let legacyWanted = '';
           if (Object.prototype.hasOwnProperty.call(data, 'metadata')) {
@@ -5266,8 +5584,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   }
   
   // Import NPC button in toolbar (create new NPC from JSON)
-  const importBtn = document.getElementById('npc_import_btn');
-  if (importBtn) {
+  function bindToolbarImportButton(importBtn){
+    if (!importBtn || importBtn.dataset.boundImport === '1') {
+      return;
+    }
+    importBtn.dataset.boundImport = '1';
     importBtn.addEventListener('click', function(){
       // Create file input
       const input = document.createElement('input');
@@ -5328,6 +5649,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       input.click();
     });
   }
+  window.bindNpcToolbarImport = bindToolbarImportButton;
+  bindToolbarImportButton(document.getElementById('npc_import_btn'));
 })();
 
 </script>

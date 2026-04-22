@@ -126,6 +126,7 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
     $hasUseObject = false;
     $hasUseDrugs = false;
     $hasDrinkItem = false;
+    $hasKnockout = false;
     $hasKill = false;
     $hasForceDrink = false;
     $hasPickupNpc = false;
@@ -139,6 +140,8 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             $hasUseDrugs = true;
         } elseif ($command === 'DRINK_ITEM') {
             $hasDrinkItem = true;
+        } elseif ($command === 'KNOCKOUT') {
+            $hasKnockout = true;
         } elseif ($command === 'KILL') {
             $hasKill = true;
         } elseif ($command === 'FORCE_DRINK') {
@@ -214,6 +217,13 @@ function loadCoreActionRows(bool $onlyActivated = true): array {
             'DRINK',
             'Drink',
             'Consume Bloodrum, Cactus Rum, Grog, or Sake from inventory/equipment.'
+        );
+    }
+    if (!$hasKnockout) {
+        $appendFallbackAction(
+            'KNOCKOUT',
+            'Knockout',
+            'Knock out a target immediately without killing them. Self-targeting is allowed; otherwise the target must already be helpless.'
         );
     }
     if (!$hasKill) {
@@ -348,6 +358,7 @@ function getActionRuntimeConfig(string $eventType): array {
         'disallow_give_cats' => false,
         'disallow_take_cats' => false,
         'disallow_pickup_npc' => false,
+        'disallow_cut_horns' => false,
         'allow_travel_location' => true,
     ];
 }
@@ -357,13 +368,12 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     $config['disallow_stop_carrying'] = false;
     $config['disallow_pickup_npc'] = false;
     $config['disallow_remove_limb'] = true;
+    $config['disallow_cut_horns'] = true;
     $config['disallow_use_drugs'] = true;
     $config['disallow_drink_item'] = true;
     $config['disallow_force_drink'] = true;
-    // AI-generated money transfers are currently too error-prone in trade dialog.
-    // Keep cats transfer as manual-action only from the chatbox.
-    $config['disallow_give_cats'] = true;
-    $config['disallow_take_cats'] = true;
+    $config['disallow_give_cats'] = false;
+    $config['disallow_take_cats'] = false;
     $config['allow_travel_location'] = true;
     if (is_array($npcData) && count($npcData) > 0 && npcIsInPlayerFaction($npcData)) {
         $config['disallow_follow_for_player_faction'] = true;
@@ -375,6 +385,7 @@ function stobeBuildActionConfigForNpc(string $eventType, array|false $npcData = 
     }
     if (is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData)) {
         $config['disallow_remove_limb'] = false;
+        $config['disallow_cut_horns'] = false;
     }
     if (is_array($npcData) && count($npcData) > 0 && !stobeNpcIsSkeletonRace($npcData)) {
         if (stobeNpcHasHashish($npcData)) {
@@ -448,6 +459,9 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
                 continue;
             }
             if ($command === 'REMOVE_LIMB' && boolval($config['disallow_remove_limb'] ?? false)) {
+                continue;
+            }
+            if ($command === 'CUT_HORNS' && boolval($config['disallow_cut_horns'] ?? false)) {
                 continue;
             }
             if ($command === 'USE_DRUGS' && boolval($config['disallow_use_drugs'] ?? false)) {
@@ -551,6 +565,12 @@ function stobeCanonicalizeActionCommand(string $command): string {
     }
     if (in_array($upper, ['REMOVELIMB'], true)) {
         return 'REMOVE_LIMB';
+    }
+    if (in_array($upper, ['CUTHORNS', 'CUT-HORNS'], true)) {
+        return 'CUT_HORNS';
+    }
+    if (in_array($upper, ['KO', 'KNOCK_OUT', 'KNOCK-OUT'], true)) {
+        return 'KNOCKOUT';
     }
     if (in_array($upper, ['KILLTARGET', 'EXECUTE', 'MURDER'], true)) {
         return 'KILL';
@@ -992,6 +1012,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         'SETRESOURCE' => 'SET_RESOURCE',
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
+        'CUTHORNS' => 'CUT_HORNS',
+        'KO' => 'KNOCKOUT',
+        'KNOCK_OUT' => 'KNOCKOUT',
+        'KNOCK-OUT' => 'KNOCKOUT',
         'KILLTARGET' => 'KILL',
         'EXECUTE' => 'KILL',
         'MURDER' => 'KILL',
@@ -1040,6 +1064,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     }
     if (boolval($config['disallow_remove_limb'] ?? false) &&
         $command === 'REMOVE_LIMB') {
+        return '';
+    }
+    if (boolval($config['disallow_cut_horns'] ?? false) &&
+        $command === 'CUT_HORNS') {
         return '';
     }
     if (boolval($config['disallow_use_drugs'] ?? false) &&
@@ -1099,25 +1127,97 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         }
         return trim($clean);
     };
+    $splitActionSegments = static function (string $raw): array {
+        $segments = [];
+        foreach (explode('@', $raw) as $segment) {
+            $segment = trim(strval($segment));
+            if ($segment === '') {
+                continue;
+            }
+            $segments[] = $segment;
+        }
+        return $segments;
+    };
+    $parsePositiveAmount = static function (string $raw, int $max = 1000000): int {
+        if (preg_match('/-?\d+/', trim($raw), $m) !== 1) {
+            return 0;
+        }
+        $amount = abs(intval($m[0]));
+        if ($amount < 1) {
+            return 0;
+        }
+        if ($amount > $max) {
+            $amount = $max;
+        }
+        return $amount;
+    };
 
     if ($command === 'GIVE_CATS' || $command === 'TAKE_CATS') {
-        if (preg_match('/-?\d+/', $argument, $m) !== 1) {
+        $segments = $splitActionSegments($argument);
+        if (count($segments) === 0) {
             return '';
         }
-        $amount = intval($m[0]);
-        if ($amount < 0) {
-            $amount = -$amount;
+        $targetName = '';
+        $amount = 0;
+        if (count($segments) === 1) {
+            $amount = $parsePositiveAmount($segments[0]);
+        } else {
+            $tailAmount = $parsePositiveAmount($segments[count($segments) - 1]);
+            if ($tailAmount > 0) {
+                $amount = $tailAmount;
+                array_pop($segments);
+                $targetName = $sanitizeInlineText(implode(' ', $segments), 160);
+            } else {
+                $headAmount = $parsePositiveAmount($segments[0]);
+                if ($headAmount > 0) {
+                    $amount = $headAmount;
+                    array_shift($segments);
+                    $targetName = $sanitizeInlineText(implode(' ', $segments), 160);
+                }
+            }
         }
         if ($amount < 1) {
             return '';
         }
-        if ($amount > 1000000) {
-            $amount = 1000000;
+        if ($targetName !== '') {
+            return $command . '@' . $targetName . '@' . strval($amount);
         }
         return $command . '@' . strval($amount);
     }
 
-    if ($command === 'TAKE_ITEM' || $command === 'DROP_ITEM' || $command === 'GIVE_ITEM') {
+    if ($command === 'TAKE_ITEM' || $command === 'GIVE_ITEM') {
+        $segments = $splitActionSegments($argument);
+        if (count($segments) === 0) {
+            return '';
+        }
+        $amount = 0;
+        if (count($segments) >= 2) {
+            $tailAmount = $parsePositiveAmount($segments[count($segments) - 1], 100);
+            if ($tailAmount > 0) {
+                $amount = $tailAmount;
+                array_pop($segments);
+            }
+        }
+        $targetName = '';
+        if (count($segments) >= 2) {
+            $targetName = $sanitizeInlineText(array_shift($segments), 160);
+        }
+        $itemName = $sanitizeInlineText(implode(' ', $segments), 140);
+        if ($itemName === '') {
+            return '';
+        }
+        $normalized = $command . '@';
+        if ($targetName !== '') {
+            $normalized .= $targetName . '@';
+        }
+        $normalized .= $itemName;
+        if ($amount > 0) {
+            $normalized .= '@' . strval($amount);
+        }
+        return $normalized;
+    }
+
+    if ($command === 'DROP_ITEM') {
         $itemName = $sanitizeInlineText($argument, 140);
         if ($itemName === '') {
             return '';
@@ -1160,6 +1260,20 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
             return '';
         }
         return 'REMOVE_LIMB@' . $targetName . '@' . strval($limbAliases[$limbToken]);
+    }
+    if ($command === 'CUT_HORNS') {
+        $targetName = $sanitizeInlineText($argument, 120);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'CUT_HORNS@' . $targetName;
+    }
+    if ($command === 'KNOCKOUT') {
+        $targetName = $sanitizeInlineText($argument, 120);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'KNOCKOUT@' . $targetName;
     }
     if ($command === 'KILL') {
         $targetName = $sanitizeInlineText($argument, 120);
@@ -1464,13 +1578,13 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         // Common alias forms emitted by models without underscores.
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'DROPNPC', 'DROP_NPC', 'DROP-NPC', 'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC', 'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC', 'PICKUPNPC', 'PICKUP-NPC', 'KIDNAP', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KO', 'KNOCK_OUT', 'KNOCK-OUT', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -1606,6 +1720,170 @@ function stobeWorldKnowledgeUniqueTerms(array $terms, int $max = 10): array {
         }
     }
     return array_values($unique);
+}
+
+function stobeWorldKnowledgeNormalizeLookupLabel(string $value): string {
+    $normalized = str_replace('_', ' ', strtolower(trim($value)));
+    $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function stobeWorldKnowledgeRaceInsertEnabled(): bool {
+    return getSettingBool('ALWAYS_INSERT_RACE', true);
+}
+
+function stobeWorldKnowledgeAddRaceSignal(array &$signals, mixed $rawRace): void {
+    $race = stobeWorldKnowledgeNormalizeLookupLabel(strval($rawRace));
+    if ($race === '') {
+        return;
+    }
+    if (in_array($race, ['unknown', 'none', 'n/a', 'na'], true)) {
+        return;
+    }
+    $signals[$race] = $race;
+}
+
+function stobeWorldKnowledgeCollectForcedRaceSignals(array $npcData, string $speakerName = ''): array {
+    if (!stobeWorldKnowledgeRaceInsertEnabled()) {
+        return [];
+    }
+
+    $signals = [];
+    stobeWorldKnowledgeAddRaceSignal($signals, $npcData['race'] ?? '');
+
+    $safeSpeakerName = normalizeParticipantNameToken($speakerName);
+    if ($safeSpeakerName !== '' && function_exists('getNpcData')) {
+        $speakerData = getNpcData($safeSpeakerName);
+        if (is_array($speakerData) && count($speakerData) > 0) {
+            stobeWorldKnowledgeAddRaceSignal($signals, $speakerData['race'] ?? '');
+        }
+    }
+
+    $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $actors = stobeExtractSceneArray($extendedData, 'nearby_actors');
+    if (count($actors) === 0) {
+        $actors = stobeExtractSceneArray($extendedData, 'nearby');
+    }
+
+    foreach ($actors as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        if (stobeParseFlexibleBool($entry['is_animal'] ?? null) === true) {
+            continue;
+        }
+        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
+        stobeWorldKnowledgeAddRaceSignal($signals, $entry['race'] ?? '');
+    }
+
+    return array_values($signals);
+}
+
+function stobeWorldKnowledgeLookupTopicRowByLabel(string $label): ?array {
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        return null;
+    }
+
+    $normalized = stobeWorldKnowledgeNormalizeLookupLabel($label);
+    if ($normalized === '') {
+        return null;
+    }
+
+    try {
+        $row = $db->fetchOne(
+            "SELECT
+                id,
+                topic,
+                topic_desc,
+                COALESCE(topic_desc_basic, '') AS topic_desc_basic,
+                COALESCE(knowledge_class, '') AS knowledge_class,
+                COALESCE(knowledge_class_basic, '') AS knowledge_class_basic,
+                COALESCE(tags, '') AS tags
+             FROM world_knowledge
+             WHERE LOWER(BTRIM(REPLACE(COALESCE(topic, ''), '_', ' '))) = $1
+                OR EXISTS (
+                    SELECT 1
+                    FROM regexp_split_to_table(COALESCE(aliases, ''), ',') AS alias_value(alias_token)
+                    WHERE LOWER(BTRIM(REPLACE(alias_token, '_', ' '))) = $1
+                )
+             ORDER BY
+                CASE
+                    WHEN LOWER(BTRIM(REPLACE(COALESCE(topic, ''), '_', ' '))) = $1 THEN 0
+                    ELSE 1
+                END,
+                id DESC
+             LIMIT 1",
+            [$normalized]
+        );
+    } catch (Throwable $exception) {
+        return null;
+    }
+
+    return is_array($row) ? $row : null;
+}
+
+function stobeWorldKnowledgeResolveForcedRaceHints(
+    string $npcName,
+    array $npcData,
+    string $speakerName = '',
+    string $eventType = 'chat'
+): array {
+    if (!stobeWorldKnowledgeRetrieverEnabled()) {
+        return [];
+    }
+
+    $normalizedEventType = strtolower(trim($eventType));
+    if ($normalizedEventType === '') {
+        $normalizedEventType = 'chat';
+    }
+    if (!stobeWorldKnowledgeEventAllowed($normalizedEventType)) {
+        return [];
+    }
+
+    if (!is_array($npcData) || count($npcData) === 0) {
+        $npcData = getNpcData($npcName);
+    }
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return [];
+    }
+
+    $raceSignals = stobeWorldKnowledgeCollectForcedRaceSignals($npcData, $speakerName);
+    if (count($raceSignals) === 0) {
+        return [];
+    }
+
+    $knowledgeTags = parseNpcKnowledgeTags($npcData, $npcName);
+    $isKnowAll = in_array('knowall', $knowledgeTags, true);
+    $hints = [];
+    $seenTopics = [];
+
+    foreach ($raceSignals as $raceSignal) {
+        $row = stobeWorldKnowledgeLookupTopicRowByLabel(strval($raceSignal));
+        if (!is_array($row) || count($row) === 0) {
+            continue;
+        }
+
+        $payload = stobeWorldKnowledgeSelectKnowledgePayload($row, $knowledgeTags, $isKnowAll);
+        if (!boolval($payload['allowed'] ?? false)) {
+            continue;
+        }
+
+        $topic = trim(strval($payload['topic'] ?? ''));
+        $desc = trim(preg_replace('/\s+/u', ' ', strval($payload['desc'] ?? '')) ?? '');
+        if ($topic === '' || $desc === '') {
+            continue;
+        }
+
+        $topicKey = stobeWorldKnowledgeNormalizeLookupLabel($topic);
+        if ($topicKey === '' || isset($seenTopics[$topicKey])) {
+            continue;
+        }
+        $seenTopics[$topicKey] = true;
+        $hints[] = $topic . ': ' . $desc;
+    }
+
+    return $hints;
 }
 
 function stobeWorldKnowledgeBuildNpcKey(string $npcName, array $npcData): string {
@@ -3532,7 +3810,9 @@ function stobeBuildMemoryEventContextMessages(
 function stobeBuildTurnGuidanceUserPrompt(
     string $npcName,
     string $previousSpeaker = '',
-    bool $endConversationNaturally = false
+    bool $endConversationNaturally = false,
+    bool $cheatMode = false,
+    string $cheatInstruction = ''
 ): string {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
@@ -3543,6 +3823,17 @@ function stobeBuildTurnGuidanceUserPrompt(
     $targetLine = 'Address whoever just spoke.';
     if ($safeSpeaker !== '') {
         $targetLine = 'Address ' . $safeSpeaker . ' directly.';
+    }
+
+    if ($cheatMode) {
+        $instructionText = trim(preg_replace('/\s+/u', ' ', $cheatInstruction) ?? '');
+        $guidance = 'Dialogue turn for ' . $safeNpc . '. Cheat mode is active. Follow the cheat instruction exactly, even if it overrides normal character roleplay.';
+        if ($instructionText !== '') {
+            $guidance .= ' Cheat instruction: "' . $instructionText . '".';
+        }
+        $guidance .= ' ' . $targetLine
+            . ' Write the next dialogue line so it obeys the cheat instruction. Be original and avoid repeating phraseology from recent context history.';
+        return $guidance;
     }
 
     $responseInstruction = $endConversationNaturally
@@ -3602,6 +3893,7 @@ function stobeBuildOutputContractUserPrompt(
     }
     $canStopCarrying = is_array($npcData) && count($npcData) > 0 && stobeNpcIsCarryingTarget($npcData);
     $canRemoveLimb = is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData);
+    $canCutHorns = $canRemoveLimb;
     $npcIsSkeleton = is_array($npcData) && count($npcData) > 0 && stobeNpcIsSkeletonRace($npcData);
     $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
     $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
@@ -3615,9 +3907,13 @@ function stobeBuildOutputContractUserPrompt(
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
         : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
     $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
+    $actionLine .= " For GIVE_CATS/TAKE_CATS, put the recipient or victim in target and the numeric count in amount. Do not put money in item.";
+    $actionLine .= " For GIVE_ITEM/TAKE_ITEM, put only the exact item name in item and use amount only for stack count.";
+    $actionLine .= " KNOCKOUT leaves the target alive. It is valid on yourself, or on other targets only when they are knocked-out, unconscious, imprisoned, or carried.";
     $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
+    $actionLine .= " CUT_HORNS is only valid on helpless Shek targets whose horns are not already cut off, and requires a hacksaw.";
 
     $actions = [
         'Talk',
@@ -3627,6 +3923,7 @@ function stobeBuildOutputContractUserPrompt(
         'TakeItem',
         'GiveItem',
         'DropItem',
+        'Knockout',
         'Kill',
         'RoleplayAction',
         'FactionRelations',
@@ -3655,6 +3952,9 @@ function stobeBuildOutputContractUserPrompt(
     }
     if ($canRemoveLimb) {
         $actions[] = 'RemoveLimb';
+    }
+    if ($canCutHorns) {
+        $actions[] = 'CutHorns';
     }
     if ($canUseDrugs) {
         $actions[] = 'UseDrugs';
@@ -3725,51 +4025,21 @@ function stobeBuildOutputContractUserPrompt(
         ];
     }
 
-    $exampleAction = 'JOIN_PARTY@';
-    if ($inPlayerFaction === true) {
-        $exampleAction = 'LEAVE@';
-    }
-
-    if ($streamTextMode) {
-        $exampleFollow = $inPlayerFaction === true ? '' : 'FOLLOW@TargetName, STOP_FOLLOW@, ';
-        $exampleCarry = $canStopCarrying ? 'STOP_CARRYING@, ' : '';
-        $examplePickupNpc = $canPickupNpc ? 'PICKUP_NPC@TargetName, ' : '';
-        $exampleRemoveLimb = $canRemoveLimb ? 'REMOVE_LIMB@TargetName@LEFT_ARM, ' : '';
-        $exampleKill = 'KILL@TargetName, ';
-        $exampleUseObject = 'USE_OBJECT@ChairName, ';
-        $exampleUseDrugs = $canUseDrugs ? 'USE_DRUGS@Hashish, ' : '';
-        $exampleDrink = $canDrinkItem ? 'DRINK@Sake, ' : '';
-        $exampleForceDrink = $canForceDrink ? 'FORCE_DRINK@TargetName@Cactus Rum, ' : '';
-        $exampleTravel = 'TRAVEL_LOCATION@LocationName, ';
-        $exampleCats = '';
-        if ($allowTakeCats) {
-            $exampleCats .= 'TAKE_CATS@50, ';
-        }
-        if ($allowGiveCats) {
-            $exampleCats .= 'GIVE_CATS@50, ';
-        }
-        return $actionLine
-            . " Use <speech_style> for reference.\n"
-            . "Return plain dialogue text only (NO JSON, NO markdown fences).\n"
-            . "If an action is needed, append exactly one final line in command form COMMAND@ARG.\n"
-            . "Examples: ATTACK@TargetName, " . $exampleFollow . $exampleCarry . $examplePickupNpc . $exampleRemoveLimb . $exampleKill . $exampleUseObject . $exampleUseDrugs . $exampleDrink . $exampleForceDrink . $exampleTravel . $exampleCats . "GIVE_ITEM@ItemName, " . $exampleAction . ", IDLE@, SUICIDE@, SET_BLOCK@ON, SET_PASSIVE@OFF.\n"
-            . "If no action is needed, output dialogue text only.";
-    }
-
     $schema = [
         'character' => $safeNpc,
         'listener' => 'who ' . $safeNpc . ' is addressing',
         'mood' => implode('|', $moods),
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
-        'item' => 'item name, amount (for GIVE/TAKE_CATS), limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
+        'item' => 'exact item name for GIVE_ITEM/TAKE_ITEM, limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
+        'amount' => 'positive integer count for GIVE_CATS/TAKE_CATS and optional stack count for GIVE_ITEM/TAKE_ITEM',
         'message' => 'lines of dialogue',
     ];
 
     return $actionLine
         . " Use <speech_style> for reference.\n"
         . "Use ONLY this JSON object to give your answer. Do not send any other characters outside of this JSON structure:\n"
-        . json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        . json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
 }
 
 function stobeDecodeStructuredDialoguePayload(string $rawResponse): array {
@@ -3871,6 +4141,20 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
         }
         return '';
     };
+    $extractScalar = static function (string $key) use ($text): string {
+        $quotedKey = preg_quote($key, '/');
+        $patterns = [
+            '/"' . $quotedKey . '"\s*:\s*(-?\d+(?:\.\d+)?)/is',
+            '/\'' . $quotedKey . '\'\s*:\s*(-?\d+(?:\.\d+)?)/is',
+            '/(?:^|[,{]\s*)' . $quotedKey . '\s*:\s*(-?\d+(?:\.\d+)?)/is',
+        ];
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text, $m) === 1) {
+                return trim(strval($m[1]));
+            }
+        }
+        return '';
+    };
 
     $extractMaybeUnclosedMessage = static function (string $key) use ($text): string {
         $quotedKey = preg_quote($key, '/');
@@ -3928,6 +4212,7 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
         'action' => $extractQuoted('action'),
         'target' => $extractQuoted('target'),
         'item' => $item,
+        'amount' => $extractScalar('amount'),
         'listener' => $extractQuoted('listener'),
         'mood' => $extractQuoted('mood'),
     ];
@@ -3940,16 +4225,41 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
     return [];
 }
 
+function stobeParseStructuredPositiveAmount(string $rawValue, int $max = 1000000): int {
+    if (preg_match('/-?\d+/', trim($rawValue), $m) !== 1) {
+        return 0;
+    }
+    $amount = abs(intval($m[0]));
+    if ($amount < 1) {
+        return 0;
+    }
+    if ($amount > $max) {
+        $amount = $max;
+    }
+    return $amount;
+}
+
+function stobeStructuredItemLooksLikeCatsTransfer(string $rawValue): bool {
+    $value = strtolower(trim(preg_replace('/[\s_\-]+/', ' ', $rawValue) ?? ''));
+    if ($value === '') {
+        return false;
+    }
+    return preg_match('/\b(cats?|money|coins?)\b/', $value) === 1;
+}
+
 function stobeBuildActionTagFromStructuredPayload(
     string $action,
     string $target,
     string $item,
     string $message,
-    string $listener = ''
+    string $listener = '',
+    string $amount = ''
 ): string {
     $actionUpper = strtoupper(trim($action));
     $target = trim($target);
     $item = trim($item);
+    $listener = trim($listener);
+    $amount = trim($amount);
 
     if ($actionUpper === '' || $actionUpper === 'TALK') {
         return '';
@@ -3991,6 +4301,9 @@ function stobeBuildActionTagFromStructuredPayload(
         'SETRESOURCE' => 'SET_RESOURCE',
         'SETMEDIC' => 'SET_MEDIC',
         'REMOVELIMB' => 'REMOVE_LIMB',
+        'KO' => 'KNOCKOUT',
+        'KNOCK_OUT' => 'KNOCKOUT',
+        'KNOCK-OUT' => 'KNOCKOUT',
         'KILLTARGET' => 'KILL',
         'EXECUTE' => 'KILL',
         'MURDER' => 'KILL',
@@ -4020,6 +4333,7 @@ function stobeBuildActionTagFromStructuredPayload(
         $actionUpper = $synonyms[$actionUpper];
     }
     $actionUpper = stobeCanonicalizeActionCommand($actionUpper);
+    $explicitAmount = stobeParseStructuredPositiveAmount($amount);
 
     if ($actionUpper === 'ATTACK') {
         return 'ATTACK@' . $target;
@@ -4088,22 +4402,74 @@ function stobeBuildActionTagFromStructuredPayload(
         return '';
     }
     if (in_array($actionUpper, ['GIVE_CATS', 'TAKE_CATS'], true)) {
-        $amountSource = $item !== '' ? $item : $target;
-        if (preg_match('/-?\d+/', $amountSource, $m) !== 1) {
+        $transferTarget = $target;
+        if ($transferTarget === '' && $actionUpper === 'GIVE_CATS' && $listener !== '') {
+            $transferTarget = $listener;
+        }
+
+        $amountValue = $explicitAmount;
+        if ($amountValue <= 0 && $item !== '') {
+            $amountValue = stobeParseStructuredPositiveAmount($item);
+        }
+        if ($amountValue <= 0 && $target !== '' && preg_match('/^\s*-?\d+\s*$/', $target) === 1) {
+            $amountValue = stobeParseStructuredPositiveAmount($target);
+            $transferTarget = '';
+        }
+        if ($amountValue <= 0) {
             return '';
         }
-        $amount = abs(intval($m[0]));
-        if ($amount <= 0) {
-            return '';
+        if ($transferTarget !== '') {
+            return $actionUpper . '@' . $transferTarget . '@' . strval($amountValue);
         }
-        return $actionUpper . '@' . strval($amount);
+        return $actionUpper . '@' . strval($amountValue);
     }
-    if (in_array($actionUpper, ['TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM'], true)) {
+    if (in_array($actionUpper, ['TAKE_ITEM', 'GIVE_ITEM'], true)) {
         $itemName = trim($item !== '' ? $item : $target);
         if ($itemName === '') {
             return '';
         }
-        return $actionUpper . '@' . $itemName;
+        $explicitTarget = '';
+        if ($item !== '') {
+            $explicitTarget = trim($target);
+        }
+        if ($actionUpper === 'GIVE_ITEM' && $explicitTarget === '' && $listener !== '') {
+            $explicitTarget = $listener;
+        }
+
+        if (stobeStructuredItemLooksLikeCatsTransfer($itemName)) {
+            $catsCommand = $actionUpper === 'GIVE_ITEM' ? 'GIVE_CATS' : 'TAKE_CATS';
+            $catsTarget = $explicitTarget;
+            if ($catsTarget === '' && $catsCommand === 'GIVE_CATS' && $listener !== '') {
+                $catsTarget = $listener;
+            }
+            $catsAmount = $explicitAmount > 0
+                ? $explicitAmount
+                : stobeParseStructuredPositiveAmount($itemName);
+            if ($catsAmount <= 0) {
+                return '';
+            }
+            if ($catsTarget !== '') {
+                return $catsCommand . '@' . $catsTarget . '@' . strval($catsAmount);
+            }
+            return $catsCommand . '@' . strval($catsAmount);
+        }
+
+        $normalized = $actionUpper . '@';
+        if ($explicitTarget !== '') {
+            $normalized .= $explicitTarget . '@';
+        }
+        $normalized .= $itemName;
+        if ($explicitAmount > 0) {
+            $normalized .= '@' . strval(min($explicitAmount, 100));
+        }
+        return $normalized;
+    }
+    if ($actionUpper === 'DROP_ITEM') {
+        $itemName = trim($item !== '' ? $item : $target);
+        if ($itemName === '') {
+            return '';
+        }
+        return 'DROP_ITEM@' . $itemName;
     }
     if ($actionUpper === 'REMOVE_LIMB') {
         $targetName = trim($target);
@@ -4119,6 +4485,20 @@ function stobeBuildActionTagFromStructuredPayload(
             return '';
         }
         return 'REMOVE_LIMB@' . $targetName . '@' . $limbToken;
+    }
+    if ($actionUpper === 'CUT_HORNS') {
+        $targetName = trim($target !== '' ? $target : $item);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'CUT_HORNS@' . $targetName;
+    }
+    if ($actionUpper === 'KNOCKOUT') {
+        $targetName = trim($target !== '' ? $target : $item);
+        if ($targetName === '') {
+            return '';
+        }
+        return 'KNOCKOUT@' . $targetName;
     }
     if ($actionUpper === 'KILL') {
         $targetName = trim($target !== '' ? $target : $item);
@@ -4216,9 +4596,6 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
         $heuristic = stobeHeuristicExtractStructuredFields($rawResponse);
         if (count($heuristic) > 0) {
             $heuristicMessage = trim(strval($heuristic['message'] ?? ''));
-            if ($heuristicMessage !== '') {
-                $fallbackMessage = $heuristicMessage;
-            }
             $heuristicAction = trim(strval($heuristic['action'] ?? ''));
             $heuristicTarget = trim(strval($heuristic['target'] ?? ''));
             $heuristicItem = trim(strval($heuristic['item'] ?? ''));
@@ -4227,8 +4604,9 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
                 $heuristicAction,
                 $heuristicTarget,
                 $heuristicItem,
-                $fallbackMessage,
-                $heuristicListener
+                $heuristicMessage,
+                $heuristicListener,
+                trim(strval($heuristic['amount'] ?? ''))
             );
             if ($fallbackActionTag !== '') {
                 $fallbackActionTag = normalizeActionTagToken(
@@ -4238,7 +4616,7 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
             }
             return [
                 'is_structured' => true,
-                'message' => trim($fallbackMessage),
+                'message' => $heuristicMessage,
                 'action_tag' => $fallbackActionTag,
                 'listener' => trim(strval($heuristic['listener'] ?? '')),
                 'mood' => trim(strval($heuristic['mood'] ?? '')),
@@ -4261,21 +4639,20 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
     if ($message === '') {
         $message = trim(strval($decoded['content'] ?? ''));
     }
-    if ($message === '') {
-        $message = $fallbackMessage;
-    }
     $action = trim(strval($decoded['action'] ?? 'Talk'));
     $target = trim(strval($decoded['target'] ?? ''));
     $item = trim(strval($decoded['item'] ?? ''));
     $listener = trim(strval($decoded['listener'] ?? ''));
     $mood = trim(strval($decoded['mood'] ?? ''));
+    $amount = trim(strval($decoded['amount'] ?? ''));
 
     $rawActionTag = stobeBuildActionTagFromStructuredPayload(
         $action,
         $target,
         $item,
         $message,
-        $listener
+        $listener,
+        $amount
     );
     $actionTag = '';
     if ($rawActionTag !== '') {
@@ -4438,7 +4815,7 @@ function queryWorldKnowledgeForNpc(
         }
 
         $topic = trim(strval($payload['topic'] ?? ''));
-        $desc = truncatePromptValue(strval($payload['desc'] ?? ''), 260);
+        $desc = trim(preg_replace('/\s+/u', ' ', strval($payload['desc'] ?? '')) ?? '');
         if ($topic === '' || $desc === '') {
             continue;
         }
@@ -9578,10 +9955,26 @@ function buildSystemPrompt(
     $playerFactionPromptBlock = stobeBuildPlayerFactionPromptBlock($npcData);
 
     $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
+    $forcedRaceHints = stobeWorldKnowledgeResolveForcedRaceHints($npcName, $npcData, $playerName, $eventType);
     $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
-    if (count($loreHints) > 0 || $playerFactionPromptBlock !== '') {
+    $knowledgeHints = [];
+    $seenKnowledgeHints = [];
+    foreach (array_merge($forcedRaceHints, $loreHints) as $hint) {
+        $line = trim(strval($hint));
+        if ($line === '') {
+            continue;
+        }
+        $lineKey = strtolower($line);
+        if (isset($seenKnowledgeHints[$lineKey])) {
+            continue;
+        }
+        $seenKnowledgeHints[$lineKey] = true;
+        $knowledgeHints[] = $line;
+    }
+
+    if (count($knowledgeHints) > 0 || $playerFactionPromptBlock !== '') {
         $prompt .= "\n\n<knowledge>";
-        foreach ($loreHints as $hint) {
+        foreach ($knowledgeHints as $hint) {
             $prompt .= "\n  <entry>" . stobePromptXmlEscape($hint) . "</entry>";
         }
         if ($playerFactionPromptBlock !== '') {
@@ -10172,12 +10565,12 @@ function stobeStripParentheticalDialogueText(string $text): string {
     $commandNames = [
         'ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
         'STOPFOLLOW', 'JOINPARTY', 'STOPCARRYING', 'DROPNPC', 'DROP_NPC', 'DROP-NPC', 'PUTDOWNNPC', 'PUT_DOWN_NPC', 'PUT-DOWN-NPC', 'RELEASENPC', 'RELEASE_NPC', 'RELEASE-NPC', 'PICKUPNPC', 'PICKUP-NPC', 'KIDNAP', 'RELEASEPLAYER', 'GIVECATS', 'TAKECATS',
-        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
+        'TAKEITEM', 'GIVEITEM', 'DROPITEM', 'REMOVELIMB', 'KO', 'KNOCK_OUT', 'KNOCK-OUT', 'KILLTARGET', 'EXECUTE', 'MURDER', 'USEOBJECT', 'USE-OBJECT', 'USEDRUGS', 'USE-DRUGS', 'DRINKITEM', 'DRINK-ITEM', 'FORCEDRINK', 'FORCE-DRINK', 'FACTIONRELATIONS', 'TRAVELLOCATION',
         'ROLEPLAYACTION', 'ROLEPLAY-ACTION',
         'SETBLOCK', 'SETHOLD', 'SETPASSIVE', 'SETJOBS', 'SETRANGED',
         'SETTAUNT', 'SETSNEAK', 'SETRESOURCE', 'SETMEDIC',
@@ -10210,8 +10603,8 @@ function stobeDedupeActionList(array $actions, string $eventType, ?array $config
 }
 
 if (!function_exists('stobeResolveDialogueListenerTarget')) {
-    function stobeResolveDialogueListenerTarget(string $listener, array $allowedNames, string $fallback = ''): string
-    {
+function stobeResolveDialogueListenerTarget(string $listener, array $allowedNames, string $fallback = ''): string
+{
         $listenerName = normalizeParticipantNameToken($listener);
         $fallbackName = normalizeParticipantNameToken($fallback);
 
@@ -10270,6 +10663,33 @@ if (!function_exists('stobeResolveDialogueListenerTarget')) {
     }
 }
 
+function stobeComputeStructuredStreamMessageDelta(string $previousMessage, string $currentMessage): string {
+    if ($currentMessage === '' || $currentMessage === $previousMessage) {
+        return '';
+    }
+    if ($previousMessage === '') {
+        return $currentMessage;
+    }
+    if (strpos($currentMessage, $previousMessage) === 0) {
+        return substr($currentMessage, strlen($previousMessage));
+    }
+
+    $maxPrefix = min(strlen($previousMessage), strlen($currentMessage));
+    $commonPrefixLength = 0;
+    while (
+        $commonPrefixLength < $maxPrefix
+        && $previousMessage[$commonPrefixLength] === $currentMessage[$commonPrefixLength]
+    ) {
+        $commonPrefixLength++;
+    }
+
+    if ($commonPrefixLength <= 0 || $commonPrefixLength < intval(strlen($previousMessage) / 2)) {
+        return '';
+    }
+
+    return substr($currentMessage, $commonPrefixLength);
+}
+
 function stobeStreamDialogueViaLlm(
     string $actor,
     array|false $actorData,
@@ -10298,13 +10718,182 @@ function stobeStreamDialogueViaLlm(
         ? $meta['action_config']
         : stobeBuildActionConfigForNpc($eventType, $actorData);
 
+    $streamMeta = $meta;
+    $structuredResponseFormat = is_array($streamMeta['response_format'] ?? null)
+        ? $streamMeta['response_format']
+        : null;
+
+    if (is_array($structuredResponseFormat)) {
+        $rawResponse = '';
+        $chunksEmitted = 0;
+        $messageStreamBuffer = '';
+        $lastStructuredMessage = '';
+        $structuredListener = '';
+        $structuredParsed = false;
+
+        $emitStructuredDialogue = function (string $deltaText = '', bool $flushRemainder = false) use (
+            &$messageStreamBuffer,
+            &$chunksEmitted,
+            $actor,
+            $actorData
+        ): void {
+            if ($deltaText !== '') {
+                $messageStreamBuffer .= $deltaText;
+            }
+
+            while (true) {
+                $position = stobeFindFastSentencePosition($messageStreamBuffer);
+                if ($position === false || $position < 0) {
+                    break;
+                }
+
+                $sentence = trim(substr($messageStreamBuffer, 0, $position + 1));
+                $remaining = substr($messageStreamBuffer, $position + 1);
+                $messageStreamBuffer = ltrim(strval($remaining));
+                if ($sentence === '') {
+                    continue;
+                }
+
+                $sentenceChunks = stobeSplitSentencesStream($sentence);
+                foreach ($sentenceChunks as $sentenceChunkRaw) {
+                    $sentenceChunk = stobeStripParentheticalDialogueText(
+                        sanitizeForKenshi(trim(strval($sentenceChunkRaw)))
+                    );
+                    if ($sentenceChunk === '') {
+                        continue;
+                    }
+                    streamResponse($actor, 'ScriptQueue', $sentenceChunk, $actorData, []);
+                    $chunksEmitted++;
+                }
+            }
+
+            if (!$flushRemainder) {
+                return;
+            }
+
+            $remainingText = stobeStripParentheticalDialogueText(
+                sanitizeForKenshi(trim($messageStreamBuffer))
+            );
+            $messageStreamBuffer = '';
+            if ($remainingText === '') {
+                return;
+            }
+
+            $remainingChunks = stobeSplitSentencesStream($remainingText);
+            foreach ($remainingChunks as $remainingChunkRaw) {
+                $remainingChunk = stobeStripParentheticalDialogueText(
+                    sanitizeForKenshi(trim(strval($remainingChunkRaw)))
+                );
+                if ($remainingChunk === '') {
+                    continue;
+                }
+                streamResponse($actor, 'ScriptQueue', $remainingChunk, $actorData, []);
+                $chunksEmitted++;
+            }
+        };
+
+        $processStructuredSnapshot = function (bool $flushRemainder = false) use (
+            &$rawResponse,
+            &$lastStructuredMessage,
+            &$structuredListener,
+            &$structuredParsed,
+            $eventType,
+            $emitStructuredDialogue
+        ): array {
+            $parsedSnapshot = stobeParseStructuredDialogueResponse($rawResponse, $eventType);
+            $isStructuredSnapshot = boolval($parsedSnapshot['is_structured'] ?? false);
+            $parsedMessage = '';
+            if ($isStructuredSnapshot) {
+                $parsedMessage = stobeStripParentheticalDialogueText(
+                    sanitizeForKenshi(trim(strval($parsedSnapshot['message'] ?? '')))
+                );
+            }
+            if ($parsedMessage !== '') {
+                $deltaText = stobeComputeStructuredStreamMessageDelta(
+                    $lastStructuredMessage,
+                    $parsedMessage
+                );
+                if (strlen($parsedMessage) >= strlen($lastStructuredMessage)) {
+                    $lastStructuredMessage = $parsedMessage;
+                }
+                if ($deltaText !== '') {
+                    $emitStructuredDialogue($deltaText, false);
+                }
+            }
+
+            $parsedListener = normalizeParticipantNameToken(
+                strval($parsedSnapshot['listener'] ?? '')
+            );
+            if ($parsedListener !== '') {
+                $structuredListener = $parsedListener;
+            }
+            if ($isStructuredSnapshot || $parsedListener !== '') {
+                $structuredParsed = true;
+            }
+
+            if ($flushRemainder) {
+                $emitStructuredDialogue('', true);
+            }
+
+            return $parsedSnapshot;
+        };
+
+        $streamed = stobeCallLLMStream(
+            $messages,
+            $llmConfig,
+            function (string $delta) use (&$rawResponse, $processStructuredSnapshot): void {
+                if ($delta === '') {
+                    return;
+                }
+                $rawResponse .= $delta;
+                $processStructuredSnapshot(false);
+            },
+            $streamMeta
+        );
+
+        if ($streamed === false) {
+            return $result;
+        }
+
+        if (is_string($streamed) && trim($streamed) !== '') {
+            $rawResponse = $streamed;
+        }
+
+        $finalSnapshot = $processStructuredSnapshot(true);
+        $finalMessage = stobeStripParentheticalDialogueText(
+            sanitizeForKenshi(trim(strval($finalSnapshot['message'] ?? '')))
+        );
+        if ($finalMessage === '' && $lastStructuredMessage !== '') {
+            $finalMessage = $lastStructuredMessage;
+        }
+
+        $finalActions = [];
+        $finalAction = trim(strval($finalSnapshot['action_tag'] ?? ''));
+        if ($finalAction !== '') {
+            $finalActions[] = $finalAction;
+        }
+        $finalActions = stobeDedupeActionList($finalActions, $eventType, $actionConfig);
+
+        $result['ok'] = true;
+        $result['used_streaming'] = true;
+        $result['raw_response'] = trim($rawResponse);
+        $result['response_text'] = $finalMessage;
+        $result['actions'] = $finalActions;
+        $result['actions_streamed'] = false;
+        $result['structured_json'] = boolval($finalSnapshot['is_structured'] ?? false) || $structuredParsed;
+        $result['listener'] = $structuredListener !== ''
+            ? $structuredListener
+            : normalizeParticipantNameToken(strval($finalSnapshot['listener'] ?? ''));
+        $result['chunks_emitted'] = $chunksEmitted;
+        return $result;
+    }
+
     $rawResponse = '';
     $streamBuffer = '';
     $chunksEmitted = 0;
     $streamActionSeen = [];
     $rawActions = [];
 
-    $streamMeta = $meta;
     unset($streamMeta['response_format']);
 
     $streamed = stobeCallLLMStream(
@@ -10465,9 +11054,7 @@ function streamResponse(
     $structuredFromMessage = stobeParseStructuredDialogueResponse($message, 'chat');
     if (boolval($structuredFromMessage['is_structured'] ?? false)) {
         $normalizedMessage = trim(strval($structuredFromMessage['message'] ?? ''));
-        if ($normalizedMessage !== '') {
-            $message = $normalizedMessage;
-        }
+        $message = $normalizedMessage;
         $structuredAction = trim(strval($structuredFromMessage['action_tag'] ?? ''));
         if ($structuredAction !== '' && !in_array($structuredAction, $actions, true)) {
             array_unshift($actions, $structuredAction);

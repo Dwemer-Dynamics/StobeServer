@@ -122,6 +122,36 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 throw new RuntimeException('Seed SQL execution failed: ' . $seedPath);
             }
         };
+        $runBioUniqueSeedBundle = static function (
+            string $missingPrefix = 'bio_unique seed file missing',
+            string $emptyPrefix = 'bio_unique seed file empty',
+            string $normalizedPrefix = 'bio_unique seed file normalized to empty SQL'
+        ) use ($runSqlSeedFile): void {
+            $seedSpecs = [
+                [
+                    'filename' => 'kenshi_boss_bio_unique_upsert.sql',
+                    'missing' => 'Boss ' . $missingPrefix,
+                    'empty' => 'Boss ' . $emptyPrefix,
+                    'normalized' => 'Boss ' . $normalizedPrefix,
+                ],
+                [
+                    'filename' => 'kenshi_unique_bio_unique_upsert.sql',
+                    'missing' => 'Unique ' . $missingPrefix,
+                    'empty' => 'Unique ' . $emptyPrefix,
+                    'normalized' => 'Unique ' . $normalizedPrefix,
+                ],
+                [
+                    'filename' => 'kenshi_animals_bio_unique_upsert.sql',
+                    'missing' => 'Animals personified ' . $missingPrefix,
+                    'empty' => 'Animals personified ' . $emptyPrefix,
+                    'normalized' => 'Animals personified ' . $normalizedPrefix,
+                ],
+            ];
+            foreach ($seedSpecs as $spec) {
+                $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . $spec['filename'];
+                $runSqlSeedFile($seedPath, $spec['missing'], $spec['empty'], $spec['normalized']);
+            }
+        };
         $importWorldKnowledgeCsv = static function (string $seedPath) use ($db): void {
             if (!is_file($seedPath)) {
                 stobeLogWarn('world_knowledge import skipped: seed file missing', ['path' => $seedPath]);
@@ -353,7 +383,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         });
         $applyPatch('general_settings', 202603190001, static function () use ($db): void {
             $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
-                ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD','3','How many global memory summaries involving an NPC are required before creating one NPC-scoped summary',NOW())
+                ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD','2','How many global memory summaries involving an NPC are required before creating one NPC-scoped summary',NOW())
                 ON CONFLICT (id) DO NOTHING");
         });
         $applyPatch('general_settings', 202603190002, static function () use ($db): void {
@@ -611,6 +641,12 @@ PROMPT;
                 VALUES ('REMOVE_LIMB','RemoveLimb',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
         });
+        $applyPatch('core_action', 202604120001, static function () use ($db): void {
+            $desc = "Cut off a helpless Shek target's horns with a hacksaw. Use target as the victim. Works only on dead, knocked-out, unconscious, imprisoned, or carried Shek whose horns are not already cut off.";
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('CUT_HORNS','CutHorns',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, updated_at=NOW()", [$desc]);
+        });
         $applyPatch('core_action', 202603140206, static function () use ($db): void {
             $desc = 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time. Put the item name in target or message field.';
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
@@ -654,6 +690,32 @@ PROMPT;
             $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
                 VALUES ('KILL','Kill',$1,TRUE,NOW())
                 ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_action', 202604200001, static function () use ($db): void {
+            $desc = 'Knock out a target immediately without killing them. Self-targeting is allowed; otherwise the target must already be helpless.';
+            $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('KNOCKOUT','Knockout',$1,TRUE,NOW())
+                ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$desc]);
+        });
+        $applyPatch('core_action', 202604200006, static function () use ($db): void {
+            $descriptions = [
+                'GIVE_CATS' => 'Give cats to the target. Put the recipient in target and the numeric amount in amount.',
+                'TAKE_CATS' => 'Take cats from the target. Put the victim in target and the numeric amount in amount.',
+                'TAKE_ITEM' => 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Put the item name in item and an optional stack count in amount. Equipment/all loot queries are still supported in item.',
+                'GIVE_ITEM' => 'Give a specific item to the target. Put the recipient in target, the exact item name in item, and an optional stack count in amount.',
+            ];
+            foreach ($descriptions as $command => $desc) {
+                $actionName = match ($command) {
+                    'GIVE_CATS' => 'GiveCats',
+                    'TAKE_CATS' => 'TakeCats',
+                    'TAKE_ITEM' => 'TakeItem',
+                    'GIVE_ITEM' => 'GiveItem',
+                    default => $command,
+                };
+                $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                    VALUES ($1,$2,$3,TRUE,NOW())
+                    ON CONFLICT (command) DO UPDATE SET action_name=EXCLUDED.action_name, description=EXCLUDED.description, is_activated=EXCLUDED.is_activated, updated_at=NOW()", [$command, $actionName, $desc]);
+            }
         });
         $applyPatch('core_action', 202603300001, static function () use ($db): void {
             $desc = 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.';
@@ -943,13 +1005,8 @@ PROMPT;
             $runSqlSeedFile($occ, 'bio_random rename-token occupation seed file missing', 'bio_random rename-token occupation seed file empty', 'bio_random rename-token occupation seed normalized to empty SQL', true, true);
         });
 
-        $applyPatch('bio_unique', 202603130208, static function () use ($db, $runSqlSeedFile): void {
-            $boss = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_boss_bio_unique_upsert.sql';
-            $runSqlSeedFile($boss, 'Boss bio_unique seed file missing', 'Boss bio_unique seed file empty', 'Boss bio_unique seed file normalized to empty SQL');
-            $unique = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_unique_bio_unique_upsert.sql';
-            $runSqlSeedFile($unique, 'Unique bio_unique seed file missing', 'Unique bio_unique seed file empty', 'Unique bio_unique seed file normalized to empty SQL');
-            $animals = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_animals_bio_unique_upsert.sql';
-            $runSqlSeedFile($animals, 'Animals personified bio_unique seed file missing', 'Animals personified bio_unique seed file empty', 'Animals personified bio_unique seed file normalized to empty SQL');
+        $applyPatch('bio_unique', 202603130208, static function () use ($db, $runBioUniqueSeedBundle): void {
+            $runBioUniqueSeedBundle();
             $db->exec("DELETE FROM bio_unique WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
             $db->exec("DELETE FROM bio_unique_custom WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
         });
@@ -1619,6 +1676,20 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  VALUES
                     ('PLAYER_FACTION_CUSTOM_NAME', '', 'Optional custom display name for the player faction in prompts.', NOW()),
                     ('PLAYER_FACTION_PROMPT', '', 'Optional player-faction instruction block injected into prompts.', NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+        });
+        $applyPatch('general_settings', 202604200002, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'ALWAYS_INSERT_RACE',
+                    'true',
+                    'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
+                    NOW()
+                 )
                  ON CONFLICT (id) DO UPDATE
                  SET description = EXCLUDED.description,
                      updated_at = NOW()"

@@ -78,6 +78,9 @@ function stobe_llm_db_row_to_ui_row(array $row): array {
     if (array_key_exists('remove_action_prompt', $config)) {
         $metadata['remove_action_prompt'] = stobe_llm_to_bool_int($config['remove_action_prompt']) === 1;
     }
+    if (array_key_exists('extra_parameters_enabled', $config)) {
+        $metadata['extra_parameters_enabled'] = stobe_llm_to_bool_int($config['extra_parameters_enabled']) === 1;
+    }
     if (isset($config['extra_parameters']) && is_array($config['extra_parameters'])) {
         $metadata['extra_parameters'] = $config['extra_parameters'];
     }
@@ -124,7 +127,7 @@ function stobe_llm_compose_config_from_payload(array $payload, array $existingCo
         unset($cfg['top_k']);
     }
 
-    foreach (['enforce_json', 'json_schema', 'prefill_json', 'reasoning_model', 'remove_action_prompt'] as $f) {
+    foreach (['enforce_json', 'json_schema', 'prefill_json', 'reasoning_model', 'remove_action_prompt', 'extra_parameters_enabled'] as $f) {
         if (array_key_exists($f, $payload)) {
             $cfg[$f] = stobe_llm_to_bool_int($payload[$f]) === 1;
         }
@@ -143,12 +146,45 @@ function stobe_llm_compose_config_from_payload(array $payload, array $existingCo
     if (array_key_exists('remove_action_prompt', $cfg)) {
         $metadata['remove_action_prompt'] = boolval($cfg['remove_action_prompt']);
     }
+    if (array_key_exists('extra_parameters_enabled', $cfg)) {
+        $metadata['extra_parameters_enabled'] = boolval($cfg['extra_parameters_enabled']);
+    } elseif (array_key_exists('extra_parameters_enabled', $metadata)) {
+        $cfg['extra_parameters_enabled'] = boolval($metadata['extra_parameters_enabled']);
+    }
     if (isset($metadata['extra_parameters']) && is_array($metadata['extra_parameters'])) {
         $cfg['extra_parameters'] = $metadata['extra_parameters'];
     }
     $cfg['metadata'] = $metadata;
 
     return $cfg;
+}
+
+function stobe_llm_apply_connector_metadata_post_overrides(array $metadata, array $post): array {
+    if (isset($post["remove_action_prompt"])) {
+        $metadata["remove_action_prompt"] = ($post["remove_action_prompt"] === "1" || $post["remove_action_prompt"] === 1);
+    } else {
+        unset($metadata["remove_action_prompt"]);
+    }
+
+    if (isset($post["extra_parameters_enabled"])) {
+        $metadata["extra_parameters_enabled"] = ($post["extra_parameters_enabled"] === "1" || $post["extra_parameters_enabled"] === 1);
+    } else {
+        unset($metadata["extra_parameters_enabled"]);
+    }
+
+    if (isset($post['extra_parameters_yaml'])) {
+        require_once __DIR__ . '/../connector/parse_simple_yaml.php';
+        $extra_parameters = parse_simple_yaml($post['extra_parameters_yaml']);
+        if (is_array($extra_parameters)) {
+            $metadata['extra_parameters'] = $extra_parameters;
+        } else {
+            unset($metadata['extra_parameters']);
+        }
+    } else {
+        unset($metadata['extra_parameters']);
+    }
+
+    return $metadata;
 }
 
 function stobe_llm_payload_to_save_fields(array $payload, ?array $existingDbRow = null): array {
@@ -917,15 +953,27 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 echo "</div>";
                 // Ace editor for extra_parameters (YAML)
                 $extra_parameters_yaml = '';
+                $meta = [];
                 if (isset($editItem['metadata'])) {
                     $meta = is_string($editItem['metadata']) ? json_decode($editItem['metadata'], true) : $editItem['metadata'];
+                    if (!is_array($meta)) {
+                        $meta = [];
+                    }
                     if (is_array($meta) && isset($meta['extra_parameters']) && is_array($meta['extra_parameters'])) {
                         // Convert map to YAML
                         $extra_parameters_yaml = array_to_yaml($meta['extra_parameters']);
                     }
                 }
+                $hasExistingConnector = isset($editItem['id']) && intval($editItem['id']) > 0;
+                $extraParametersEnabled = $hasExistingConnector
+                    ? (!array_key_exists('extra_parameters_enabled', $meta) || boolval($meta['extra_parameters_enabled']))
+                    : boolval($meta['extra_parameters_enabled'] ?? false);
                 echo "<div style='margin-top:18px;'>";
                 echo "<label for='extra_parameters_yaml' style='font-weight:600; color:#e9efff; display:block; margin-bottom:6px;'>Include Body Parameters (YAML)</label>";
+                echo "<label class='label-with-toggle' style='margin-bottom:8px; display:flex; align-items:center; gap:8px;'><span class='tip-label' data-tip='When off, the saved YAML body parameters remain stored but are not injected into requests. Existing connectors without this setting still default to on for migration.'>Enable YAML Body Parameters</span>";
+                echo "<input type='hidden' name='extra_parameters_enabled' value='0'>";
+                echo "<input type='checkbox' name='extra_parameters_enabled' value='1' " . ($extraParametersEnabled ? "checked" : "") . ">";
+                echo "</label>";
                 echo "<div class='extra_parameters_editor_container' style='height:120px; width:100%; border-radius:6px; border:1px solid #4a4a4a; background:#181a20; color:#e9efff;'></div>";
                 echo "<textarea class='extra_parameters_yaml' name='extra_parameters_yaml' style='display:none;'>" . htmlspecialchars($extra_parameters_yaml) . "</textarea>";
                 echo "<div style='font-size:12px; color:#b0b0b0; margin-top:4px;'>Enter additional request body parameters in YAML format. (Advanced users only.)</div>";
@@ -1110,7 +1158,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
     }
     // Sync On/Off labels for checkboxes
     (function(){
-        const names = ['reasoning_model','enforce_json','json_schema','prefill_json','remove_action_prompt'];
+        const names = ['reasoning_model','enforce_json','json_schema','prefill_json','remove_action_prompt','extra_parameters_enabled'];
         names.forEach(n=>{
             const cb = document.querySelector(`input[type="checkbox"][name="${n}"]`);
             if (!cb) return;
@@ -1471,6 +1519,17 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
     // Seed required defaults for new connector (force values on create)
     $payload = $_POST;
+    $metadata = [];
+    if (isset($payload["metadata"]) && !empty($payload["metadata"])) {
+        $metadata = json_decode($payload["metadata"], true);
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+    }
+    $payload["metadata"] = json_encode(
+        stobe_llm_apply_connector_metadata_post_overrides($metadata, $payload),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
     $payload['driver'] = 'openrouterjson';
     $payload['temperature'] = 1;
     $payload['url'] = 'https://openrouter.ai/api/v1/chat/completions';
@@ -1632,7 +1691,8 @@ if (isset($_GET["create_blank"])) {
         'api_badge_id' => stobe_llm_default_api_badge_id(),
         'enforce_json' => 1,
         'json_schema' => 1,
-        'service' => 'openrouter'
+        'service' => 'openrouter',
+        'extra_parameters_enabled' => 0,
     ]);
     $redir = 'llm_connectors.php' . ($newId ? ('?edit=' . urlencode($newId)) : '');
     header("Location: " . $withEmbed($redir));
@@ -1657,28 +1717,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && (isset($_POST["save"]) || isset($_P
         }
     }
     
-    // Add remove_action_prompt to metadata (checkbox with hidden field pattern)
-    if (isset($_POST["remove_action_prompt"])) {
-        $metadata["remove_action_prompt"] = ($_POST["remove_action_prompt"] === "1" || $_POST["remove_action_prompt"] === 1);
-    } else {
-        // If checkbox not present, remove from metadata
-        unset($metadata["remove_action_prompt"]);
-    }
-
-    // Persist extra_parameters from YAML editor
-    if (isset($_POST['extra_parameters_yaml'])) {
-        require_once __DIR__ . '/../connector/parse_simple_yaml.php';
-        $extra_parameters = parse_simple_yaml($_POST['extra_parameters_yaml']);
-        if (is_array($extra_parameters)) {
-            $metadata['extra_parameters'] = $extra_parameters;
-        } else {
-            unset($metadata['extra_parameters']);
-        }
-    } else {
-        unset($metadata['extra_parameters']);
-    }
-
-    $_POST["metadata"] = json_encode($metadata);
+    $_POST["metadata"] = json_encode(
+        stobe_llm_apply_connector_metadata_post_overrides($metadata, $_POST),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
 
     $_POST = normalize_player2_connector_payload($_POST);
     $llm->update($id, $_POST);
@@ -2255,14 +2297,26 @@ if (typeof window.consolidation !== 'function') {
             echo "</div>";
             // Ace editor for extra_parameters (YAML)
             $extra_parameters_yaml = '';
+            $meta = [];
             if (isset($editItem['metadata'])) {
                 $meta = is_string($editItem['metadata']) ? json_decode($editItem['metadata'], true) : $editItem['metadata'];
+                if (!is_array($meta)) {
+                    $meta = [];
+                }
                 if (is_array($meta) && isset($meta['extra_parameters']) && is_array($meta['extra_parameters'])) {
                     $extra_parameters_yaml = array_to_yaml($meta['extra_parameters']);
                 }
             }
+            $hasExistingConnector = isset($editItem['id']) && intval($editItem['id']) > 0;
+            $extraParametersEnabled = $hasExistingConnector
+                ? (!array_key_exists('extra_parameters_enabled', $meta) || boolval($meta['extra_parameters_enabled']))
+                : boolval($meta['extra_parameters_enabled'] ?? false);
             echo "<div style='margin-top:18px;'>";
             echo "<label for='extra_parameters_yaml' style='font-weight:600; color:#e9efff; display:block; margin-bottom:6px;'>Include Body Parameters (YAML)</label>";
+            echo "<label class='label-with-toggle' style='margin-bottom:8px; display:flex; align-items:center; gap:8px;'><span class='tip-label' data-tip='When off, the saved YAML body parameters remain stored but are not injected into requests. Existing connectors without this setting still default to on for migration.'>Enable YAML Body Parameters</span>";
+            echo "<input type='hidden' name='extra_parameters_enabled' value='0'>";
+            echo "<input type='checkbox' name='extra_parameters_enabled' value='1' " . ($extraParametersEnabled ? "checked" : "") . ">";
+            echo "</label>";
             echo "<div class='extra_parameters_editor_container' style='height:120px; width:100%; border-radius:6px; border:1px solid #4a4a4a; background:#181a20; color:#e9efff;'></div>";
             echo "<textarea class='extra_parameters_yaml' name='extra_parameters_yaml' style='display:none;'>" . htmlspecialchars($extra_parameters_yaml) . "</textarea>";
             echo "<div style='font-size:12px; color:#b0b0b0; margin-top:4px;'>Enter additional request body parameters in YAML format. (Advanced users only.)</div>";
@@ -2283,7 +2337,7 @@ if (typeof window.consolidation !== 'function') {
 <script>
 // Sync On/Off labels for checkboxes
 (function(){
-    const names = ['reasoning_model','enforce_json','json_schema','prefill_json'];
+    const names = ['reasoning_model','enforce_json','json_schema','prefill_json','extra_parameters_enabled'];
     names.forEach(n=>{
         const cb = document.querySelector(`input[type="checkbox"][name="${n}"]`);
         if (!cb) return;

@@ -844,7 +844,7 @@ $messages[] = [
     'content' => stobeBuildOutputContractUserPrompt(
         $respondingNpc,
         false,
-        true,
+        false,
         npcIsInPlayerFaction($npcData)
     ),
 ];
@@ -874,6 +874,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'npc_name' => $respondingNpc,
         'event_type' => 'rechat',
         'action_config' => $actionConfig,
+        'response_format' => ['type' => 'json_object'],
     ]
 );
 
@@ -885,34 +886,9 @@ if (boolval($streamResult['ok'] ?? false)) {
     $structuredJson = boolval($streamResult['structured_json'] ?? false);
     $actionsStreamedInLlm = boolval($streamResult['actions_streamed'] ?? false);
 } else {
-    $rawResponse = stobeCallLLM($messages, $llmConfig, [
-        'npc_name' => $respondingNpc,
-        'event_type' => 'rechat',
-    ]);
-    if ($rawResponse === false || trim($rawResponse) === '') {
-        stobeLogWarn('Rechat LLM returned empty response', ['responding_npc' => $respondingNpc]);
-        echo "ok";
-        return;
-    }
-
-    $structured = stobeParseStructuredDialogueResponse($rawResponse, 'rechat');
-    $responseListener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
-    $responseText = sanitizeForKenshi(trim(strval($structured['message'] ?? '')));
-    $structuredJson = boolval($structured['is_structured'] ?? false);
-    $structuredAction = trim(strval($structured['action_tag'] ?? ''));
-    if ($structuredAction !== '') {
-        $responseActions[] = $structuredAction;
-    }
-    if ($responseText !== '') {
-        $actionExtraction = extractAndNormalizeActionTags($responseText, 'rechat', $actionConfig);
-        $responseText = sanitizeForKenshi(trim(strval($actionExtraction['text'] ?? $responseText)));
-        $inlineActions = is_array($actionExtraction['actions'] ?? null) ? $actionExtraction['actions'] : [];
-        foreach ($inlineActions as $inlineAction) {
-            if (!in_array($inlineAction, $responseActions, true)) {
-                $responseActions[] = $inlineAction;
-            }
-        }
-    }
+    stobeLogWarn('Rechat LLM stream failed', ['responding_npc' => $respondingNpc]);
+    echo "ok";
+    return;
 }
 $responseActions = stobeDedupeActionList($responseActions, 'rechat', $actionConfig);
 $defaultReplyTarget = $previousSpeaker;
