@@ -14,8 +14,8 @@ require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
  * Safe to call multiple times (idempotent).
  */
 function pts_ensure_functions($conn): bool {
-    // Check if functions already exist in chim_meta schema
-    $checkQuery = "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'clone_schema' AND n.nspname = 'chim_meta' LIMIT 1";
+    // Check if functions already exist in stobe_meta schema
+    $checkQuery = "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'clone_schema' AND n.nspname = 'stobe_meta' LIMIT 1";
     $checkResult = @pg_query($conn, $checkQuery);
     if ($checkResult && pg_num_rows($checkResult) > 0) {
         // Functions already exist
@@ -113,20 +113,20 @@ function pts_clone_schema($conn, string $sourceSchema, string $destSchema): arra
         return ['success' => false, 'error' => "Source schema '{$sourceSchema}' does not exist"];
     }
     
-    // Drop destination if it exists (functions are in chim_meta schema)
+    // Drop destination if it exists (functions are in stobe_meta schema)
     $dropResult = @pg_query(
         $conn,
-        "SELECT chim_meta.drop_schema_safe('" . pg_escape_string($conn, $destSchema) . "'::text)"
+        "SELECT stobe_meta.drop_schema_safe('" . pg_escape_string($conn, $destSchema) . "'::text)"
     );
     
     if (!$dropResult) {
         Logger::warn("Could not drop existing schema {$destSchema}: " . pg_last_error($conn));
     }
     
-    // Clone the schema (functions are in chim_meta schema)
+    // Clone the schema (functions are in stobe_meta schema)
     $result = @pg_query(
         $conn,
-        "SELECT chim_meta.clone_schema('" . pg_escape_string($conn, $sourceSchema) . "'::text, '" . pg_escape_string($conn, $destSchema) . "'::text)"
+        "SELECT stobe_meta.clone_schema('" . pg_escape_string($conn, $sourceSchema) . "'::text, '" . pg_escape_string($conn, $destSchema) . "'::text)"
     );
     
     if (!$result) {
@@ -149,14 +149,14 @@ function pts_drop_schema($conn, string $schemaName): array {
     }
     
     // Additional PHP-level protection
-    $protected = ['public', 'pg_catalog', 'information_schema', 'pg_toast', 'chim_meta'];
+    $protected = ['public', 'pg_catalog', 'information_schema', 'pg_toast', 'stobe_meta'];
     if (in_array(strtolower($schemaName), $protected)) {
         return ['success' => false, 'error' => 'Cannot drop protected schema'];
     }
     
     $result = @pg_query(
         $conn,
-        "SELECT chim_meta.drop_schema_safe('" . pg_escape_string($conn, $schemaName) . "'::text)"
+        "SELECT stobe_meta.drop_schema_safe('" . pg_escape_string($conn, $schemaName) . "'::text)"
     );
     
     if (!$result) {
@@ -185,7 +185,7 @@ function pts_get_schema_size($conn, string $schemaName): int {
     
     $result = @pg_query(
         $conn,
-        "SELECT chim_meta.get_schema_size('" . pg_escape_string($conn, $schemaName) . "'::text) as size"
+        "SELECT stobe_meta.get_schema_size('" . pg_escape_string($conn, $schemaName) . "'::text) as size"
     );
     
     if (!$result) {

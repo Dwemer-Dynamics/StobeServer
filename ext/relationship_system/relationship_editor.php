@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * RELATIONSHIP EDITOR - Embeddable UI Component
  *
@@ -161,7 +161,7 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
             <?php if (!empty($autoInitMessage)): ?>
                 <br><strong style="color:#4ade80;">&#x2713; <?= htmlspecialchars($autoInitMessage) ?></strong>
             <?php endif; ?>
-            <br><span style="color:#b8860b;">&#x26A0;&#xFE0F; Dynamic relationship data is subject to CHIM Paradox Prevention. Save your game to preserve changes.</span>
+            <br><span style="color:#b8860b;">&#x26A0;&#xFE0F; Dynamic relationship data is subject to STOBE Paradox Prevention. Save your game to preserve changes.</span>
         </small>
 
         <div id="rel-editor-container" style="margin-top:12px; max-height:460px; overflow-y:auto; padding-right:4px;">

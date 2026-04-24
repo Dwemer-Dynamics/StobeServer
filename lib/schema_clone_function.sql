@@ -1,10 +1,10 @@
 -- Schema cloning function for fast playthrough snapshots
 -- This function clones an entire PostgreSQL schema including tables, data, sequences, and views
--- Functions are created in chim_meta schema so they survive public schema drops
+-- Functions are created in stobe_meta schema so they survive public schema drops
 
-CREATE SCHEMA IF NOT EXISTS chim_meta;
+CREATE SCHEMA IF NOT EXISTS stobe_meta;
 
-CREATE OR REPLACE FUNCTION chim_meta.clone_schema(source_schema text, dest_schema text)
+CREATE OR REPLACE FUNCTION stobe_meta.clone_schema(source_schema text, dest_schema text)
 RETURNS void AS $$
 DECLARE
     obj RECORD;
@@ -185,11 +185,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Helper function to drop a schema and all its contents safely
-CREATE OR REPLACE FUNCTION chim_meta.drop_schema_safe(schema_name text)
+CREATE OR REPLACE FUNCTION stobe_meta.drop_schema_safe(schema_name text)
 RETURNS boolean AS $$
 BEGIN
     -- Prevent dropping critical schemas
-    IF schema_name IN ('public', 'pg_catalog', 'information_schema', 'pg_toast', 'chim_meta') THEN
+    IF schema_name IN ('public', 'pg_catalog', 'information_schema', 'pg_toast', 'stobe_meta') THEN
         RAISE EXCEPTION 'Cannot drop protected schema: %', schema_name;
         RETURN false;
     END IF;
@@ -205,7 +205,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Helper function to get schema size in bytes
-CREATE OR REPLACE FUNCTION chim_meta.get_schema_size(schema_name text)
+CREATE OR REPLACE FUNCTION stobe_meta.get_schema_size(schema_name text)
 RETURNS bigint AS $$
 DECLARE
     total_size bigint := 0;

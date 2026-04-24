@@ -468,8 +468,10 @@ $webRoot = rtrim($webRoot, '/');
                                         $storageType = trim(strval($row['storage_type'] ?? 'schema'));
                                         $schemaName = trim(strval($row['schema_name'] ?? ''));
                                         $schemaNameDisplay = $schemaName;
-                                        if (strtolower(substr($schemaNameDisplay, 0, 13)) === 'chim_profile_') {
-                                            $schemaNameDisplay = 'stobe_profile_' . substr($schemaNameDisplay, 13);
+                                        $stobeProfilePrefix = 'stobe_profile_';
+                                        $stobeProfilePrefixLength = strlen($stobeProfilePrefix);
+                                        if (strtolower(substr($schemaNameDisplay, 0, $stobeProfilePrefixLength)) === $stobeProfilePrefix) {
+                                            $schemaNameDisplay = $stobeProfilePrefix . substr($schemaNameDisplay, $stobeProfilePrefixLength);
                                         }
                                         $rollbackDays = intval($row['rollback_delta_days'] ?? 0);
                                         $rollbackFrom = intval($row['rollback_from_gamets'] ?? 0);

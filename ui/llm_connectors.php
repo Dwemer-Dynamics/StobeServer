@@ -377,7 +377,7 @@ function find_player2_api_badge_id() {
 
     $row = $db->fetchOne(
         "SELECT id FROM core_api_badge " .
-        "WHERE lower(label) IN ('player2','chim') " .
+        "WHERE lower(label) IN ('player2','stobe') " .
         "ORDER BY CASE WHEN lower(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1"
     );
     $badgeId = intval($row["id"] ?? 0);
@@ -385,11 +385,11 @@ function find_player2_api_badge_id() {
     if ($badgeId <= 0) {
         $db->insert("core_api_badge", [
             "label" => "Player2",
-            "api_key" => "CHIM"
+            "api_key" => "STOBE"
         ]);
         $row = $db->fetchOne(
             "SELECT id FROM core_api_badge " .
-            "WHERE lower(label) IN ('player2','chim') " .
+            "WHERE lower(label) IN ('player2','stobe') " .
             "ORDER BY CASE WHEN lower(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1"
         );
         $badgeId = intval($row["id"] ?? 0);
@@ -487,7 +487,7 @@ if (isset($_GET["export"])) {
     fclose($outEarly);
     exit;
 }
-$TITLE = "CHIM - LLM Connectors";
+$TITLE = "STOBE - LLM Connectors";
 ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
 ?>
@@ -585,7 +585,7 @@ h1.api-title {
 <main class="d-flex flex-column">
 <?php
 if ($isEmbed) {
-    echo '<style>.chim-navbar-wrapper,.chim-navbar,nav.navbar,.navbar{display:none!important;}body{padding-top:0!important;}main{padding-top:10px!important;}</style>';
+    echo '<style>.stobe-navbar-wrapper,.stobe-navbar,nav.navbar,.navbar{display:none!important;}body{padding-top:0!important;}main{padding-top:10px!important;}</style>';
 }
 $noticeMsg = '';
 if (isset($_GET['notice']) && $_GET['notice'] !== '') {
@@ -781,7 +781,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 </div>
 
                 <div id="custom_note" class="orm-muted" style="font-size:12px; display:none; margin:-6px 0 8px 0;">
-                    Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with CHIM. For advanced users only
+                    Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with STOBE. For advanced users only
                 </div>
 
                 <div id="url_row">
@@ -1221,7 +1221,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
         function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
         const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: '' };
-        const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','chim'] };
+        const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
         function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
         function applyService(service){ try {const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (defaults[service]) { const currentUrl = String((urlInput && urlInput.value) || ''); if (currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } providerRow.style.display = (service === 'openrouter') ? '' : 'none'; const savedDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverRow) driverRow.style.display = ''; if (driverSelect) driverSelect.style.display = ''; if (driverInput) driverInput.style.display = 'none'; if (driverSelect) { if (savedDriver) { driverSelect.value = savedDriver; } else if (!driverSelect.value) { driverSelect.value = 'openaijson'; } } if (driverInput && !savedDriver) { driverInput.value = driverSelect ? driverSelect.value : 'openaijson'; } } else { if (driverRow) driverRow.style.display = 'none'; if (driverSelect) driverSelect.style.display = 'none'; if (driverInput) driverInput.style.display = ''; if (driverInput && !savedDriver && driverDefaults[service]) { driverInput.value = driverDefaults[service]; } } syncApiBadge(service); setActive(service); if (apiKeyRow) apiKeyRow.style.display = ''; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); document.querySelectorAll('.orm-dropdown').forEach(function(el){ el.style.display='none'; }); } catch (e) {console.log(e);console.log("Check this bug")}}
         function detectService(){ const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const sVal=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||'').toLowerCase())||''; if (['openrouter','openai','google','groq','nanogpt','player2','custom'].includes(sVal)) return sVal; const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('openrouter')) return 'openrouter'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; return 'openrouter'; }
@@ -2123,7 +2123,7 @@ if (typeof window.consolidation !== 'function') {
             </div>
 
             <div id="custom_note" class="orm-muted" style="font-size:12px; display:none; margin:-6px 0 8px 0;">
-                Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with CHIM. Depending on the service you may not need to fill out all fields. For advanced users only
+                Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with STOBE. Depending on the service you may not need to fill out all fields. For advanced users only
             </div>
 
             <div id="url_row">
@@ -2422,7 +2422,7 @@ if (typeof window.consolidation !== 'function') {
     const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
     function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
     const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: 'openaijson' };
-    const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','chim'] };
+    const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
     function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
     function applyService(service, fromUser){ const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (service !== 'custom' && defaults[service]) { const currentUrl = urlInput ? String(urlInput.value||'') : ''; if (fromUser || currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } const urlRow = document.getElementById('url_row'); if (urlRow) urlRow.style.display = (service==='custom') ? '' : 'none'; providerRow.style.display = (service === 'openrouter' || service === 'custom') ? '' : 'none'; if (modelRow) modelRow.style.display = (service === 'player2') ? 'none' : ''; const driverSelect = document.getElementById('driver_select'); const currentDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverSelect) { driverSelect.style.display = ''; } if (driverInput) { driverInput.style.display = 'none'; } // reflect saved driver in select; default only if empty
         if (driverSelect) {

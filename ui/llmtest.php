@@ -51,7 +51,7 @@ function stobeLlmtestPerformanceBadge(float $elapsedMs): array {
     if ($seconds < 30.0) {
         return ['SLOW', '#fd7e14'];
     }
-    return ['TOO CHIMMING SLOW', '#dc3545'];
+    return ['TOO STOBING SLOW', '#dc3545'];
 }
 
 function stobeLlmtestDefaultMoodEnums(): array {

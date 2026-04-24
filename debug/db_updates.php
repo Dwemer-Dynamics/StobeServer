@@ -857,11 +857,11 @@ PROMPT;
         });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {
-            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','CHIM') ON CONFLICT (label) DO NOTHING");
-            $badge = $db->fetchOne("SELECT id FROM core_api_badge WHERE LOWER(label) IN ('player2','chim') ORDER BY CASE WHEN LOWER(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1");
+            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','STOBE') ON CONFLICT (label) DO NOTHING");
+            $badge = $db->fetchOne("SELECT id FROM core_api_badge WHERE LOWER(label) IN ('player2','stobe') ORDER BY CASE WHEN LOWER(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1");
             $badgeId = intval($badge['id'] ?? 0);
             $db->exec("INSERT INTO core_llm_connector (name, connector_type, api_badge_id, api_key, base_url, model, max_tokens, temperature, is_default, config)
-                VALUES ('Player2 Local','player2json',$1,'','http://127.0.0.1:4315/v1/chat/completions','player2-app-selected',750,1.0,FALSE,'{\"player2_game_key\":\"CHIM\"}'::jsonb)
+                VALUES ('Player2 Local','player2json',$1,'','http://127.0.0.1:4315/v1/chat/completions','player2-app-selected',750,1.0,FALSE,'{\"player2_game_key\":\"STOBE\"}'::jsonb)
                 ON CONFLICT (name) DO UPDATE SET connector_type=EXCLUDED.connector_type, api_badge_id=COALESCE(core_llm_connector.api_badge_id,EXCLUDED.api_badge_id)", [$badgeId > 0 ? $badgeId : null]);
             $std = $db->fetchOne("SELECT id FROM core_llm_connector WHERE LOWER(name)='gemini 2.5 flash' LIMIT 1");
             $stdId = intval($std['id'] ?? 0);
