@@ -78,6 +78,11 @@ function stobe_llm_db_row_to_ui_row(array $row): array {
     if (array_key_exists('remove_action_prompt', $config)) {
         $metadata['remove_action_prompt'] = stobe_llm_to_bool_int($config['remove_action_prompt']) === 1;
     }
+    if (array_key_exists('disable_streaming', $config)) {
+        $metadata['disable_streaming'] = stobe_llm_to_bool_int($config['disable_streaming']) === 1;
+    } elseif (array_key_exists('disable_streaming', $metadata)) {
+        $metadata['disable_streaming'] = stobe_llm_to_bool_int($metadata['disable_streaming']) === 1;
+    }
     if (array_key_exists('extra_parameters_enabled', $config)) {
         $metadata['extra_parameters_enabled'] = stobe_llm_to_bool_int($config['extra_parameters_enabled']) === 1;
     }
@@ -102,6 +107,7 @@ function stobe_llm_db_row_to_ui_row(array $row): array {
     $ui['json_schema'] = stobe_llm_to_bool_int($config['json_schema'] ?? 0);
     $ui['prefill_json'] = stobe_llm_to_bool_int($config['prefill_json'] ?? 0);
     $ui['reasoning_model'] = stobe_llm_to_bool_int($config['reasoning_model'] ?? 0);
+    $ui['disable_streaming'] = stobe_llm_to_bool_int($config['disable_streaming'] ?? ($metadata['disable_streaming'] ?? 0));
     $ui['metadata'] = json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ui['metadata'] === false) {
         $ui['metadata'] = '{}';
@@ -127,7 +133,7 @@ function stobe_llm_compose_config_from_payload(array $payload, array $existingCo
         unset($cfg['top_k']);
     }
 
-    foreach (['enforce_json', 'json_schema', 'prefill_json', 'reasoning_model', 'remove_action_prompt', 'extra_parameters_enabled'] as $f) {
+    foreach (['enforce_json', 'json_schema', 'prefill_json', 'reasoning_model', 'remove_action_prompt', 'disable_streaming', 'extra_parameters_enabled'] as $f) {
         if (array_key_exists($f, $payload)) {
             $cfg[$f] = stobe_llm_to_bool_int($payload[$f]) === 1;
         }
@@ -145,6 +151,11 @@ function stobe_llm_compose_config_from_payload(array $payload, array $existingCo
 
     if (array_key_exists('remove_action_prompt', $cfg)) {
         $metadata['remove_action_prompt'] = boolval($cfg['remove_action_prompt']);
+    }
+    if (array_key_exists('disable_streaming', $cfg)) {
+        $metadata['disable_streaming'] = boolval($cfg['disable_streaming']);
+    } elseif (array_key_exists('disable_streaming', $metadata)) {
+        $cfg['disable_streaming'] = boolval($metadata['disable_streaming']);
     }
     if (array_key_exists('extra_parameters_enabled', $cfg)) {
         $metadata['extra_parameters_enabled'] = boolval($cfg['extra_parameters_enabled']);
@@ -164,6 +175,12 @@ function stobe_llm_apply_connector_metadata_post_overrides(array $metadata, arra
         $metadata["remove_action_prompt"] = ($post["remove_action_prompt"] === "1" || $post["remove_action_prompt"] === 1);
     } else {
         unset($metadata["remove_action_prompt"]);
+    }
+
+    if (isset($post["disable_streaming"])) {
+        $metadata["disable_streaming"] = ($post["disable_streaming"] === "1" || $post["disable_streaming"] === 1);
+    } else {
+        unset($metadata["disable_streaming"]);
     }
 
     if (isset($post["extra_parameters_enabled"])) {
@@ -443,9 +460,9 @@ if (isset($_GET["export"])) {
     $rowEarly = $llmEarly->getById($idEarly);
     if (!$rowEarly) { header('HTTP/1.1 404 Not Found'); echo 'Not found'; exit; }
     $colsEarly = [
-        'id','label','service','url','model','provider','driver','api_badge_id','max_tokens','temperature','presence_penalty','frequency_penalty','repetition_penalty','top_p','top_k','min_p','top_a','enforce_json','json_schema','prefill_json','reasoning_model','metadata'
+        'id','label','service','url','model','provider','driver','api_badge_id','max_tokens','temperature','presence_penalty','frequency_penalty','repetition_penalty','top_p','top_k','min_p','top_a','enforce_json','json_schema','prefill_json','reasoning_model','disable_streaming','metadata'
     ];
-    $boolKeysEarly = ['enforce_json','json_schema','prefill_json','reasoning_model'];
+    $boolKeysEarly = ['enforce_json','json_schema','prefill_json','reasoning_model','disable_streaming'];
     $filenameBase = (string)($rowEarly['label'] ?? ('connector_'.$idEarly));
     if ($filenameBase==='') { $filenameBase = 'connector_'.$idEarly; }
     $filename = $filenameBase . '.csv';
@@ -849,6 +866,20 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     </label>
                 </div>
                 
+                <div id="disable_streaming" style="margin-top:12px;">
+                    <label class="label-with-toggle"><span class='tip-label' data-tip='Disable SSE streaming for this connector and wait for the full JSON reply before parsing. Useful for local LM Studio or other OpenAI-compatible servers that stream slowly or emit long reasoning chunks first.'>Disable Streaming</span>
+                        <input type="hidden" name="disable_streaming" value="0">
+                        <input type="checkbox" name="disable_streaming" value="1" <?php 
+                            $metadata = [];
+                            if (isset($editItem["metadata"]) && !empty($editItem["metadata"])) {
+                                $metadata = is_string($editItem["metadata"]) ? json_decode($editItem["metadata"], true) : $editItem["metadata"];
+                                if (!is_array($metadata)) $metadata = [];
+                            }
+                            echo (isset($metadata["disable_streaming"]) && $metadata["disable_streaming"]) ? "checked" : "";
+                        ?>>
+                    </label>
+                </div>
+                
                 <div id="remove_action_prompt" style="margin-top:12px;">
                     <label class="label-with-toggle"><span class='tip-label' data-tip='Option to disable the action enforcement prompt. Some models like gemini-3-flash tend to use actions a lot.'>Remove Action Prompt</span>
                         <input type="hidden" name="remove_action_prompt" value="0">
@@ -1158,7 +1189,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
     }
     // Sync On/Off labels for checkboxes
     (function(){
-        const names = ['reasoning_model','enforce_json','json_schema','prefill_json','remove_action_prompt','extra_parameters_enabled'];
+        const names = ['reasoning_model','enforce_json','json_schema','prefill_json','remove_action_prompt','disable_streaming','extra_parameters_enabled'];
         names.forEach(n=>{
             const cb = document.querySelector(`input[type="checkbox"][name="${n}"]`);
             if (!cb) return;
@@ -1627,6 +1658,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["import"])) {
             $b = $getBool('json_schema'); if ($b!==null) $payload['json_schema'] = $b; else unset($payload['json_schema']);
             $b = $getBool('prefill_json'); if ($b!==null) $payload['prefill_json'] = $b; else unset($payload['prefill_json']);
             $b = $getBool('reasoning_model'); if ($b!==null) $payload['reasoning_model'] = $b; else unset($payload['reasoning_model']);
+            $b = $getBool('disable_streaming'); if ($b!==null) $payload['disable_streaming'] = $b; else unset($payload['disable_streaming']);
             $meta = $getString('metadata'); if ($meta !== '') { $payload['metadata'] = $meta; }
 
             // Infer service if missing
@@ -1692,6 +1724,7 @@ if (isset($_GET["create_blank"])) {
         'enforce_json' => 1,
         'json_schema' => 1,
         'service' => 'openrouter',
+        'disable_streaming' => 0,
         'extra_parameters_enabled' => 0,
     ]);
     $redir = 'llm_connectors.php' . ($newId ? ('?edit=' . urlencode($newId)) : '');
@@ -2189,6 +2222,20 @@ if (typeof window.consolidation !== 'function') {
                 </label>
             </div>
             
+            <div id="disable_streaming_main" style="margin-top:12px;">
+                <label class="label-with-toggle"><span class='tip-label' data-tip='Disable SSE streaming for this connector and wait for the full JSON reply before parsing. Useful for local LM Studio or other OpenAI-compatible servers that stream slowly or emit long reasoning chunks first.'>Disable Streaming</span>
+                    <input type="hidden" name="disable_streaming" value="0">
+                    <input type="checkbox" name="disable_streaming" value="1" <?php 
+                        $metadataMain = [];
+                        if (isset($editItem["metadata"]) && !empty($editItem["metadata"])) {
+                            $metadataMain = is_string($editItem["metadata"]) ? json_decode($editItem["metadata"], true) : $editItem["metadata"];
+                            if (!is_array($metadataMain)) $metadataMain = [];
+                        }
+                        echo (isset($metadataMain["disable_streaming"]) && $metadataMain["disable_streaming"]) ? "checked" : "";
+                    ?>>
+                </label>
+            </div>
+            
             <div id="remove_action_prompt_main" style="margin-top:12px;">
                 <label class="label-with-toggle"><span class='tip-label' data-tip='Option to disable the action enforcement prompt. Some models like gemini-3-flash tend to use actions a lot.'>Remove Action Prompt</span>
                     <input type="hidden" name="remove_action_prompt" value="0">
@@ -2337,7 +2384,7 @@ if (typeof window.consolidation !== 'function') {
 <script>
 // Sync On/Off labels for checkboxes
 (function(){
-    const names = ['reasoning_model','enforce_json','json_schema','prefill_json','extra_parameters_enabled'];
+    const names = ['reasoning_model','enforce_json','json_schema','prefill_json','disable_streaming','extra_parameters_enabled'];
     names.forEach(n=>{
         const cb = document.querySelector(`input[type="checkbox"][name="${n}"]`);
         if (!cb) return;
