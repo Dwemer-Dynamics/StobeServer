@@ -15,6 +15,15 @@ function world_knowledgeTrim(mixed $value): string
     return trim(strval($value));
 }
 
+function world_knowledgePreferredDescription(array $row): string
+{
+    $basic = world_knowledgeTrim($row['topic_desc_basic'] ?? '');
+    if ($basic !== '') {
+        return $basic;
+    }
+    return world_knowledgeTrim($row['topic_desc'] ?? '');
+}
+
 function world_knowledgeUpdateNativeVector(int $id): void
 {
     if ($id <= 0) {
@@ -41,12 +50,33 @@ function world_knowledgeUpsertByTopic(array $payload): int
     }
 
     $existing = $db->fetchOne(
-        "SELECT id FROM world_knowledge WHERE LOWER(topic) = LOWER($1) LIMIT 1",
+        "SELECT id, knowledge_class, knowledge_class_basic
+         FROM world_knowledge
+         WHERE LOWER(topic) = LOWER($1)
+         LIMIT 1",
         [$topic]
     );
+    $topicDesc = array_key_exists('topic_desc', $payload)
+        ? world_knowledgeTrim($payload['topic_desc'] ?? '')
+        : '';
+    $topicDescBasic = array_key_exists('topic_desc_basic', $payload)
+        ? world_knowledgeTrim($payload['topic_desc_basic'] ?? '')
+        : '';
+    $knowledgeClass = array_key_exists('knowledge_class', $payload)
+        ? world_knowledgeTrim($payload['knowledge_class'] ?? '')
+        : null;
+    $knowledgeClassBasic = array_key_exists('knowledge_class_basic', $payload)
+        ? world_knowledgeTrim($payload['knowledge_class_basic'] ?? '')
+        : null;
     if ($existing) {
         $id = intval($existing['id'] ?? 0);
         if ($id > 0) {
+            if ($knowledgeClass === null) {
+                $knowledgeClass = world_knowledgeTrim($existing['knowledge_class'] ?? '');
+            }
+            if ($knowledgeClassBasic === null) {
+                $knowledgeClassBasic = world_knowledgeTrim($existing['knowledge_class_basic'] ?? '');
+            }
             $db->exec(
                 "UPDATE world_knowledge
                  SET topic = $1,
@@ -59,10 +89,10 @@ function world_knowledgeUpsertByTopic(array $payload): int
                  WHERE id = $8",
                 [
                     $topic,
-                    world_knowledgeTrim($payload['topic_desc'] ?? ''),
-                    world_knowledgeTrim($payload['topic_desc_basic'] ?? ''),
-                    world_knowledgeTrim($payload['knowledge_class'] ?? ''),
-                    world_knowledgeTrim($payload['knowledge_class_basic'] ?? ''),
+                    $topicDesc,
+                    $topicDescBasic,
+                    strval($knowledgeClass ?? ''),
+                    strval($knowledgeClassBasic ?? ''),
                     world_knowledgeTrim($payload['aliases'] ?? ''),
                     world_knowledgeTrim($payload['tags'] ?? ''),
                     $id,
@@ -82,10 +112,10 @@ function world_knowledgeUpsertByTopic(array $payload): int
          RETURNING id",
         [
             $topic,
-            world_knowledgeTrim($payload['topic_desc'] ?? ''),
-            world_knowledgeTrim($payload['topic_desc_basic'] ?? ''),
-            world_knowledgeTrim($payload['knowledge_class'] ?? ''),
-            world_knowledgeTrim($payload['knowledge_class_basic'] ?? ''),
+            $topicDesc,
+            $topicDescBasic,
+            strval($knowledgeClass ?? ''),
+            strval($knowledgeClassBasic ?? ''),
             world_knowledgeTrim($payload['aliases'] ?? ''),
             world_knowledgeTrim($payload['tags'] ?? ''),
         ]
@@ -145,17 +175,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_custom_descriptions') 
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['save_entry'])) {
+        $description = world_knowledgeTrim($_POST['description'] ?? '');
         $payload = [
             'topic' => $_POST['topic'] ?? '',
-            'topic_desc' => $_POST['topic_desc'] ?? '',
-            'topic_desc_basic' => $_POST['topic_desc_basic'] ?? '',
-            'knowledge_class' => $_POST['knowledge_class'] ?? '',
-            'knowledge_class_basic' => $_POST['knowledge_class_basic'] ?? '',
+            'topic_desc' => $description,
+            'topic_desc_basic' => $description,
             'aliases' => $_POST['aliases'] ?? '',
             'tags' => $_POST['tags'] ?? '',
         ];
         if (world_knowledgeTrim($payload['topic']) === '' || world_knowledgeTrim($payload['topic_desc']) === '') {
-            $message = "Topic and topic description are required.";
+            $message = "Topic and description are required.";
             $messageType = 'err';
         } else {
             $savedId = world_knowledgeUpsertByTopic($payload);
@@ -275,7 +304,7 @@ $params = [];
 if ($search !== '') {
     $params[] = '%' . $search . '%';
     $p = '$' . count($params);
-    $where[] = "(topic ILIKE {$p} OR topic_desc ILIKE {$p} OR tags ILIKE {$p})";
+    $where[] = "(topic ILIKE {$p} OR topic_desc ILIKE {$p} OR topic_desc_basic ILIKE {$p} OR aliases ILIKE {$p} OR tags ILIKE {$p})";
 }
 if ($letter !== '') {
     $params[] = $letter . '%';
@@ -604,10 +633,7 @@ input[type=text]:focus, textarea:focus {
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <div><?= h($row['topic_desc'] ?? '') ?></div>
-                                <?php if (trim(strval($row['topic_desc_basic'] ?? '')) !== ''): ?>
-                                    <div class="mono" style="margin-top:6px;">basic: <?= h($row['topic_desc_basic']) ?></div>
-                                <?php endif; ?>
+                                <div><?= h(world_knowledgePreferredDescription($row)) ?></div>
                             </td>
                             <td><?= h($row['tags'] ?? '') ?></td>
                             <td>
@@ -638,20 +664,8 @@ input[type=text]:focus, textarea:focus {
                     <div class="modal-body">
                         <label for="topic">Topic</label>
                         <input id="topic" type="text" name="topic" value="<?= h($editRow['topic'] ?? '') ?>" required>
-                        <label for="topic_desc">Topic Description</label>
-                        <textarea id="topic_desc" name="topic_desc" rows="4" required><?= h($editRow['topic_desc'] ?? '') ?></textarea>
-                        <label for="topic_desc_basic">Basic Description</label>
-                        <textarea id="topic_desc_basic" name="topic_desc_basic" rows="3"><?= h($editRow['topic_desc_basic'] ?? '') ?></textarea>
-                        <div class="grid2">
-                            <div>
-                                <label for="knowledge_class">Knowledge Class</label>
-                                <input id="knowledge_class" type="text" name="knowledge_class" value="<?= h($editRow['knowledge_class'] ?? '') ?>">
-                            </div>
-                            <div>
-                                <label for="knowledge_class_basic">Basic Knowledge Class</label>
-                                <input id="knowledge_class_basic" type="text" name="knowledge_class_basic" value="<?= h($editRow['knowledge_class_basic'] ?? '') ?>">
-                            </div>
-                        </div>
+                        <label for="description">Description</label>
+                        <textarea id="description" name="description" rows="4" required><?= h($editRow ? world_knowledgePreferredDescription($editRow) : '') ?></textarea>
                         <div class="grid2">
                             <div>
                                 <label for="aliases">Aliases</label>
