@@ -9901,7 +9901,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $metadataForStorage['trader_shop_item_count'] = $traderShopItemCount;
     }
     if ($hornAppearanceSentence !== '') {
-        $hornAppearanceBase = $existingMasterAppearance !== '' ? $existingMasterAppearance : $appearance;
+        $hornAppearanceBase = $appearance !== '' ? $appearance : $existingMasterAppearance;
         $appearance = $applyHornAppearanceSentence($hornAppearanceBase, $hornAppearanceSentence);
         $forceAppearanceUpdate = true;
         stobeLogImport('Horn appearance sentence applied', [

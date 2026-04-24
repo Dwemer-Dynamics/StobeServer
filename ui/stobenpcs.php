@@ -2022,6 +2022,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         // Upsert by name
         $existing = $npc->getByName($data['npc_name']);
         if ($existing) {
+            $existingAppearance = trim(strval($existing['appearance'] ?? ''));
+            $existingRefId = trim(strval($existing['refid'] ?? ''));
+            if (
+                $includeExt &&
+                array_key_exists('appearance', $data) &&
+                $existingAppearance !== '' &&
+                $existingRefId !== ''
+            ) {
+                // Snapshot-backed NPCs should keep their generated appearance text.
+                unset($data['appearance']);
+            }
             $data['md5'] = md5((string)$data['npc_name']);
             $ok = $npc->update((int)$existing['id'], $data);
             if ($ok === false) { echo json_encode(['ok'=>false,'error'=>'Update failed']); exit; }
