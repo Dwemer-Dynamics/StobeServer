@@ -51,11 +51,11 @@ if (file_exists($releaseDatePath)) {
     $releaseDate = trim((string)file_get_contents($releaseDatePath));
 }
 if ($releaseDate === '') {
-    $releaseDate = '2026-04-21';
+    $releaseDate = '2026-04-25';
 }
 echo json_encode([
     'server' => 'StobeServer',
-    'version' => '0.8.6',
+    'version' => '0.8.7',
     'release_date' => $releaseDate,
     'game' => 'Kenshi',
     'status' => 'ok',
