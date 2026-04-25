@@ -46,6 +46,73 @@ function stobeIsOpenAiModel(string $model): bool {
     return strpos($modelLower, 'openai/') === 0;
 }
 
+function stobeNormalizeBooleanFlag(mixed $value, bool $fallback = false): bool {
+    if (is_bool($value)) {
+        return $value;
+    }
+    if (is_int($value) || is_float($value)) {
+        return floatval($value) !== 0.0;
+    }
+    if (is_string($value)) {
+        $normalized = strtolower(trim($value));
+        if ($normalized === '') {
+            return $fallback;
+        }
+        if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+            return true;
+        }
+        if (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
+            return false;
+        }
+    }
+    return $fallback;
+}
+
+function stobeDecodeConnectorConfig(mixed $rawConfig): array {
+    if (is_array($rawConfig)) {
+        return $rawConfig;
+    }
+    $decoded = json_decode(strval($rawConfig), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function stobeDecodeConnectorMetadata(array $connectorConfig): array {
+    $metadata = $connectorConfig['metadata'] ?? [];
+    if (is_array($metadata)) {
+        return $metadata;
+    }
+    $decoded = json_decode(strval($metadata), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function stobeShouldUseStreamingTransport(array $connectorConfig): bool {
+    $metadata = stobeDecodeConnectorMetadata($connectorConfig);
+    $useStreaming = !stobeNormalizeBooleanFlag(
+        $connectorConfig['disable_streaming'] ?? ($metadata['disable_streaming'] ?? false),
+        false
+    );
+
+    $extraPayload = stobeParseConnectorExtras($connectorConfig);
+    if (array_key_exists('stream', $extraPayload)) {
+        $useStreaming = stobeNormalizeBooleanFlag($extraPayload['stream'], $useStreaming);
+    }
+
+    return $useStreaming;
+}
+
+function stobeApplyConnectorExtraPayload(array &$payload, array $connectorConfig, bool $streamValue): void {
+    $extraPayload = stobeParseConnectorExtras($connectorConfig);
+    if (array_key_exists('stream', $extraPayload)) {
+        unset($extraPayload['stream']);
+    }
+
+    foreach ($extraPayload as $key => $value) {
+        $payload[$key] = $value;
+    }
+
+    $payload['stream'] = $streamValue;
+}
+
 function stobeParseConnectorExtras(mixed $rawConfig): array {
     $config = [];
     if (is_array($rawConfig)) {
@@ -84,6 +151,28 @@ function stobeParseConnectorExtras(mixed $rawConfig): array {
     $presencePenalty = $config['presence_penalty'] ?? null;
     if ($presencePenalty !== null && is_numeric($presencePenalty)) {
         $extras['presence_penalty'] = floatval($presencePenalty);
+    }
+
+    $extraParametersEnabled = true;
+    if (array_key_exists('extra_parameters_enabled', $config)) {
+        $rawEnabled = $config['extra_parameters_enabled'];
+        if (is_bool($rawEnabled)) {
+            $extraParametersEnabled = $rawEnabled;
+        } elseif (is_numeric($rawEnabled)) {
+            $extraParametersEnabled = intval($rawEnabled) !== 0;
+        } else {
+            $normalizedEnabled = strtolower(trim(strval($rawEnabled)));
+            $extraParametersEnabled = in_array($normalizedEnabled, ['1', 'true', 'yes', 'on'], true);
+        }
+    }
+    if ($extraParametersEnabled && isset($config['extra_parameters']) && is_array($config['extra_parameters'])) {
+        foreach ($config['extra_parameters'] as $key => $value) {
+            $paramName = trim(strval($key));
+            if ($paramName === '') {
+                continue;
+            }
+            $extras[$paramName] = $value;
+        }
     }
 
     return $extras;
@@ -536,13 +625,8 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
     $model = $config['model'] ?? '';
     $maxTokens = $config['max_tokens'] ?? 2048;
     $temperature = $config['temperature'] ?? 0.8;
-    $connectorConfig = $config['config'] ?? [];
+    $connectorConfig = stobeDecodeConnectorConfig($config['config'] ?? []);
     $connectorType = strtolower(trim(strval($config['connector_type'] ?? 'openaijson')));
-
-    if (!is_array($connectorConfig)) {
-        $decodedConfig = json_decode(strval($connectorConfig), true);
-        $connectorConfig = is_array($decodedConfig) ? $decodedConfig : [];
-    }
 
     if ($baseUrl === '') {
         $baseUrl = 'https://openrouter.ai/api/v1';
@@ -569,10 +653,7 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
         $payload['response_format'] = $meta['response_format'];
     }
 
-    $extraPayload = stobeParseConnectorExtras($connectorConfig);
-    foreach ($extraPayload as $key => $value) {
-        $payload[$key] = $value;
-    }
+    stobeApplyConnectorExtraPayload($payload, $connectorConfig, false);
 
     if (stobeIsReasoningModel($model)) {
         $payload['reasoning'] = ['exclude' => true];
@@ -881,12 +962,22 @@ function callLLMStream(
     $model = $config['model'] ?? '';
     $maxTokens = $config['max_tokens'] ?? 2048;
     $temperature = $config['temperature'] ?? 0.8;
-    $connectorConfig = $config['config'] ?? [];
+    $connectorConfig = stobeDecodeConnectorConfig($config['config'] ?? []);
     $connectorType = strtolower(trim(strval($config['connector_type'] ?? 'openaijson')));
-
-    if (!is_array($connectorConfig)) {
-        $decodedConfig = json_decode(strval($connectorConfig), true);
-        $connectorConfig = is_array($decodedConfig) ? $decodedConfig : [];
+    if (!stobeShouldUseStreamingTransport($connectorConfig)) {
+        $fallbackConfig = $config;
+        $fallbackConfig['config'] = $connectorConfig;
+        $fullResponse = callLLM($messages, $fallbackConfig, $meta);
+        if (is_string($fullResponse) && $fullResponse !== '') {
+            try {
+                $onTextDelta($fullResponse);
+            } catch (Throwable $callbackException) {
+                stobeLogWarn('LLM stream fallback callback threw exception', [
+                    'error' => $callbackException->getMessage(),
+                ]);
+            }
+        }
+        return $fullResponse;
     }
 
     if ($baseUrl === '') {
@@ -915,10 +1006,7 @@ function callLLMStream(
         $payload['response_format'] = $meta['response_format'];
     }
 
-    $extraPayload = stobeParseConnectorExtras($connectorConfig);
-    foreach ($extraPayload as $key => $value) {
-        $payload[$key] = $value;
-    }
+    stobeApplyConnectorExtraPayload($payload, $connectorConfig, true);
 
     if (stobeIsReasoningModel($model)) {
         $payload['reasoning'] = ['exclude' => true];

@@ -78,6 +78,14 @@ function stobe_llm_db_row_to_ui_row(array $row): array {
     if (array_key_exists('remove_action_prompt', $config)) {
         $metadata['remove_action_prompt'] = stobe_llm_to_bool_int($config['remove_action_prompt']) === 1;
     }
+    if (array_key_exists('disable_streaming', $config)) {
+        $metadata['disable_streaming'] = stobe_llm_to_bool_int($config['disable_streaming']) === 1;
+    } elseif (array_key_exists('disable_streaming', $metadata)) {
+        $metadata['disable_streaming'] = stobe_llm_to_bool_int($metadata['disable_streaming']) === 1;
+    }
+    if (array_key_exists('extra_parameters_enabled', $config)) {
+        $metadata['extra_parameters_enabled'] = stobe_llm_to_bool_int($config['extra_parameters_enabled']) === 1;
+    }
     if (isset($config['extra_parameters']) && is_array($config['extra_parameters'])) {
         $metadata['extra_parameters'] = $config['extra_parameters'];
     }
@@ -99,6 +107,7 @@ function stobe_llm_db_row_to_ui_row(array $row): array {
     $ui['json_schema'] = stobe_llm_to_bool_int($config['json_schema'] ?? 0);
     $ui['prefill_json'] = stobe_llm_to_bool_int($config['prefill_json'] ?? 0);
     $ui['reasoning_model'] = stobe_llm_to_bool_int($config['reasoning_model'] ?? 0);
+    $ui['disable_streaming'] = stobe_llm_to_bool_int($config['disable_streaming'] ?? ($metadata['disable_streaming'] ?? 0));
     $ui['metadata'] = json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ui['metadata'] === false) {
         $ui['metadata'] = '{}';
@@ -124,7 +133,7 @@ function stobe_llm_compose_config_from_payload(array $payload, array $existingCo
         unset($cfg['top_k']);
     }
 
-    foreach (['enforce_json', 'json_schema', 'prefill_json', 'reasoning_model', 'remove_action_prompt'] as $f) {
+    foreach (['enforce_json', 'json_schema', 'prefill_json', 'reasoning_model', 'remove_action_prompt', 'disable_streaming', 'extra_parameters_enabled'] as $f) {
         if (array_key_exists($f, $payload)) {
             $cfg[$f] = stobe_llm_to_bool_int($payload[$f]) === 1;
         }
@@ -143,12 +152,56 @@ function stobe_llm_compose_config_from_payload(array $payload, array $existingCo
     if (array_key_exists('remove_action_prompt', $cfg)) {
         $metadata['remove_action_prompt'] = boolval($cfg['remove_action_prompt']);
     }
+    if (array_key_exists('disable_streaming', $cfg)) {
+        $metadata['disable_streaming'] = boolval($cfg['disable_streaming']);
+    } elseif (array_key_exists('disable_streaming', $metadata)) {
+        $cfg['disable_streaming'] = boolval($metadata['disable_streaming']);
+    }
+    if (array_key_exists('extra_parameters_enabled', $cfg)) {
+        $metadata['extra_parameters_enabled'] = boolval($cfg['extra_parameters_enabled']);
+    } elseif (array_key_exists('extra_parameters_enabled', $metadata)) {
+        $cfg['extra_parameters_enabled'] = boolval($metadata['extra_parameters_enabled']);
+    }
     if (isset($metadata['extra_parameters']) && is_array($metadata['extra_parameters'])) {
         $cfg['extra_parameters'] = $metadata['extra_parameters'];
     }
     $cfg['metadata'] = $metadata;
 
     return $cfg;
+}
+
+function stobe_llm_apply_connector_metadata_post_overrides(array $metadata, array $post): array {
+    if (isset($post["remove_action_prompt"])) {
+        $metadata["remove_action_prompt"] = ($post["remove_action_prompt"] === "1" || $post["remove_action_prompt"] === 1);
+    } else {
+        unset($metadata["remove_action_prompt"]);
+    }
+
+    if (isset($post["disable_streaming"])) {
+        $metadata["disable_streaming"] = ($post["disable_streaming"] === "1" || $post["disable_streaming"] === 1);
+    } else {
+        unset($metadata["disable_streaming"]);
+    }
+
+    if (isset($post["extra_parameters_enabled"])) {
+        $metadata["extra_parameters_enabled"] = ($post["extra_parameters_enabled"] === "1" || $post["extra_parameters_enabled"] === 1);
+    } else {
+        unset($metadata["extra_parameters_enabled"]);
+    }
+
+    if (isset($post['extra_parameters_yaml'])) {
+        require_once __DIR__ . '/../connector/parse_simple_yaml.php';
+        $extra_parameters = parse_simple_yaml($post['extra_parameters_yaml']);
+        if (is_array($extra_parameters)) {
+            $metadata['extra_parameters'] = $extra_parameters;
+        } else {
+            unset($metadata['extra_parameters']);
+        }
+    } else {
+        unset($metadata['extra_parameters']);
+    }
+
+    return $metadata;
 }
 
 function stobe_llm_payload_to_save_fields(array $payload, ?array $existingDbRow = null): array {
@@ -324,7 +377,7 @@ function find_player2_api_badge_id() {
 
     $row = $db->fetchOne(
         "SELECT id FROM core_api_badge " .
-        "WHERE lower(label) IN ('player2','chim') " .
+        "WHERE lower(label) IN ('player2','stobe') " .
         "ORDER BY CASE WHEN lower(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1"
     );
     $badgeId = intval($row["id"] ?? 0);
@@ -332,11 +385,11 @@ function find_player2_api_badge_id() {
     if ($badgeId <= 0) {
         $db->insert("core_api_badge", [
             "label" => "Player2",
-            "api_key" => "CHIM"
+            "api_key" => "STOBE"
         ]);
         $row = $db->fetchOne(
             "SELECT id FROM core_api_badge " .
-            "WHERE lower(label) IN ('player2','chim') " .
+            "WHERE lower(label) IN ('player2','stobe') " .
             "ORDER BY CASE WHEN lower(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1"
         );
         $badgeId = intval($row["id"] ?? 0);
@@ -407,9 +460,9 @@ if (isset($_GET["export"])) {
     $rowEarly = $llmEarly->getById($idEarly);
     if (!$rowEarly) { header('HTTP/1.1 404 Not Found'); echo 'Not found'; exit; }
     $colsEarly = [
-        'id','label','service','url','model','provider','driver','api_badge_id','max_tokens','temperature','presence_penalty','frequency_penalty','repetition_penalty','top_p','top_k','min_p','top_a','enforce_json','json_schema','prefill_json','reasoning_model','metadata'
+        'id','label','service','url','model','provider','driver','api_badge_id','max_tokens','temperature','presence_penalty','frequency_penalty','repetition_penalty','top_p','top_k','min_p','top_a','enforce_json','json_schema','prefill_json','reasoning_model','disable_streaming','metadata'
     ];
-    $boolKeysEarly = ['enforce_json','json_schema','prefill_json','reasoning_model'];
+    $boolKeysEarly = ['enforce_json','json_schema','prefill_json','reasoning_model','disable_streaming'];
     $filenameBase = (string)($rowEarly['label'] ?? ('connector_'.$idEarly));
     if ($filenameBase==='') { $filenameBase = 'connector_'.$idEarly; }
     $filename = $filenameBase . '.csv';
@@ -434,7 +487,7 @@ if (isset($_GET["export"])) {
     fclose($outEarly);
     exit;
 }
-$TITLE = "CHIM - LLM Connectors";
+$TITLE = "STOBE - LLM Connectors";
 ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
 ?>
@@ -532,7 +585,7 @@ h1.api-title {
 <main class="d-flex flex-column">
 <?php
 if ($isEmbed) {
-    echo '<style>.chim-navbar-wrapper,.chim-navbar,nav.navbar,.navbar{display:none!important;}body{padding-top:0!important;}main{padding-top:10px!important;}</style>';
+    echo '<style>.stobe-navbar-wrapper,.stobe-navbar,nav.navbar,.navbar{display:none!important;}body{padding-top:0!important;}main{padding-top:10px!important;}</style>';
 }
 $noticeMsg = '';
 if (isset($_GET['notice']) && $_GET['notice'] !== '') {
@@ -728,7 +781,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 </div>
 
                 <div id="custom_note" class="orm-muted" style="font-size:12px; display:none; margin:-6px 0 8px 0;">
-                    Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with CHIM. For advanced users only
+                    Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with STOBE. For advanced users only
                 </div>
 
                 <div id="url_row">
@@ -810,6 +863,20 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     <label class="label-with-toggle"><span class='tip-label' data-tip='Send a starter JSON object to steer field names/shape in the response.'>Prefill JSON</span>
                         <input type="hidden" name="prefill_json" value="0">
                         <input type="checkbox" name="prefill_json" value="1" <?= isset($editItem["prefill_json"]) && $editItem["prefill_json"] == 1 ? "checked" : "" ?>>
+                    </label>
+                </div>
+                
+                <div id="disable_streaming" style="margin-top:12px;">
+                    <label class="label-with-toggle"><span class='tip-label' data-tip='Disable SSE streaming for this connector and wait for the full JSON reply before parsing. Useful for local LM Studio or other OpenAI-compatible servers that stream slowly or emit long reasoning chunks first.'>Disable Streaming</span>
+                        <input type="hidden" name="disable_streaming" value="0">
+                        <input type="checkbox" name="disable_streaming" value="1" <?php 
+                            $metadata = [];
+                            if (isset($editItem["metadata"]) && !empty($editItem["metadata"])) {
+                                $metadata = is_string($editItem["metadata"]) ? json_decode($editItem["metadata"], true) : $editItem["metadata"];
+                                if (!is_array($metadata)) $metadata = [];
+                            }
+                            echo (isset($metadata["disable_streaming"]) && $metadata["disable_streaming"]) ? "checked" : "";
+                        ?>>
                     </label>
                 </div>
                 
@@ -917,15 +984,27 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 echo "</div>";
                 // Ace editor for extra_parameters (YAML)
                 $extra_parameters_yaml = '';
+                $meta = [];
                 if (isset($editItem['metadata'])) {
                     $meta = is_string($editItem['metadata']) ? json_decode($editItem['metadata'], true) : $editItem['metadata'];
+                    if (!is_array($meta)) {
+                        $meta = [];
+                    }
                     if (is_array($meta) && isset($meta['extra_parameters']) && is_array($meta['extra_parameters'])) {
                         // Convert map to YAML
                         $extra_parameters_yaml = array_to_yaml($meta['extra_parameters']);
                     }
                 }
+                $hasExistingConnector = isset($editItem['id']) && intval($editItem['id']) > 0;
+                $extraParametersEnabled = $hasExistingConnector
+                    ? (!array_key_exists('extra_parameters_enabled', $meta) || boolval($meta['extra_parameters_enabled']))
+                    : boolval($meta['extra_parameters_enabled'] ?? false);
                 echo "<div style='margin-top:18px;'>";
                 echo "<label for='extra_parameters_yaml' style='font-weight:600; color:#e9efff; display:block; margin-bottom:6px;'>Include Body Parameters (YAML)</label>";
+                echo "<label class='label-with-toggle' style='margin-bottom:8px; display:flex; align-items:center; gap:8px;'><span class='tip-label' data-tip='When off, the saved YAML body parameters remain stored but are not injected into requests. Existing connectors without this setting still default to on for migration.'>Enable YAML Body Parameters</span>";
+                echo "<input type='hidden' name='extra_parameters_enabled' value='0'>";
+                echo "<input type='checkbox' name='extra_parameters_enabled' value='1' " . ($extraParametersEnabled ? "checked" : "") . ">";
+                echo "</label>";
                 echo "<div class='extra_parameters_editor_container' style='height:120px; width:100%; border-radius:6px; border:1px solid #4a4a4a; background:#181a20; color:#e9efff;'></div>";
                 echo "<textarea class='extra_parameters_yaml' name='extra_parameters_yaml' style='display:none;'>" . htmlspecialchars($extra_parameters_yaml) . "</textarea>";
                 echo "<div style='font-size:12px; color:#b0b0b0; margin-top:4px;'>Enter additional request body parameters in YAML format. (Advanced users only.)</div>";
@@ -1110,7 +1189,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
     }
     // Sync On/Off labels for checkboxes
     (function(){
-        const names = ['reasoning_model','enforce_json','json_schema','prefill_json','remove_action_prompt'];
+        const names = ['reasoning_model','enforce_json','json_schema','prefill_json','remove_action_prompt','disable_streaming','extra_parameters_enabled'];
         names.forEach(n=>{
             const cb = document.querySelector(`input[type="checkbox"][name="${n}"]`);
             if (!cb) return;
@@ -1142,7 +1221,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
         function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
         const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: '' };
-        const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','chim'] };
+        const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
         function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
         function applyService(service){ try {const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (defaults[service]) { const currentUrl = String((urlInput && urlInput.value) || ''); if (currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } providerRow.style.display = (service === 'openrouter') ? '' : 'none'; const savedDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverRow) driverRow.style.display = ''; if (driverSelect) driverSelect.style.display = ''; if (driverInput) driverInput.style.display = 'none'; if (driverSelect) { if (savedDriver) { driverSelect.value = savedDriver; } else if (!driverSelect.value) { driverSelect.value = 'openaijson'; } } if (driverInput && !savedDriver) { driverInput.value = driverSelect ? driverSelect.value : 'openaijson'; } } else { if (driverRow) driverRow.style.display = 'none'; if (driverSelect) driverSelect.style.display = 'none'; if (driverInput) driverInput.style.display = ''; if (driverInput && !savedDriver && driverDefaults[service]) { driverInput.value = driverDefaults[service]; } } syncApiBadge(service); setActive(service); if (apiKeyRow) apiKeyRow.style.display = ''; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); document.querySelectorAll('.orm-dropdown').forEach(function(el){ el.style.display='none'; }); } catch (e) {console.log(e);console.log("Check this bug")}}
         function detectService(){ const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const sVal=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||'').toLowerCase())||''; if (['openrouter','openai','google','groq','nanogpt','player2','custom'].includes(sVal)) return sVal; const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('openrouter')) return 'openrouter'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; return 'openrouter'; }
@@ -1471,6 +1550,17 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
     // Seed required defaults for new connector (force values on create)
     $payload = $_POST;
+    $metadata = [];
+    if (isset($payload["metadata"]) && !empty($payload["metadata"])) {
+        $metadata = json_decode($payload["metadata"], true);
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+    }
+    $payload["metadata"] = json_encode(
+        stobe_llm_apply_connector_metadata_post_overrides($metadata, $payload),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
     $payload['driver'] = 'openrouterjson';
     $payload['temperature'] = 1;
     $payload['url'] = 'https://openrouter.ai/api/v1/chat/completions';
@@ -1568,6 +1658,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["import"])) {
             $b = $getBool('json_schema'); if ($b!==null) $payload['json_schema'] = $b; else unset($payload['json_schema']);
             $b = $getBool('prefill_json'); if ($b!==null) $payload['prefill_json'] = $b; else unset($payload['prefill_json']);
             $b = $getBool('reasoning_model'); if ($b!==null) $payload['reasoning_model'] = $b; else unset($payload['reasoning_model']);
+            $b = $getBool('disable_streaming'); if ($b!==null) $payload['disable_streaming'] = $b; else unset($payload['disable_streaming']);
             $meta = $getString('metadata'); if ($meta !== '') { $payload['metadata'] = $meta; }
 
             // Infer service if missing
@@ -1632,7 +1723,9 @@ if (isset($_GET["create_blank"])) {
         'api_badge_id' => stobe_llm_default_api_badge_id(),
         'enforce_json' => 1,
         'json_schema' => 1,
-        'service' => 'openrouter'
+        'service' => 'openrouter',
+        'disable_streaming' => 0,
+        'extra_parameters_enabled' => 0,
     ]);
     $redir = 'llm_connectors.php' . ($newId ? ('?edit=' . urlencode($newId)) : '');
     header("Location: " . $withEmbed($redir));
@@ -1657,28 +1750,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && (isset($_POST["save"]) || isset($_P
         }
     }
     
-    // Add remove_action_prompt to metadata (checkbox with hidden field pattern)
-    if (isset($_POST["remove_action_prompt"])) {
-        $metadata["remove_action_prompt"] = ($_POST["remove_action_prompt"] === "1" || $_POST["remove_action_prompt"] === 1);
-    } else {
-        // If checkbox not present, remove from metadata
-        unset($metadata["remove_action_prompt"]);
-    }
-
-    // Persist extra_parameters from YAML editor
-    if (isset($_POST['extra_parameters_yaml'])) {
-        require_once __DIR__ . '/../connector/parse_simple_yaml.php';
-        $extra_parameters = parse_simple_yaml($_POST['extra_parameters_yaml']);
-        if (is_array($extra_parameters)) {
-            $metadata['extra_parameters'] = $extra_parameters;
-        } else {
-            unset($metadata['extra_parameters']);
-        }
-    } else {
-        unset($metadata['extra_parameters']);
-    }
-
-    $_POST["metadata"] = json_encode($metadata);
+    $_POST["metadata"] = json_encode(
+        stobe_llm_apply_connector_metadata_post_overrides($metadata, $_POST),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
 
     $_POST = normalize_player2_connector_payload($_POST);
     $llm->update($id, $_POST);
@@ -2048,7 +2123,7 @@ if (typeof window.consolidation !== 'function') {
             </div>
 
             <div id="custom_note" class="orm-muted" style="font-size:12px; display:none; margin:-6px 0 8px 0;">
-                Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with CHIM. Depending on the service you may not need to fill out all fields. For advanced users only
+                Custom allows you to build your own connector setting using one of our API drivers to use non-supported services with STOBE. Depending on the service you may not need to fill out all fields. For advanced users only
             </div>
 
             <div id="url_row">
@@ -2144,6 +2219,20 @@ if (typeof window.consolidation !== 'function') {
                 <label class="label-with-toggle"><span class='tip-label' data-tip='Send a starter JSON object to steer field names/shape in the response.'>Prefill JSON</span>
                     <input type="hidden" name="prefill_json" value="0">
                     <input type="checkbox" name="prefill_json" value="1" <?= isset($editItem["prefill_json"]) && $editItem["prefill_json"] == 1 ? "checked" : "" ?>>
+                </label>
+            </div>
+            
+            <div id="disable_streaming_main" style="margin-top:12px;">
+                <label class="label-with-toggle"><span class='tip-label' data-tip='Disable SSE streaming for this connector and wait for the full JSON reply before parsing. Useful for local LM Studio or other OpenAI-compatible servers that stream slowly or emit long reasoning chunks first.'>Disable Streaming</span>
+                    <input type="hidden" name="disable_streaming" value="0">
+                    <input type="checkbox" name="disable_streaming" value="1" <?php 
+                        $metadataMain = [];
+                        if (isset($editItem["metadata"]) && !empty($editItem["metadata"])) {
+                            $metadataMain = is_string($editItem["metadata"]) ? json_decode($editItem["metadata"], true) : $editItem["metadata"];
+                            if (!is_array($metadataMain)) $metadataMain = [];
+                        }
+                        echo (isset($metadataMain["disable_streaming"]) && $metadataMain["disable_streaming"]) ? "checked" : "";
+                    ?>>
                 </label>
             </div>
             
@@ -2255,14 +2344,26 @@ if (typeof window.consolidation !== 'function') {
             echo "</div>";
             // Ace editor for extra_parameters (YAML)
             $extra_parameters_yaml = '';
+            $meta = [];
             if (isset($editItem['metadata'])) {
                 $meta = is_string($editItem['metadata']) ? json_decode($editItem['metadata'], true) : $editItem['metadata'];
+                if (!is_array($meta)) {
+                    $meta = [];
+                }
                 if (is_array($meta) && isset($meta['extra_parameters']) && is_array($meta['extra_parameters'])) {
                     $extra_parameters_yaml = array_to_yaml($meta['extra_parameters']);
                 }
             }
+            $hasExistingConnector = isset($editItem['id']) && intval($editItem['id']) > 0;
+            $extraParametersEnabled = $hasExistingConnector
+                ? (!array_key_exists('extra_parameters_enabled', $meta) || boolval($meta['extra_parameters_enabled']))
+                : boolval($meta['extra_parameters_enabled'] ?? false);
             echo "<div style='margin-top:18px;'>";
             echo "<label for='extra_parameters_yaml' style='font-weight:600; color:#e9efff; display:block; margin-bottom:6px;'>Include Body Parameters (YAML)</label>";
+            echo "<label class='label-with-toggle' style='margin-bottom:8px; display:flex; align-items:center; gap:8px;'><span class='tip-label' data-tip='When off, the saved YAML body parameters remain stored but are not injected into requests. Existing connectors without this setting still default to on for migration.'>Enable YAML Body Parameters</span>";
+            echo "<input type='hidden' name='extra_parameters_enabled' value='0'>";
+            echo "<input type='checkbox' name='extra_parameters_enabled' value='1' " . ($extraParametersEnabled ? "checked" : "") . ">";
+            echo "</label>";
             echo "<div class='extra_parameters_editor_container' style='height:120px; width:100%; border-radius:6px; border:1px solid #4a4a4a; background:#181a20; color:#e9efff;'></div>";
             echo "<textarea class='extra_parameters_yaml' name='extra_parameters_yaml' style='display:none;'>" . htmlspecialchars($extra_parameters_yaml) . "</textarea>";
             echo "<div style='font-size:12px; color:#b0b0b0; margin-top:4px;'>Enter additional request body parameters in YAML format. (Advanced users only.)</div>";
@@ -2283,7 +2384,7 @@ if (typeof window.consolidation !== 'function') {
 <script>
 // Sync On/Off labels for checkboxes
 (function(){
-    const names = ['reasoning_model','enforce_json','json_schema','prefill_json'];
+    const names = ['reasoning_model','enforce_json','json_schema','prefill_json','disable_streaming','extra_parameters_enabled'];
     names.forEach(n=>{
         const cb = document.querySelector(`input[type="checkbox"][name="${n}"]`);
         if (!cb) return;
@@ -2321,7 +2422,7 @@ if (typeof window.consolidation !== 'function') {
     const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
     function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
     const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: 'openaijson' };
-    const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','chim'] };
+    const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
     function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
     function applyService(service, fromUser){ const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (service !== 'custom' && defaults[service]) { const currentUrl = urlInput ? String(urlInput.value||'') : ''; if (fromUser || currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } const urlRow = document.getElementById('url_row'); if (urlRow) urlRow.style.display = (service==='custom') ? '' : 'none'; providerRow.style.display = (service === 'openrouter' || service === 'custom') ? '' : 'none'; if (modelRow) modelRow.style.display = (service === 'player2') ? 'none' : ''; const driverSelect = document.getElementById('driver_select'); const currentDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverSelect) { driverSelect.style.display = ''; } if (driverInput) { driverInput.style.display = 'none'; } // reflect saved driver in select; default only if empty
         if (driverSelect) {

@@ -455,7 +455,7 @@ CREATE TABLE IF NOT EXISTS bio_random (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_random_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_random_type_description_name_key UNIQUE (type, description, name)
 );
 
@@ -470,7 +470,7 @@ CREATE TABLE IF NOT EXISTS bio_random_custom (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_random_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_random_custom_type_description_name_key UNIQUE (type, description, name)
 );
 
@@ -525,7 +525,7 @@ CREATE TABLE IF NOT EXISTS bio_unique (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_unique_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_unique_name_type_key UNIQUE (name, type)
 );
 
@@ -537,7 +537,7 @@ CREATE TABLE IF NOT EXISTS bio_unique_custom (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_unique_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals')),
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_unique_custom_name_type_key UNIQUE (name, type)
 );
 
@@ -1227,7 +1227,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_random
         ADD CONSTRAINT bio_random_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1273,7 +1273,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_random_custom
         ADD CONSTRAINT bio_random_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1356,7 +1356,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_unique
         ADD CONSTRAINT bio_unique_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1397,7 +1397,7 @@ BEGIN
     ) THEN
         ALTER TABLE bio_unique_custom
         ADD CONSTRAINT bio_unique_custom_type_check
-        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'goals'));
+        CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'));
     END IF;
 END $$;
 DO $$
@@ -1684,11 +1684,11 @@ BEGIN
 END $$;
 
 -- ----------------------------------------------------------
--- PLAYTHROUGH MANAGER (chim_meta schema snapshots)
+-- PLAYTHROUGH MANAGER (stobe_meta schema snapshots)
 -- ----------------------------------------------------------
-CREATE SCHEMA IF NOT EXISTS chim_meta;
+CREATE SCHEMA IF NOT EXISTS stobe_meta;
 
-CREATE TABLE IF NOT EXISTS chim_meta.playthrough_profiles (
+CREATE TABLE IF NOT EXISTS stobe_meta.playthrough_profiles (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -1709,15 +1709,15 @@ CREATE TABLE IF NOT EXISTS chim_meta.playthrough_profiles (
     rollback_to_gamets BIGINT DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS chim_meta.playthrough_blobs (
-    profile_id INT PRIMARY KEY REFERENCES chim_meta.playthrough_profiles(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS stobe_meta.playthrough_blobs (
+    profile_id INT PRIMARY KEY REFERENCES stobe_meta.playthrough_profiles(id) ON DELETE CASCADE,
     dump_data TEXT,
     dump_lob OID
 );
 
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_created ON chim_meta.playthrough_profiles (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_last_gamets ON chim_meta.playthrough_profiles (last_gamets DESC);
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_is_active ON chim_meta.playthrough_profiles (is_active);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_created ON stobe_meta.playthrough_profiles (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_last_gamets ON stobe_meta.playthrough_profiles (last_gamets DESC);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_is_active ON stobe_meta.playthrough_profiles (is_active);
 
 INSERT INTO general_settings (id, value, description, updated_at)
 VALUES
@@ -1989,10 +1989,10 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('IDLE', 'Idle', 'Stop current action and idle.', TRUE),
 ('STOP_CARRYING', 'StopCarrying', 'Put down what you are currently carrying.', TRUE),
 ('PICKUP_NPC', 'PickupNpc', 'Pick up a nearby helpless target and carry them. Use target as the actor name. Only valid when you are not already carrying someone.', TRUE),
-('GIVE_CATS', 'GiveCats', 'Give cats to the target. Put amount in item field.', TRUE),
-('TAKE_CATS', 'TakeCats', 'Take cats from the target. Put amount in item field.', TRUE),
-('TAKE_ITEM', 'TakeItem', 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Item supports quantities and lists like GiveItem, plus equipment/all loot queries.', TRUE),
-('GIVE_ITEM', 'GiveItem', 'Give a specific item to the the target.', TRUE),
+('GIVE_CATS', 'GiveCats', 'Give cats to the target. Put the recipient in target and the numeric amount in amount.', TRUE),
+('TAKE_CATS', 'TakeCats', 'Take cats from the target. Put the victim in target and the numeric amount in amount.', TRUE),
+('TAKE_ITEM', 'TakeItem', 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Put the item name in item and an optional stack count in amount. Equipment/all loot queries are still supported in item.', TRUE),
+('GIVE_ITEM', 'GiveItem', 'Give a specific item to the target. Put the recipient in target, the exact item name in item, and an optional stack count in amount.', TRUE),
 ('DROP_ITEM', 'DropItem', 'Drop a specific item.', TRUE),
 ('ROLEPLAY_ACTION', 'RoleplayAction', 'Describe a roleplay action along with your dialogue.', TRUE),
 ('FACTION_RELATIONS', 'FactionRelations', 'Change relation between your faction and a nearby player-faction person''s faction. Put target person name in target and use item as -100 or 100.', TRUE),
@@ -2007,6 +2007,7 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('SET_MEDIC', 'SetMedic', 'Toggle medic behavior using ON/OFF in item or target.', TRUE),
 ('REMOVE_LIMB', 'RemoveLimb', 'Remove one limb from a helpless target. Requires a hacksaw in inventory. Use target and item as LEFT_ARM, RIGHT_ARM, LEFT_LEG, or RIGHT_LEG. Works only on knocked-out, unconscious, imprisoned, or carried targets.', TRUE),
 ('CUT_HORNS', 'CutHorns', 'Cut off a helpless Shek target''s horns with a hacksaw. Use target as the victim. Works only on dead, knocked-out, unconscious, imprisoned, or carried Shek whose horns are not already cut off.', TRUE),
+('KNOCKOUT', 'Knockout', 'Knock out a target immediately without killing them. Self-targeting is allowed; otherwise the target must already be helpless.', TRUE),
 ('KILL', 'Kill', 'Kill a helpless target immediately.', TRUE),
 ('USE_OBJECT', 'UseObject', 'Use a nearby point of interest such as a chair, turret, bed, throne, or work spot. Use target or item as an object name/refid, or leave blank to use the nearest usable free slot.', TRUE),
 ('USE_DRUGS', 'UseDrugs', 'Consume Hashish from your inventory/equipment. Applies a high state for 5 in-game hours and increases hunger drain to 1.5x during that time.', TRUE),
@@ -2207,6 +2208,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('EMOTEMOODS', 'sassy,assertive,sexy,smug,kindly,lovely,seductive,sarcastic,sardonic,smirking,amused,default,assisting,irritated,playful,neutral,teasing,mocking,desperate,distressed,pleading,sad', 'Default mood/emote list (comma-separated). Can be overridden per NPC in Stobe NPCs.'),
 
 ('WORLD_KNOWLEDGE_ENABLED',        'true',         'Enable world knowledge retrieval'),
+('ALWAYS_INSERT_RACE',             'true',         'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.'),
 ('WORLD_KNOWLEDGE_AMOUNT',         '2',            'Max extracted world knowledge topics per turn'),
 ('WORLD_KNOWLEDGE_CONTEXT_HISTORY','16',           'Recent event rows used for world knowledge keyword context'),
 ('WORLD_KNOWLEDGE_CONTEXT_KEYWORDS','8',           'Max world knowledge context keywords'),
@@ -2214,7 +2216,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
-('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '3', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
+('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '2', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
 ('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '6', 'Memory summary packing interval. Is measured in ingame hours.'),
 ('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
 ('RELATIONSHIP_SYSTEM_ENABLED', 'true',  'Enable relationship system analysis and updates for NPC interactions.'),
@@ -2234,7 +2236,7 @@ INSERT INTO core_api_badge (label, api_key) VALUES
 ('Inworld', ''),
 ('Nano-GPT', ''),
 ('Groq', ''),
-('Player2', 'CHIM')
+('Player2', 'STOBE')
 ON CONFLICT (label) DO NOTHING;
 
 INSERT INTO core_llm_connector (
@@ -2303,7 +2305,7 @@ INSERT INTO core_llm_connector (
     'player2json',
     (
         SELECT id FROM core_api_badge
-        WHERE LOWER(label) IN ('player2', 'chim')
+        WHERE LOWER(label) IN ('player2', 'stobe')
         ORDER BY CASE WHEN LOWER(label) = 'player2' THEN 0 ELSE 1 END, id ASC
         LIMIT 1
     ),
@@ -2313,7 +2315,7 @@ INSERT INTO core_llm_connector (
     750,
     1.0,
     FALSE,
-    '{"player2_game_key":"CHIM"}'::jsonb
+    '{"player2_game_key":"STOBE"}'::jsonb
 )
 ON CONFLICT (name) DO NOTHING;
 

@@ -1202,7 +1202,7 @@ function stobePlaythroughListAutoLoadCandidates(int $incomingGamets, int $limit 
                 last_gamets,
                 player_faction_members,
                 created_at
-             FROM chim_meta.playthrough_profiles
+             FROM stobe_meta.playthrough_profiles
              WHERE COALESCE(storage_type, 'schema') = 'schema'
                AND COALESCE(schema_name, '') <> ''
              ORDER BY ABS(COALESCE(last_gamets, 0) - $1), created_at DESC

@@ -4655,6 +4655,73 @@ function normalizeBioTraitType(string $value): string {
     return '';
 }
 
+function normalizeBioAppearanceExtra(string $value): string {
+    $normalized = trim((string)(preg_replace('/\s+/u', ' ', $value) ?? $value));
+    if ($normalized === '') {
+        return '';
+    }
+    $lowered = strtolower($normalized);
+    if ($lowered === 'unknown' || $lowered === 'null' || $lowered === 'n/a') {
+        return '';
+    }
+    return $normalized;
+}
+
+function buildBioAppearanceExtraKey(string $value): string {
+    $normalized = normalizeBioAppearanceExtra($value);
+    if ($normalized === '') {
+        return '';
+    }
+    return strtolower((string)(preg_replace('/\s+/u', ' ', $normalized) ?? $normalized));
+}
+
+function createEmptyBioTraitSelections(): array {
+    $selections = [];
+    foreach (getRequiredBioTraitTypes() as $type) {
+        $selections[$type] = [
+            'description' => '',
+        ];
+    }
+    return $selections;
+}
+
+function appendBioAppearanceExtrasToText(string $baseAppearance, array $extras): string {
+    $result = trim((string)(preg_replace('/\s+/u', ' ', $baseAppearance) ?? $baseAppearance));
+    $seenKeys = [];
+    if ($result !== '') {
+        $resultKey = buildBioAppearanceExtraKey($result);
+        if ($resultKey !== '') {
+            $seenKeys[$resultKey] = true;
+        }
+    }
+
+    foreach ($extras as $extra) {
+        $appearance = normalizeBioAppearanceExtra(strval($extra));
+        if ($appearance === '') {
+            continue;
+        }
+        $key = buildBioAppearanceExtraKey($appearance);
+        if ($key === '' || isset($seenKeys[$key])) {
+            continue;
+        }
+        if ($result !== '' && stripos($result, $appearance) !== false) {
+            $seenKeys[$key] = true;
+            continue;
+        }
+        if ($result === '') {
+            $result = $appearance;
+        } else {
+            if (preg_match('/[.!?]$/u', $result) !== 1) {
+                $result .= '.';
+            }
+            $result .= ' ' . $appearance;
+        }
+        $seenKeys[$key] = true;
+    }
+
+    return $result;
+}
+
 function getRequiredBioTraitTypes(): array {
     return ['personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals'];
 }
@@ -4675,13 +4742,9 @@ function getBioUniqueLookupKeys(string $name): array {
     return $keys;
 }
 
-function loadBioUniqueTraits(string $name): array {
+function loadBioUniqueTraitSelections(string $name): array {
     static $cache = [];
-    $requiredTypes = getRequiredBioTraitTypes();
-    $result = [];
-    foreach ($requiredTypes as $type) {
-        $result[$type] = '';
-    }
+    $result = createEmptyBioTraitSelections();
 
     $lookupKeys = getBioUniqueLookupKeys($name);
     if (count($lookupKeys) === 0) {
@@ -4729,17 +4792,27 @@ function loadBioUniqueTraits(string $name): array {
         if ($type === '' || !array_key_exists($type, $result)) {
             continue;
         }
-        if (trim(strval($result[$type])) !== '') {
+        if (trim(strval($result[$type]['description'] ?? '')) !== '') {
             continue;
         }
         $description = trim(strval($row['description'] ?? ''));
         if ($description === '') {
             continue;
         }
-        $result[$type] = $description;
+        $result[$type] = [
+            'description' => $description,
+        ];
     }
 
     $cache[$cacheKey] = $result;
+    return $result;
+}
+
+function loadBioUniqueTraits(string $name): array {
+    $result = [];
+    foreach (loadBioUniqueTraitSelections($name) as $type => $selection) {
+        $result[$type] = trim(strval($selection['description'] ?? ''));
+    }
     return $result;
 }
 
@@ -4839,7 +4912,9 @@ function loadBioRandomCandidates(
 
         $descriptionKey = strtolower($description);
         if (!isset($candidatesByType[$type][$specificity][$descriptionKey])) {
-            $candidatesByType[$type][$specificity][$descriptionKey] = $description;
+            $candidatesByType[$type][$specificity][$descriptionKey] = [
+                'description' => $description,
+            ];
         }
     }
 
@@ -4853,7 +4928,7 @@ function loadBioRandomCandidates(
     return $candidatesByType;
 }
 
-function selectRandomBioTraits(
+function selectRandomBioTraitSelections(
     string $seedName = '',
     string $race = '',
     string $gender = '',
@@ -4864,7 +4939,7 @@ function selectRandomBioTraits(
     $requiredTypes = getRequiredBioTraitTypes();
     $specificityLevels = [7, 6, 5, 4, 3, 2, 1, 0];
     $candidatesByType = loadBioRandomCandidates($race, $gender, $faction, $name, $originalName);
-    $traits = [];
+    $selections = createEmptyBioTraitSelections();
 
     foreach ($requiredTypes as $type) {
         if (!isset($candidatesByType[$type])) {
@@ -4887,20 +4962,40 @@ function selectRandomBioTraits(
             $bestIndex = 0;
             $bestRank = null;
             foreach ($options as $index => $option) {
-                $rank = intval(sprintf('%u', crc32(strtolower($seedName . '|' . $type . '|' . $option))));
+                $description = trim(strval($option['description'] ?? ''));
+                $rank = intval(sprintf('%u', crc32(strtolower($seedName . '|' . $type . '|' . $description))));
                 if ($bestRank === null || $rank < $bestRank) {
                     $bestRank = $rank;
                     $bestIndex = $index;
                 }
             }
-            $traits[$type] = strval($options[$bestIndex] ?? '');
+            $selections[$type] = [
+                'description' => trim(strval($options[$bestIndex]['description'] ?? '')),
+            ];
             continue;
         }
 
         $randomIndex = random_int(0, count($options) - 1);
-        $traits[$type] = strval($options[$randomIndex] ?? '');
+        $selections[$type] = [
+            'description' => trim(strval($options[$randomIndex]['description'] ?? '')),
+        ];
     }
 
+    return $selections;
+}
+
+function selectRandomBioTraits(
+    string $seedName = '',
+    string $race = '',
+    string $gender = '',
+    string $faction = '',
+    string $name = '',
+    string $originalName = ''
+): array {
+    $traits = [];
+    foreach (selectRandomBioTraitSelections($seedName, $race, $gender, $faction, $name, $originalName) as $type => $selection) {
+        $traits[$type] = trim(strval($selection['description'] ?? ''));
+    }
     return $traits;
 }
 
@@ -4912,20 +5007,20 @@ function selectBioTraitsForNpc(
     string $originalName = ''
 ): array {
     $requiredTypes = getRequiredBioTraitTypes();
-    $uniqueTraits = loadBioUniqueTraits($name);
-    $randomTraits = selectRandomBioTraits($name, $race, $gender, $faction, $name, $originalName);
+    $uniqueSelections = loadBioUniqueTraitSelections($name);
+    $randomSelections = selectRandomBioTraitSelections($name, $race, $gender, $faction, $name, $originalName);
     $resolvedTraits = [];
     $traitSources = [];
 
     foreach ($requiredTypes as $type) {
-        $uniqueTrait = trim(strval($uniqueTraits[$type] ?? ''));
+        $uniqueTrait = trim(strval($uniqueSelections[$type]['description'] ?? ''));
         if ($uniqueTrait !== '') {
             $resolvedTraits[$type] = $uniqueTrait;
             $traitSources[$type] = 'unique';
             continue;
         }
 
-        $randomTrait = trim(strval($randomTraits[$type] ?? ''));
+        $randomTrait = trim(strval($randomSelections[$type]['description'] ?? ''));
         if ($randomTrait !== '') {
             $resolvedTraits[$type] = $randomTrait;
             $traitSources[$type] = 'random';
@@ -7661,7 +7756,8 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
     }
     $occupation = $occupationRaw !== '' ? $occupationRaw : trim(strval($resolvedTraits['occupation'] ?? ''));
     $occupation = stobeNormalizeOccupationText($occupation, $factionCombined);
-    $appearance = $appearanceRaw !== '' ? $appearanceRaw : trim(strval($resolvedTraits['appearance'] ?? ''));
+    $appearanceExtra = normalizeBioAppearanceExtra(trim(strval($resolvedTraits['appearance'] ?? '')));
+    $appearance = appendBioAppearanceExtrasToText($appearanceRaw, $appearanceExtra !== '' ? [$appearanceExtra] : []);
     $equipment = $equipmentRaw;
     $inventory = $inventoryRaw;
     $skills = $skillsRaw;
@@ -9650,12 +9746,8 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     } elseif (stripos($goals, 'survive') === false) {
         $goals .= ' | ' . $goalsDefault;
     }
-    $appearanceTrait = trim(strval($resolvedTraits['appearance'] ?? ''));
-    if ($appearanceTrait !== '') {
-        $appearance = $appearanceTrait;
-    } else {
-        $appearance = $appearanceFallback;
-    }
+    $appearanceTrait = normalizeBioAppearanceExtra(trim(strval($resolvedTraits['appearance'] ?? '')));
+    $appearance = appendBioAppearanceExtrasToText($appearanceFallback, $appearanceTrait !== '' ? [$appearanceTrait] : []);
     $emoteMoods = stobeResolveGlobalEmoteMoods();
     if ($characterState !== 'normal' && $characterState !== '') {
         $emoteMoods .= ',state:' . $characterState;
@@ -9809,7 +9901,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $metadataForStorage['trader_shop_item_count'] = $traderShopItemCount;
     }
     if ($hornAppearanceSentence !== '') {
-        $hornAppearanceBase = $existingMasterAppearance !== '' ? $existingMasterAppearance : $appearance;
+        $hornAppearanceBase = $appearance !== '' ? $appearance : $existingMasterAppearance;
         $appearance = $applyHornAppearanceSentence($hornAppearanceBase, $hornAppearanceSentence);
         $forceAppearanceUpdate = true;
         stobeLogImport('Horn appearance sentence applied', [
@@ -9821,6 +9913,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             'appearance_after' => $appearance,
             'source' => $snapshotSource,
         ], 'DEBUG');
+    }
+    if ($appearanceTrait !== '') {
+        $forceAppearanceUpdate = true;
     }
     if ($isLikelyTraderContext) {
         $mergeTraderEntry = static function (array &$bucket, array $entry): void {

@@ -184,8 +184,6 @@ if (isset($_POST["run_memory_sync"])) {
 }
 
 $memoryEnabled = getGeneralSettingBool($db, "MEMORY_ENABLED", true);
-$memorySummaryInterval = getGeneralSetting($db, "MEMORY_AUTO_CREATE_SUMMARY_INTERVAL", "6");
-$individualSummaryThreshold = getGeneralSetting($db, "INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD", "3");
 $txtaiUrl = function_exists("getMemoryTxtaiUrl") ? getMemoryTxtaiUrl() : "http://127.0.0.1:8082";
 $useText2Vec = function_exists("getMemoryUseText2Vec") ? getMemoryUseText2Vec() : true;
 
@@ -470,12 +468,6 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                         <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">TXT2VEC (Embeddings)</div>
                         <div style="font-size: 14px;"><?= $statusIcon($useText2Vec) ?></div>
                         <div style="font-size: 12px; color: #aaa; margin-top: 4px;">URL: <?= h($txtaiUrl) ?></div>
-                    </div>
-
-                    <div style="background: #2a2a2a; padding: 15px; border-radius: 5px; border: 1px solid #3a3a3a;">
-                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">Summary Settings</div>
-                        <div style="font-size: 12px; color: #f8f9fa;">Auto Summary Interval: <?= h($memorySummaryInterval) ?> (in-game hours)</div>
-                        <div style="font-size: 12px; color: #f8f9fa; margin-top: 4px;">Individual Summary Threshold: <?= h($individualSummaryThreshold) ?></div>
                     </div>
                 </div>
             </div>

@@ -23,7 +23,7 @@
 
 ## Related PRs
 
-<!-- Does this PR relate to or rely on another PR in another CHIM repo? -->
+<!-- Does this PR relate to or rely on another PR in another STOBE repo? -->
 <!-- If yes, link the related PR(s) below: -->
 
 

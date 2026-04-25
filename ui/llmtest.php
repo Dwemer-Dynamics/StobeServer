@@ -51,10 +51,195 @@ function stobeLlmtestPerformanceBadge(float $elapsedMs): array {
     if ($seconds < 30.0) {
         return ['SLOW', '#fd7e14'];
     }
-    return ['TOO CHIMMING SLOW', '#dc3545'];
+    return ['TOO STOBING SLOW', '#dc3545'];
 }
 
-function stobeLlmtestBuildResolvedPreview(array $cfg, array $messages): array {
+function stobeLlmtestDefaultMoodEnums(): array {
+    $moodsCsv = '';
+    if (function_exists('stobeResolveGlobalEmoteMoods')) {
+        $moodsCsv = trim(stobeResolveGlobalEmoteMoods());
+    }
+    if ($moodsCsv === '') {
+        $moodsCsv = trim(strval(getSetting(
+            'EMOTEMOODS',
+            'sassy,assertive,sexy,smug,kindly,lovely,seductive,sarcastic,sardonic,smirking,amused,default,assisting,irritated,playful,neutral,teasing,mocking,desperate,distressed,pleading,sad'
+        )));
+    }
+    $moodsCsv = str_replace(
+        'mockingdesperatedistressedpleadingsad',
+        'mocking,desperate,distressed,pleading,sad',
+        $moodsCsv
+    );
+
+    $moods = [];
+    $seen = [];
+    foreach (explode(',', $moodsCsv) as $rawMood) {
+        $mood = strtolower(trim(strval($rawMood)));
+        if ($mood === '' || isset($seen[$mood])) {
+            continue;
+        }
+        $seen[$mood] = true;
+        $moods[] = $mood;
+    }
+
+    if (count($moods) === 0) {
+        $moods = [
+            'default', 'neutral', 'assertive', 'kindly', 'smug', 'sarcastic',
+            'teasing', 'playful', 'sardonic', 'irritated', 'amused', 'assisting',
+        ];
+    }
+
+    return $moods;
+}
+
+function stobeLlmtestDefaultActionEnums(): array {
+    return [
+        'Talk',
+        'Attack',
+        'Suicide',
+        'Idle',
+        'TakeItem',
+        'GiveItem',
+        'DropItem',
+        'Knockout',
+        'Kill',
+        'RoleplayAction',
+        'FactionRelations',
+        'Task',
+        'SetBlock',
+        'SetHold',
+        'SetPassive',
+        'SetJobs',
+        'SetRanged',
+        'SetTaunt',
+        'SetSneak',
+        'SetResource',
+        'SetMedic',
+        'GiveCats',
+        'TakeCats',
+        'StopCarrying',
+        'PickupNpc',
+        'RemoveLimb',
+        'CutHorns',
+        'UseDrugs',
+        'Drink',
+        'ForceDrink',
+        'Follow',
+        'StopFollow',
+        'JoinParty',
+        'Leave',
+        'TravelLocation',
+    ];
+}
+
+function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods, array $actions): array {
+    $safeNpc = trim($npcName);
+    if ($safeNpc === '') {
+        $safeNpc = 'Stobe Test NPC';
+    }
+
+    return [
+        'type' => 'json_schema',
+        'json_schema' => [
+            'name' => 'response',
+            'strict' => true,
+            'schema' => [
+                'type' => 'object',
+                'properties' => [
+                    'character' => [
+                        'type' => 'string',
+                        'description' => $safeNpc,
+                    ],
+                    'listener' => [
+                        'type' => 'string',
+                        'description' => 'who ' . $safeNpc . ' is addressing',
+                    ],
+                    'message' => [
+                        'type' => 'string',
+                        'description' => 'lines of ' . $safeNpc . '\'s dialogue',
+                    ],
+                    'mood' => [
+                        'type' => 'string',
+                        'description' => 'mood to use while speaking',
+                        'enum' => array_values($moods),
+                    ],
+                    'action' => [
+                        'type' => 'string',
+                        'description' => 'a valid action (refer to available actions list)',
+                        'enum' => array_values($actions),
+                    ],
+                    'target' => [
+                        'type' => 'string',
+                        'description' => 'action target actor or destination name',
+                    ],
+                    'item' => [
+                        'type' => 'string',
+                        'description' => 'exact item name for GiveItem/TakeItem, limb token for RemoveLimb, object token for UseObject, or consumable item for Drink/UseDrugs/ForceDrink',
+                    ],
+                    'amount' => [
+                        'type' => 'integer',
+                        'description' => 'positive integer count for GiveCats/TakeCats and optional stack count for GiveItem/TakeItem; use 0 when not needed',
+                    ],
+                ],
+                'required' => [
+                    'character',
+                    'listener',
+                    'message',
+                    'mood',
+                    'action',
+                    'target',
+                    'item',
+                    'amount',
+                ],
+                'additionalProperties' => false,
+            ],
+        ],
+    ];
+}
+
+function stobeLlmtestBuildPromptMessages(string $prompt): array {
+    $character = 'Stobe Test NPC';
+    $listener = 'Drifter';
+    $moods = stobeLlmtestDefaultMoodEnums();
+    $actions = stobeLlmtestDefaultActionEnums();
+
+    $systemPrompt = 'You are ' . $character . ', a character in the world of Kenshi. This is not a simulation or a game; this is your reality. '
+        . 'You will embody this persona with conviction, prioritizing narrative authenticity and psychological consistency. '
+        . 'The director provides scene prompts and narrative catalysts. Integrate these prompts seamlessly as the next logical event in the story. '
+        . 'Treat them as established fact and build upon them with your character\'s authentic reaction. '
+        . 'Your primary driver is to be a compelling, psychologically consistent, and authentically reactive character. '
+        . 'Write plain spoken dialogue rather than narration unless the action itself requires otherwise.';
+
+    $exampleResponse = [
+        'character' => $character,
+        'listener' => $listener,
+        'mood' => 'neutral',
+        'action' => 'Talk',
+        'target' => '',
+        'item' => '',
+        'amount' => 0,
+        'message' => 'What are you looking at?',
+    ];
+
+    $messages = [
+        ['role' => 'system', 'content' => $systemPrompt],
+        ['role' => 'user', 'content' => $listener . ': ' . $listener . ' looks at ' . $character . '.'],
+        ['role' => 'assistant', 'content' => json_encode($exampleResponse, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+        ['role' => 'user', 'content' => $prompt],
+        ['role' => 'user', 'content' => stobeBuildOutputContractUserPrompt($character, false, false, null)],
+    ];
+
+    return [
+        'character' => $character,
+        'listener' => $listener,
+        'moods' => $moods,
+        'actions' => $actions,
+        'messages' => $messages,
+        'response_format' => stobeLlmtestBuildStructuredResponseFormat($character, $moods, $actions),
+    ];
+}
+
+function stobeLlmtestBuildResolvedPreview(array $cfg, array $messages, array $meta = [], bool $stream = true): array {
     $runtime = function_exists('stobePrepareLlmRuntimeConfig')
         ? stobePrepareLlmRuntimeConfig($cfg)
         : $cfg;
@@ -80,13 +265,17 @@ function stobeLlmtestBuildResolvedPreview(array $cfg, array $messages): array {
         'model' => $model,
         'messages' => $messages,
         'temperature' => $temperature,
-        'stream' => false,
+        'stream' => $stream,
     ];
 
     if (function_exists('stobeIsOpenAiModel') && stobeIsOpenAiModel($model)) {
         $payload['max_completion_tokens'] = $maxTokens;
     } else {
         $payload['max_tokens'] = $maxTokens;
+    }
+
+    if (is_array($meta['response_format'] ?? null)) {
+        $payload['response_format'] = $meta['response_format'];
     }
 
     if (function_exists('stobeParseConnectorExtras')) {
@@ -146,7 +335,7 @@ $connector = $connectorId > 0 ? getLlmConnectorById($connectorId) : false;
 $resolvedPreview = [];
 $responseText = '';
 $errorText = '';
-$prompt = trim(strval($_POST['prompt'] ?? $_GET['prompt'] ?? 'Give me one short Kenshi line.'));
+$prompt = trim(strval($_POST['prompt'] ?? $_GET['prompt'] ?? 'Hey, test NPC, hand me 50 cats.'));
 $elapsedMs = 0.0;
 $executed = false;
 $requestId = '';
@@ -156,24 +345,25 @@ $auditResultPayload = [];
 
 if ($connector) {
     if ($prompt === '') {
-        $prompt = 'Give me one short Kenshi line.';
+        $prompt = 'Hey, test NPC, hand me 50 cats.';
     }
 
-    $messages = [
-        ['role' => 'system', 'content' => 'You are a Kenshi NPC. Reply concisely in-world.'],
-        ['role' => 'user', 'content' => $prompt],
+    $testScenario = stobeLlmtestBuildPromptMessages($prompt);
+    $messages = $testScenario['messages'];
+    $meta = [
+        'event_type' => 'llmtest',
+        'npc_name' => strval($connector['name'] ?? 'LLM Test'),
+        'response_format' => $testScenario['response_format'],
     ];
     $cfg = stobeBuildLlmConfigFromConnector($connector);
-    $resolvedPreview = stobeLlmtestBuildResolvedPreview($cfg, $messages);
+    $resolvedPreview = stobeLlmtestBuildResolvedPreview($cfg, $messages, $meta, true);
 
     $requestId = 'llmtest_' . gmdate('Ymd_His') . '_' . substr(md5(uniqid('', true)), 0, 8);
     $GLOBALS['__stobe_request_id'] = $requestId;
 
     $start = microtime(true);
-    $out = stobeCallLLM($messages, $cfg, [
-        'event_type' => 'llmtest',
-        'npc_name' => strval($connector['name'] ?? 'LLM Test'),
-    ]);
+    $out = stobeCallLLMStream($messages, $cfg, static function (string $_delta): void {
+    }, $meta);
     $elapsedMs = (microtime(true) - $start) * 1000.0;
     $executed = true;
 

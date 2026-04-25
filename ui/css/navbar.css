@@ -60,16 +60,16 @@ h6,
 }
 
 /* Navbar labels/buttons should use title font + white text */
-.chim-navbar .nav-link,
-.chim-navbar .dropdown-toggle,
-.chim-navbar .dropdown-item,
-.chim-navbar .dropdown-header,
-.chim-navbar .nav-item.dropdown.mx-2,
-.chim-navbar .nav-item.dropdown.mx-2 > .nav-link,
-.chim-navbar .brand-menu,
-.chim-navbar .brand-menu .dropdown-item,
-.chim-navbar button,
-.chim-navbar .btn {
+.stobe-navbar .nav-link,
+.stobe-navbar .dropdown-toggle,
+.stobe-navbar .dropdown-item,
+.stobe-navbar .dropdown-header,
+.stobe-navbar .nav-item.dropdown.mx-2,
+.stobe-navbar .nav-item.dropdown.mx-2 > .nav-link,
+.stobe-navbar .brand-menu,
+.stobe-navbar .brand-menu .dropdown-item,
+.stobe-navbar button,
+.stobe-navbar .btn {
     font-family: var(--stobe-title-font) !important;
     color: #ffffff !important;
 }
@@ -137,12 +137,12 @@ details {
 }
 
 /* Disable animation when auto-refresh is enabled */
-body.auto-refresh .chim-navbar-wrapper,
-body.auto-refresh .chim-status-nav {
+body.auto-refresh .stobe-navbar-wrapper,
+body.auto-refresh .stobe-status-nav {
     animation: none !important;
 }
 
-.chim-navbar-wrapper {
+.stobe-navbar-wrapper {
     position: fixed;
     top: 0;
     left: 0;
@@ -155,12 +155,12 @@ body.auto-refresh .chim-status-nav {
     animation: scrollBackground 480s linear infinite;
 }
 
-.chim-navbar {
+.stobe-navbar {
     background: transparent !important;
     padding: 10px 0;
 }
 
-.chim-status-nav {
+.stobe-status-nav {
     background: url('../images/navbarback.png');
     background-repeat: repeat-x;
     background-position: 0 0;
@@ -169,7 +169,7 @@ body.auto-refresh .chim-status-nav {
     animation: scrollBackground 480s linear infinite;
 }
 
-.chim-status-container {
+.stobe-status-container {
     padding: 0 15px;
 }
 
@@ -267,7 +267,7 @@ body.auto-refresh .chim-status-nav {
     font-family: var(--stobe-title-font) !important;
     font-weight: 700 !important;
 }
-.chim-navbar-wrapper .brand-menu .dropdown-item,
+.stobe-navbar-wrapper .brand-menu .dropdown-item,
 .dropdown-menu.brand-menu .dropdown-item {
     font-family: var(--stobe-title-font) !important;
     font-weight: 700 !important;
@@ -908,7 +908,7 @@ body.overlay-active {
 }
 
 /* Stobe override: force visible white dropdown caret next to server logo */
-.chim-navbar .navbar-center .dropdown-toggle::after {
+.stobe-navbar .navbar-center .dropdown-toggle::after {
     content: "" !important;
     display: inline-block !important;
     margin-left: 10px !important;

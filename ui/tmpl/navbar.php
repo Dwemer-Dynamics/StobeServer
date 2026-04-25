@@ -21,29 +21,29 @@ $navbarCssPath = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'c
 $navbarCssVersion = file_exists($navbarCssPath) ? strval(filemtime($navbarCssPath)) : strval(time());
 echo '<link rel="stylesheet" href="' . $webRoot . '/ui/css/navbar.css?v=' . rawurlencode($navbarCssVersion) . '">';
 echo '<style>
-.chim-navbar .container-fluid {
+.stobe-navbar .container-fluid {
     display: flex !important;
     justify-content: space-between;
     align-items: center;
     width: 100%;
 }
 
-.chim-navbar {
+.stobe-navbar {
     height: 64px;
 }
-.chim-navbar .container-fluid > * {
+.stobe-navbar .container-fluid > * {
     align-items: center;
 }
-.chim-navbar .navbar-brand,
-.chim-navbar .navbar-center button.navbar-brand {
+.stobe-navbar .navbar-brand,
+.stobe-navbar .navbar-center button.navbar-brand {
     padding: 0;
     line-height: 1;
 }
 
 .navbar-left,
 .navbar-right,
-.chim-navbar .nav-item.mx-2,
-.chim-navbar .nav-item.dropdown.mx-2 {
+.stobe-navbar .nav-item.mx-2,
+.stobe-navbar .nav-item.dropdown.mx-2 {
     display: none !important;
 }
 
@@ -116,26 +116,26 @@ echo '<style>
 }
 
 /* Hard override so Stobe navbar matches requested visuals */
-.chim-navbar .navbar-center .navbar-brand img:hover {
+.stobe-navbar .navbar-center .navbar-brand img:hover {
     filter: drop-shadow(0 0 8px rgba(220, 220, 220, 0.7)) !important;
 }
-.chim-navbar .navbar-center .navbar-brand img:active {
+.stobe-navbar .navbar-center .navbar-brand img:active {
     filter: drop-shadow(0 0 12px rgba(220, 220, 220, 0.85)) !important;
 }
 /* Ensure stobesmall icon never shifts to a warm/orange hue on hover */
-.chim-navbar .navbar-center .navbar-brand .stobe-mark {
+.stobe-navbar .navbar-center .navbar-brand .stobe-mark {
     filter: brightness(1) drop-shadow(0 0 0 transparent) !important;
 }
-.chim-navbar .navbar-center .navbar-brand:hover .stobe-mark {
+.stobe-navbar .navbar-center .navbar-brand:hover .stobe-mark {
     filter: drop-shadow(0 0 8px rgba(220, 220, 220, 0.7)) !important;
 }
-.chim-navbar .navbar-center .navbar-brand:active .stobe-mark {
+.stobe-navbar .navbar-center .navbar-brand:active .stobe-mark {
     filter: drop-shadow(0 0 12px rgba(220, 220, 220, 0.85)) !important;
 }
-.chim-navbar .navbar-center .dropdown-toggle {
+.stobe-navbar .navbar-center .dropdown-toggle {
     color: #ffffff !important;
 }
-.chim-navbar .navbar-center .dropdown-toggle::after {
+.stobe-navbar .navbar-center .dropdown-toggle::after {
     content: "" !important;
     display: inline-block !important;
     width: 0 !important;
@@ -188,8 +188,8 @@ echo '<style>
 </style>';
 ?>
 
-<div class="chim-navbar-wrapper">
-    <nav class="navbar navbar-expand-lg chim-navbar">
+<div class="stobe-navbar-wrapper">
+    <nav class="navbar navbar-expand-lg stobe-navbar">
         <div class="container-fluid mx-1">
             <div class="navbar-content-wrapper">
                 <div class="navbar-center dropdown">

@@ -139,13 +139,13 @@ function _relFindMentionedNpcs($dialogue, $excludeNames = []) {
 }
 
 // Get NPC name - check multiple sources
-// Priority: CHIM profile data > currentNpcData > HERIKA_NAME fallback
+// Priority: STOBE profile data > currentNpcData > HERIKA_NAME fallback
 $npcName = null;
 $npcNameSource = 'none';
 
-if (isset($GLOBALS["CHIM_CORE_CURRENT_NPC_DATA"]["npc_name"])) {
-    $npcName = $GLOBALS["CHIM_CORE_CURRENT_NPC_DATA"]["npc_name"];
-    $npcNameSource = 'CHIM_CORE_CURRENT_NPC_DATA';
+if (isset($GLOBALS["STOBE_CORE_CURRENT_NPC_DATA"]["npc_name"])) {
+    $npcName = $GLOBALS["STOBE_CORE_CURRENT_NPC_DATA"]["npc_name"];
+    $npcNameSource = 'STOBE_CORE_CURRENT_NPC_DATA';
 } elseif (isset($currentNpcData["npc_name"])) {
     $npcName = $currentNpcData["npc_name"];
     $npcNameSource = 'currentNpcData';

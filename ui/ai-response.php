@@ -50,6 +50,337 @@ function safeExec(sql $db, string $query, array $params = []): bool
     }
 }
 
+function normalizeAiResponseLogMarkup(mixed $value): string
+{
+    if ($value === null) {
+        return "";
+    }
+
+    $text = strval($value);
+    $text = str_replace(["<br />", "<br>", "<br/>"], "\n", $text);
+    $text = html_entity_decode($text, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8");
+    return trim($text);
+}
+
+function decodePromptExportString(string $value): string
+{
+    return str_replace(["\\\\", "\\'"], ["\\", "'"], $value);
+}
+
+function readPhpExportQuotedString(string $text, int $startPos): ?array
+{
+    $length = strlen($text);
+    if ($startPos < 0 || $startPos >= $length) {
+        return null;
+    }
+
+    $value = "";
+    $index = $startPos;
+    while ($index < $length) {
+        $char = $text[$index];
+        if ($char === "\\") {
+            if ($index + 1 < $length) {
+                $value .= $char . $text[$index + 1];
+                $index += 2;
+                continue;
+            }
+
+            $value .= $char;
+            $index++;
+            continue;
+        }
+
+        if ($char === "'") {
+            return [
+                "value" => $value,
+                "next" => $index + 1,
+            ];
+        }
+
+        $value .= $char;
+        $index++;
+    }
+
+    return null;
+}
+
+function extractPhpExportScalarField(string $text, string $fieldName): string
+{
+    $needle = "'" . $fieldName . "' => '";
+    $fieldPos = strpos($text, $needle);
+    if ($fieldPos === false) {
+        return "";
+    }
+
+    $parsed = readPhpExportQuotedString($text, $fieldPos + strlen($needle));
+    if (!is_array($parsed) || !isset($parsed["value"])) {
+        return "";
+    }
+
+    return decodePromptExportString((string)$parsed["value"]);
+}
+
+function extractPromptPayloadFromDecodedArray(array $decoded): array
+{
+    $promptPayload = null;
+    if (isset($decoded["response_full"]) && is_array($decoded["response_full"])) {
+        $promptPayload = $decoded["response_full"];
+    } elseif (isset($decoded["full"]) && is_array($decoded["full"])) {
+        $promptPayload = $decoded["full"];
+    } elseif (isset($decoded["payload"]) && is_array($decoded["payload"])) {
+        $promptPayload = $decoded["payload"];
+    }
+
+    $responseConnector = isset($decoded["response_connector"]) && is_array($decoded["response_connector"])
+        ? $decoded["response_connector"]
+        : [];
+
+    if (isset($decoded["connector_type"]) && trim((string)$decoded["connector_type"]) !== "" && !isset($responseConnector["label"])) {
+        $responseConnector["label"] = trim((string)$decoded["connector_type"]);
+    }
+    if (isset($decoded["driver"]) && trim((string)$decoded["driver"]) !== "" && !isset($responseConnector["driver"])) {
+        $responseConnector["driver"] = trim((string)$decoded["driver"]);
+    }
+
+    $messages = [];
+    if (is_array($promptPayload) && isset($promptPayload["messages"]) && is_array($promptPayload["messages"])) {
+        $messages = $promptPayload["messages"];
+    } elseif (isset($decoded["messages"]) && is_array($decoded["messages"])) {
+        $messages = $decoded["messages"];
+    }
+
+    $model = "";
+    if (is_array($promptPayload) && isset($promptPayload["model"])) {
+        $model = trim((string)$promptPayload["model"]);
+    } elseif (isset($decoded["model"])) {
+        $model = trim((string)$decoded["model"]);
+    }
+
+    return [
+        "messages" => $messages,
+        "model" => $model,
+        "response_connector" => $responseConnector,
+    ];
+}
+
+function extractPromptPayloadFromPhpArrayExport(string $rawPrompt): ?array
+{
+    $messagesStart = strpos($rawPrompt, "'messages' =>");
+    if ($messagesStart === false) {
+        return null;
+    }
+
+    $messages = [];
+    $roleNeedle = "'role' => '";
+    $contentNeedle = "'content' => '";
+    $cursor = $messagesStart;
+
+    while (($rolePos = strpos($rawPrompt, $roleNeedle, $cursor)) !== false) {
+        $roleParsed = readPhpExportQuotedString($rawPrompt, $rolePos + strlen($roleNeedle));
+        if (!is_array($roleParsed) || !isset($roleParsed["value"], $roleParsed["next"])) {
+            break;
+        }
+
+        $contentPos = strpos($rawPrompt, $contentNeedle, intval($roleParsed["next"]));
+        if ($contentPos === false) {
+            break;
+        }
+
+        $contentParsed = readPhpExportQuotedString($rawPrompt, $contentPos + strlen($contentNeedle));
+        if (!is_array($contentParsed) || !isset($contentParsed["value"], $contentParsed["next"])) {
+            break;
+        }
+
+        $messages[] = [
+            "role" => decodePromptExportString((string)$roleParsed["value"]),
+            "content" => decodePromptExportString((string)$contentParsed["value"]),
+        ];
+        $cursor = intval($contentParsed["next"]);
+    }
+
+    if (count($messages) === 0) {
+        return null;
+    }
+
+    $responseConnector = [];
+    $connectorType = extractPhpExportScalarField($rawPrompt, "connector_type");
+    if ($connectorType !== "") {
+        $responseConnector["label"] = $connectorType;
+    }
+
+    $model = extractPhpExportScalarField($rawPrompt, "model");
+
+    return [
+        "messages" => $messages,
+        "model" => $model,
+        "response_connector" => $responseConnector,
+    ];
+}
+
+function extractPromptModalData(mixed $rawPromptValue): ?array
+{
+    $rawPrompt = normalizeAiResponseLogMarkup($rawPromptValue);
+    if ($rawPrompt === "") {
+        return null;
+    }
+
+    $decoded = json_decode($rawPrompt, true);
+    if (is_array($decoded)) {
+        return extractPromptPayloadFromDecodedArray($decoded);
+    }
+
+    return extractPromptPayloadFromPhpArrayExport($rawPrompt);
+}
+
+function extractWorldKnowledgeTopics(mixed $rawPromptValue): array
+{
+    $text = normalizeAiResponseLogMarkup($rawPromptValue);
+    if ($text === "") {
+        return [];
+    }
+
+    $topics = [];
+    $seen = [];
+
+    if (preg_match_all('/<knowledge>\s*(.*?)\s*<\/knowledge>/is', $text, $knowledgeMatches) < 1) {
+        return [];
+    }
+
+    foreach ($knowledgeMatches[1] as $knowledgeBlock) {
+        if (!is_string($knowledgeBlock) || trim($knowledgeBlock) === "") {
+            continue;
+        }
+
+        if (preg_match_all('/<entry>\s*(.*?)\s*<\/entry>/is', $knowledgeBlock, $entryMatches) < 1) {
+            continue;
+        }
+
+        foreach ($entryMatches[1] as $entryText) {
+            $entry = trim(html_entity_decode(strip_tags(strval($entryText)), ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"));
+            if ($entry === "") {
+                continue;
+            }
+
+            $topic = $entry;
+            $colonPos = strpos($entry, ":");
+            if ($colonPos !== false) {
+                $topic = trim(substr($entry, 0, $colonPos));
+            }
+
+            if ($topic === "") {
+                continue;
+            }
+
+            $topicKey = strtolower($topic);
+            if (isset($seen[$topicKey])) {
+                continue;
+            }
+
+            $seen[$topicKey] = true;
+            $topics[] = $topic;
+        }
+    }
+
+    return $topics;
+}
+
+function formatWorldKnowledgeTopics(mixed $rawPromptValue): string
+{
+    $topics = extractWorldKnowledgeTopics($rawPromptValue);
+    if (count($topics) === 0) {
+        return "None";
+    }
+
+    return implode(", ", $topics);
+}
+
+function formatPromptModalHtml(mixed $rawPromptValue): string
+{
+    $rawPrompt = normalizeAiResponseLogMarkup($rawPromptValue);
+    if ($rawPrompt === "") {
+        return '<pre style="white-space: pre-wrap; word-wrap: break-word;">Prompt payload is empty for this row.</pre>';
+    }
+
+    $formattedPrompt = "";
+    $promptModalData = extractPromptModalData($rawPromptValue);
+
+    if (is_array($promptModalData)) {
+        $responseConnector = is_array($promptModalData["response_connector"] ?? null)
+            ? $promptModalData["response_connector"]
+            : [];
+        $responseConnectorLabel = trim((string)($responseConnector["label"] ?? ""));
+        $responseConnectorDriver = trim((string)($responseConnector["driver"] ?? ""));
+        $model = trim((string)($promptModalData["model"] ?? ""));
+        if ($model === "") {
+            $model = "unknown";
+        }
+
+        $formattedPrompt = "<div style=\"font-family: 'Consolas', monospace; line-height: 1.6;\">";
+        $metaBits = [];
+        if ($responseConnectorLabel !== "") {
+            $metaBits[] = '<span style="display:inline-block; padding: 3px 8px; border-radius: 999px; background: #1f2937; color: #e5e7eb;">'
+                . htmlspecialchars($responseConnectorLabel, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8")
+                . "</span>";
+        }
+        if ($responseConnectorDriver !== "") {
+            $metaBits[] = '<span style="display:inline-block; padding: 3px 8px; border-radius: 999px; background: #111827; color: #93c5fd;">'
+                . htmlspecialchars($responseConnectorDriver, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8")
+                . "</span>";
+        }
+        if ($model !== "unknown") {
+            $metaBits[] = '<span style="display:inline-block; padding: 3px 8px; border-radius: 999px; background: #0f172a; color: #cbd5e1;">'
+                . htmlspecialchars($model, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8")
+                . "</span>";
+        }
+        if (!empty($metaBits)) {
+            $formattedPrompt .= '<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">' . implode("", $metaBits) . "</div>";
+        }
+
+        $messages = is_array($promptModalData["messages"] ?? null)
+            ? $promptModalData["messages"]
+            : [];
+
+        foreach ($messages as $msgIndex => $msg) {
+            if (!isset($msg["role"]) || !isset($msg["content"])) {
+                continue;
+            }
+
+            $role = $msg["role"];
+            $content = $msg["content"];
+            if (is_array($content)) {
+                $content = json_encode($content, JSON_PRETTY_PRINT);
+            } else {
+                $content = (string)$content;
+            }
+
+            $escapedContent = htmlspecialchars($content, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8");
+            $roleColor = $role === "system" ? "#4ec9b0" : ($role === "user" ? "#dcdcaa" : "#c586c0");
+
+            $formattedPrompt .= '<div style="margin: 10px 0; border-left: 3px solid ' . $roleColor . '; padding-left: 15px;">';
+            $formattedPrompt .= '<div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">';
+            $formattedPrompt .= '<span style="color: ' . $roleColor . '; font-weight: bold; text-transform: uppercase;">'
+                . htmlspecialchars((string)$role, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8")
+                . "</span>";
+            $formattedPrompt .= '<span style="color: #6b7280; font-size: 12px;">#' . intval($msgIndex) . "</span>";
+            $formattedPrompt .= "</div>";
+            $formattedPrompt .= '<div style="color: #ce9178; white-space: pre-wrap; margin-top: 5px; max-height: 400px; overflow-y: auto; background: #1e1e1e; padding: 10px; border-radius: 5px;">'
+                . $escapedContent
+                . "</div>";
+            $formattedPrompt .= "</div>";
+        }
+
+        $formattedPrompt .= "</div>";
+    }
+
+    if ($formattedPrompt === "") {
+        $formattedPrompt = '<pre style="white-space: pre-wrap; word-wrap: break-word;">'
+            . htmlspecialchars($rawPrompt, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8")
+            . "</pre>";
+    }
+
+    return $formattedPrompt;
+}
+
 $db = $GLOBALS["db"];
 $limit = isset($_GET["limit"]) ? intval($_GET["limit"]) : 50;
 $limit = max(10, min(500, $limit));
@@ -75,18 +406,20 @@ $rows = safeFetchAll(
 $totalRow = safeFetchOne($db, "SELECT COUNT(*) AS total FROM log");
 $totalRecords = intval($totalRow["total"] ?? 0);
 $totalPages = max(1, (int)ceil($totalRecords / $limit));
+$promptModalContentById = [];
 
 if (isset($_GET["export"]) && $_GET["export"] === "1") {
     header("Content-Type: text/csv; charset=UTF-8");
     header("Content-Disposition: attachment; filename=\"stobe_ai_responses.csv\"");
     $out = fopen("php://output", "w");
     if ($out !== false) {
-        fputcsv($out, ["rowid", "time_utc", "response", "url", "prompt"]);
+        fputcsv($out, ["rowid", "time_utc", "response", "world_knowledge", "url", "prompt"]);
         foreach ($rows as $row) {
             fputcsv($out, [
                 intval($row["rowid"] ?? 0),
                 formatLocalTs($row["localts"] ?? 0),
                 strval($row["response"] ?? ""),
+                formatWorldKnowledgeTopics($row["prompt"] ?? ""),
                 strval($row["url"] ?? ""),
                 strval($row["prompt"] ?? ""),
             ]);
@@ -284,7 +617,7 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.98), rgba(34, 34, 34, 0.98));
             margin: 3% auto;
             padding: 20px;
-            border: 2px solid rgba(230, 183, 108, 0.5);
+            border: 2px solid rgba(242, 124, 17, 0.5);
             width: 90%;
             max-width: 1600px;
             max-height: 90vh;
@@ -351,9 +684,9 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
 <div id="contentModal" class="modal">
     <div class="modal-content">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h2 style="margin: 0; color: #e6b76c; font-family: 'MagicCards', sans-serif;">Prompt Viewer</h2>
+            <h2 style="margin: 0; color: rgb(242, 124, 17); font-family: 'MagicCards', sans-serif;">&#x1F4DC; Prompt Viewer</h2>
             <div>
-                <button id="copyPromptBtn" class="btn-base btn-primary" style="margin-right: 10px; padding: 8px 16px;">Copy</button>
+                <button id="copyPromptBtn" class="btn-base btn-primary" style="margin-right: 10px; padding: 8px 16px;">&#x1F4CB; Copy</button>
                 <span class="close">&times;</span>
             </div>
         </div>
@@ -393,40 +726,45 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
                 <table>
                     <thead>
                     <tr>
-                        <th style="width:14%">Time (UTC)</th>
-                        <th style="width:42%">AI Response</th>
+                        <th style="width:12%">Time (UTC)</th>
+                        <th style="width:34%">AI Response</th>
+                        <th style="width:18%">World Knowledge</th>
                         <th style="width:14%">Prompt</th>
-                        <th style="width:30%">HTTP Request</th>
+                        <th style="width:22%">HTTP Request</th>
                     </tr>
                     </thead>
                     <tbody>
                     <?php if (count($rows) > 0): ?>
                         <?php foreach ($rows as $row): ?>
                             <?php
-                            $promptId = "prompt_" . intval($row["rowid"] ?? 0);
-                            $promptRaw = trim((string)($row["prompt"] ?? ""));
-                            if ($promptRaw === "") {
-                                $promptRaw = "Prompt payload is empty for this row.";
-                            }
+                            $promptIdSeed = $row["rowid"] ?? md5((string)($row["prompt"] ?? ""));
+                            $promptId = "prompt_" . preg_replace('/[^A-Za-z0-9_\-]/', "_", (string)$promptIdSeed);
+                            $promptModalContentById[$promptId] = formatPromptModalHtml($row["prompt"] ?? "");
+                            $worldKnowledgeDisplay = formatWorldKnowledgeTopics($row["prompt"] ?? "");
                             ?>
                             <tr>
                                 <td><?= h(formatLocalTs($row["localts"] ?? 0)) ?></td>
                                 <td><?= nl2br(h($row["response"] ?? "")) ?></td>
+                                <td><?= nl2br(h($worldKnowledgeDisplay)) ?></td>
                                 <td>
-                                    <div id="<?= h($promptId) ?>" style="display:none;">
-                                        <pre style="white-space: pre-wrap; word-wrap: break-word; font-family: Consolas, Monaco, monospace;"><?= h($promptRaw) ?></pre>
-                                    </div>
-                                    <button class="view-contents-btn" data-prompt-id="<?= h($promptId) ?>">View Prompt</button>
+                                    <button class="view-contents-btn" data-prompt-id="<?= h($promptId) ?>">&#x1F9FE; View Prompt</button>
                                 </td>
                                 <td><?= nl2br(h($row["url"] ?? "")) ?></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="4">No AI response rows found.</td></tr>
+                        <tr><td colspan="5">No AI response rows found.</td></tr>
                     <?php endif; ?>
                     </tbody>
                 </table>
             </div>
+            <?php if (!empty($promptModalContentById)): ?>
+                <div id="prompt-modal-store" style="display:none;">
+                    <?php foreach ($promptModalContentById as $promptId => $promptHtml): ?>
+                        <div id="<?= h($promptId) ?>"><?= $promptHtml ?></div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
 
             <div class="pagination-row">
                 <span class="info-message" style="padding:0">Page <?= intval($page) ?> / <?= intval($totalPages) ?> (<?= intval($totalRecords) ?> rows)</span>
@@ -443,73 +781,76 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-    const modal = document.getElementById("contentModal");
-    const modalText = document.getElementById("modalText");
-    const closeBtn = document.getElementsByClassName("close")[0];
-    const copyBtn = document.getElementById("copyPromptBtn");
+    var modal = document.getElementById("contentModal");
+    var modalText = document.getElementById("modalText");
+    var span = document.getElementsByClassName("close")[0];
+    var copyBtn = document.getElementById("copyPromptBtn");
 
-    if (closeBtn) {
-        closeBtn.onclick = function() {
-            modal.style.display = "none";
-            document.body.classList.remove("modal-open");
-        };
+    if (!modal || !modalText || !span || !copyBtn) {
+        return;
     }
 
+    span.onclick = function() {
+        modal.style.display = "none";
+        document.body.classList.remove("modal-open");
+    };
+
     window.onclick = function(event) {
-        if (event.target === modal) {
+        if (event.target == modal) {
             modal.style.display = "none";
             document.body.classList.remove("modal-open");
         }
     };
 
-    if (copyBtn) {
-        copyBtn.onclick = function() {
-            const textToCopy = modalText.innerText || modalText.textContent || "";
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(textToCopy).then(function() {
-                    const originalText = copyBtn.innerHTML;
-                    copyBtn.innerHTML = "Copied!";
-                    copyBtn.style.background = "#28a745";
-                    setTimeout(function() {
-                        copyBtn.innerHTML = originalText;
-                        copyBtn.style.background = "";
-                    }, 1500);
-                }).catch(function() {
-                    alert("Failed to copy to clipboard");
-                });
-            } else {
-                const textArea = document.createElement("textarea");
-                textArea.value = textToCopy;
-                textArea.style.position = "fixed";
-                textArea.style.left = "-999999px";
-                document.body.appendChild(textArea);
-                textArea.focus();
-                textArea.select();
-                try {
-                    document.execCommand("copy");
-                    const originalText = copyBtn.innerHTML;
-                    copyBtn.innerHTML = "Copied!";
-                    copyBtn.style.background = "#28a745";
-                    setTimeout(function() {
-                        copyBtn.innerHTML = originalText;
-                        copyBtn.style.background = "";
-                    }, 1500);
-                } catch (err) {
-                    alert("Failed to copy to clipboard");
-                }
-                document.body.removeChild(textArea);
+    copyBtn.onclick = function() {
+        var textToCopy = modalText.innerText || modalText.textContent;
+
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(textToCopy).then(function() {
+                var originalText = copyBtn.innerHTML;
+                copyBtn.innerHTML = "&#x2705; Copied!";
+                copyBtn.style.background = "#28a745";
+                setTimeout(function() {
+                    copyBtn.innerHTML = originalText;
+                    copyBtn.style.background = "";
+                }, 2000);
+            }).catch(function(err) {
+                console.error("Failed to copy: ", err);
+                alert("Failed to copy to clipboard");
+            });
+        } else {
+            var textArea = document.createElement("textarea");
+            textArea.value = textToCopy;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand("copy");
+                var originalText = copyBtn.innerHTML;
+                copyBtn.innerHTML = "&#x2705; Copied!";
+                copyBtn.style.background = "#28a745";
+                setTimeout(function() {
+                    copyBtn.innerHTML = originalText;
+                    copyBtn.style.background = "";
+                }, 2000);
+            } catch (err) {
+                console.error("Fallback copy failed: ", err);
+                alert("Failed to copy to clipboard");
             }
-        };
-    }
+            document.body.removeChild(textArea);
+        }
+    };
 
     document.querySelectorAll(".view-contents-btn").forEach(function(element) {
         element.addEventListener("click", function() {
-            const promptId = this.getAttribute("data-prompt-id");
-            const promptDiv = document.getElementById(promptId);
+            var promptId = this.getAttribute("data-prompt-id");
+            var promptDiv = document.getElementById(promptId);
             if (promptDiv) {
                 modalText.innerHTML = promptDiv.innerHTML;
             } else {
-                modalText.innerHTML = "Prompt not found.";
+                modalText.innerHTML = this.getAttribute("data-full-content") || "Content not found";
             }
             modal.style.display = "block";
             document.body.classList.add("modal-open");

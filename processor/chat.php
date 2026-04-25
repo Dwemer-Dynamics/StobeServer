@@ -14,6 +14,7 @@ if (!function_exists('stobeNormalizeManualChatActionKey')) {
             'remove_limb_left_leg',
             'remove_limb_right_leg',
             'cut_horns',
+            'knockout',
             'kill',
         ];
         if (!in_array($normalized, $allowed, true)) {
@@ -27,6 +28,9 @@ if (!function_exists('stobeManualChatActionType')) {
     function stobeManualChatActionType(string $actionKey): string
     {
         $normalized = strtolower(trim($actionKey));
+        if ($normalized === 'knockout') {
+            return 'knockout';
+        }
         if ($normalized === 'kill') {
             return 'kill';
         }
@@ -70,7 +74,7 @@ if (!function_exists('stobeManualActionTargetCannotSpeak')) {
     function stobeManualActionTargetCannotSpeak(array $npcData, string $actionKey = ''): bool
     {
         $actionType = stobeManualChatActionType($actionKey);
-        if ($actionType === 'kill') {
+        if ($actionType === 'kill' || $actionType === 'knockout') {
             return true;
         }
 
@@ -132,9 +136,9 @@ if (!function_exists('stobeBuildManualActionPainFallback')) {
         $safeTarget = trim($targetNpc) !== '' ? trim($targetNpc) : 'The target';
         $safeActor = trim($actorName) !== '' ? trim($actorName) : 'the attacker';
         $actionType = stobeManualChatActionType($actionKey);
-        if ($actionType === 'kill') {
-            // For manual kill, avoid emitting a second world notification.
-            // The plugin kill execution message is the single source of truth.
+        if ($actionType === 'kill' || $actionType === 'knockout') {
+            // For manual kill/knockout, avoid emitting a second world notification.
+            // The plugin execution feedback is the single source of truth.
             return '';
         }
         $limbLabel = stobeManualChatActionLimbLabel($actionKey);
@@ -793,7 +797,9 @@ if ($deliveryStyleInstruction !== '') {
         . "</speech_mode>";
 }
 if ($manualActionActive) {
-    if ($manualActionType === 'kill') {
+    if ($manualActionType === 'knockout') {
+        $manualInstruction = 'Manual knockout is happening now. The target is knocked out immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
+    } elseif ($manualActionType === 'kill') {
         $manualInstruction = 'Manual execution is happening now. The target is killed immediately and cannot speak. Do not invent coherent spoken dialogue for the target.';
     } elseif ($manualActionType === 'cut_horns') {
         $manualInstruction = $manualActionCannotSpeak
@@ -866,7 +872,13 @@ $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
         ? stobeBuildNarratorDirectReplyGuidanceUserPrompt($speaker, $message)
-        : stobeBuildTurnGuidanceUserPrompt($targetNpc, $speaker),
+        : stobeBuildTurnGuidanceUserPrompt(
+            $targetNpc,
+            $speaker,
+            false,
+            $dialogueMode === 'cheat',
+            $dialogueMode === 'cheat' ? $message : ''
+        ),
 ];
 $messages[] = [
     'role' => 'user',
@@ -875,7 +887,7 @@ $messages[] = [
         : stobeBuildOutputContractUserPrompt(
             $targetNpc,
             $dialogueMode === 'cheat',
-            true,
+            false,
             npcIsInPlayerFaction($npcData)
         ),
 ];
@@ -923,6 +935,7 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             'event_type' => 'chat',
             'speaker' => $speaker,
             'action_config' => $actionConfig,
+            'response_format' => $narratorMode ? null : ['type' => 'json_object'],
         ]
     );
 
@@ -943,45 +956,12 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             'actions_streamed' => $actionsStreamedInLlm,
         ]);
     } else {
-        $rawResponse = stobeCallLLM($messages, $llmConfig, [
-        'npc_name' => $targetNpc,
-        'event_type' => 'chat',
-        'speaker' => $speaker,
+        $responseText = '...';
+        stobeLogWarn('LLM stream response failed', [
+            'target_npc' => $targetNpc,
+            'model' => $llmConfig['model'] ?? '',
+            'narrator_mode' => $narratorMode,
         ]);
-        if ($rawResponse === false || trim($rawResponse) === '') {
-            $responseText = '...';
-            stobeLogWarn('LLM returned an empty response', [
-                'target_npc' => $targetNpc,
-                'model' => $llmConfig['model'] ?? '',
-            ]);
-        } else {
-            $structured = stobeParseStructuredDialogueResponse($rawResponse, 'chat');
-            $responseListener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
-            $responseText = sanitizeForKenshi(trim(strval($structured['message'] ?? '')));
-            $responseActions = [];
-            $structuredAction = trim(strval($structured['action_tag'] ?? ''));
-            if ($structuredAction !== '') {
-                $responseActions[] = $structuredAction;
-            }
-            if ($responseText !== '') {
-                $actionExtraction = extractAndNormalizeActionTags($responseText, 'chat', $actionConfig);
-                $responseText = sanitizeForKenshi(trim(strval($actionExtraction['text'] ?? $responseText)));
-                $inlineActions = is_array($actionExtraction['actions'] ?? null) ? $actionExtraction['actions'] : [];
-                foreach ($inlineActions as $inlineAction) {
-                    if (!in_array($inlineAction, $responseActions, true)) {
-                        $responseActions[] = $inlineAction;
-                    }
-                }
-            }
-            stobeLogInfo('LLM response generated (non-stream fallback)', [
-                'target_npc' => $targetNpc,
-                'model' => $llmConfig['model'] ?? '',
-                'response_length' => strlen($responseText),
-                'structured_json' => boolval($structured['is_structured'] ?? false),
-                'actions_count' => count($responseActions),
-                'actions' => $responseActions,
-            ]);
-        }
     }
 }
 $responseActions = stobeDedupeActionList($responseActions, 'chat', $actionConfig);

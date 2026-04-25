@@ -234,13 +234,7 @@ function stobeRegularMemoryLocationColumnAvailable(): bool
 
 function stobeRegularMemoryIndividualSummaryThreshold(): int
 {
-    $threshold = getSettingInt('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', 3);
-    if ($threshold < 2) {
-        $threshold = 2;
-    } elseif ($threshold > 20) {
-        $threshold = 20;
-    }
-    return $threshold;
+    return 2;
 }
 
 function stobeRegularMemoryIndividualEnabledForNpc(array|false $npcData): bool

@@ -116,10 +116,38 @@ function stobePlaythroughEnsureMetaSchema($adminConn): bool
         return false;
     }
 
-    @pg_query($adminConn, 'CREATE SCHEMA IF NOT EXISTS chim_meta');
+    $metaSchema = 'stobe_meta';
+    $legacyMetaSchema = 'ch' . 'im_meta';
+    $schemaExists = static function ($conn, string $schemaName): bool {
+        $result = @pg_query_params(
+            $conn,
+            'SELECT 1 FROM information_schema.schemata WHERE schema_name = $1 LIMIT 1',
+            [$schemaName]
+        );
+
+        return boolval($result && @pg_fetch_assoc($result));
+    };
+
+    if (!$schemaExists($adminConn, $metaSchema) && $schemaExists($adminConn, $legacyMetaSchema)) {
+        @pg_query($adminConn, 'ALTER SCHEMA "' . $legacyMetaSchema . '" RENAME TO "' . $metaSchema . '"');
+    }
+
+    @pg_query($adminConn, 'CREATE SCHEMA IF NOT EXISTS ' . $metaSchema);
+
+    $legacyIndexRenames = [
+        ('idx_' . 'ch' . 'im_playthrough_profiles_created') => 'idx_stobe_playthrough_profiles_created',
+        ('idx_' . 'ch' . 'im_playthrough_profiles_last_gamets') => 'idx_stobe_playthrough_profiles_last_gamets',
+        ('idx_' . 'ch' . 'im_playthrough_profiles_is_active') => 'idx_stobe_playthrough_profiles_is_active',
+    ];
+    foreach ($legacyIndexRenames as $legacyIndexName => $newIndexName) {
+        @pg_query(
+            $adminConn,
+            'ALTER INDEX IF EXISTS "' . $metaSchema . '"."' . $legacyIndexName . '" RENAME TO "' . $newIndexName . '"'
+        );
+    }
 
     $sql = <<<SQL
-CREATE TABLE IF NOT EXISTS chim_meta.playthrough_profiles (
+CREATE TABLE IF NOT EXISTS stobe_meta.playthrough_profiles (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -140,17 +168,17 @@ CREATE TABLE IF NOT EXISTS chim_meta.playthrough_profiles (
     rollback_to_gamets BIGINT DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS chim_meta.playthrough_blobs (
-    profile_id INT PRIMARY KEY REFERENCES chim_meta.playthrough_profiles(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS stobe_meta.playthrough_blobs (
+    profile_id INT PRIMARY KEY REFERENCES stobe_meta.playthrough_profiles(id) ON DELETE CASCADE,
     dump_data TEXT,
     dump_lob OID
 );
 
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_created ON chim_meta.playthrough_profiles (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_last_gamets ON chim_meta.playthrough_profiles (last_gamets DESC);
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_is_active ON chim_meta.playthrough_profiles (is_active);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_created ON stobe_meta.playthrough_profiles (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_last_gamets ON stobe_meta.playthrough_profiles (last_gamets DESC);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_is_active ON stobe_meta.playthrough_profiles (is_active);
 
-ALTER TABLE chim_meta.playthrough_profiles
+ALTER TABLE stobe_meta.playthrough_profiles
     ADD COLUMN IF NOT EXISTS player_faction_members TEXT DEFAULT '[]';
 SQL;
 
@@ -249,7 +277,7 @@ function stobePlaythroughBuildUniqueProfileName($adminConn, string $baseName): s
     while (true) {
         $exists = @pg_query_params(
             $adminConn,
-            'SELECT 1 FROM chim_meta.playthrough_profiles WHERE name = $1 LIMIT 1',
+            'SELECT 1 FROM stobe_meta.playthrough_profiles WHERE name = $1 LIMIT 1',
             [$name]
         );
         if (!$exists || !@pg_fetch_assoc($exists)) {
@@ -327,12 +355,12 @@ function stobePlaythroughCreateSchemaSnapshot(string $name, string $notes = '', 
 
         @pg_query($adminConn, 'BEGIN');
         if ($markActive) {
-            @pg_query($adminConn, 'UPDATE chim_meta.playthrough_profiles SET is_active = FALSE');
+            @pg_query($adminConn, 'UPDATE stobe_meta.playthrough_profiles SET is_active = FALSE');
         }
 
         $insert = @pg_query_params(
             $adminConn,
-            'INSERT INTO chim_meta.playthrough_profiles (
+            'INSERT INTO stobe_meta.playthrough_profiles (
                 name, size_bytes, storage_format, notes, is_active,
                 player_name, player_faction_members, game, eventlog_count, oghma_count, last_gamets,
                 schema_name, storage_type,
@@ -422,7 +450,7 @@ function stobePlaythroughGetProfileById(int $profileId): array|false
         'SELECT id, name, created_at, size_bytes, storage_format, storage_type, schema_name, notes,
                 is_active, player_name, player_faction_members, game, eventlog_count, oghma_count, last_gamets,
                 rollback_delta_days, rollback_from_gamets, rollback_to_gamets
-         FROM chim_meta.playthrough_profiles
+         FROM stobe_meta.playthrough_profiles
          WHERE id = $1
          LIMIT 1',
         [$profileId]
@@ -447,7 +475,7 @@ function stobePlaythroughListProfiles(int $limit = 500): array
         'SELECT id, name, created_at, size_bytes, storage_format, storage_type, schema_name, notes,
                 is_active, player_name, player_faction_members, game, eventlog_count, oghma_count, last_gamets,
                 rollback_delta_days, rollback_from_gamets, rollback_to_gamets
-         FROM chim_meta.playthrough_profiles
+         FROM stobe_meta.playthrough_profiles
          ORDER BY COALESCE(last_gamets, 0) DESC, created_at DESC
          LIMIT ' . intval($limit)
     );
@@ -471,7 +499,7 @@ function stobePlaythroughDeleteProfile(int $profileId): array
 
         $rowRes = @pg_query_params(
             $adminConn,
-            'SELECT id, name, schema_name, storage_type FROM chim_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
+            'SELECT id, name, schema_name, storage_type FROM stobe_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
             [strval($profileId)]
         );
         $row = $rowRes ? @pg_fetch_assoc($rowRes) : null;
@@ -490,7 +518,7 @@ function stobePlaythroughDeleteProfile(int $profileId): array
 
         $delete = @pg_query_params(
             $adminConn,
-            'DELETE FROM chim_meta.playthrough_profiles WHERE id = $1',
+            'DELETE FROM stobe_meta.playthrough_profiles WHERE id = $1',
             [strval($profileId)]
         );
         if (!$delete) {
@@ -530,7 +558,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
 
         $targetRes = @pg_query_params(
             $adminConn,
-            'SELECT id, name, schema_name, storage_type FROM chim_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
+            'SELECT id, name, schema_name, storage_type FROM stobe_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
             [strval($profileId)]
         );
         $target = $targetRes ? @pg_fetch_assoc($targetRes) : null;
@@ -574,10 +602,10 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
             return ['success' => false, 'error' => 'clone_to_public_failed: ' . strval($clone['error'] ?? '')];
         }
 
-        @pg_query($adminConn, 'UPDATE chim_meta.playthrough_profiles SET is_active = FALSE');
+        @pg_query($adminConn, 'UPDATE stobe_meta.playthrough_profiles SET is_active = FALSE');
         $mark = @pg_query_params(
             $adminConn,
-            'UPDATE chim_meta.playthrough_profiles SET is_active = TRUE WHERE id = $1',
+            'UPDATE stobe_meta.playthrough_profiles SET is_active = TRUE WHERE id = $1',
             [strval($profileId)]
         );
         if (!$mark) {
@@ -617,7 +645,7 @@ function stobePlaythroughCurrentActiveProfileName(): string
     }
 
     $row = $db->fetchOne(
-        'SELECT name FROM chim_meta.playthrough_profiles WHERE is_active = TRUE ORDER BY id DESC LIMIT 1'
+        'SELECT name FROM stobe_meta.playthrough_profiles WHERE is_active = TRUE ORDER BY id DESC LIMIT 1'
     );
     return trim(strval($row['name'] ?? ''));
 }
