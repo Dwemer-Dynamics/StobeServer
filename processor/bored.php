@@ -207,7 +207,8 @@ $messages[] = [
         $speakerNpc,
         false,
         false,
-        npcIsInPlayerFaction($speakerData)
+        npcIsInPlayerFaction($speakerData),
+        'bored'
     ),
 ];
 
@@ -238,7 +239,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'npc_name' => $speakerNpc,
         'event_type' => 'bored',
         'action_config' => $actionConfig,
-        'response_format' => ['type' => 'json_object'],
+        'response_format' => stobeBuildStructuredDialogueResponseFormat($speakerNpc, $speakerData, npcIsInPlayerFaction($speakerData), 'bored'),
     ]
 );
 

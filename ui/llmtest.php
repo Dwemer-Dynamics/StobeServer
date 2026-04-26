@@ -166,6 +166,10 @@ function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods
                         'type' => 'string',
                         'description' => 'exact item name for GiveItem/TakeItem, limb token for RemoveLimb, object token for UseObject, or consumable item for Drink/UseDrugs/ForceDrink',
                     ],
+                    'lang' => [
+                        'type' => 'string',
+                        'description' => 'ISO 639-1 language code such as en; use en unless a different language is clearly appropriate',
+                    ],
                     'amount' => [
                         'type' => 'integer',
                         'description' => 'positive integer count for GiveCats/TakeCats and optional stack count for GiveItem/TakeItem; use 0 when not needed',
@@ -179,6 +183,7 @@ function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods
                     'action',
                     'target',
                     'item',
+                    'lang',
                     'amount',
                 ],
                 'additionalProperties' => false,
@@ -203,12 +208,13 @@ function stobeLlmtestBuildPromptMessages(string $prompt): array {
     $exampleResponse = [
         'character' => $character,
         'listener' => $listener,
+        'message' => 'What are you looking at?',
         'mood' => 'neutral',
         'action' => 'Talk',
         'target' => '',
         'item' => '',
+        'lang' => 'en',
         'amount' => 0,
-        'message' => 'What are you looking at?',
     ];
 
     $messages = [
