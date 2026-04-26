@@ -4008,27 +4008,20 @@ function stobeBuildOutputContractUserPrompt(
             );
         }
     }
-    $moods = [];
-    $seenMoods = [];
-    foreach (explode(',', $moodsCsv) as $rawMood) {
-        $normalizedMood = strtolower(trim(strval($rawMood)));
-        if ($normalizedMood === '' || isset($seenMoods[$normalizedMood])) {
-            continue;
-        }
-        $seenMoods[$normalizedMood] = true;
-        $moods[] = $normalizedMood;
-    }
+    $moods = function_exists('stobeNormalizeEmoteMoods') ? stobeNormalizeEmoteMoods($moodsCsv) : [];
     if (count($moods) === 0) {
-        $moods = [
-            'default', 'neutral', 'assertive', 'kindly', 'smug', 'sarcastic',
-            'teasing', 'playful', 'sardonic', 'irritated', 'amused', 'assisting',
-        ];
+        $moods = function_exists('stobeDefaultEmoteMoodList')
+            ? stobeDefaultEmoteMoodList()
+            : ['neutral', 'assertive', 'kindly', 'smug', 'sarcastic', 'teasing', 'playful', 'irritated', 'amused'];
     }
+    $moodDescription = count($moods) > 0
+        ? 'choose exactly one mood while speaking from this list, never combine moods: ' . implode('|', $moods)
+        : 'choose exactly one mood while speaking, never combine moods';
 
     $schema = [
         'character' => $safeNpc,
         'listener' => 'who ' . $safeNpc . ' is addressing',
-        'mood' => implode('|', $moods),
+        'mood' => $moodDescription,
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
         'item' => 'exact item name for GIVE_ITEM/TAKE_ITEM, limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
@@ -4619,7 +4612,9 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
                 'message' => $heuristicMessage,
                 'action_tag' => $fallbackActionTag,
                 'listener' => trim(strval($heuristic['listener'] ?? '')),
-                'mood' => trim(strval($heuristic['mood'] ?? '')),
+                'mood' => function_exists('stobeExtractFirstEmoteMood')
+                    ? stobeExtractFirstEmoteMood($heuristic['mood'] ?? '')
+                    : trim(strval($heuristic['mood'] ?? '')),
             ];
         }
 
@@ -4643,7 +4638,9 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
     $target = trim(strval($decoded['target'] ?? ''));
     $item = trim(strval($decoded['item'] ?? ''));
     $listener = trim(strval($decoded['listener'] ?? ''));
-    $mood = trim(strval($decoded['mood'] ?? ''));
+    $mood = function_exists('stobeExtractFirstEmoteMood')
+        ? stobeExtractFirstEmoteMood($decoded['mood'] ?? '')
+        : trim(strval($decoded['mood'] ?? ''));
     $amount = trim(strval($decoded['amount'] ?? ''));
 
     $rawActionTag = stobeBuildActionTagFromStructuredPayload(

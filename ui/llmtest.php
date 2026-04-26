@@ -71,22 +71,12 @@ function stobeLlmtestDefaultMoodEnums(): array {
         $moodsCsv
     );
 
-    $moods = [];
-    $seen = [];
-    foreach (explode(',', $moodsCsv) as $rawMood) {
-        $mood = strtolower(trim(strval($rawMood)));
-        if ($mood === '' || isset($seen[$mood])) {
-            continue;
-        }
-        $seen[$mood] = true;
-        $moods[] = $mood;
-    }
+    $moods = function_exists('stobeNormalizeEmoteMoods') ? stobeNormalizeEmoteMoods($moodsCsv) : [];
 
     if (count($moods) === 0) {
-        $moods = [
-            'default', 'neutral', 'assertive', 'kindly', 'smug', 'sarcastic',
-            'teasing', 'playful', 'sardonic', 'irritated', 'amused', 'assisting',
-        ];
+        $moods = function_exists('stobeDefaultEmoteMoodList')
+            ? stobeDefaultEmoteMoodList()
+            : ['neutral', 'assertive', 'kindly', 'smug', 'sarcastic', 'teasing', 'playful', 'irritated', 'amused'];
     }
 
     return $moods;
@@ -160,7 +150,7 @@ function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods
                     ],
                     'mood' => [
                         'type' => 'string',
-                        'description' => 'mood to use while speaking',
+                        'description' => 'choose exactly one mood while speaking from this list, never combine moods',
                         'enum' => array_values($moods),
                     ],
                     'action' => [

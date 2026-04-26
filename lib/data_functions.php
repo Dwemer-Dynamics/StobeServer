@@ -7273,32 +7273,123 @@ function stobeMaybeSnapshotNpcHistoryBeforeAfter(array|false $beforeRow, array|f
 
 function stobeDefaultEmoteMoods(): string {
     // Keep parity with HerikaServer conf.sample.php default EMOTEMOODS.
+    // Runtime normalization maps deprecated aliases to canonical moods.
     return 'sassy,assertive,sexy,smug,kindly,lovely,seductive,sarcastic,sardonic,smirking,amused,default,assisting,irritated,playful,neutral,teasing,mocking,desperate,distressed,pleading,sad';
 }
 
-function stobeNormalizeEmoteMoodsCsv(string $csv): string {
-    $raw = trim($csv);
-    if ($raw === '') {
-        return '';
+function stobeDefaultEmoteMoodList(): array {
+    return [
+        'sassy',
+        'assertive',
+        'sexy',
+        'smug',
+        'kindly',
+        'lovely',
+        'seductive',
+        'sarcastic',
+        'smirking',
+        'amused',
+        'irritated',
+        'playful',
+        'neutral',
+        'teasing',
+        'desperate',
+        'scared',
+        'pleading',
+        'sad',
+    ];
+}
+
+function stobeExpandEmoteMoodToken(string $token): array {
+    $token = strtolower(trim($token));
+    if ($token === '') {
+        return [];
     }
-    // Repair legacy malformed suffix without commas.
-    $raw = str_replace(
-        'mockingdesperatedistressedpleadingsad',
-        'mocking,desperate,distressed,pleading,sad',
-        $raw
-    );
-    $parts = explode(',', $raw);
-    $clean = [];
-    $seen = [];
-    foreach ($parts as $part) {
-        $token = strtolower(trim($part));
-        if ($token === '' || isset($seen[$token])) {
-            continue;
+
+    $defaultMoods = stobeDefaultEmoteMoodList();
+    $defaultLookup = array_fill_keys($defaultMoods, true);
+    $deprecatedMoodAliases = [
+        'sardonic' => ['sarcastic'],
+        'mocking' => ['sarcastic'],
+        'default' => ['neutral'],
+        'distressed' => ['scared'],
+        'assisting' => [],
+    ];
+
+    if (isset($defaultLookup[$token])) {
+        return [$token];
+    }
+    if (isset($deprecatedMoodAliases[$token])) {
+        return $deprecatedMoodAliases[$token];
+    }
+    if (str_contains($token, ':')) {
+        return [$token];
+    }
+
+    $compactToken = preg_replace('/[^a-z]/', '', $token);
+    if ($compactToken === '') {
+        return [];
+    }
+    if (isset($defaultLookup[$compactToken])) {
+        return [$compactToken];
+    }
+    if (isset($deprecatedMoodAliases[$compactToken])) {
+        return $deprecatedMoodAliases[$compactToken];
+    }
+
+    $sortedMoods = array_values(array_unique(array_merge($defaultMoods, array_keys($deprecatedMoodAliases))));
+    usort($sortedMoods, static function (string $left, string $right): int {
+        return strlen($right) <=> strlen($left);
+    });
+
+    $pattern = '/' . implode('|', array_map(static function (string $mood): string {
+        return preg_quote($mood, '/');
+    }, $sortedMoods)) . '/';
+
+    preg_match_all($pattern, $compactToken, $matches);
+    $expandedMoods = $matches[0] ?? [];
+    if (!empty($expandedMoods) && implode('', $expandedMoods) === $compactToken) {
+        $normalizedExpandedMoods = [];
+        foreach ($expandedMoods as $expandedMood) {
+            foreach (stobeExpandEmoteMoodToken($expandedMood) as $normalizedMood) {
+                $normalizedExpandedMoods[] = $normalizedMood;
+            }
         }
-        $seen[$token] = true;
-        $clean[] = $token;
+        return $normalizedExpandedMoods;
     }
-    return implode(',', $clean);
+
+    return [$token];
+}
+
+function stobeNormalizeEmoteMoods(mixed $rawMoods): array {
+    if (is_array($rawMoods)) {
+        $tokens = $rawMoods;
+    } else {
+        $repaired = str_replace(
+            'mockingdesperatedistressedpleadingsad',
+            'mocking,desperate,distressed,pleading,sad',
+            trim((string)$rawMoods)
+        );
+        $tokens = preg_split('/[\r\n,|]+/', $repaired);
+    }
+
+    $normalizedMoods = [];
+    $seenMoods = [];
+    foreach ($tokens as $token) {
+        foreach (stobeExpandEmoteMoodToken((string)$token) as $mood) {
+            if ($mood === '' || isset($seenMoods[$mood])) {
+                continue;
+            }
+            $normalizedMoods[] = $mood;
+            $seenMoods[$mood] = true;
+        }
+    }
+
+    return $normalizedMoods;
+}
+
+function stobeNormalizeEmoteMoodsCsv(string $csv): string {
+    return implode(',', stobeNormalizeEmoteMoods($csv));
 }
 
 function stobeResolveGlobalEmoteMoods(): string {
@@ -7309,7 +7400,15 @@ function stobeResolveGlobalEmoteMoods(): string {
             return $normalized;
         }
     }
-    return stobeDefaultEmoteMoods();
+    return stobeNormalizeEmoteMoodsCsv(stobeDefaultEmoteMoods());
+}
+
+function stobeExtractFirstEmoteMood(mixed $rawMoods, string $fallback = ''): string {
+    $normalizedMoods = stobeNormalizeEmoteMoods($rawMoods);
+    if (!empty($normalizedMoods)) {
+        return $normalizedMoods[0];
+    }
+    return trim($fallback);
 }
 
 function stobeParseNonNegativeInt(mixed $value, int $fallback = 0): int {
