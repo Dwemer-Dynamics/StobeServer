@@ -2535,24 +2535,75 @@ function stobeWorldKnowledgeResolveTranslatorConfig(array|false $npcData): array
     return getLlmConfigForNpcPurpose($npcData, 'response');
 }
 
-function stobeWorldKnowledgeTranslateSignalWithLlm(string $text, array $glossary, array|false $npcData): string
+function stobeWorldKnowledgeNormalizeSpanishText(string $value): string
 {
-    if (!stobeWorldKnowledgeSignalTranslationEnabled()) {
+    $normalized = mb_strtolower(trim($value), 'UTF-8');
+    if ($normalized === '') {
         return '';
+    }
+    $normalized = strtr(
+        $normalized,
+        [
+            'á' => 'a', 'à' => 'a', 'ä' => 'a', 'â' => 'a',
+            'é' => 'e', 'è' => 'e', 'ë' => 'e', 'ê' => 'e',
+            'í' => 'i', 'ì' => 'i', 'ï' => 'i', 'î' => 'i',
+            'ó' => 'o', 'ò' => 'o', 'ö' => 'o', 'ô' => 'o',
+            'ú' => 'u', 'ù' => 'u', 'ü' => 'u', 'û' => 'u',
+            'ñ' => 'n',
+        ]
+    );
+    $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
+    return trim($normalized);
+}
+
+function stobeWorldKnowledgeHeuristicCanonicalTargets(string $value): array
+{
+    $normalized = stobeWorldKnowledgeNormalizeSpanishText($value);
+    if ($normalized === '') {
+        return [];
+    }
+
+    $targets = [];
+    if (preg_match('/\bnacion\s+(sagrada|santa|santo)\b/u', $normalized) === 1) {
+        $targets[] = 'Holy Nation';
+    }
+
+    return stobeWorldKnowledgeUniqueTerms($targets, 3);
+}
+
+function stobeWorldKnowledgeTranslateSignalWithLlmDetailed(string $text, array $glossary, array|false $npcData): array
+{
+    $result = [
+        'attempted' => false,
+        'accepted' => false,
+        'translated' => '',
+        'raw' => '',
+        'reason' => 'unknown',
+    ];
+
+    if (!stobeWorldKnowledgeSignalTranslationEnabled()) {
+        $result['reason'] = 'translation_disabled';
+        return $result;
     }
 
     $safeText = trim($text);
     if ($safeText === '') {
-        return '';
+        $result['reason'] = 'empty_signal';
+        return $result;
     }
 
     if (!stobeWorldKnowledgeHasQueryableTerms($safeText)) {
-        return '';
+        $result['reason'] = 'non_queryable_signal';
+        return $result;
     }
 
+    $result['attempted'] = true;
     $cached = stobeWorldKnowledgeReadSignalTranslationCache($safeText);
     if ($cached !== '') {
-        return $cached;
+        $result['accepted'] = true;
+        $result['translated'] = $cached;
+        $result['reason'] = 'cache_hit';
+        return $result;
     }
 
     $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
@@ -2561,7 +2612,8 @@ function stobeWorldKnowledgeTranslateSignalWithLlm(string $text, array $glossary
         require_once($dispatcher);
     }
     if (!function_exists('stobeCallLLM')) {
-        return '';
+        $result['reason'] = 'dispatcher_unavailable';
+        return $result;
     }
 
     $llmConfig = stobeWorldKnowledgeResolveTranslatorConfig($npcData);
@@ -2606,48 +2658,60 @@ function stobeWorldKnowledgeTranslateSignalWithLlm(string $text, array $glossary
     );
 
     if ($raw === false) {
-        return '';
+        $result['reason'] = 'llm_call_failed';
+        return $result;
     }
 
-    $decoded = json_decode(trim(strval($raw)), true);
+    $result['raw'] = trim(strval($raw));
+    $decoded = json_decode($result['raw'], true);
     if (!is_array($decoded)) {
-        return '';
+        $result['reason'] = 'invalid_json';
+        return $result;
     }
 
     $translated = trim(strval($decoded['en'] ?? ''));
-    if ($translated === '' || !stobeWorldKnowledgeHasQueryableTerms($translated)) {
-        return '';
+    $result['translated'] = $translated;
+    if ($translated === '') {
+        $result['reason'] = 'empty_en';
+        return $result;
+    }
+    if (!stobeWorldKnowledgeHasQueryableTerms($translated)) {
+        $result['reason'] = 'non_queryable_en';
+        return $result;
     }
 
     stobeWorldKnowledgeWriteSignalTranslationCache($safeText, $translated);
-    return $translated;
+    $result['accepted'] = true;
+    $result['reason'] = 'accepted';
+    return $result;
 }
 
-function stobeWorldKnowledgeBuildSignalVariants(
-    string $signal,
-    array|false $npcData = false,
-    bool $allowLlm = false
-): array {
-    $entries = stobeWorldKnowledgeBuildSignalVariantEntries($signal, $npcData, $allowLlm);
-    $variants = [];
-    foreach ($entries as $entry) {
-        $text = trim(strval($entry['text'] ?? ''));
-        if ($text === '') {
-            continue;
-        }
-        $variants[] = $text;
+function stobeWorldKnowledgeTranslateSignalWithLlm(string $text, array $glossary, array|false $npcData): string
+{
+    $detail = stobeWorldKnowledgeTranslateSignalWithLlmDetailed($text, $glossary, $npcData);
+    if (!boolval($detail['accepted'] ?? false)) {
+        return '';
     }
-    return stobeWorldKnowledgeUniqueTerms($variants, 4);
+    return trim(strval($detail['translated'] ?? ''));
 }
 
-function stobeWorldKnowledgeBuildSignalVariantEntries(
+function stobeWorldKnowledgeBuildSignalVariantPack(
     string $signal,
     array|false $npcData = false,
     bool $allowLlm = false
 ): array {
     $base = trim($signal);
     if ($base === '') {
-        return [];
+        return [
+            'entries' => [],
+            'llm' => [
+                'attempted' => false,
+                'accepted' => false,
+                'translated' => '',
+                'raw' => '',
+                'reason' => 'empty_signal',
+            ],
+        ];
     }
 
     $rawEntries = [
@@ -2660,8 +2724,6 @@ function stobeWorldKnowledgeBuildSignalVariantEntries(
     if ($glossaryVariant !== '' && strcasecmp($glossaryVariant, $base) !== 0) {
         $rawEntries[] = ['text' => $glossaryVariant, 'source' => 'glossary'];
     }
-    // When glossary substitutions occur inside a longer sentence,
-    // also add each canonical target term as its own clean retrieval signal.
     if (count($applied) > 0) {
         foreach ($applied as $canonicalTarget) {
             $target = trim(strval($canonicalTarget));
@@ -2672,14 +2734,33 @@ function stobeWorldKnowledgeBuildSignalVariantEntries(
         }
     }
 
+    $heuristicTargets = stobeWorldKnowledgeHeuristicCanonicalTargets($base);
+    foreach ($heuristicTargets as $heuristicTarget) {
+        $target = trim(strval($heuristicTarget));
+        if ($target === '' || !stobeWorldKnowledgeHasQueryableTerms($target)) {
+            continue;
+        }
+        $rawEntries[] = ['text' => $target, 'source' => 'heuristic'];
+    }
+
+    $llmDetail = [
+        'attempted' => false,
+        'accepted' => false,
+        'translated' => '',
+        'raw' => '',
+        'reason' => $allowLlm ? 'translation_disabled' : 'llm_not_requested',
+    ];
     if ($allowLlm && stobeWorldKnowledgeSignalTranslationEnabled()) {
-        $llmVariant = stobeWorldKnowledgeTranslateSignalWithLlm(
+        $llmDetail = stobeWorldKnowledgeTranslateSignalWithLlmDetailed(
             $glossaryVariant !== '' ? $glossaryVariant : $base,
             $glossary,
             $npcData
         );
-        if ($llmVariant !== '') {
-            $rawEntries[] = ['text' => $llmVariant, 'source' => 'llm'];
+        if (boolval($llmDetail['accepted'] ?? false)) {
+            $llmVariant = trim(strval($llmDetail['translated'] ?? ''));
+            if ($llmVariant !== '') {
+                $rawEntries[] = ['text' => $llmVariant, 'source' => 'llm'];
+            }
         }
     }
 
@@ -2716,7 +2797,68 @@ function stobeWorldKnowledgeBuildSignalVariantEntries(
         $entries[] = $entry;
     }
 
-    return $entries;
+    return [
+        'entries' => $entries,
+        'llm' => $llmDetail,
+    ];
+}
+
+function stobeWorldKnowledgeBuildSignalVariants(
+    string $signal,
+    array|false $npcData = false,
+    bool $allowLlm = false
+): array {
+    $pack = stobeWorldKnowledgeBuildSignalVariantPack($signal, $npcData, $allowLlm);
+    $entries = is_array($pack['entries'] ?? null) ? $pack['entries'] : [];
+    $variants = [];
+    foreach ($entries as $entry) {
+        $text = trim(strval($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        $variants[] = $text;
+    }
+    return stobeWorldKnowledgeUniqueTerms($variants, 4);
+}
+
+function stobeWorldKnowledgeBuildSignalVariantEntries(
+    string $signal,
+    array|false $npcData = false,
+    bool $allowLlm = false
+): array {
+    $pack = stobeWorldKnowledgeBuildSignalVariantPack($signal, $npcData, $allowLlm);
+    return is_array($pack['entries'] ?? null) ? $pack['entries'] : [];
+}
+
+function stobeWorldKnowledgeFormatLlmAttemptTrace(string $label, array $llmDetail): string
+{
+    $cleanLabel = trim($label);
+    if ($cleanLabel === '') {
+        return '';
+    }
+    $attempted = boolval($llmDetail['attempted'] ?? false);
+    if (!$attempted) {
+        return '';
+    }
+
+    $accepted = boolval($llmDetail['accepted'] ?? false);
+    $reason = trim(strval($llmDetail['reason'] ?? ''));
+    $translated = truncatePromptValue(trim(strval($llmDetail['translated'] ?? '')), 180);
+    $raw = truncatePromptValue(trim(strval($llmDetail['raw'] ?? '')), 180);
+
+    $parts = [];
+    $parts[] = 'status=' . ($accepted ? 'accepted' : 'rejected');
+    if ($reason !== '') {
+        $parts[] = 'reason=' . $reason;
+    }
+    if ($translated !== '') {
+        $parts[] = 'en=' . $translated;
+    }
+    if ($raw !== '') {
+        $parts[] = 'raw=' . $raw;
+    }
+
+    return 'llm_' . $cleanLabel . '={' . implode(', ', $parts) . '}';
 }
 
 function stobeWorldKnowledgeFormatVariantEntryTrace(string $label, array $entries): string
@@ -5227,11 +5369,17 @@ function queryWorldKnowledgeForNpc(
     };
 
     $translateAllSignals = stobeWorldKnowledgeSignalTranslationAllowAllSignals();
-    $topicVariantEntries = stobeWorldKnowledgeBuildSignalVariantEntries($primaryTopic, $npcData, true);
-    $continuityVariantEntries = stobeWorldKnowledgeBuildSignalVariantEntries($currentTopicBefore, $npcData, $translateAllSignals);
-    $locationVariantEntries = stobeWorldKnowledgeBuildSignalVariantEntries($locationContext, $npcData, $translateAllSignals);
-    $contextVariantEntries = stobeWorldKnowledgeBuildSignalVariantEntries($contextKeywords, $npcData, $translateAllSignals);
-    $messageVariantEntries = stobeWorldKnowledgeBuildSignalVariantEntries($message, $npcData, $translateAllSignals);
+    $topicVariantPack = stobeWorldKnowledgeBuildSignalVariantPack($primaryTopic, $npcData, true);
+    $continuityVariantPack = stobeWorldKnowledgeBuildSignalVariantPack($currentTopicBefore, $npcData, $translateAllSignals);
+    $locationVariantPack = stobeWorldKnowledgeBuildSignalVariantPack($locationContext, $npcData, $translateAllSignals);
+    $contextVariantPack = stobeWorldKnowledgeBuildSignalVariantPack($contextKeywords, $npcData, $translateAllSignals);
+    $messageVariantPack = stobeWorldKnowledgeBuildSignalVariantPack($message, $npcData, $translateAllSignals);
+
+    $topicVariantEntries = is_array($topicVariantPack['entries'] ?? null) ? $topicVariantPack['entries'] : [];
+    $continuityVariantEntries = is_array($continuityVariantPack['entries'] ?? null) ? $continuityVariantPack['entries'] : [];
+    $locationVariantEntries = is_array($locationVariantPack['entries'] ?? null) ? $locationVariantPack['entries'] : [];
+    $contextVariantEntries = is_array($contextVariantPack['entries'] ?? null) ? $contextVariantPack['entries'] : [];
+    $messageVariantEntries = is_array($messageVariantPack['entries'] ?? null) ? $messageVariantPack['entries'] : [];
 
     $extractTexts = static function (array $entries): array {
         $variants = [];
@@ -5261,6 +5409,18 @@ function queryWorldKnowledgeForNpc(
         $trace = stobeWorldKnowledgeFormatVariantEntryTrace($signalLabel, $signalEntries);
         if ($trace !== '') {
             $signalDebugParts[] = $trace;
+        }
+    }
+    foreach ([
+        'topic' => ($topicVariantPack['llm'] ?? []),
+        'continuity' => ($continuityVariantPack['llm'] ?? []),
+        'location' => ($locationVariantPack['llm'] ?? []),
+        'context' => ($contextVariantPack['llm'] ?? []),
+        'message' => ($messageVariantPack['llm'] ?? []),
+    ] as $signalLabel => $llmDetail) {
+        $llmTrace = stobeWorldKnowledgeFormatLlmAttemptTrace($signalLabel, is_array($llmDetail) ? $llmDetail : []);
+        if ($llmTrace !== '') {
+            $signalDebugParts[] = $llmTrace;
         }
     }
 
