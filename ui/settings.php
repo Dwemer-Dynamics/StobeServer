@@ -37,6 +37,36 @@ try {
                 'value' => 'true',
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
             ],
+            [
+                'id' => 'WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_ENABLED',
+                'value' => 'false',
+                'description' => 'When true, normalize retrieval signals for World Knowledge using glossary rules and optional LLM translation before ranking.',
+            ],
+            [
+                'id' => 'WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_ALL_SIGNALS',
+                'value' => 'false',
+                'description' => 'When true, also normalize context, location, continuity and full-message signals. When false, only the primary topic signal is translated.',
+            ],
+            [
+                'id' => 'WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_DRIVER',
+                'value' => 'player2json',
+                'description' => 'Preferred LLM connector type for signal normalization. Default is player2json.',
+            ],
+            [
+                'id' => 'WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_CONNECTOR_ID',
+                'value' => '0',
+                'description' => 'Optional exact core_llm_connector ID to force for signal normalization. Use 0 to auto-resolve by driver.',
+            ],
+            [
+                'id' => 'WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_CACHE_MIN',
+                'value' => '1440',
+                'description' => 'How long, in minutes, translated retrieval signals stay cached in conf_opts.',
+            ],
+            [
+                'id' => 'WORLD_KNOWLEDGE_SIGNAL_GLOSSARY_JSON',
+                'value' => '',
+                'description' => 'JSON object mapping Spanish lore terms to canonical English Kenshi terms for retrieval. Example: {"Nación Santa":"Holy Nation"}',
+            ],
         ];
 
         foreach ($requiredSettings as $requiredSetting) {
@@ -146,7 +176,7 @@ function stobeSettingType(string $id, string $value): string
     if (strpos($idUpper, 'API_KEY') !== false || strpos($idUpper, 'SECRET') !== false || strpos($idUpper, 'TOKEN') !== false) {
         return 'password';
     }
-    if (in_array($idUpper, ['PROMPT_HEAD', 'EMOTEMOODS', 'ROLEPLAY_INSTRUCTIONS', 'GENERAL_INSTRUCTIONS', 'ACTIONS_ALLOWLIST', 'PLAYER_FACTION_PROMPT'], true)) {
+    if (in_array($idUpper, ['PROMPT_HEAD', 'EMOTEMOODS', 'ROLEPLAY_INSTRUCTIONS', 'GENERAL_INSTRUCTIONS', 'ACTIONS_ALLOWLIST', 'PLAYER_FACTION_PROMPT', 'WORLD_KNOWLEDGE_SIGNAL_GLOSSARY_JSON'], true)) {
         return 'textarea';
     }
     if (strlen($value) > 120 || strpos($value, "\n") !== false) {
@@ -230,6 +260,18 @@ function stobeSettingWarningMessage(string $id): string
     return '';
 }
 
+function stobeTranslatorDriverOptions(): array
+{
+    return [
+        'player2json' => 'Player2 JSON',
+        'koboldcppjson' => 'KoboldCpp JSON',
+        'openaijson' => 'OpenAI JSON',
+        'openrouterjson' => 'OpenRouter JSON',
+        'google_openaijson' => 'Google OpenAI JSON',
+        'groqjson' => 'Groq JSON',
+    ];
+}
+
 $isEmbed = (isset($_GET['embed']) && strval($_GET['embed']) === '1');
 $webRoot = stobeSettingsWebRoot();
 $selfPage = $webRoot . '/ui/settings.php' . ($isEmbed ? '?embed=1' : '');
@@ -299,6 +341,12 @@ foreach ($grouped as $groupName => $rows) {
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
             'ALWAYS_INSERT_RACE' => 1,
+            'WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_ENABLED' => 90,
+            'WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_ALL_SIGNALS' => 91,
+            'WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_DRIVER' => 92,
+            'WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_CONNECTOR_ID' => 93,
+            'WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_CACHE_MIN' => 94,
+            'WORLD_KNOWLEDGE_SIGNAL_GLOSSARY_JSON' => 95,
             'PLAYTHROUGH_AUTOLOAD_ENABLED' => 0,
             'PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED' => 1,
         ];
@@ -539,7 +587,14 @@ uksort($grouped, function ($a, $b) {
                                 <div class="setting-warning"><?= h($warning) ?></div>
                             <?php endif; ?>
                             <div class="setting-control">
-                                <?php if ($type === 'bool'): ?>
+                                <?php if ($id === 'WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_DRIVER'): ?>
+                                    <?php $driverOptions = stobeTranslatorDriverOptions(); ?>
+                                    <select id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]">
+                                        <?php foreach ($driverOptions as $optionValue => $optionLabel): ?>
+                                            <option value="<?= h($optionValue) ?>" <?= strcasecmp($value, $optionValue) === 0 ? 'selected' : '' ?>><?= h($optionLabel) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                <?php elseif ($type === 'bool'): ?>
                                     <?php $checked = in_array(strtolower(trim($value)), ['true', '1', 'yes', 'on'], true); ?>
                                     <input type="hidden" name="settings[<?= h($id) ?>]" value="false">
                                     <label class="bool-wrap" for="<?= h($inputId) ?>">

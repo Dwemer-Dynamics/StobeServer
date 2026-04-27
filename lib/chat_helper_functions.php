@@ -1859,7 +1859,17 @@ function stobeWorldKnowledgeResolveForcedRaceHints(
     $seenTopics = [];
 
     foreach ($raceSignals as $raceSignal) {
-        $row = stobeWorldKnowledgeLookupTopicRowByLabel(strval($raceSignal));
+        $row = null;
+        $lookupCandidates = stobeWorldKnowledgeBuildLookupCandidates(strval($raceSignal), $npcData);
+        if (count($lookupCandidates) === 0) {
+            $lookupCandidates = [strval($raceSignal)];
+        }
+        foreach ($lookupCandidates as $lookupLabel) {
+            $row = stobeWorldKnowledgeLookupTopicRowByLabel(strval($lookupLabel));
+            if (is_array($row) && count($row) > 0) {
+                break;
+            }
+        }
         if (!is_array($row) || count($row) === 0) {
             continue;
         }
@@ -2349,6 +2359,317 @@ function stobeWorldKnowledgeExtractTopics(string $message, string $contextKeywor
         return $topics;
     }
     return stobeWorldKnowledgeExtractTopicsHeuristic($message, $contextKeywords, $maxTopics);
+}
+
+function stobeWorldKnowledgeSignalTranslationEnabled(): bool
+{
+    return getSettingBool('WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_ENABLED', false);
+}
+
+function stobeWorldKnowledgeSignalTranslationAllowAllSignals(): bool
+{
+    return getSettingBool('WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_ALL_SIGNALS', false);
+}
+
+function stobeWorldKnowledgeSignalGlossaryMap(): array
+{
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    $defaults = [
+        'nacion santa' => 'Holy Nation',
+        'nación santa' => 'Holy Nation',
+        'anti esclavistas' => 'Anti-Slavers',
+        'antiesclavistas' => 'Anti-Slavers',
+        'ciudades unidas' => 'United Cities',
+        'reino shek' => 'Shek Kingdom',
+        'colmena occidental' => 'Western Hive',
+        'colmena del sur' => 'Southern Hive',
+    ];
+
+    $map = [];
+    foreach ($defaults as $source => $target) {
+        $key = mb_strtolower(trim(strval($source)), 'UTF-8');
+        $value = trim(strval($target));
+        if ($key !== '' && $value !== '') {
+            $map[$key] = $value;
+        }
+    }
+
+    $raw = trim(strval(getSetting('WORLD_KNOWLEDGE_SIGNAL_GLOSSARY_JSON', '')));
+    if ($raw !== '') {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $source => $target) {
+                if (!is_scalar($source) || !is_scalar($target)) {
+                    continue;
+                }
+                $key = mb_strtolower(trim(strval($source)), 'UTF-8');
+                $value = trim(strval($target));
+                if ($key === '' || $value === '') {
+                    continue;
+                }
+                $map[$key] = $value;
+            }
+        }
+    }
+
+    $cached = $map;
+    return $cached;
+}
+
+function stobeWorldKnowledgeApplyGlossaryToSignal(string $text, array $glossary, array &$applied): string
+{
+    $normalizedText = trim($text);
+    if ($normalizedText === '' || count($glossary) === 0) {
+        return $normalizedText;
+    }
+
+    $terms = array_keys($glossary);
+    usort(
+        $terms,
+        static fn(string $a, string $b): int => strlen($b) <=> strlen($a)
+    );
+
+    $output = $normalizedText;
+    foreach ($terms as $source) {
+        $target = trim(strval($glossary[$source] ?? ''));
+        if ($target === '') {
+            continue;
+        }
+        $pattern = '/\b' . preg_quote($source, '/') . '\b/iu';
+        $newOutput = preg_replace($pattern, $target, $output) ?? $output;
+        if ($newOutput !== $output) {
+            $applied[$source] = $target;
+            $output = $newOutput;
+        }
+    }
+
+    $output = preg_replace('/\s+/u', ' ', $output) ?? $output;
+    return trim($output);
+}
+
+function stobeWorldKnowledgeReadSignalTranslationCache(string $text): string
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return '';
+    }
+
+    $safeText = trim($text);
+    if ($safeText === '') {
+        return '';
+    }
+
+    $cacheMinutes = max(5, min(10080, getSettingInt('WORLD_KNOWLEDGE_SIGNAL_TRANSLATION_CACHE_MIN', 1440)));
+    $cacheId = 'wk_signal_translate:' . substr(sha1(mb_strtolower($safeText, 'UTF-8')), 0, 32);
+
+    try {
+        $row = $db->fetchOne(
+            "SELECT value
+             FROM conf_opts
+             WHERE id = $1
+               AND updated_at >= NOW() - (($2::text || ' minutes')::interval)
+             LIMIT 1",
+            [$cacheId, strval($cacheMinutes)]
+        );
+    } catch (Throwable $exception) {
+        return '';
+    }
+
+    return trim(strval($row['value'] ?? ''));
+}
+
+function stobeWorldKnowledgeWriteSignalTranslationCache(string $text, string $translated): void
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return;
+    }
+
+    $safeText = trim($text);
+    $safeTranslated = trim($translated);
+    if ($safeText === '' || $safeTranslated === '') {
+        return;
+    }
+
+    $cacheId = 'wk_signal_translate:' . substr(sha1(mb_strtolower($safeText, 'UTF-8')), 0, 32);
+    try {
+        $db->exec(
+            "INSERT INTO conf_opts (id, value, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (id) DO UPDATE
+             SET value = EXCLUDED.value,
+                 updated_at = NOW()",
+            [$cacheId, truncatePromptValue($safeTranslated, 500)]
+        );
+    } catch (Throwable $exception) {
+        return;
+    }
+}
+
+function stobeWorldKnowledgeResolveTranslatorConfig(array|false $npcData): array
+{
+    $forcedConnectorId = getSettingInt('WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_CONNECTOR_ID', 0);
+    if ($forcedConnectorId > 0 && function_exists('getLlmConnectorById')) {
+        $forced = getLlmConnectorById($forcedConnectorId);
+        if ($forced && function_exists('stobeBuildLlmConfigFromConnector')) {
+            return stobeBuildLlmConfigFromConnector($forced);
+        }
+    }
+
+    $forcedType = strtolower(trim(strval(getSetting('WORLD_KNOWLEDGE_SIGNAL_TRANSLATOR_DRIVER', 'player2json'))));
+    if ($forcedType !== '' && function_exists('getAllLlmConnectors') && function_exists('stobeBuildLlmConfigFromConnector')) {
+        $connectors = getAllLlmConnectors();
+        foreach ($connectors as $connector) {
+            $connectorType = strtolower(trim(strval($connector['connector_type'] ?? '')));
+            if ($connectorType !== $forcedType) {
+                continue;
+            }
+            return stobeBuildLlmConfigFromConnector($connector);
+        }
+    }
+
+    return getLlmConfigForNpcPurpose($npcData, 'response');
+}
+
+function stobeWorldKnowledgeTranslateSignalWithLlm(string $text, array $glossary, array|false $npcData): string
+{
+    if (!stobeWorldKnowledgeSignalTranslationEnabled()) {
+        return '';
+    }
+
+    $safeText = trim($text);
+    if ($safeText === '') {
+        return '';
+    }
+
+    if (!stobeWorldKnowledgeHasQueryableTerms($safeText)) {
+        return '';
+    }
+
+    $cached = stobeWorldKnowledgeReadSignalTranslationCache($safeText);
+    if ($cached !== '') {
+        return $cached;
+    }
+
+    $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
+    $dispatcher = $enginePath . 'connector' . DIRECTORY_SEPARATOR . 'llm_dispatcher.php';
+    if (is_file($dispatcher)) {
+        require_once($dispatcher);
+    }
+    if (!function_exists('stobeCallLLM')) {
+        return '';
+    }
+
+    $llmConfig = stobeWorldKnowledgeResolveTranslatorConfig($npcData);
+    $glossaryLines = [];
+    foreach ($glossary as $source => $target) {
+        $sourceSafe = trim(strval($source));
+        $targetSafe = trim(strval($target));
+        if ($sourceSafe === '' || $targetSafe === '') {
+            continue;
+        }
+        $glossaryLines[] = '- ' . $sourceSafe . ' => ' . $targetSafe;
+        if (count($glossaryLines) >= 80) {
+            break;
+        }
+    }
+
+    $systemPrompt = "You normalize retrieval signals for Kenshi lore lookup. "
+        . "This is not dialogue translation. "
+        . "Your job is to produce a short English search phrase that matches canonical Kenshi lore terms used by the English knowledge base. "
+        . "Respect glossary replacements exactly when provided. "
+        . "If a Spanish proper noun has a known canonical English lore name, use that canonical lore name instead of a literal translation. "
+        . "Examples: Nación Santa => Holy Nation, antiesclavistas => Anti-Slavers, Ciudades Unidas => United Cities. "
+        . "Preserve only retrieval-relevant entities, factions, locations, races and core intent terms. "
+        . "Do not add explanations, do not roleplay, do not expand with extra lore. "
+        . "If unsure about a token, keep the original token rather than inventing a new lore term. "
+        . "Return strict JSON only with shape: {\"en\":\"...\"}.";
+    $userPrompt = "source_text:\n" . $safeText;
+    if (count($glossaryLines) > 0) {
+        $userPrompt .= "\n\nglossary:\n" . implode("\n", $glossaryLines);
+    }
+
+    $raw = stobeCallLLM(
+        [
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => $userPrompt],
+        ],
+        $llmConfig,
+        [
+            'event_type' => 'world_knowledge_signal_translation',
+            'response_format' => ['type' => 'json_object'],
+        ]
+    );
+
+    if ($raw === false) {
+        return '';
+    }
+
+    $decoded = json_decode(trim(strval($raw)), true);
+    if (!is_array($decoded)) {
+        return '';
+    }
+
+    $translated = trim(strval($decoded['en'] ?? ''));
+    if ($translated === '' || !stobeWorldKnowledgeHasQueryableTerms($translated)) {
+        return '';
+    }
+
+    stobeWorldKnowledgeWriteSignalTranslationCache($safeText, $translated);
+    return $translated;
+}
+
+function stobeWorldKnowledgeBuildSignalVariants(
+    string $signal,
+    array|false $npcData = false,
+    bool $allowLlm = false
+): array {
+    $base = trim($signal);
+    if ($base === '') {
+        return [];
+    }
+
+    $variants = [$base];
+    $glossary = stobeWorldKnowledgeSignalGlossaryMap();
+    $applied = [];
+    $glossaryVariant = stobeWorldKnowledgeApplyGlossaryToSignal($base, $glossary, $applied);
+    if ($glossaryVariant !== '' && strcasecmp($glossaryVariant, $base) !== 0) {
+        $variants[] = $glossaryVariant;
+    }
+
+    if ($allowLlm && stobeWorldKnowledgeSignalTranslationEnabled()) {
+        $llmVariant = stobeWorldKnowledgeTranslateSignalWithLlm(
+            $glossaryVariant !== '' ? $glossaryVariant : $base,
+            $glossary,
+            $npcData
+        );
+        if ($llmVariant !== '') {
+            $variants[] = $llmVariant;
+        }
+    }
+
+    return stobeWorldKnowledgeUniqueTerms($variants, 4);
+}
+
+function stobeWorldKnowledgeBuildLookupCandidates(string $label, array|false $npcData = false): array
+{
+    $candidates = [];
+    $variants = stobeWorldKnowledgeBuildSignalVariants($label, $npcData, true);
+    if (count($variants) === 0) {
+        $variants = [$label];
+    }
+    foreach ($variants as $variant) {
+        $normalized = stobeWorldKnowledgeNormalizeLookupLabel($variant);
+        if ($normalized === '') {
+            continue;
+        }
+        $candidates[] = $normalized;
+    }
+    return stobeWorldKnowledgeUniqueTerms($candidates, 6);
 }
 
 function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
@@ -4720,7 +5041,7 @@ function queryWorldKnowledgeForNpc(
 
     $db = $GLOBALS["db"];
     $vectorExpr = "COALESCE(native_vector, to_tsvector('english', COALESCE(topic, '') || ' ' || COALESCE(topic_desc, '') || ' ' || COALESCE(topic_desc_basic, '')))";
-    $aliasExpr = "to_tsvector('simple', regexp_replace(replace(lower(COALESCE(topic, '')), '_', ' '), ',', ' ', 'g'))";
+    $aliasExpr = "to_tsvector('simple', regexp_replace(replace(lower(COALESCE(topic, '') || ' ' || COALESCE(aliases, '')), '_', ' '), ',', ' ', 'g'))";
     $scoreParts = ['0'];
     $whereParts = [];
     $params = [];
@@ -4743,18 +5064,40 @@ function queryWorldKnowledgeForNpc(
         $notes[] = $label;
     };
 
-    $addSignal($primaryTopic, 10.0, 'topic');
-    $addSignal($currentTopicBefore, 5.0, 'continuity');
-    $addSignal($locationContext, 2.0, 'location');
-    $addSignal($contextKeywords, 1.0, 'context');
-    $addSignal($message, 1.0, 'message');
+    $addSignalVariants = static function (array $variants, float $baseWeight, string $label) use (&$addSignal): void {
+        $i = 0;
+        foreach ($variants as $variant) {
+            $weight = ($i === 0) ? $baseWeight : max(0.5, $baseWeight * 0.7);
+            $suffix = ($i === 0) ? '' : '_x' . strval($i);
+            $addSignal(strval($variant), $weight, $label . $suffix);
+            $i++;
+        }
+    };
 
-    if (stobeWorldKnowledgeHasQueryableTerms($primaryTopic)) {
-        $params[] = $primaryTopic;
+    $translateAllSignals = stobeWorldKnowledgeSignalTranslationAllowAllSignals();
+    $topicVariants = stobeWorldKnowledgeBuildSignalVariants($primaryTopic, $npcData, true);
+    $continuityVariants = stobeWorldKnowledgeBuildSignalVariants($currentTopicBefore, $npcData, $translateAllSignals);
+    $locationVariants = stobeWorldKnowledgeBuildSignalVariants($locationContext, $npcData, $translateAllSignals);
+    $contextVariants = stobeWorldKnowledgeBuildSignalVariants($contextKeywords, $npcData, $translateAllSignals);
+    $messageVariants = stobeWorldKnowledgeBuildSignalVariants($message, $npcData, $translateAllSignals);
+
+    $addSignalVariants($topicVariants, 10.0, 'topic');
+    $addSignalVariants($continuityVariants, 5.0, 'continuity');
+    $addSignalVariants($locationVariants, 2.0, 'location');
+    $addSignalVariants($contextVariants, 1.0, 'context');
+    $addSignalVariants($messageVariants, 1.0, 'message');
+
+    $aliasCandidates = count($topicVariants) > 0 ? $topicVariants : [$primaryTopic];
+    foreach ($aliasCandidates as $index => $aliasCandidate) {
+        if (!stobeWorldKnowledgeHasQueryableTerms(strval($aliasCandidate))) {
+            continue;
+        }
+        $params[] = strval($aliasCandidate);
         $aliasIdx = count($params);
-        $scoreParts[] = "(CASE WHEN {$aliasExpr} @@ websearch_to_tsquery('simple', $" . $aliasIdx . ") THEN 20 ELSE 0 END)";
+        $bonus = ($index === 0) ? 20.0 : 12.0;
+        $scoreParts[] = "(CASE WHEN {$aliasExpr} @@ websearch_to_tsquery('simple', $" . $aliasIdx . ") THEN " . strval($bonus) . " ELSE 0 END)";
         $whereParts[] = "{$aliasExpr} @@ websearch_to_tsquery('simple', $" . $aliasIdx . ")";
-        $notes[] = 'alias';
+        $notes[] = ($index === 0) ? 'alias' : ('alias_x' . strval($index));
     }
 
     if (count($whereParts) === 0) {
