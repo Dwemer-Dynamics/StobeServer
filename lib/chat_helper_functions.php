@@ -2660,6 +2660,17 @@ function stobeWorldKnowledgeBuildSignalVariantEntries(
     if ($glossaryVariant !== '' && strcasecmp($glossaryVariant, $base) !== 0) {
         $rawEntries[] = ['text' => $glossaryVariant, 'source' => 'glossary'];
     }
+    // When glossary substitutions occur inside a longer sentence,
+    // also add each canonical target term as its own clean retrieval signal.
+    if (count($applied) > 0) {
+        foreach ($applied as $canonicalTarget) {
+            $target = trim(strval($canonicalTarget));
+            if ($target === '' || !stobeWorldKnowledgeHasQueryableTerms($target)) {
+                continue;
+            }
+            $rawEntries[] = ['text' => $target, 'source' => 'glossary'];
+        }
+    }
 
     if ($allowLlm && stobeWorldKnowledgeSignalTranslationEnabled()) {
         $llmVariant = stobeWorldKnowledgeTranslateSignalWithLlm(
