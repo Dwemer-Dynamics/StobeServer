@@ -175,6 +175,7 @@ $rows = wkAuditFetchRows(200);
 
                 <div class="section-label" style="margin-top:10px;">Signals Used For Ranking</div>
                 <div class="trace-box"><?= h($signals !== '' ? $signals : '(not captured)') ?></div>
+                <div style="margin-top:6px; font-size:.82rem; color:#b9b9b9;">Legend: <b>original</b> = signal as received, <b>glossary</b> = replaced by lore glossary, <b>llm</b> = normalized by translator model.</div>
 
                 <div class="section-label" style="margin-top:10px;">Ranking Notes</div>
                 <div class="trace-box"><?= h($notes !== '' ? $notes : '(none)') ?></div>
