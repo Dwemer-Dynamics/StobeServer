@@ -2813,6 +2813,8 @@ function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     $selectedTopic = trim(strval($payload['selected_topic'] ?? ''));
     $selectedMode = trim(strval($payload['selected_mode'] ?? ''));
     $selectedEntryId = intval($payload['selected_entry_id'] ?? 0);
+    $npcName = truncatePromptValue(strval($payload['npc_name'] ?? ''), 120);
+    $eventType = truncatePromptValue(strval($payload['event_type'] ?? ''), 60);
     $locationContext = truncatePromptValue(strval($payload['location_context'] ?? ''), 400);
     $contextKeywords = truncatePromptValue(strval($payload['context_keywords'] ?? ''), 400);
     $currentTopicBefore = truncatePromptValue(strval($payload['current_topic_before'] ?? ''), 180);
@@ -2846,6 +2848,12 @@ function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     if ($topicText !== '') {
         $keywordParts[] = 'topics=' . $topicText;
     }
+    if ($npcName !== '') {
+        $keywordParts[] = 'npc=' . $npcName;
+    }
+    if ($eventType !== '') {
+        $keywordParts[] = 'event=' . $eventType;
+    }
     if ($notes !== '') {
         $keywordParts[] = 'notes=' . $notes;
     }
@@ -2866,6 +2874,12 @@ function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     }
     if ($selectedEntryId > 0) {
         $memoryParts[] = 'entry_id=' . strval($selectedEntryId);
+    }
+    if ($npcName !== '') {
+        $memoryParts[] = 'npc=' . $npcName;
+    }
+    if ($eventType !== '') {
+        $memoryParts[] = 'event=' . $eventType;
     }
     if ($locationContext !== '') {
         $memoryParts[] = 'location=' . $locationContext;

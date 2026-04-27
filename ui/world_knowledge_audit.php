@@ -40,27 +40,99 @@ function wkAuditParseKeyValueString(string $raw, string $separator): array
     return $pairs;
 }
 
-function wkAuditFetchRows(int $limit = 200): array
+function wkAuditBuildWhereClause(bool $matchedOnly): string
+{
+    if ($matchedOnly) {
+        return "WHERE COALESCE(memory, '') LIKE '%selected=%'";
+    }
+    return '';
+}
+
+function wkAuditCountRows(bool $matchedOnly = false): int
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return 0;
+    }
+    try {
+        $whereSql = wkAuditBuildWhereClause($matchedOnly);
+        $row = $db->fetchOne(
+            'SELECT COUNT(*) AS total FROM audit_memory ' . $whereSql
+        );
+        return intval($row['total'] ?? 0);
+    } catch (Throwable $exception) {
+        return 0;
+    }
+}
+
+function wkAuditFetchRows(int $limit = 50, int $offset = 0, bool $matchedOnly = false): array
 {
     $db = $GLOBALS['db'] ?? null;
     if (!$db) {
         return [];
     }
+    $safeLimit = max(10, min(100, $limit));
+    $safeOffset = max(0, $offset);
     try {
+        $whereSql = wkAuditBuildWhereClause($matchedOnly);
         return $db->fetchAll(
             'SELECT created_at, input, keywords, rank_any, rank_all, memory, "time"
              FROM audit_memory
+             ' . $whereSql . '
              ORDER BY created_at DESC
-             LIMIT ' . intval(max(20, min(500, $limit)))
+             LIMIT ' . intval($safeLimit) . '
+             OFFSET ' . intval($safeOffset)
         );
     } catch (Throwable $exception) {
         return [];
     }
 }
 
+function wkAuditBuildQuery(array $params): string
+{
+    $filtered = [];
+    foreach ($params as $key => $value) {
+        if ($value === null || $value === '') {
+            continue;
+        }
+        $filtered[$key] = strval($value);
+    }
+    if (count($filtered) === 0) {
+        return '';
+    }
+    return '?' . http_build_query($filtered);
+}
+
 $isEmbed = (isset($_GET['embed']) && strval($_GET['embed']) === '1');
 $webRoot = wkAuditWebRoot();
-$rows = wkAuditFetchRows(200);
+$matchedOnly = isset($_GET['matched']) && strval($_GET['matched']) === '1';
+$page = max(1, intval($_GET['page'] ?? 1));
+$perPageAllowed = [25, 50, 100];
+$perPageRaw = intval($_GET['per_page'] ?? 50);
+$perPage = in_array($perPageRaw, $perPageAllowed, true) ? $perPageRaw : 50;
+
+$totalRows = wkAuditCountRows($matchedOnly);
+$totalPages = max(1, intval(ceil($totalRows / $perPage)));
+if ($page > $totalPages) {
+    $page = $totalPages;
+}
+$offset = ($page - 1) * $perPage;
+$rows = wkAuditFetchRows($perPage, $offset, $matchedOnly);
+
+$baseParams = [];
+if ($isEmbed) {
+    $baseParams['embed'] = '1';
+}
+$baseParams['per_page'] = strval($perPage);
+$toggleMatchedParams = $baseParams;
+$toggleMatchedParams['matched'] = $matchedOnly ? '0' : '1';
+$paginationBaseParams = $baseParams;
+if ($matchedOnly) {
+    $paginationBaseParams['matched'] = '1';
+}
+
+$rangeStart = $totalRows > 0 ? ($offset + 1) : 0;
+$rangeEnd = min($offset + $perPage, $totalRows);
 
 ?>
 <!DOCTYPE html>
@@ -112,10 +184,62 @@ $rows = wkAuditFetchRows(200);
             font-size: .85rem;
         }
         .search-wrap { margin-bottom: 14px; }
+        .toolbar-wrap {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
         .search-input {
             width: 100%; background:#111; color:#f2f2f2; border:1px solid #4a4a4a; border-radius:8px; padding:10px 12px;
         }
+        .quick-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,.03);
+            border: 1px solid rgba(230,183,108,.25);
+            border-radius: 8px;
+            padding: 8px 10px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .quick-toggle input { accent-color: #d7b37a; }
+        .pager-wrap {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+        .pager-meta { color: #b8b8b8; font-size: .9rem; }
+        .pager-links {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .pager-link {
+            display: inline-block;
+            color: #efefef;
+            text-decoration: none;
+            border: 1px solid rgba(230,183,108,.28);
+            border-radius: 8px;
+            padding: 6px 10px;
+            background: rgba(255,255,255,.02);
+        }
+        .pager-link[aria-disabled="true"] {
+            opacity: .45;
+            pointer-events: none;
+        }
+        .per-page-select {
+            background:#111; color:#f2f2f2; border:1px solid #4a4a4a; border-radius:8px; padding:6px 8px;
+        }
         .empty-state { padding: 20px; text-align:center; color:#aaa; }
+        @media (max-width: 850px) {
+            .toolbar-wrap { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -128,8 +252,51 @@ $rows = wkAuditFetchRows(200);
         <div>See whether retrieval matched, which topic won, what rank it got, and which signals were used.</div>
     </div>
 
-    <div class="search-wrap">
-        <input id="auditSearch" class="search-input" type="text" placeholder="Filter by NPC input, selected topic, signals, notes...">
+    <div class="toolbar-wrap">
+        <div class="search-wrap" style="margin-bottom:0;">
+            <input id="auditSearch" class="search-input" type="text" placeholder="Filter current page by input, selected topic, signals, notes...">
+        </div>
+        <label class="quick-toggle" for="matchedOnlyToggle">
+            <input id="matchedOnlyToggle" type="checkbox" <?= $matchedOnly ? 'checked' : '' ?>>
+            <span>Only Matched</span>
+        </label>
+        <form method="get" action="" style="margin:0;">
+            <?php if ($isEmbed): ?>
+                <input type="hidden" name="embed" value="1">
+            <?php endif; ?>
+            <?php if ($matchedOnly): ?>
+                <input type="hidden" name="matched" value="1">
+            <?php endif; ?>
+            <input type="hidden" name="page" value="1">
+            <label style="display:inline-flex; align-items:center; gap:8px; margin:0;">
+                <span style="font-size:.9rem; color:#b8b8b8;">Per page</span>
+                <select class="per-page-select" name="per_page" onchange="this.form.submit()">
+                    <?php foreach ($perPageAllowed as $option): ?>
+                        <option value="<?= h(strval($option)) ?>" <?= $perPage === $option ? 'selected' : '' ?>><?= h(strval($option)) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+        </form>
+    </div>
+
+    <div class="pager-wrap">
+        <div class="pager-meta">
+            Showing <?= h(strval($rangeStart)) ?>-<?= h(strval($rangeEnd)) ?> of <?= h(strval($totalRows)) ?> rows
+            <?php if ($matchedOnly): ?>
+                (matched only)
+            <?php endif; ?>
+        </div>
+        <div class="pager-links">
+            <?php
+                $prevParams = $paginationBaseParams;
+                $prevParams['page'] = strval(max(1, $page - 1));
+                $nextParams = $paginationBaseParams;
+                $nextParams['page'] = strval(min($totalPages, $page + 1));
+            ?>
+            <a class="pager-link" href="<?= h(wkAuditBuildQuery($prevParams)) ?>" aria-disabled="<?= $page <= 1 ? 'true' : 'false' ?>">Prev</a>
+            <span class="pager-meta">Page <?= h(strval($page)) ?> / <?= h(strval($totalPages)) ?></span>
+            <a class="pager-link" href="<?= h(wkAuditBuildQuery($nextParams)) ?>" aria-disabled="<?= $page >= $totalPages ? 'true' : 'false' ?>">Next</a>
+        </div>
     </div>
 
     <?php if (count($rows) === 0): ?>
@@ -148,17 +315,21 @@ $rows = wkAuditFetchRows(200);
                 $selected = strval($memoryMap['selected'] ?? '');
                 $selectedMode = strval($memoryMap['mode'] ?? '');
                 $entryId = strval($memoryMap['entry_id'] ?? '');
+                $npcName = strval($keywordMap['npc'] ?? ($memoryMap['npc'] ?? ''));
+                $eventType = strval($keywordMap['event'] ?? ($memoryMap['event'] ?? ''));
                 $topics = strval($keywordMap['topics'] ?? '');
                 $notes = strval($keywordMap['notes'] ?? '');
                 $signals = strval($keywordMap['signals'] ?? ($memoryMap['signals'] ?? ''));
                 $context = strval($memoryMap['context'] ?? '');
                 $location = strval($memoryMap['location'] ?? '');
                 $status = $selected !== '' ? 'Matched' : 'No Match';
-                $searchBlob = strtolower(implode(' ', [$input, $selected, $topics, $notes, $signals, $context, $location, $created]));
+                $searchBlob = strtolower(implode(' ', [$input, $selected, $topics, $notes, $signals, $context, $location, $created, $npcName, $eventType]));
             ?>
             <section class="audit-card" data-search="<?= h($searchBlob) ?>">
                 <div class="meta-grid">
                     <div class="meta-pill"><div class="meta-label">Status</div><div class="meta-value"><?= h($status) ?></div></div>
+                    <div class="meta-pill"><div class="meta-label">NPC</div><div class="meta-value"><?= h($npcName !== '' ? $npcName : '(unknown)') ?></div></div>
+                    <div class="meta-pill"><div class="meta-label">Event</div><div class="meta-value"><?= h($eventType !== '' ? $eventType : '(unknown)') ?></div></div>
                     <div class="meta-pill"><div class="meta-label">Selected Topic</div><div class="meta-value"><?= h($selected !== '' ? $selected : '(none)') ?></div></div>
                     <div class="meta-pill"><div class="meta-label">Rank</div><div class="meta-value"><?= h($rank) ?></div></div>
                     <div class="meta-pill"><div class="meta-label">Mode</div><div class="meta-value"><?= h($selectedMode !== '' ? $selectedMode : '(n/a)') ?></div></div>
@@ -195,6 +366,20 @@ $rows = wkAuditFetchRows(200);
     <?php endif; ?>
 </main>
 <script>
+const matchedToggle = document.getElementById('matchedOnlyToggle');
+if (matchedToggle) {
+    matchedToggle.addEventListener('change', () => {
+        const url = new URL(window.location.href);
+        if (matchedToggle.checked) {
+            url.searchParams.set('matched', '1');
+        } else {
+            url.searchParams.delete('matched');
+        }
+        url.searchParams.set('page', '1');
+        window.location.href = url.toString();
+    });
+}
+
 const searchInput = document.getElementById('auditSearch');
 if (searchInput) {
   searchInput.addEventListener('input', () => {
