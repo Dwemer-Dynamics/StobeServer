@@ -2672,6 +2672,31 @@ function stobeWorldKnowledgeBuildLookupCandidates(string $label, array|false $np
     return stobeWorldKnowledgeUniqueTerms($candidates, 6);
 }
 
+function stobeWorldKnowledgeFormatVariantTrace(string $label, array $variants): string
+{
+    $cleanLabel = trim($label);
+    if ($cleanLabel === '' || count($variants) === 0) {
+        return '';
+    }
+
+    $parts = [];
+    foreach ($variants as $variant) {
+        $value = trim(strval($variant));
+        if ($value === '') {
+            continue;
+        }
+        $parts[] = $value;
+        if (count($parts) >= 4) {
+            break;
+        }
+    }
+    if (count($parts) === 0) {
+        return '';
+    }
+
+    return $cleanLabel . '=[' . implode(' => ', $parts) . ']';
+}
+
 function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     $db = $GLOBALS["db"] ?? null;
     if (!$db) {
@@ -2687,6 +2712,7 @@ function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     $currentTopicBefore = truncatePromptValue(strval($payload['current_topic_before'] ?? ''), 180);
     $currentTopicAfter = truncatePromptValue(strval($payload['current_topic_after'] ?? ''), 180);
     $knowledgeTags = truncatePromptValue(strval($payload['knowledge_tags'] ?? ''), 240);
+    $signalDebug = truncatePromptValue(strval($payload['signal_debug'] ?? ''), 2000);
     $notes = truncatePromptValue(strval($payload['notes'] ?? ''), 800);
     $rank = floatval($payload['selected_rank'] ?? 0.0);
 
@@ -2717,6 +2743,9 @@ function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     if ($notes !== '') {
         $keywordParts[] = 'notes=' . $notes;
     }
+    if ($signalDebug !== '') {
+        $keywordParts[] = 'signals=' . $signalDebug;
+    }
     $keywords = trim(implode(' | ', $keywordParts));
     if ($keywords === '') {
         $keywords = 'world_knowledge';
@@ -2746,6 +2775,9 @@ function stobeWorldKnowledgeWriteAuditRow(array $payload): void {
     }
     if ($knowledgeTags !== '') {
         $memoryParts[] = 'tags=' . $knowledgeTags;
+    }
+    if ($signalDebug !== '') {
+        $memoryParts[] = 'signals=' . $signalDebug;
     }
     $memory = truncatePromptValue(implode(' / ', $memoryParts), 8000);
 
@@ -5080,6 +5112,19 @@ function queryWorldKnowledgeForNpc(
     $locationVariants = stobeWorldKnowledgeBuildSignalVariants($locationContext, $npcData, $translateAllSignals);
     $contextVariants = stobeWorldKnowledgeBuildSignalVariants($contextKeywords, $npcData, $translateAllSignals);
     $messageVariants = stobeWorldKnowledgeBuildSignalVariants($message, $npcData, $translateAllSignals);
+    $signalDebugParts = [];
+    foreach ([
+        'topic' => $topicVariants,
+        'continuity' => $continuityVariants,
+        'location' => $locationVariants,
+        'context' => $contextVariants,
+        'message' => $messageVariants,
+    ] as $signalLabel => $signalVariants) {
+        $trace = stobeWorldKnowledgeFormatVariantTrace($signalLabel, $signalVariants);
+        if ($trace !== '') {
+            $signalDebugParts[] = $trace;
+        }
+    }
 
     $addSignalVariants($topicVariants, 10.0, 'topic');
     $addSignalVariants($continuityVariants, 5.0, 'continuity');
@@ -5088,6 +5133,11 @@ function queryWorldKnowledgeForNpc(
     $addSignalVariants($messageVariants, 1.0, 'message');
 
     $aliasCandidates = count($topicVariants) > 0 ? $topicVariants : [$primaryTopic];
+    $aliasTrace = stobeWorldKnowledgeFormatVariantTrace('alias', $aliasCandidates);
+    if ($aliasTrace !== '') {
+        $signalDebugParts[] = $aliasTrace;
+    }
+    $signalDebug = implode(' | ', $signalDebugParts);
     foreach ($aliasCandidates as $index => $aliasCandidate) {
         if (!stobeWorldKnowledgeHasQueryableTerms(strval($aliasCandidate))) {
             continue;
@@ -5116,6 +5166,7 @@ function queryWorldKnowledgeForNpc(
             'current_topic_before' => $currentTopicBefore,
             'current_topic_after' => $currentTopicBefore,
             'knowledge_tags' => $knowledgeSummary,
+            'signal_debug' => $signalDebug,
             'notes' => 'No queryable world_knowledge signals',
             'elapsed_seconds' => max(0.0, microtime(true) - $queryStartedAt),
         ]);
@@ -5209,6 +5260,7 @@ function queryWorldKnowledgeForNpc(
         'current_topic_before' => $currentTopicBefore,
         'current_topic_after' => $currentTopicAfter,
         'knowledge_tags' => $knowledgeSummary,
+        'signal_debug' => $signalDebug,
         'notes' => implode(',', $notes),
         'elapsed_seconds' => max(0.0, microtime(true) - $queryStartedAt),
     ]);
