@@ -2189,6 +2189,28 @@ Fields currently editable for this NPC: #ALLOWED_FIELDS#$$,
     $$Prompt template for bored-event generation. Supports #NPC_LIST#, #LOCATION#, #WORLD_EVENTS#. Used in lib/chat_helper_functions.php.$$
 ),
 (
+        'kenshi_mechanics_alignment',
+        $$<kenshi_mechanics_alignment>
+    <scope>Apply these grounding rules before generating any response.</scope>
+    <event_type>#EVENT_TYPE#</event_type>
+    <observed_state>
+        <in_player_faction>#IN_PLAYER_FACTION#</in_player_faction>
+        <health>#NPC_HEALTH#</health>
+        <blood>#NPC_BLOOD#</blood>
+        <hunger>#NPC_HUNGER#</hunger>
+        <available_player_cats>#PLAYER_CATS#</available_player_cats>
+    </observed_state>
+    <rules>
+        <rule>Treat Kenshi constraints as hard reality. Do not imply modern conveniences, safe institutions, or guaranteed mercy.</rule>
+        <rule>Ground tone and priorities in survival pressure: injuries, blood loss, hunger, danger, faction tension, and nearby threats.</rule>
+        <rule>Do not invent items, money, authority, travel options, or social status not supported by context.</rule>
+        <rule>If suggesting actions, keep them physically and socially plausible for the speaker's current condition and affiliations.</rule>
+        <rule>Prefer terse, practical speech under stress; only become reflective when context supports safety or downtime.</rule>
+    </rules>
+</kenshi_mechanics_alignment>$$,
+        $$Grounding block to align chat/rechat/bored responses with Kenshi mechanics and current character state. Supports #EVENT_TYPE#, #IN_PLAYER_FACTION#, #NPC_HEALTH#, #NPC_BLOOD#, #NPC_HUNGER#, #PLAYER_CATS#. Used in lib/chat_helper_functions.php.$$
+),
+(
     'random_narration_prompt',
     $$Describe the current scene visually using only details from context. Focus on characters present, body language, environment, and atmosphere in 1-2 concise sentences. Do not invent events or include action tags.$$,
     $$Prompt for random narrator interjections during rechat turns. Used in processor/rechat.php.$$

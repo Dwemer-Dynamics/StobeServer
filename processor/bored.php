@@ -20,12 +20,9 @@ $participants = extractParticipantNames([
 
 $candidateNames = [];
 $seen = [];
-$pushCandidate = static function (string $candidate) use (&$candidateNames, &$seen, $playerName): void {
+$pushCandidate = static function (string $candidate) use (&$candidateNames, &$seen): void {
     $name = normalizeParticipantNameToken($candidate);
     if ($name === '') {
-        return;
-    }
-    if ($playerName !== '' && strcasecmp($name, $playerName) === 0) {
         return;
     }
     $key = strtolower($name);
@@ -59,6 +56,10 @@ if (count($candidateNames) === 0) {
 $speakerNpc = '';
 $speakerData = false;
 foreach ($candidateNames as $candidateName) {
+    if ($playerName !== '' && strcasecmp($candidateName, $playerName) === 0) {
+        // Player may be a valid listener target, but never auto-bootstrap as NPC speaker.
+        continue;
+    }
     $candidateData = getNpcData($candidateName);
     if (!$candidateData) {
         storeNpcProfile($candidateName, []);
@@ -106,8 +107,7 @@ $listener = '';
 $dialogueData = parseDialogueEventData($eventData);
 $suggestedTarget = normalizeParticipantNameToken(strval($dialogueData['target'] ?? ''));
 if ($suggestedTarget !== '' &&
-    strcasecmp($suggestedTarget, $speakerNpc) !== 0 &&
-    ($forceDirectorMode || $playerName === '' || strcasecmp($suggestedTarget, $playerName) !== 0)) {
+    strcasecmp($suggestedTarget, $speakerNpc) !== 0) {
     $listener = $suggestedTarget;
 }
 if ($listener === '') {
@@ -123,7 +123,7 @@ if ($listener === '') {
     }
 }
 if ($listener === '') {
-    stobeLogInfo('Bored event skipped: no eligible NPC listener', [
+    stobeLogInfo('Bored event skipped: no eligible listener', [
         'speaker' => $speakerNpc,
         'candidate_count' => count($candidateNames),
     ]);

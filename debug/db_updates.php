@@ -1610,6 +1610,36 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 [$prompt, $description]
             );
         });
+        $applyPatch('prompts', 202605070101, static function () use ($db): void {
+            $prompt = "<kenshi_mechanics_alignment>\n"
+                . "  <scope>Apply these grounding rules before generating any response.</scope>\n"
+                . "  <event_type>#EVENT_TYPE#</event_type>\n"
+                . "  <observed_state>\n"
+                . "    <in_player_faction>#IN_PLAYER_FACTION#</in_player_faction>\n"
+                . "    <health>#NPC_HEALTH#</health>\n"
+                . "    <blood>#NPC_BLOOD#</blood>\n"
+                . "    <hunger>#NPC_HUNGER#</hunger>\n"
+                . "    <available_player_cats>#PLAYER_CATS#</available_player_cats>\n"
+                . "  </observed_state>\n"
+                . "  <rules>\n"
+                . "    <rule>Treat Kenshi constraints as hard reality. Do not imply modern conveniences, safe institutions, or guaranteed mercy.</rule>\n"
+                . "    <rule>Ground tone and priorities in survival pressure: injuries, blood loss, hunger, danger, faction tension, and nearby threats.</rule>\n"
+                . "    <rule>Do not invent items, money, authority, travel options, or social status not supported by context.</rule>\n"
+                . "    <rule>If suggesting actions, keep them physically and socially plausible for the speaker's current condition and affiliations.</rule>\n"
+                . "    <rule>Prefer terse, practical speech under stress; only become reflective when context supports safety or downtime.</rule>\n"
+                . "  </rules>\n"
+                . "</kenshi_mechanics_alignment>";
+            $description = 'Grounding block to align chat/rechat/bored responses with Kenshi mechanics and current character state. Supports #EVENT_TYPE#, #IN_PLAYER_FACTION#, #NPC_HEALTH#, #NPC_BLOOD#, #NPC_HUNGER#, #PLAYER_CATS#. Used in lib/chat_helper_functions.php.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description)
+                 VALUES ('kenshi_mechanics_alignment', $1, $2)
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt, $description]
+            );
+        });
         $applyPatch('core_profiles', 202604110102, static function () use ($db): void {
             $db->exec(
                 "UPDATE core_profiles

@@ -3978,6 +3978,113 @@ function stobeNormalizeContextHistoryDataLine(string $historyData): string {
     return stobeSanitizePromptContextLine($singleLine);
 }
 
+function stobeExtractRoleplayActionContextLine(string $historyData): string {
+    $raw = trim($historyData);
+    if ($raw === '') {
+        return '';
+    }
+
+    if (preg_match('/ROLEPLAY_ACTION\s*@\s*(.+)$/iu', $raw, $matches) !== 1) {
+        return '';
+    }
+
+    $notice = stobeSanitizePromptContextLine(trim(strval($matches[1] ?? '')));
+    if ($notice === '') {
+        return '';
+    }
+
+    $parsed = parseDialogueEventData($raw);
+    $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+
+    if ($speaker !== '') {
+        $line = $speaker . ': roleplay context - ' . $notice;
+        if ($target !== '' && strcasecmp($target, $speaker) !== 0) {
+            $line .= ' (talking to: ' . $target . ')';
+        }
+        return stobeSanitizePromptContextLine($line);
+    }
+
+    return stobeSanitizePromptContextLine('Roleplay context: ' . $notice);
+}
+
+function stobeGetRecentRoleplayActionContextForSpeaker(
+    string $speaker,
+    string $listener = '',
+    int $maxAgeSeconds = 900,
+    int $minLocalTsHint = 0,
+    bool $allowFallbackToOlder = true,
+    int $waitForFreshMs = 0
+): string {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !method_exists($db, 'fetchAll')) {
+        return '';
+    }
+
+    $safeSpeaker = normalizeParticipantNameToken($speaker);
+    if ($safeSpeaker === '') {
+        return '';
+    }
+    $safeListener = normalizeParticipantNameToken($listener);
+    $minLocalTs = time() - max(30, intval($maxAgeSeconds));
+
+    $fetchRecent = static function (int $sinceTs) use ($db, $safeSpeaker, $safeListener): string {
+        $rows = $db->fetchAll(
+            "SELECT rowid, data, people, localts
+             FROM eventlog
+             WHERE type = 'infoaction'
+               AND data ILIKE $1
+               AND COALESCE(localts, 0) >= $2
+             ORDER BY rowid DESC
+             LIMIT 40",
+            [$safeSpeaker . ': action command received:%ROLEPLAY_ACTION@%', $sinceTs]
+        );
+
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            if ($safeListener !== '') {
+                $people = strtolower(trim(strval($row['people'] ?? '')));
+                if ($people !== '' && strpos($people, strtolower($safeListener)) === false) {
+                    continue;
+                }
+            }
+
+            $line = stobeExtractRoleplayActionContextLine(strval($row['data'] ?? ''));
+            if ($line !== '') {
+                return $line;
+            }
+        }
+
+        return '';
+    };
+
+    $freshSince = max($minLocalTs, max(0, intval($minLocalTsHint)));
+    $line = $fetchRecent($freshSince);
+    if ($line !== '') {
+        return $line;
+    }
+
+    $waitMs = max(0, intval($waitForFreshMs));
+    if ($waitMs > 0) {
+        $deadline = microtime(true) + ($waitMs / 1000.0);
+        while (microtime(true) < $deadline) {
+            usleep(150000);
+            $line = $fetchRecent($freshSince);
+            if ($line !== '') {
+                return $line;
+            }
+        }
+    }
+
+    if (!$allowFallbackToOlder) {
+        return '';
+    }
+
+    return $fetchRecent($minLocalTs);
+}
+
 function stobeIsMergeableRecentContextType(string $historyType): bool {
     return in_array($historyType, ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'], true);
 }
@@ -4250,13 +4357,16 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         }
 
         $historyType = strtolower(trim(strval($row['type'] ?? 'event')));
-        if ($historyType === 'infoaction') {
-            continue;
-        }
         if ($historyType === 'inputtext' || $historyType === 'inputtext_s') {
             continue;
         }
         $historyData = stobeNormalizeContextHistoryDataLine(strval($row['data'] ?? ''));
+        if ($historyType === 'infoaction') {
+            $historyData = stobeExtractRoleplayActionContextLine($historyData);
+            if ($historyData !== '') {
+                $historyType = 'roleplay_action';
+            }
+        }
         if ($historyData === '') {
             continue;
         }
@@ -4265,6 +4375,7 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
             'inputtext', 'inputtext_s', 'chat', 'rechat', 'bored',
             'action', 'death', 'limb_loss', 'knockout',
             'enslaved', 'freed_slave', 'item_pickup', 'carry', 'predation', 'trade',
+            'roleplay_action',
         ];
         if (!in_array($historyType, $inlineTypes, true)) {
             $historyData = '[' . $historyType . '] ' . $historyData;
@@ -4366,7 +4477,11 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
             continue;
         }
         if (preg_match('/^\[\s*infoaction\b/i', $clean) === 1) {
-            continue;
+            $roleplayLine = stobeExtractRoleplayActionContextLine($clean);
+            if ($roleplayLine === '') {
+                continue;
+            }
+            $clean = $roleplayLine;
         }
         if (preg_match('/^\[\s*inputtext(?:_s)?\b/i', $clean) === 1) {
             continue;
@@ -8640,6 +8755,67 @@ function stobeBuildGeneralInstructionsText(array|false $npcData = false): string
     return implode("\n", $defaults);
 }
 
+function stobeBuildKenshiMechanicsAlignmentPromptBlock(
+    array $npcData,
+    array $metadata,
+    string $eventType,
+    string $playerCats,
+    bool $inPlayerFaction
+): string {
+    $event = strtolower(trim($eventType));
+    if ($event === '') {
+        $event = 'chat';
+    }
+
+    $health = trim(strval($npcData['health'] ?? ($metadata['health'] ?? '')));
+    if ($health === '') {
+        $health = 'Unknown';
+    }
+    $blood = stobeDescribeBloodStatus($npcData['blood'] ?? '');
+    if ($blood === '') {
+        $blood = 'Unknown';
+    }
+    $hunger = stobeDescribeHungerStatus($npcData['hunger'] ?? '');
+    if ($hunger === '') {
+        $hunger = 'Unknown';
+    }
+
+    $defaultTemplate = "<kenshi_mechanics_alignment>\n"
+        . "  <scope>Apply these grounding rules before generating any response.</scope>\n"
+        . "  <event_type>#EVENT_TYPE#</event_type>\n"
+        . "  <observed_state>\n"
+        . "    <in_player_faction>#IN_PLAYER_FACTION#</in_player_faction>\n"
+        . "    <health>#NPC_HEALTH#</health>\n"
+        . "    <blood>#NPC_BLOOD#</blood>\n"
+        . "    <hunger>#NPC_HUNGER#</hunger>\n"
+        . "    <available_player_cats>#PLAYER_CATS#</available_player_cats>\n"
+        . "  </observed_state>\n"
+        . "  <rules>\n"
+        . "    <rule>Treat Kenshi constraints as hard reality. Do not imply modern conveniences, safe institutions, or guaranteed mercy.</rule>\n"
+        . "    <rule>Ground tone and priorities in survival pressure: injuries, blood loss, hunger, danger, faction tension, and nearby threats.</rule>\n"
+        . "    <rule>Do not invent items, money, authority, travel options, or social status not supported by context.</rule>\n"
+        . "    <rule>If suggesting actions, keep them physically and socially plausible for the speaker's current condition and affiliations.</rule>\n"
+        . "    <rule>Prefer terse, practical speech under stress; only become reflective when context supports safety or downtime.</rule>\n"
+        . "  </rules>\n"
+        . "</kenshi_mechanics_alignment>";
+
+    $template = $defaultTemplate;
+    if (function_exists('stobeGetPromptTemplateValue')) {
+        $template = stobeGetPromptTemplateValue('kenshi_mechanics_alignment', $defaultTemplate);
+    }
+
+    $replacements = [
+        '#EVENT_TYPE#' => stobePromptXmlEscape($event),
+        '#IN_PLAYER_FACTION#' => $inPlayerFaction ? 'true' : 'false',
+        '#NPC_HEALTH#' => stobePromptXmlEscape($health),
+        '#NPC_BLOOD#' => stobePromptXmlEscape($blood),
+        '#NPC_HUNGER#' => stobePromptXmlEscape($hunger),
+        '#PLAYER_CATS#' => stobePromptXmlEscape($playerCats),
+    ];
+
+    return str_replace(array_keys($replacements), array_values($replacements), $template);
+}
+
 function stobeResolveNpcPromptOverrides(array $npcData, array $metadata = []): array {
     $profileId = intval($npcData['profile_id'] ?? 0);
     if ($profileId <= 0 && function_exists('getDefaultNpcProfileId')) {
@@ -10674,6 +10850,17 @@ function buildSystemPrompt(
             $prompt .= "\n  " . trim($playerFactionPromptBlock);
         }
         $prompt .= "\n</knowledge>";
+    }
+
+    $mechanicsAlignmentBlock = stobeBuildKenshiMechanicsAlignmentPromptBlock(
+        $npcData,
+        $metadata,
+        $eventType,
+        $playerCats,
+        $inPlayerFaction
+    );
+    if (trim($mechanicsAlignmentBlock) !== '') {
+        $prompt .= "\n\n" . trim($mechanicsAlignmentBlock);
     }
 
     if ($includeActionGuidance) {
