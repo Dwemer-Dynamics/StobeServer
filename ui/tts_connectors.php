@@ -160,7 +160,7 @@ $cfg = is_array($editItem) ? ($editItem['config'] ?? []) : [];
 $apiRows = $GLOBALS['db']->fetchAll("SELECT id, label, api_key FROM core_api_badge ORDER BY label ASC");
 $specs = ttsSpecs();
 
-$TITLE = "ðŸ“¢ CHIM - TTS Connectors";
+$TITLE = "ðŸ“¢ STOBE - TTS Connectors";
 ob_start();
 include(__DIR__ . DIRECTORY_SEPARATOR . "../tmpl/head.html");
 ?>

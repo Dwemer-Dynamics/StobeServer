@@ -1,11 +1,11 @@
-# CHIM Relationship System
+# STOBE Relationship System
 
 ## The Three Layers of NPC Intelligence
 
 | Layer | System | What It Tracks |
 |-------|--------|----------------|
 | **Faction** | Kagrenac's Plugin | What factions an NPC *belongs to* (FormID from Skyrim) |
-| **Relationship** | CHIM (this system) | How the NPC *feels* about individuals, groups, concepts |
+| **Relationship** | STOBE (this system) | How the NPC *feels* about individuals, groups, concepts |
 | **Knowledge** | World Knowledge | What the NPC *knows* about the world |
 
 ---
@@ -188,7 +188,7 @@ RelationshipManager::setRelationship('Lydia', 'Kang', 80, 'romantic');
 - RelationshipLLM now uses connector's configured temperature and settings (no hardcoded overrides)
 - Added support for all connector parameters: penalties, sampling, safety settings
 - Fixed batch_build.php to properly load ApiBadge class
-- Improved modal UI with gray/orange theme matching CHIM style
+- Improved modal UI with gray/orange theme matching STOBE style
 
 ### December 22, 2025
 - Initial release

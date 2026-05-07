@@ -1,0 +1,130 @@
+<?php
+
+declare(strict_types=1);
+
+try {
+    require __DIR__ . '/../lib/bootstrap.php';
+} catch (Throwable $exception) {
+    $stderr = fopen('php://stderr', 'wb');
+    $message = 'FAIL: bootstrap threw ' . get_class($exception) . ': ' . $exception->getMessage() . PHP_EOL;
+    if ($stderr !== false) {
+        fwrite($stderr, $message);
+        fclose($stderr);
+    } else {
+        echo $message;
+    }
+    exit(1);
+}
+
+function contractTestFail(string $message): void
+{
+    $stderr = fopen('php://stderr', 'wb');
+    if ($stderr !== false) {
+        fwrite($stderr, 'FAIL: ' . $message . PHP_EOL);
+        fclose($stderr);
+    } else {
+        echo 'FAIL: ' . $message . PHP_EOL;
+    }
+    exit(1);
+}
+
+function contractAssertTrue(bool $condition, string $message): void
+{
+    if (!$condition) {
+        contractTestFail($message);
+    }
+}
+
+function contractAssertSame(string $expected, string $actual, string $message): void
+{
+    if ($expected !== $actual) {
+        contractTestFail($message . ' (expected="' . $expected . '", actual="' . $actual . '")');
+    }
+}
+
+function contractAssertSameList(array $expected, array $actual, string $message): void
+{
+    if ($expected !== $actual) {
+        contractTestFail(
+            $message
+            . ' (expected=' . json_encode($expected, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            . ', actual=' . json_encode($actual, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            . ')'
+        );
+    }
+}
+
+function contractAssertOrderedFields(string $text, array $fields, string $message): void
+{
+    $previousPos = -1;
+    foreach ($fields as $field) {
+        $pos = strpos($text, $field);
+        if ($pos === false) {
+            contractTestFail($message . ' (missing field ' . $field . ')');
+        }
+        if ($pos <= $previousPos) {
+            contractTestFail($message . ' (field out of order: ' . $field . ')');
+        }
+        $previousPos = $pos;
+    }
+}
+
+$expectedFieldOrder = [
+    'character',
+    'listener',
+    'message',
+    'mood',
+    'action',
+    'target',
+    'item',
+    'lang',
+    'amount',
+];
+
+$contractPrompt = stobeBuildOutputContractUserPrompt('Esata the Stone Golem', false, false, null, 'chat');
+contractAssertOrderedFields(
+    $contractPrompt,
+    array_map(static fn(string $field): string => '"' . $field . '"', $expectedFieldOrder),
+    'Structured dialogue prompt should keep Herika-style field ordering'
+);
+
+$responseFormat = stobeBuildStructuredDialogueResponseFormat('Esata the Stone Golem', false, null, 'chat');
+contractAssertSame('json_schema', strval($responseFormat['type'] ?? ''), 'Structured response format should use json_schema');
+$schemaProperties = is_array($responseFormat['json_schema']['schema']['properties'] ?? null)
+    ? array_keys($responseFormat['json_schema']['schema']['properties'])
+    : [];
+contractAssertSameList($expectedFieldOrder, $schemaProperties, 'Schema property order should match prompt contract');
+$requiredFields = is_array($responseFormat['json_schema']['schema']['required'] ?? null)
+    ? $responseFormat['json_schema']['schema']['required']
+    : [];
+contractAssertSameList($expectedFieldOrder, $requiredFields, 'Schema required fields should match prompt contract');
+
+$herikaStyle = stobeParseStructuredDialogueResponse(
+    '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler.","mood":"kindly","action":"Talk","target":"RANGROO","item":"","lang":"en","amount":0}',
+    'chat'
+);
+contractAssertTrue(boolval($herikaStyle['is_structured'] ?? false), 'Herika-style JSON should parse as structured');
+contractAssertSame('Dagur', trim(strval($herikaStyle['character'] ?? '')), 'Herika-style JSON should preserve character');
+contractAssertSame('RANGROO', trim(strval($herikaStyle['listener'] ?? '')), 'Herika-style JSON should preserve listener');
+contractAssertSame('Well met, traveler.', trim(strval($herikaStyle['message'] ?? '')), 'Herika-style JSON should preserve message');
+contractAssertSame('en', trim(strval($herikaStyle['lang'] ?? '')), 'Herika-style JSON should preserve lang');
+
+$legacyStyle = stobeParseStructuredDialogueResponse(
+    '{"character":"Esata the Stone Golem","message":"State your purpose. Now.","listener":"Herika","mood":"irritated","action":"Talk"}',
+    'chat'
+);
+contractAssertTrue(boolval($legacyStyle['is_structured'] ?? false), 'Legacy Stobe JSON should remain parseable');
+contractAssertSame('Esata the Stone Golem', trim(strval($legacyStyle['character'] ?? '')), 'Legacy Stobe JSON should preserve character');
+contractAssertSame('Herika', trim(strval($legacyStyle['listener'] ?? '')), 'Legacy Stobe JSON should preserve listener');
+contractAssertSame('State your purpose. Now.', trim(strval($legacyStyle['message'] ?? '')), 'Legacy Stobe JSON should preserve message');
+
+$partialStructured = stobeParseStructuredDialogueResponse(
+    '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler',
+    'chat'
+);
+contractAssertTrue(boolval($partialStructured['is_structured'] ?? false), 'Partial structured JSON should still parse heuristically');
+contractAssertSame('Dagur', trim(strval($partialStructured['character'] ?? '')), 'Partial structured JSON should preserve character');
+contractAssertSame('RANGROO', trim(strval($partialStructured['listener'] ?? '')), 'Partial structured JSON should preserve listener');
+contractAssertSame('Well met, traveler', trim(strval($partialStructured['message'] ?? '')), 'Partial structured JSON should expose message early');
+
+echo "PASS: structured dialogue contract regression\n";

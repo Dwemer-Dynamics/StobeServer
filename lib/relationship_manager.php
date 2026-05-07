@@ -1,6 +1,6 @@
 <?php
 /**
- * CHIM Relationship Manager
+ * STOBE Relationship Manager
  *
  * Handles NPC relationship tracking, context injection, and AI output parsing.
  * See docs/RELATIONSHIP_SYSTEM_SPEC.md for full specification.

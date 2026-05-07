@@ -3868,29 +3868,27 @@ function stobeBuildNarratorDirectReplyGuidanceUserPrompt(string $speakerName, st
     return $guidance;
 }
 
-function stobeBuildOutputContractUserPrompt(
+function stobeResolveStructuredDialogueContractParts(
     string $npcName,
-    bool $preferAction = false,
-    bool $streamTextMode = false,
-    ?bool $inPlayerFaction = null
-): string {
+    array|false $npcData = false,
+    ?bool $inPlayerFaction = null,
+    string $eventType = 'chat'
+): array {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
         $safeNpc = 'the NPC';
     }
 
-    $npcData = false;
-    if ($inPlayerFaction === null) {
+    if (!is_array($npcData) || count($npcData) === 0) {
         $npcData = getNpcData($safeNpc);
-        if (is_array($npcData) && count($npcData) > 0) {
-            $inPlayerFaction = npcIsInPlayerFaction($npcData);
-        }
-    } else {
-        $npcData = getNpcData($safeNpc);
+    }
+    if (!is_bool($inPlayerFaction) && is_array($npcData) && count($npcData) > 0) {
+        $inPlayerFaction = npcIsInPlayerFaction($npcData);
     }
     if (!is_bool($inPlayerFaction)) {
         $inPlayerFaction = null;
     }
+
     $canStopCarrying = is_array($npcData) && count($npcData) > 0 && stobeNpcIsCarryingTarget($npcData);
     $canRemoveLimb = is_array($npcData) && count($npcData) > 0 && stobeNpcHasHacksaw($npcData);
     $canCutHorns = $canRemoveLimb;
@@ -3898,22 +3896,10 @@ function stobeBuildOutputContractUserPrompt(
     $canUseDrugs = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasHashish($npcData);
     $canDrinkItem = is_array($npcData) && count($npcData) > 0 && !$npcIsSkeleton && stobeNpcHasDrinkItem($npcData);
     $canForceDrink = $canDrinkItem;
-    $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
+    $actionConfig = stobeBuildActionConfigForNpc($eventType, $npcData);
     $allowGiveCats = !boolval($actionConfig['disallow_give_cats'] ?? false);
     $allowTakeCats = !boolval($actionConfig['disallow_take_cats'] ?? false);
     $canPickupNpc = !boolval($actionConfig['disallow_pickup_npc'] ?? false);
-
-    $actionLine = $preferAction
-        ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
-        : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
-    $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
-    $actionLine .= " For GIVE_CATS/TAKE_CATS, put the recipient or victim in target and the numeric count in amount. Do not put money in item.";
-    $actionLine .= " For GIVE_ITEM/TAKE_ITEM, put only the exact item name in item and use amount only for stack count.";
-    $actionLine .= " KNOCKOUT leaves the target alive. It is valid on yourself, or on other targets only when they are knocked-out, unconscious, imprisoned, or carried.";
-    $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
-    $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
-    $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
-    $actionLine .= " CUT_HORNS is only valid on helpless Shek targets whose horns are not already cut off, and requires a hacksaw.";
 
     $actions = [
         'Talk',
@@ -3978,6 +3964,7 @@ function stobeBuildOutputContractUserPrompt(
         $actions[] = 'Leave';
     }
     $actions[] = 'TravelLocation';
+
     $moodsCsv = '';
     if (is_array($npcData)) {
         $moodsCsv = trim(strval($npcData['emote_moods'] ?? ''));
@@ -4008,36 +3995,156 @@ function stobeBuildOutputContractUserPrompt(
             );
         }
     }
-    $moods = [];
-    $seenMoods = [];
-    foreach (explode(',', $moodsCsv) as $rawMood) {
-        $normalizedMood = strtolower(trim(strval($rawMood)));
-        if ($normalizedMood === '' || isset($seenMoods[$normalizedMood])) {
-            continue;
-        }
-        $seenMoods[$normalizedMood] = true;
-        $moods[] = $normalizedMood;
-    }
+    $moods = function_exists('stobeNormalizeEmoteMoods') ? stobeNormalizeEmoteMoods($moodsCsv) : [];
     if (count($moods) === 0) {
-        $moods = [
-            'default', 'neutral', 'assertive', 'kindly', 'smug', 'sarcastic',
-            'teasing', 'playful', 'sardonic', 'irritated', 'amused', 'assisting',
-        ];
+        $moods = function_exists('stobeDefaultEmoteMoodList')
+            ? stobeDefaultEmoteMoodList()
+            : ['neutral', 'assertive', 'kindly', 'smug', 'sarcastic', 'teasing', 'playful', 'irritated', 'amused'];
     }
 
-    $schema = [
+    return [
+        'safe_npc' => $safeNpc,
+        'npc_data' => $npcData,
+        'in_player_faction' => $inPlayerFaction,
+        'actions' => array_values($actions),
+        'moods' => array_values($moods),
+    ];
+}
+
+function stobeBuildStructuredDialogueSchemaPrompt(string $npcName, array $actions, array $moods): array
+{
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if ($safeNpc === '') {
+        $safeNpc = 'the NPC';
+    }
+
+    $moodDescription = count($moods) > 0
+        ? 'choose exactly one mood while speaking from this list, never combine moods: ' . implode('|', $moods)
+        : 'choose exactly one mood while speaking, never combine moods';
+
+    return [
         'character' => $safeNpc,
         'listener' => 'who ' . $safeNpc . ' is addressing',
-        'mood' => implode('|', $moods),
+        'message' => 'lines of dialogue',
+        'mood' => $moodDescription,
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
         'item' => 'exact item name for GIVE_ITEM/TAKE_ITEM, limb token (LEFT_ARM/RIGHT_ARM/LEFT_LEG/RIGHT_LEG), object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
+        'lang' => 'ISO 639-1 language code such as en; use en unless a different language is clearly appropriate',
         'amount' => 'positive integer count for GIVE_CATS/TAKE_CATS and optional stack count for GIVE_ITEM/TAKE_ITEM',
-        'message' => 'lines of dialogue',
     ];
+}
+
+function stobeBuildStructuredDialogueResponseFormat(
+    string $npcName,
+    array|false $npcData = false,
+    ?bool $inPlayerFaction = null,
+    string $eventType = 'chat'
+): array {
+    $parts = stobeResolveStructuredDialogueContractParts($npcName, $npcData, $inPlayerFaction, $eventType);
+    $safeNpc = strval($parts['safe_npc'] ?? '');
+    if ($safeNpc === '') {
+        $safeNpc = 'the NPC';
+    }
+    $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
+    $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
+
+    return [
+        'type' => 'json_schema',
+        'json_schema' => [
+            'name' => 'stobe_dialogue_response',
+            'strict' => true,
+            'schema' => [
+                'type' => 'object',
+                'properties' => [
+                    'character' => [
+                        'type' => 'string',
+                        'description' => 'must be exactly ' . $safeNpc,
+                        'enum' => [$safeNpc],
+                    ],
+                    'listener' => [
+                        'type' => 'string',
+                        'description' => 'who ' . $safeNpc . ' is addressing',
+                    ],
+                    'message' => [
+                        'type' => 'string',
+                        'description' => 'lines of ' . $safeNpc . '\'s dialogue',
+                    ],
+                    'mood' => [
+                        'type' => 'string',
+                        'description' => 'choose exactly one mood while speaking from this list, never combine moods',
+                        'enum' => array_values($moods),
+                    ],
+                    'action' => [
+                        'type' => 'string',
+                        'description' => 'a valid action (refer to available actions list)',
+                        'enum' => array_values($actions),
+                    ],
+                    'target' => [
+                        'type' => 'string',
+                        'description' => 'action target actor or destination name',
+                    ],
+                    'item' => [
+                        'type' => 'string',
+                        'description' => 'exact item name for GIVE_ITEM/TAKE_ITEM, limb token for REMOVE_LIMB/CUT_HORNS, object token for USE_OBJECT, or consumable item for DRINK/USE_DRUGS/FORCE_DRINK',
+                    ],
+                    'lang' => [
+                        'type' => 'string',
+                        'description' => 'ISO 639-1 language code such as en; use en unless a different language is clearly appropriate',
+                    ],
+                    'amount' => [
+                        'type' => 'integer',
+                        'description' => 'positive integer count for GIVE_CATS/TAKE_CATS and optional stack count for GIVE_ITEM/TAKE_ITEM; use 0 when not needed',
+                    ],
+                ],
+                'required' => [
+                    'character',
+                    'listener',
+                    'message',
+                    'mood',
+                    'action',
+                    'target',
+                    'item',
+                    'lang',
+                    'amount',
+                ],
+                'additionalProperties' => false,
+            ],
+        ],
+    ];
+}
+
+function stobeBuildOutputContractUserPrompt(
+    string $npcName,
+    bool $preferAction = false,
+    bool $streamTextMode = false,
+    ?bool $inPlayerFaction = null,
+    string $eventType = 'chat'
+): string {
+    $parts = stobeResolveStructuredDialogueContractParts($npcName, false, $inPlayerFaction, $eventType);
+    $safeNpc = strval($parts['safe_npc'] ?? '');
+    if ($safeNpc === '') {
+        $safeNpc = 'the NPC';
+    }
+
+    $actionLine = $preferAction
+        ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
+        : '(If action is clearly contextually appropriate, use it; otherwise use Talk).';
+    $actionLine .= " Command semantics: GIVE_ITEM means hand over an item; GIVE_CATS means this NPC gives away its own money. Do not use GIVE_CATS for trade pricing.";
+    $actionLine .= " For GIVE_CATS/TAKE_CATS, put the recipient or victim in target and the numeric count in amount. Do not put money in item.";
+    $actionLine .= " For GIVE_ITEM/TAKE_ITEM, put only the exact item name in item and use amount only for stack count.";
+    $actionLine .= " KNOCKOUT leaves the target alive. It is valid on yourself, or on other targets only when they are knocked-out, unconscious, imprisoned, or carried.";
+    $actionLine .= " KILL is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
+    $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
+    $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
+    $actionLine .= " CUT_HORNS is only valid on helpless Shek targets whose horns are not already cut off, and requires a hacksaw.";
+    $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
+    $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
+    $schema = stobeBuildStructuredDialogueSchemaPrompt($safeNpc, $actions, $moods);
 
     return $actionLine
         . " Use <speech_style> for reference.\n"
+        . "Put the JSON fields in this exact order: character, listener, message, mood, action, target, item, lang, amount.\n"
         . "Use ONLY this JSON object to give your answer. Do not send any other characters outside of this JSON structure:\n"
         . json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
 }
@@ -4208,13 +4315,15 @@ function stobeHeuristicExtractStructuredFields(string $rawResponse): array {
     }
 
     $fields = [
+        'character' => $extractQuoted('character'),
         'message' => $message,
         'action' => $extractQuoted('action'),
         'target' => $extractQuoted('target'),
         'item' => $item,
-        'amount' => $extractScalar('amount'),
         'listener' => $extractQuoted('listener'),
         'mood' => $extractQuoted('mood'),
+        'lang' => $extractQuoted('lang'),
+        'amount' => $extractScalar('amount'),
     ];
 
     foreach ($fields as $value) {
@@ -4616,22 +4725,29 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
             }
             return [
                 'is_structured' => true,
+                'character' => trim(strval($heuristic['character'] ?? '')),
                 'message' => $heuristicMessage,
                 'action_tag' => $fallbackActionTag,
                 'listener' => trim(strval($heuristic['listener'] ?? '')),
-                'mood' => trim(strval($heuristic['mood'] ?? '')),
+                'mood' => function_exists('stobeExtractFirstEmoteMood')
+                    ? stobeExtractFirstEmoteMood($heuristic['mood'] ?? '')
+                    : trim(strval($heuristic['mood'] ?? '')),
+                'lang' => trim(strval($heuristic['lang'] ?? '')),
             ];
         }
 
         return [
             'is_structured' => false,
+            'character' => '',
             'message' => $fallbackMessage,
             'action_tag' => $fallbackActionTag,
             'listener' => '',
             'mood' => '',
+            'lang' => '',
         ];
     }
 
+    $character = trim(strval($decoded['character'] ?? ''));
     $message = trim(strval($decoded['message'] ?? ''));
     if ($message === '') {
         $message = trim(strval($decoded['text'] ?? ''));
@@ -4643,7 +4759,10 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
     $target = trim(strval($decoded['target'] ?? ''));
     $item = trim(strval($decoded['item'] ?? ''));
     $listener = trim(strval($decoded['listener'] ?? ''));
-    $mood = trim(strval($decoded['mood'] ?? ''));
+    $mood = function_exists('stobeExtractFirstEmoteMood')
+        ? stobeExtractFirstEmoteMood($decoded['mood'] ?? '')
+        : trim(strval($decoded['mood'] ?? ''));
+    $lang = trim(strval($decoded['lang'] ?? ''));
     $amount = trim(strval($decoded['amount'] ?? ''));
 
     $rawActionTag = stobeBuildActionTagFromStructuredPayload(
@@ -4661,10 +4780,12 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
 
     return [
         'is_structured' => true,
+        'character' => $character,
         'message' => trim($message),
         'action_tag' => $actionTag,
         'listener' => $listener,
         'mood' => $mood,
+        'lang' => $lang,
     ];
 }
 

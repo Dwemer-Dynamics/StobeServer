@@ -1684,11 +1684,11 @@ BEGIN
 END $$;
 
 -- ----------------------------------------------------------
--- PLAYTHROUGH MANAGER (chim_meta schema snapshots)
+-- PLAYTHROUGH MANAGER (stobe_meta schema snapshots)
 -- ----------------------------------------------------------
-CREATE SCHEMA IF NOT EXISTS chim_meta;
+CREATE SCHEMA IF NOT EXISTS stobe_meta;
 
-CREATE TABLE IF NOT EXISTS chim_meta.playthrough_profiles (
+CREATE TABLE IF NOT EXISTS stobe_meta.playthrough_profiles (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -1709,15 +1709,15 @@ CREATE TABLE IF NOT EXISTS chim_meta.playthrough_profiles (
     rollback_to_gamets BIGINT DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS chim_meta.playthrough_blobs (
-    profile_id INT PRIMARY KEY REFERENCES chim_meta.playthrough_profiles(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS stobe_meta.playthrough_blobs (
+    profile_id INT PRIMARY KEY REFERENCES stobe_meta.playthrough_profiles(id) ON DELETE CASCADE,
     dump_data TEXT,
     dump_lob OID
 );
 
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_created ON chim_meta.playthrough_profiles (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_last_gamets ON chim_meta.playthrough_profiles (last_gamets DESC);
-CREATE INDEX IF NOT EXISTS idx_chim_playthrough_profiles_is_active ON chim_meta.playthrough_profiles (is_active);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_created ON stobe_meta.playthrough_profiles (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_last_gamets ON stobe_meta.playthrough_profiles (last_gamets DESC);
+CREATE INDEX IF NOT EXISTS idx_stobe_playthrough_profiles_is_active ON stobe_meta.playthrough_profiles (is_active);
 
 INSERT INTO general_settings (id, value, description, updated_at)
 VALUES
@@ -2236,7 +2236,7 @@ INSERT INTO core_api_badge (label, api_key) VALUES
 ('Inworld', ''),
 ('Nano-GPT', ''),
 ('Groq', ''),
-('Player2', 'CHIM')
+('Player2', 'STOBE')
 ON CONFLICT (label) DO NOTHING;
 
 INSERT INTO core_llm_connector (
@@ -2305,7 +2305,7 @@ INSERT INTO core_llm_connector (
     'player2json',
     (
         SELECT id FROM core_api_badge
-        WHERE LOWER(label) IN ('player2', 'chim')
+        WHERE LOWER(label) IN ('player2', 'stobe')
         ORDER BY CASE WHEN LOWER(label) = 'player2' THEN 0 ELSE 1 END, id ASC
         LIMIT 1
     ),
@@ -2315,7 +2315,7 @@ INSERT INTO core_llm_connector (
     750,
     1.0,
     FALSE,
-    '{"player2_game_key":"CHIM"}'::jsonb
+    '{"player2_game_key":"STOBE"}'::jsonb
 )
 ON CONFLICT (name) DO NOTHING;
 

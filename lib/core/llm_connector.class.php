@@ -146,6 +146,11 @@ if (!class_exists('LLMConnector')) {
             if (array_key_exists('remove_action_prompt', $config)) {
                 $metadata['remove_action_prompt'] = boolval($config['remove_action_prompt']);
             }
+            if (array_key_exists('disable_streaming', $config)) {
+                $metadata['disable_streaming'] = boolval($config['disable_streaming']);
+            } elseif (array_key_exists('disable_streaming', $metadata)) {
+                $metadata['disable_streaming'] = boolval($metadata['disable_streaming']);
+            }
             if (array_key_exists('extra_parameters_enabled', $config)) {
                 $metadata['extra_parameters_enabled'] = boolval($config['extra_parameters_enabled']);
             }
@@ -170,6 +175,7 @@ if (!class_exists('LLMConnector')) {
             $mapped['top_k'] = $config['top_k'] ?? '';
             $mapped['min_p'] = $config['min_p'] ?? '';
             $mapped['top_a'] = $config['top_a'] ?? '';
+            $mapped['disable_streaming'] = !empty($config['disable_streaming']) ? 1 : (!empty($metadata['disable_streaming']) ? 1 : 0);
             $mapped['metadata'] = json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if (!is_string($mapped['metadata'])) {
                 $mapped['metadata'] = '{}';

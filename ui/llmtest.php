@@ -51,7 +51,7 @@ function stobeLlmtestPerformanceBadge(float $elapsedMs): array {
     if ($seconds < 30.0) {
         return ['SLOW', '#fd7e14'];
     }
-    return ['TOO CHIMMING SLOW', '#dc3545'];
+    return ['TOO STOBING SLOW', '#dc3545'];
 }
 
 function stobeLlmtestDefaultMoodEnums(): array {
@@ -71,22 +71,12 @@ function stobeLlmtestDefaultMoodEnums(): array {
         $moodsCsv
     );
 
-    $moods = [];
-    $seen = [];
-    foreach (explode(',', $moodsCsv) as $rawMood) {
-        $mood = strtolower(trim(strval($rawMood)));
-        if ($mood === '' || isset($seen[$mood])) {
-            continue;
-        }
-        $seen[$mood] = true;
-        $moods[] = $mood;
-    }
+    $moods = function_exists('stobeNormalizeEmoteMoods') ? stobeNormalizeEmoteMoods($moodsCsv) : [];
 
     if (count($moods) === 0) {
-        $moods = [
-            'default', 'neutral', 'assertive', 'kindly', 'smug', 'sarcastic',
-            'teasing', 'playful', 'sardonic', 'irritated', 'amused', 'assisting',
-        ];
+        $moods = function_exists('stobeDefaultEmoteMoodList')
+            ? stobeDefaultEmoteMoodList()
+            : ['neutral', 'assertive', 'kindly', 'smug', 'sarcastic', 'teasing', 'playful', 'irritated', 'amused'];
     }
 
     return $moods;
@@ -160,7 +150,7 @@ function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods
                     ],
                     'mood' => [
                         'type' => 'string',
-                        'description' => 'mood to use while speaking',
+                        'description' => 'choose exactly one mood while speaking from this list, never combine moods',
                         'enum' => array_values($moods),
                     ],
                     'action' => [
@@ -176,6 +166,10 @@ function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods
                         'type' => 'string',
                         'description' => 'exact item name for GiveItem/TakeItem, limb token for RemoveLimb, object token for UseObject, or consumable item for Drink/UseDrugs/ForceDrink',
                     ],
+                    'lang' => [
+                        'type' => 'string',
+                        'description' => 'ISO 639-1 language code such as en; use en unless a different language is clearly appropriate',
+                    ],
                     'amount' => [
                         'type' => 'integer',
                         'description' => 'positive integer count for GiveCats/TakeCats and optional stack count for GiveItem/TakeItem; use 0 when not needed',
@@ -189,6 +183,7 @@ function stobeLlmtestBuildStructuredResponseFormat(string $npcName, array $moods
                     'action',
                     'target',
                     'item',
+                    'lang',
                     'amount',
                 ],
                 'additionalProperties' => false,
@@ -213,12 +208,13 @@ function stobeLlmtestBuildPromptMessages(string $prompt): array {
     $exampleResponse = [
         'character' => $character,
         'listener' => $listener,
+        'message' => 'What are you looking at?',
         'mood' => 'neutral',
         'action' => 'Talk',
         'target' => '',
         'item' => '',
+        'lang' => 'en',
         'amount' => 0,
-        'message' => 'What are you looking at?',
     ];
 
     $messages = [

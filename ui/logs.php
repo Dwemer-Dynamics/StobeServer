@@ -263,7 +263,7 @@ $herikaWebRoot = preg_replace('#/StobeServer$#i', '/HerikaServer', $webRoot) ?? 
 if ($herikaWebRoot === $webRoot || $herikaWebRoot === "") {
     $herikaWebRoot = "/HerikaServer";
 }
-$herikaMcpConfigApi = $herikaWebRoot . "/ui/api/chim_mcp_config.php";
+$herikaMcpConfigApi = $herikaWebRoot . "/ui/api/stobe_mcp_config.php";
 $herikaLogsUrl = $herikaWebRoot . "/ui/tests/apache2err.php";
 
 $mcpHost = 'localhost';

@@ -46,6 +46,73 @@ function stobeIsOpenAiModel(string $model): bool {
     return strpos($modelLower, 'openai/') === 0;
 }
 
+function stobeNormalizeBooleanFlag(mixed $value, bool $fallback = false): bool {
+    if (is_bool($value)) {
+        return $value;
+    }
+    if (is_int($value) || is_float($value)) {
+        return floatval($value) !== 0.0;
+    }
+    if (is_string($value)) {
+        $normalized = strtolower(trim($value));
+        if ($normalized === '') {
+            return $fallback;
+        }
+        if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+            return true;
+        }
+        if (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
+            return false;
+        }
+    }
+    return $fallback;
+}
+
+function stobeDecodeConnectorConfig(mixed $rawConfig): array {
+    if (is_array($rawConfig)) {
+        return $rawConfig;
+    }
+    $decoded = json_decode(strval($rawConfig), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function stobeDecodeConnectorMetadata(array $connectorConfig): array {
+    $metadata = $connectorConfig['metadata'] ?? [];
+    if (is_array($metadata)) {
+        return $metadata;
+    }
+    $decoded = json_decode(strval($metadata), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function stobeShouldUseStreamingTransport(array $connectorConfig): bool {
+    $metadata = stobeDecodeConnectorMetadata($connectorConfig);
+    $useStreaming = !stobeNormalizeBooleanFlag(
+        $connectorConfig['disable_streaming'] ?? ($metadata['disable_streaming'] ?? false),
+        false
+    );
+
+    $extraPayload = stobeParseConnectorExtras($connectorConfig);
+    if (array_key_exists('stream', $extraPayload)) {
+        $useStreaming = stobeNormalizeBooleanFlag($extraPayload['stream'], $useStreaming);
+    }
+
+    return $useStreaming;
+}
+
+function stobeApplyConnectorExtraPayload(array &$payload, array $connectorConfig, bool $streamValue): void {
+    $extraPayload = stobeParseConnectorExtras($connectorConfig);
+    if (array_key_exists('stream', $extraPayload)) {
+        unset($extraPayload['stream']);
+    }
+
+    foreach ($extraPayload as $key => $value) {
+        $payload[$key] = $value;
+    }
+
+    $payload['stream'] = $streamValue;
+}
+
 function stobeParseConnectorExtras(mixed $rawConfig): array {
     $config = [];
     if (is_array($rawConfig)) {
@@ -558,13 +625,8 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
     $model = $config['model'] ?? '';
     $maxTokens = $config['max_tokens'] ?? 2048;
     $temperature = $config['temperature'] ?? 0.8;
-    $connectorConfig = $config['config'] ?? [];
+    $connectorConfig = stobeDecodeConnectorConfig($config['config'] ?? []);
     $connectorType = strtolower(trim(strval($config['connector_type'] ?? 'openaijson')));
-
-    if (!is_array($connectorConfig)) {
-        $decodedConfig = json_decode(strval($connectorConfig), true);
-        $connectorConfig = is_array($decodedConfig) ? $decodedConfig : [];
-    }
 
     if ($baseUrl === '') {
         $baseUrl = 'https://openrouter.ai/api/v1';
@@ -591,10 +653,7 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
         $payload['response_format'] = $meta['response_format'];
     }
 
-    $extraPayload = stobeParseConnectorExtras($connectorConfig);
-    foreach ($extraPayload as $key => $value) {
-        $payload[$key] = $value;
-    }
+    stobeApplyConnectorExtraPayload($payload, $connectorConfig, false);
 
     if (stobeIsReasoningModel($model)) {
         $payload['reasoning'] = ['exclude' => true];
@@ -903,12 +962,22 @@ function callLLMStream(
     $model = $config['model'] ?? '';
     $maxTokens = $config['max_tokens'] ?? 2048;
     $temperature = $config['temperature'] ?? 0.8;
-    $connectorConfig = $config['config'] ?? [];
+    $connectorConfig = stobeDecodeConnectorConfig($config['config'] ?? []);
     $connectorType = strtolower(trim(strval($config['connector_type'] ?? 'openaijson')));
-
-    if (!is_array($connectorConfig)) {
-        $decodedConfig = json_decode(strval($connectorConfig), true);
-        $connectorConfig = is_array($decodedConfig) ? $decodedConfig : [];
+    if (!stobeShouldUseStreamingTransport($connectorConfig)) {
+        $fallbackConfig = $config;
+        $fallbackConfig['config'] = $connectorConfig;
+        $fullResponse = callLLM($messages, $fallbackConfig, $meta);
+        if (is_string($fullResponse) && $fullResponse !== '') {
+            try {
+                $onTextDelta($fullResponse);
+            } catch (Throwable $callbackException) {
+                stobeLogWarn('LLM stream fallback callback threw exception', [
+                    'error' => $callbackException->getMessage(),
+                ]);
+            }
+        }
+        return $fullResponse;
     }
 
     if ($baseUrl === '') {
@@ -937,10 +1006,7 @@ function callLLMStream(
         $payload['response_format'] = $meta['response_format'];
     }
 
-    $extraPayload = stobeParseConnectorExtras($connectorConfig);
-    foreach ($extraPayload as $key => $value) {
-        $payload[$key] = $value;
-    }
+    stobeApplyConnectorExtraPayload($payload, $connectorConfig, true);
 
     if (stobeIsReasoningModel($model)) {
         $payload['reasoning'] = ['exclude' => true];
@@ -1004,92 +1070,142 @@ function callLLMStream(
     $fullContent = '';
     $usage = [];
     $streamDone = false;
+    $writeCallback = function ($curlHandle, string $data) use (
+        &$streamBuffer,
+        &$rawStream,
+        &$fullContent,
+        &$usage,
+        &$streamDone,
+        $onTextDelta
+    ): int {
+        $rawStream .= $data;
+        $streamBuffer .= $data;
 
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payloadJson,
-        CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_RETURNTRANSFER => false,
-        CURLOPT_TIMEOUT => $timeoutSeconds,
-        CURLOPT_WRITEFUNCTION => function ($curlHandle, string $data) use (
-            &$streamBuffer,
-            &$rawStream,
-            &$fullContent,
-            &$usage,
-            &$streamDone,
-            $onTextDelta
-        ): int {
-            $rawStream .= $data;
-            $streamBuffer .= $data;
-
-            while (true) {
-                $newlinePos = strpos($streamBuffer, "\n");
-                if ($newlinePos === false) {
-                    break;
-                }
-
-                $line = substr($streamBuffer, 0, $newlinePos);
-                $streamBuffer = substr($streamBuffer, $newlinePos + 1);
-                $line = trim(strval($line), "\r\n");
-                if ($line === '') {
-                    continue;
-                }
-                if (stripos($line, 'data:') !== 0) {
-                    continue;
-                }
-
-                $chunkPayload = trim(substr($line, 5));
-                if ($chunkPayload === '' || $chunkPayload === '[DONE]') {
-                    if ($chunkPayload === '[DONE]') {
-                        $streamDone = true;
-                    }
-                    continue;
-                }
-
-                $chunkData = json_decode($chunkPayload, true);
-                if (!is_array($chunkData)) {
-                    continue;
-                }
-
-                if (is_array($chunkData['usage'] ?? null)) {
-                    $usage = $chunkData['usage'];
-                }
-
-                $choices = $chunkData['choices'] ?? [];
-                if (!is_array($choices) || count($choices) === 0 || !is_array($choices[0] ?? null)) {
-                    continue;
-                }
-
-                $deltaText = stobeExtractDeltaContent($choices[0]);
-                if ($deltaText === '') {
-                    $messageContent = stobeExtractMessageContent($choices[0]);
-                    if ($messageContent !== '') {
-                        $deltaText = $messageContent;
-                    }
-                }
-                if ($deltaText === '') {
-                    continue;
-                }
-
-                $fullContent .= $deltaText;
-                try {
-                    $onTextDelta($deltaText);
-                } catch (Throwable $callbackException) {
-                    stobeLogWarn('LLM stream text callback threw exception', [
-                        'error' => $callbackException->getMessage(),
-                    ]);
-                }
+        while (true) {
+            $newlinePos = strpos($streamBuffer, "\n");
+            if ($newlinePos === false) {
+                break;
             }
 
-            return strlen($data);
-        },
-    ]);
+            $line = substr($streamBuffer, 0, $newlinePos);
+            $streamBuffer = substr($streamBuffer, $newlinePos + 1);
+            $line = trim(strval($line), "\r\n");
+            if ($line === '') {
+                continue;
+            }
+            if (stripos($line, 'data:') !== 0) {
+                continue;
+            }
 
-    $execResult = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
-    curl_close($ch);
+            $chunkPayload = trim(substr($line, 5));
+            if ($chunkPayload === '' || $chunkPayload === '[DONE]') {
+                if ($chunkPayload === '[DONE]') {
+                    $streamDone = true;
+                }
+                continue;
+            }
+
+            $chunkData = json_decode($chunkPayload, true);
+            if (!is_array($chunkData)) {
+                continue;
+            }
+
+            if (is_array($chunkData['usage'] ?? null)) {
+                $usage = $chunkData['usage'];
+            }
+
+            $choices = $chunkData['choices'] ?? [];
+            if (!is_array($choices) || count($choices) === 0 || !is_array($choices[0] ?? null)) {
+                continue;
+            }
+
+            $deltaText = stobeExtractDeltaContent($choices[0]);
+            if ($deltaText === '') {
+                $messageContent = stobeExtractMessageContent($choices[0]);
+                if ($messageContent !== '') {
+                    $deltaText = $messageContent;
+                }
+            }
+            if ($deltaText === '') {
+                continue;
+            }
+
+            $fullContent .= $deltaText;
+            try {
+                $onTextDelta($deltaText);
+            } catch (Throwable $callbackException) {
+                stobeLogWarn('LLM stream text callback threw exception', [
+                    'error' => $callbackException->getMessage(),
+                ]);
+            }
+        }
+
+        return strlen($data);
+    };
+
+    $runStreamRequest = static function (string $requestPayloadJson) use (
+        $url,
+        $headers,
+        $timeoutSeconds,
+        $writeCallback,
+        &$httpCode,
+        &$curlError
+    ) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $requestPayloadJson,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => false,
+            CURLOPT_TIMEOUT => $timeoutSeconds,
+            CURLOPT_WRITEFUNCTION => $writeCallback,
+        ]);
+
+        $execResultLocal = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        return $execResultLocal;
+    };
+
+    $httpCode = 0;
+    $curlError = '';
+    $execResult = $runStreamRequest($payloadJson);
+
+    if (($httpCode !== 200 || $execResult === false) && isset($payload['response_format'])) {
+        stobeLogWarn('LLM stream request failed with response_format; retrying without response_format', [
+            'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
+            'event_type' => strval($meta['event_type'] ?? ''),
+            'npc_name' => strval($meta['npc_name'] ?? ''),
+            'connector_type' => $connectorType,
+            'model' => $model,
+            'http_code' => $httpCode,
+            'curl_error' => $curlError,
+        ]);
+
+        unset($payload['response_format']);
+        $retryPayloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (is_string($retryPayloadJson) && $retryPayloadJson !== '') {
+            stobeAppendContextRequestLog('llm_stream_request_retry_no_response_format', [
+                'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
+                'event_type' => strval($meta['event_type'] ?? ''),
+                'npc_name' => strval($meta['npc_name'] ?? ''),
+                'connector_type' => $connectorType,
+                'model' => $model,
+                'base_url' => $baseUrl,
+                'url' => $url,
+                'payload' => $payload,
+            ], $forceFastLog);
+
+            $streamBuffer = '';
+            $rawStream = '';
+            $fullContent = '';
+            $usage = [];
+            $streamDone = false;
+            $execResult = $runStreamRequest($retryPayloadJson);
+        }
+    }
 
     if ($httpCode !== 200 || $execResult === false) {
         stobeAppendLlmDebugLog('output_from_llm.log', 'llm_stream_response_error', [

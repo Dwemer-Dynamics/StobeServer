@@ -845,7 +845,8 @@ $messages[] = [
         $respondingNpc,
         false,
         false,
-        npcIsInPlayerFaction($npcData)
+        npcIsInPlayerFaction($npcData),
+        'rechat'
     ),
 ];
 
@@ -874,7 +875,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'npc_name' => $respondingNpc,
         'event_type' => 'rechat',
         'action_config' => $actionConfig,
-        'response_format' => ['type' => 'json_object'],
+        'response_format' => stobeBuildStructuredDialogueResponseFormat($respondingNpc, $npcData, npcIsInPlayerFaction($npcData), 'rechat'),
     ]
 );
 

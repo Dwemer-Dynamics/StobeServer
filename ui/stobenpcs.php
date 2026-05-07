@@ -1619,7 +1619,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                     <?php endif; ?>
                                 <a class="btn btn-toggle <?= coerceBoolean($row["npc_favorite"] ?? false) ? "active" : "" ?>" href="#" data-favorite-id="<?= $row["id"] ?>" title="Toggle favorite"><?php echo coerceBoolean($row["npc_favorite"] ?? false) ? "&#9733;" : "&#9734;"; ?></a>
                                 <a class="btn btn-toggle <?= coerceBoolean($row["lock_profile"] ?? false) ? "active" : "" ?>" href="#" data-lock-id="<?= $row["id"] ?>" title="Toggle lock - Locked profiles are protected from save rollback when loading saves"><?php echo coerceBoolean($row["lock_profile"] ?? false) ? "&#x1F512;" : "&#x1F513;"; ?></a>
-                                <a class="btn btn-trash<?= coerceBoolean($row['lock_profile'] ?? false) ? ' disabled' : '' ?>" data-delete-id="<?= intval($row['id']) ?>" href="<?= coerceBoolean($row['lock_profile'] ?? false) ? '#' : ('npc_master.php?delete='.$row['id']) ?>" title="<?= coerceBoolean($row['lock_profile'] ?? false) ? 'Locked - cannot delete' : 'Delete' ?>">&#x1F5D1;&#xFE0F;</a>
+                                <a class="btn btn-trash<?= coerceBoolean($row['lock_profile'] ?? false) ? ' disabled' : '' ?>" data-delete-id="<?= intval($row['id']) ?>" href="<?= coerceBoolean($row['lock_profile'] ?? false) ? '#' : ('npc_master.php?delete='.$row['id']) ?>" title="<?= coerceBoolean($row['lock_profile'] ?? false) ? 'Locked - cannot delete' : 'Delete' ?>">&#x274C;</a>
                 </div>
             </div>
             <div class="npc-divider"></div>
@@ -2022,6 +2022,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         // Upsert by name
         $existing = $npc->getByName($data['npc_name']);
         if ($existing) {
+            $existingAppearance = trim(strval($existing['appearance'] ?? ''));
+            $existingRefId = trim(strval($existing['refid'] ?? ''));
+            if (
+                $includeExt &&
+                array_key_exists('appearance', $data) &&
+                $existingAppearance !== '' &&
+                $existingRefId !== ''
+            ) {
+                // Snapshot-backed NPCs should keep their generated appearance text.
+                unset($data['appearance']);
+            }
             $data['md5'] = md5((string)$data['npc_name']);
             $ok = $npc->update((int)$existing['id'], $data);
             if ($ok === false) { echo json_encode(['ok'=>false,'error'=>'Update failed']); exit; }
@@ -3605,7 +3616,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <?php endif; ?>
                                 <a class="btn btn-toggle <?= coerceBoolean($row["npc_favorite"] ?? false) ? "active" : "" ?>" href="#" data-favorite-id="<?= $row["id"] ?>" title="Toggle favorite"><?php echo coerceBoolean($row["npc_favorite"] ?? false) ? "&#9733;" : "&#9734;"; ?></a>
                                 <a class="btn btn-toggle <?= coerceBoolean($row["lock_profile"] ?? false) ? "active" : "" ?>" href="#" data-lock-id="<?= $row["id"] ?>" title="Toggle lock - Locked profiles are protected from save rollback when loading saves"><?php echo coerceBoolean($row["lock_profile"] ?? false) ? "&#x1F512;" : "&#x1F513;"; ?></a>
-                                <a class="btn btn-trash<?= coerceBoolean($row['lock_profile'] ?? false) ? ' disabled' : '' ?>" data-delete-id="<?= intval($row['id']) ?>" href="<?= coerceBoolean($row['lock_profile'] ?? false) ? '#' : ('npc_master.php?delete='.$row['id']) ?>" title="<?= coerceBoolean($row['lock_profile'] ?? false) ? 'Locked - cannot delete' : 'Delete' ?>">&#x1F5D1;&#xFE0F;</a>
+                                <a class="btn btn-trash<?= coerceBoolean($row['lock_profile'] ?? false) ? ' disabled' : '' ?>" data-delete-id="<?= intval($row['id']) ?>" href="<?= coerceBoolean($row['lock_profile'] ?? false) ? '#' : ('npc_master.php?delete='.$row['id']) ?>" title="<?= coerceBoolean($row['lock_profile'] ?? false) ? 'Locked - cannot delete' : 'Delete' ?>">&#x274C;</a>
             </div>
         </div>
         <div class="npc-divider"></div>
@@ -5090,7 +5101,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <span class="npc-tags-top" style="display:none"></span>
                 <a class="btn btn-toggle" href="#" data-favorite-id="${id}" title="Toggle favorite">&#9734;</a>
                 <a class="btn btn-toggle" href="#" data-lock-id="${id}" title="Toggle lock - Locked profiles are protected from save rollback when loading saves">&#x1F513;</a>
-                <a class="btn btn-trash" data-delete-id="${id}" href="npc_master.php?delete=${id}" title="Delete">&#x1F5D1;&#xFE0F;</a>
+                <a class="btn btn-trash" data-delete-id="${id}" href="npc_master.php?delete=${id}" title="Delete">&#x274C;</a>
               </div>
             </div>
             <div class="npc-divider"></div>
