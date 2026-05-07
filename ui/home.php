@@ -229,7 +229,7 @@ if ($serverVersionDisplay === '') {
 }
 $serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
 if ($serverReleaseDate === '') {
-    $serverReleaseDate = '2026-04-25';
+    $serverReleaseDate = '2026-05-07';
 }
 
 $pluginVersionDisplay = 'N/A';
