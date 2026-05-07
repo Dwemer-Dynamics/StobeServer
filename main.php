@@ -129,10 +129,6 @@ if (!function_exists('stobeTryInlineMemoryMaintenanceFallback')) {
                 // Use manager-equivalent event type so regular-memory allowlist applies.
                 stobeMaybeRunRegularMemoryCycle('chat', $timestamp, $gamets, $tickPayload);
             }
-            if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
-                // Keep dynamic profiles moving even when the daemon loop is unavailable.
-                stobeMaybeRunDynamicProfileCycle('chat', $timestamp, $gamets, $tickPayload);
-            }
             if (function_exists('stobeMaybeRunAutoDiaryCycle')) {
                 stobeMaybeRunAutoDiaryCycle($timestamp, $gamets);
             }

@@ -7,6 +7,7 @@
  * - Periodically refreshes enabled NPC profile fields via LLM.
  * - Interval is controlled by conf_opts key DYNAMIC_PROFILE_INTERVAL_HOURS.
  * - Interval uses Kenshi in-game gamets, not wall-clock time.
+ * - Per-NPC real-time cooldown prevents bursty refresh loops.
  * - Respects NPC/profile layered setting DYNAMIC_PROFILE_ENABLED.
  */
 
@@ -78,6 +79,20 @@ function stobeDynamicProfileLoadGraceSeconds(): int
         $seconds = 5;
     } elseif ($seconds > 300) {
         $seconds = 300;
+    }
+    return $seconds;
+}
+
+function stobeDynamicProfileRealtimeCooldownSeconds(): int
+{
+    $seconds = parseIntLike(
+        getSetting('DYNAMIC_PROFILE_REALTIME_COOLDOWN_SECONDS', '900'),
+        900
+    );
+    if ($seconds < 60) {
+        $seconds = 60;
+    } elseif ($seconds > 86400) {
+        $seconds = 86400;
     }
     return $seconds;
 }
@@ -289,6 +304,7 @@ function stobeDynamicProfileProcessNarrator(
     if ($gamets > 0) {
         setConfOpt(stobeDynamicProfileLastGametsKey($narratorName), strval($gamets), true);
     }
+    setConfOpt(stobeDynamicProfileLastRunTsKey($narratorName), strval(time()), true);
 
     stobeLogInfo('Dynamic profile updated', [
         'npc_name' => $narratorName,
@@ -320,34 +336,45 @@ function stobeDynamicProfileNpcDue(string $npcName, int $currentGamets, int $int
     }
 
     $gametsKey = stobeDynamicProfileLastGametsKey($npcName);
+    $lastRunTsKey = stobeDynamicProfileLastRunTsKey($npcName);
     $lastRunGamets = intval(getConfOpt($gametsKey, '0'));
+    $lastRunTs = intval(getConfOpt($lastRunTsKey, '0'));
+    $nowTs = time();
 
-    // One-time migration: if old wall-clock state exists but no gamets state,
-    // rebase to current gamets so we don't immediately spam updates.
+    // Seed missing per-NPC state to current time/gamets so newly discovered
+    // faction NPCs do not backfill into an immediate LLM burst.
     if ($lastRunGamets <= 0) {
-        $legacyLastRunTs = intval(getConfOpt(stobeDynamicProfileLastRunTsKey($npcName), '0'));
-        if ($legacyLastRunTs > 0) {
-            setConfOpt($gametsKey, strval($currentGamets), true);
-            setConfOpt(stobeDynamicProfileLastRunTsKey($npcName), '0', true);
-            stobeLogDebug('Dynamic profile NPC timer migrated from wall-clock to gamets', [
+        $hadLegacyTs = $lastRunTs > 0;
+        setConfOpt($gametsKey, strval($currentGamets), true);
+        setConfOpt($lastRunTsKey, strval($nowTs), true);
+        stobeLogDebug(
+            $hadLegacyTs
+                ? 'Dynamic profile NPC timer migrated from wall-clock to seeded gamets state'
+                : 'Dynamic profile NPC timer seeded on first sight',
+            [
                 'npc_name' => $npcName,
-                'legacy_last_run_ts' => $legacyLastRunTs,
+                'legacy_last_run_ts' => $lastRunTs,
                 'current_gamets' => $currentGamets,
                 'interval_hours' => $intervalHours,
-            ]);
-            return false;
-        }
-        return true;
+            ]
+        );
+        return false;
     }
 
     if ($currentGamets + 5 < $lastRunGamets) {
         setConfOpt($gametsKey, strval($currentGamets), true);
+        setConfOpt($lastRunTsKey, strval($nowTs), true);
         stobeLogDebug('Dynamic profile NPC timer rebased after gamets rewind', [
             'npc_name' => $npcName,
             'last_run_gamets' => $lastRunGamets,
             'current_gamets' => $currentGamets,
             'interval_hours' => $intervalHours,
         ]);
+        return false;
+    }
+
+    $realtimeCooldownSeconds = stobeDynamicProfileRealtimeCooldownSeconds();
+    if ($lastRunTs > 0 && ($nowTs - $lastRunTs) < $realtimeCooldownSeconds) {
         return false;
     }
 
@@ -510,7 +537,14 @@ function stobeDynamicProfileFetchRecentContext(string $npcName, int $limit = 30)
     return $db->fetchAll(
         "SELECT rowid AS id, type, data, gamets, localts, ts, people, location
          FROM eventlog
-         WHERE type NOT IN ('setconf', 'status_msg', 'npc_snapshot', 'playerinfo')
+         WHERE type NOT IN (
+             'setconf',
+             'status_msg',
+             'npc_snapshot',
+             'playerinfo',
+             'infonpc',
+             'infoloc'
+         )
            AND (
                 LOWER(COALESCE(people, '')) LIKE LOWER($1)
                 OR LOWER(COALESCE(data, '')) LIKE LOWER($1)
@@ -718,6 +752,7 @@ function stobeMaybeRunDynamicProfileCycle(
             if ($gamets > 0) {
                 setConfOpt(stobeDynamicProfileLastGametsKey($npcName), strval($gamets), true);
             }
+            setConfOpt(stobeDynamicProfileLastRunTsKey($npcName), strval(time()), true);
 
             stobeLogInfo('Dynamic profile updated', [
                 'npc_name' => $npcName,
