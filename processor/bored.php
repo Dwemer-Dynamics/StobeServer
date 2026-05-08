@@ -12,6 +12,10 @@ $forceDirectorMode = ($requestMode === 'director');
 $playerName = normalizeParticipantNameToken(getSetting('PLAYER_NAME', 'Drifter'));
 $incomingProfile = normalizeParticipantNameToken(trim(strval($_GET['profile'] ?? '')));
 $peopleRaw = strval($GLOBALS["CACHE_PEOPLE"] ?? ($_GET['people'] ?? ''));
+$participantIdentities = extractParticipantIdentities([
+    'people' => $peopleRaw,
+    'profile' => $incomingProfile,
+]);
 
 $participants = extractParticipantNames([
     'people' => $peopleRaw,
@@ -141,6 +145,17 @@ if ($listener === '') {
     ]);
     echo "ok";
     return;
+}
+$listenerStorageId = '';
+foreach ($participantIdentities as $identity) {
+    $identityName = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+    if ($identityName === '' || strcasecmp($identityName, $listener) !== 0) {
+        continue;
+    }
+    $listenerStorageId = normalizeStorageIdToken(strval($identity['storage_id'] ?? ''));
+    if ($listenerStorageId !== '') {
+        break;
+    }
 }
 
 // --- Configurable Bored Frequency Gate ---
@@ -368,6 +383,18 @@ if ($responseTextForStore === '' && count($responseActions) > 0) {
 $chatEventData = $speakerNpc . ': ' . $responseTextForStore . ' (talking to: ' . $listener . ')';
 storeActionEvents($speakerNpc, $responseActions, $gamets, $listener, 'bored');
 storeEvent('chat', time(), $gamets, $chatEventData);
+
+$listenerMetaPayload = $speakerNpc . '|ListenerMeta|' . $listener;
+if ($listenerStorageId !== '') {
+    $listenerMetaPayload .= '|sid=' . $listenerStorageId;
+}
+$listenerMetaPayload .= "\r\n";
+echo $listenerMetaPayload;
+stobeLogOutputToPlugin($speakerNpc, 'ListenerMeta', $listener, trim($listenerMetaPayload));
+if (ob_get_length()) {
+    ob_flush();
+}
+flush();
 
 // Release the conversation floor now that the response has been stored.
 // The floor will remain in a cooldown state for FLOOR_MIN_HOLD_SECONDS (8 s)
