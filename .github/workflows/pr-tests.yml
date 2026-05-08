@@ -3,6 +3,12 @@ name: PR Tests
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      test_file:
+        description: "Optional single test path, for example tests/rechat_flow_regression.php. Leave blank to run all tests."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -60,11 +66,12 @@ jobs:
           STOBE_DB_NAME: stobe_test
           STOBE_DB_USER: dwemer
           STOBE_DB_PASSWORD: dwemer
+          REQUESTED_TEST: ${{ github.event.inputs.test_file || '' }}
         shell: bash
         run: |
           set -euo pipefail
 
-          tests=(
+          all_tests=(
             "tests/bio_unique_regression.php"
             "tests/chat_flow_regression.php"
             "tests/chat_json_endpoint_regression.php"
@@ -84,6 +91,16 @@ jobs:
             "tests/startup_runtime_regression.php"
             "tests/structured_dialogue_contract_regression.php"
           )
+          tests=("${all_tests[@]}")
+
+          if [[ -n "${REQUESTED_TEST}" ]]; then
+            if [[ "${REQUESTED_TEST}" != tests/*.php || "${REQUESTED_TEST}" == *".."* || ! -f "${REQUESTED_TEST}" ]]; then
+              echo "Invalid test_file input: ${REQUESTED_TEST}" >&2
+              echo "Use a repository test path like tests/rechat_flow_regression.php." >&2
+              exit 1
+            fi
+            tests=("${REQUESTED_TEST}")
+          fi
 
           reset_db() {
             if [[ "${STOBE_DB_NAME}" != *test* && "${STOBE_DB_NAME}" != *ci* ]]; then
