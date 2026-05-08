@@ -17,13 +17,13 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18-trixie
         env:
-          POSTGRES_DB: stobe
+          POSTGRES_DB: stobe_test
           POSTGRES_USER: dwemer
           POSTGRES_PASSWORD: dwemer
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U dwemer -d stobe"
+          --health-cmd "pg_isready -U dwemer -d stobe_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -47,30 +47,51 @@ jobs:
       - name: Verify database service
         env:
           PGPASSWORD: dwemer
+          STOBE_DB_NAME: stobe_test
+          STOBE_DB_USER: dwemer
+          STOBE_DB_PASSWORD: dwemer
         run: |
-          psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -c "SELECT version();"
-          psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h localhost -U dwemer -d stobe_test -v ON_ERROR_STOP=1 -c "SELECT version();"
+          psql -h localhost -U dwemer -d stobe_test -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
       - name: Run regression tests
         env:
           PGPASSWORD: dwemer
+          STOBE_DB_NAME: stobe_test
+          STOBE_DB_USER: dwemer
+          STOBE_DB_PASSWORD: dwemer
         shell: bash
         run: |
           set -euo pipefail
 
           tests=(
             "tests/bio_unique_regression.php"
+            "tests/chat_flow_regression.php"
+            "tests/chat_json_endpoint_regression.php"
+            "tests/chat_processor_regression.php"
+            "tests/conversation_context_regression.php"
             "tests/diary_gamets_conversion.php"
+            "tests/ingress_people_regression.php"
+            "tests/import_rules_regression.php"
+            "tests/main_ingress_http_regression.php"
             "tests/npc_history_snapshot_regression.php"
             "tests/playthrough_rollback_regression.php"
+            "tests/playthrough_storage_regression.php"
+            "tests/rechat_flow_regression.php"
+            "tests/rechat_selection_regression.php"
             "tests/relationship_system_regression.php"
             "tests/rename_snapshot_regression.php"
+            "tests/startup_runtime_regression.php"
             "tests/structured_dialogue_contract_regression.php"
           )
 
           reset_db() {
-            psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-            psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -f data/schema.sql
+            if [[ "${STOBE_DB_NAME}" != *test* && "${STOBE_DB_NAME}" != *ci* ]]; then
+              echo "Refusing to reset non-test database: ${STOBE_DB_NAME}" >&2
+              exit 1
+            fi
+            psql -h localhost -U dwemer -d "${STOBE_DB_NAME}" -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+            psql -h localhost -U dwemer -d "${STOBE_DB_NAME}" -v ON_ERROR_STOP=1 -f data/schema.sql
             php debug/run_db_updates.php
           }
 

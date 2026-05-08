@@ -4086,6 +4086,20 @@ function stobeRecoverSparsePeopleForCriticalEvent(string $eventType, string $eve
     $mergedIdentities = extractParticipantIdentities([
         'people' => array_merge($recentTokens, $currentTokens),
     ]);
+    $namesWithStorageId = [];
+    foreach ($mergedIdentities as $identity) {
+        if (!is_array($identity)) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
+        if ($storageId !== '') {
+            $namesWithStorageId[strtolower($name)] = true;
+        }
+    }
     $mergedTokens = [];
     foreach ($mergedIdentities as $identity) {
         if (!is_array($identity)) {
@@ -4096,6 +4110,9 @@ function stobeRecoverSparsePeopleForCriticalEvent(string $eventType, string $eve
             continue;
         }
         $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
+        if ($storageId === '' && isset($namesWithStorageId[strtolower($name)])) {
+            continue;
+        }
         $mergedTokens[] = $storageId !== '' ? ($name . '|' . $storageId) : $name;
         if (count($mergedTokens) >= 24) {
             break;

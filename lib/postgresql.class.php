@@ -10,10 +10,28 @@ class sql {
     private string $lastError = '';
 
     public function __construct() {
-        $this->conn = pg_connect("host=localhost dbname=stobe user=dwemer password=dwemer");
+        $host = trim(strval(getenv('STOBE_DB_HOST') ?: 'localhost'));
+        $dbname = trim(strval(getenv('STOBE_DB_NAME') ?: 'stobe'));
+        $user = trim(strval(getenv('STOBE_DB_USER') ?: 'dwemer'));
+        $password = strval(getenv('STOBE_DB_PASSWORD') ?: 'dwemer');
+
+        $connectionParts = [
+            'host=' . $this->escapeConnectionValue($host),
+            'dbname=' . $this->escapeConnectionValue($dbname),
+            'user=' . $this->escapeConnectionValue($user),
+            'password=' . $this->escapeConnectionValue($password),
+        ];
+        $this->conn = pg_connect(implode(' ', $connectionParts));
         if (!$this->conn) {
             throw new Exception("Database connection failed");
         }
+    }
+
+    private function escapeConnectionValue(string $value): string {
+        if (preg_match('/^[A-Za-z0-9_.:-]+$/', $value) === 1) {
+            return $value;
+        }
+        return "'" . str_replace(["\\", "'"], ["\\\\", "\\'"], $value) . "'";
     }
 
     public function exec(string $query, array $params = []): mixed {
