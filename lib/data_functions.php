@@ -3214,15 +3214,36 @@ function stobeBuildFactionOccupationText(string $rawFaction): string {
     return 'A member of the ' . $factionName . ' Faction';
 }
 
+function stobeBuildCanonicalFactionOccupationText(string $rawFaction): string {
+    $factionName = baseNameWithoutBracketSuffix($rawFaction);
+    if ($factionName === '') {
+        $factionName = trim($rawFaction);
+    }
+    $factionName = trim((string)preg_replace('/^faction\s*:\s*/iu', '', $factionName));
+    $factionName = trim((string)preg_replace('/\s{2,}/u', ' ', $factionName));
+    if ($factionName === '') {
+        return '';
+    }
+    return 'Faction: ' . $factionName;
+}
+
 function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFaction = ''): string {
     $occupation = trim($rawOccupation);
     if ($occupation === '') {
-        $fallbackText = stobeBuildFactionOccupationText($fallbackFaction);
+        $fallbackText = stobeBuildCanonicalFactionOccupationText($fallbackFaction);
         return $fallbackText;
     }
 
     if (preg_match('/^\s*faction(?:\s+member)?\s*:\s*(.+)$/iu', $occupation, $match) === 1) {
-        $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+        $normalized = stobeBuildCanonicalFactionOccupationText(strval($match[1] ?? ''));
+        if ($normalized !== '') {
+            return $normalized;
+        }
+    }
+
+    if (preg_match('/^\s*A member of the\s+(.+?)(?:\s+Faction)?\s*$/iu', $occupation, $match) === 1) {
+        $normalizedFaction = trim($fallbackFaction) !== '' ? $fallbackFaction : strval($match[1] ?? '');
+        $normalized = stobeBuildCanonicalFactionOccupationText($normalizedFaction);
         if ($normalized !== '') {
             return $normalized;
         }
@@ -3231,8 +3252,19 @@ function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFac
     $occupation = preg_replace_callback(
         '/\bFaction\s*:\s*([^|\n\r]+)/iu',
         static function (array $match): string {
-            $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+            $normalized = stobeBuildCanonicalFactionOccupationText(strval($match[1] ?? ''));
             return $normalized !== '' ? $normalized : trim(strval($match[0] ?? ''));
+        },
+        $occupation
+    ) ?? $occupation;
+
+    $occupation = preg_replace_callback(
+        '/(^|\|\s*)A member of the\s+([^|\n\r]+?)(?:\s+Faction)?(?=\s*(?:\||$))/iu',
+        function (array $match) use ($fallbackFaction): string {
+            $prefix = strval($match[1] ?? '');
+            $normalizedFaction = trim($fallbackFaction) !== '' ? $fallbackFaction : strval($match[2] ?? '');
+            $normalized = stobeBuildCanonicalFactionOccupationText($normalizedFaction);
+            return $prefix . ($normalized !== '' ? $normalized : trim(strval($match[0] ?? '')));
         },
         $occupation
     ) ?? $occupation;
@@ -5735,7 +5767,10 @@ function persistManualRename(
         return ['status' => 'error', 'message' => 'Failed to update profile'];
     }
 
-    $bootstrapOccupation = trim(strval($bootstrapProfile['occupation'] ?? ''));
+    $bootstrapOccupation = stobeNormalizeOccupationText(
+        trim(strval($bootstrapProfile['occupation'] ?? '')),
+        trim(strval($bootstrapProfile['faction'] ?? ($bootstrapProfile['faction_name'] ?? '')))
+    );
     if ($bootstrapOccupation !== '') {
         $db->exec(
             "UPDATE core_npc
@@ -7104,20 +7139,90 @@ function stobePruneNpcHistorySnapshots(int $npcId, int $keep = 50): void {
     );
 }
 
-function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snapshot'): bool {
+function stobeBuildNpcHistorySnapshotPayloadFromRow(array $row, string $reason = 'snapshot'): array|false {
     $npcId = intval($row['id'] ?? 0);
     $name = trim(strval($row['name'] ?? ''));
     if ($npcId <= 0 || $name === '') {
         return false;
     }
 
-    $db = $GLOBALS["db"];
     $snapshotHash = stobeBuildNpcHistoryHashFromRow($row);
     if ($snapshotHash === '') {
         return false;
     }
 
     $safeReason = trim($reason);
+    if ($safeReason === '') {
+        $safeReason = 'snapshot';
+    }
+
+    $metadata = normalizeJsonString(normalizeCoreNpcMetadata($row['metadata'] ?? '{}'));
+    $extendedData = normalizeJsonString(normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}'));
+    $limbs = normalizeJsonString(stobeNormalizeJsonArrayValue($row['limbs'] ?? '{}'));
+    $bounty = stobeNormalizeBountyJsonString($row['bounty'] ?? '{}');
+
+    $dynamicProfileEnabled = false;
+    $metadataArray = normalizeCoreNpcMetadata($metadata);
+    if (array_key_exists('DYNAMIC_PROFILE_ENABLED', $metadataArray)) {
+        $dynamicProfileEnabled = coerceBoolean($metadataArray['DYNAMIC_PROFILE_ENABLED']);
+    } elseif (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
+        $dynamicProfileEnabled = coerceBoolean($row['dynamic_profile']);
+    }
+
+    return [
+        'npc_id' => $npcId,
+        'name' => $name,
+        'original_name' => strval($row['original_name'] ?? ''),
+        'npc_favorite' => coerceBoolean($row['npc_favorite'] ?? false),
+        'lock_profile' => coerceBoolean($row['lock_profile'] ?? false),
+        'prompt_head' => strval($row['prompt_head'] ?? ''),
+        'personality' => strval($row['personality'] ?? ''),
+        'backstory' => strval($row['backstory'] ?? ''),
+        'emote_moods' => strval($row['emote_moods'] ?? ''),
+        'occupation' => strval($row['occupation'] ?? ''),
+        'appearance' => strval($row['appearance'] ?? ''),
+        'equipment' => strval($row['equipment'] ?? ''),
+        'inventory' => strval($row['inventory'] ?? ''),
+        'skills' => strval($row['skills'] ?? ''),
+        'speechstyle' => strval($row['speechstyle'] ?? ''),
+        'goals' => strval($row['goals'] ?? ''),
+        'relationships' => strval($row['relationships'] ?? ''),
+        'voiceid' => strval($row['voiceid'] ?? ''),
+        'metadata' => $metadata,
+        'race' => strval($row['race'] ?? ''),
+        'faction' => strval($row['faction'] ?? ''),
+        'gender' => strval($row['gender'] ?? ''),
+        'profile_id' => ($row['profile_id'] ?? '') === '' ? null : intval($row['profile_id']),
+        'dynamic_profile' => $dynamicProfileEnabled,
+        'extended_data' => $extendedData,
+        'md5' => strval($row['md5'] ?? ''),
+        'gamets_last_updated' => intval($row['gamets_last_updated'] ?? 0),
+        'bounty' => $bounty,
+        'limbs' => $limbs,
+        'blood' => strval($row['blood'] ?? '0/0'),
+        'hunger' => strval($row['hunger'] ?? '300/300'),
+        'tags' => strval($row['tags'] ?? ''),
+        'is_animal' => coerceBoolean($row['is_animal'] ?? false),
+        'is_slave' => coerceBoolean($row['is_slave'] ?? false),
+        'world_knowledge_tags' => strval($row['world_knowledge_tags'] ?? ''),
+        'snapshot_reason' => $safeReason,
+        'snapshot_hash' => $snapshotHash,
+        'source_created_at' => ($row['created_at'] ?? '') === '' ? null : strval($row['created_at']),
+        'source_updated_at' => ($row['updated_at'] ?? '') === '' ? null : strval($row['updated_at']),
+    ];
+}
+
+function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snapshot'): bool {
+    $payload = stobeBuildNpcHistorySnapshotPayloadFromRow($row, $reason);
+    if (!is_array($payload)) {
+        return false;
+    }
+
+    $db = $GLOBALS["db"];
+    $npcId = intval($payload['npc_id'] ?? 0);
+    $name = trim(strval($payload['name'] ?? ''));
+    $snapshotHash = trim(strval($payload['snapshot_hash'] ?? ''));
+    $safeReason = trim(strval($payload['snapshot_reason'] ?? 'snapshot'));
     if ($safeReason === '') {
         $safeReason = 'snapshot';
     }
@@ -7157,19 +7262,6 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
         }
     }
 
-    $metadata = normalizeJsonString(normalizeCoreNpcMetadata($row['metadata'] ?? '{}'));
-    $extendedData = normalizeJsonString(normalizeCoreNpcExtendedData($row['extended_data'] ?? '{}'));
-    $limbs = normalizeJsonString(stobeNormalizeJsonArrayValue($row['limbs'] ?? '{}'));
-    $bounty = stobeNormalizeBountyJsonString($row['bounty'] ?? '{}');
-
-    $dynamicProfileEnabled = false;
-    $metadataArray = normalizeCoreNpcMetadata($metadata);
-    if (array_key_exists('DYNAMIC_PROFILE_ENABLED', $metadataArray)) {
-        $dynamicProfileEnabled = coerceBoolean($metadataArray['DYNAMIC_PROFILE_ENABLED']);
-    } elseif (array_key_exists('dynamic_profile', $row) && $row['dynamic_profile'] !== null && $row['dynamic_profile'] !== '') {
-        $dynamicProfileEnabled = coerceBoolean($row['dynamic_profile']);
-    }
-
     $result = $db->fetchOne(
         "INSERT INTO core_npc_master_history (
             npc_id, name, original_name, npc_favorite, lock_profile,
@@ -7190,45 +7282,45 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
         )
         RETURNING history_id",
         [
-            $npcId,
-            $name,
-            strval($row['original_name'] ?? ''),
-            coerceBoolean($row['npc_favorite'] ?? false),
-            coerceBoolean($row['lock_profile'] ?? false),
-            strval($row['prompt_head'] ?? ''),
-            strval($row['personality'] ?? ''),
-            strval($row['backstory'] ?? ''),
-            strval($row['emote_moods'] ?? ''),
-            strval($row['occupation'] ?? ''),
-            strval($row['appearance'] ?? ''),
-            strval($row['equipment'] ?? ''),
-            strval($row['inventory'] ?? ''),
-            strval($row['skills'] ?? ''),
-            strval($row['speechstyle'] ?? ''),
-            strval($row['goals'] ?? ''),
-            strval($row['relationships'] ?? ''),
-            strval($row['voiceid'] ?? ''),
-            $metadata,
-            strval($row['race'] ?? ''),
-            strval($row['faction'] ?? ''),
-            strval($row['gender'] ?? ''),
-            ($row['profile_id'] ?? '') === '' ? null : intval($row['profile_id']),
-            $dynamicProfileEnabled,
-            $extendedData,
-            strval($row['md5'] ?? ''),
-            intval($row['gamets_last_updated'] ?? 0),
-            $bounty,
-            $limbs,
-            strval($row['blood'] ?? '0/0'),
-            strval($row['hunger'] ?? '300/300'),
-            strval($row['tags'] ?? ''),
-            coerceBoolean($row['is_animal'] ?? false),
-            coerceBoolean($row['is_slave'] ?? false),
-            strval($row['world_knowledge_tags'] ?? ''),
+            $payload['npc_id'],
+            $payload['name'],
+            $payload['original_name'],
+            $payload['npc_favorite'],
+            $payload['lock_profile'],
+            $payload['prompt_head'],
+            $payload['personality'],
+            $payload['backstory'],
+            $payload['emote_moods'],
+            $payload['occupation'],
+            $payload['appearance'],
+            $payload['equipment'],
+            $payload['inventory'],
+            $payload['skills'],
+            $payload['speechstyle'],
+            $payload['goals'],
+            $payload['relationships'],
+            $payload['voiceid'],
+            $payload['metadata'],
+            $payload['race'],
+            $payload['faction'],
+            $payload['gender'],
+            $payload['profile_id'],
+            $payload['dynamic_profile'],
+            $payload['extended_data'],
+            $payload['md5'],
+            $payload['gamets_last_updated'],
+            $payload['bounty'],
+            $payload['limbs'],
+            $payload['blood'],
+            $payload['hunger'],
+            $payload['tags'],
+            $payload['is_animal'],
+            $payload['is_slave'],
+            $payload['world_knowledge_tags'],
             $safeReason,
             $snapshotHash,
-            ($row['created_at'] ?? '') === '' ? null : strval($row['created_at']),
-            ($row['updated_at'] ?? '') === '' ? null : strval($row['updated_at']),
+            $payload['source_created_at'],
+            $payload['source_updated_at'],
         ]
     );
 
@@ -7243,6 +7335,113 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
     }
 
     return $result !== false;
+}
+
+function stobeRewriteNpcHistorySnapshotById(int $historyId, array $row, string $reason): bool {
+    if ($historyId <= 0) {
+        return false;
+    }
+
+    $beforePayload = stobeBuildNpcHistorySnapshotPayloadFromRow($row, $reason);
+    if (!is_array($beforePayload)) {
+        return false;
+    }
+
+    $db = $GLOBALS["db"];
+    $updated = $db->exec(
+        "UPDATE core_npc_master_history
+         SET name = $1,
+             original_name = $2,
+             npc_favorite = $3,
+             lock_profile = $4,
+             prompt_head = $5,
+             personality = $6,
+             backstory = $7,
+             emote_moods = $8,
+             occupation = $9,
+             appearance = $10,
+             equipment = $11,
+             inventory = $12,
+             skills = $13,
+             speechstyle = $14,
+             goals = $15,
+             relationships = $16,
+             voiceid = $17,
+             metadata = $18::jsonb,
+             race = $19,
+             faction = $20,
+             gender = $21,
+             profile_id = $22,
+             dynamic_profile = $23,
+             extended_data = $24::jsonb,
+             md5 = $25,
+             gamets_last_updated = $26,
+             bounty = $27::jsonb,
+             limbs = $28::jsonb,
+             blood = $29,
+             hunger = $30,
+             tags = $31,
+             is_animal = $32,
+             is_slave = $33,
+             world_knowledge_tags = $34,
+             snapshot_reason = $35,
+             snapshot_hash = $36,
+             source_created_at = $37,
+             source_updated_at = $38
+         WHERE history_id = $39",
+        [
+            $beforePayload['name'],
+            $beforePayload['original_name'],
+            $beforePayload['npc_favorite'],
+            $beforePayload['lock_profile'],
+            $beforePayload['prompt_head'],
+            $beforePayload['personality'],
+            $beforePayload['backstory'],
+            $beforePayload['emote_moods'],
+            $beforePayload['occupation'],
+            $beforePayload['appearance'],
+            $beforePayload['equipment'],
+            $beforePayload['inventory'],
+            $beforePayload['skills'],
+            $beforePayload['speechstyle'],
+            $beforePayload['goals'],
+            $beforePayload['relationships'],
+            $beforePayload['voiceid'],
+            $beforePayload['metadata'],
+            $beforePayload['race'],
+            $beforePayload['faction'],
+            $beforePayload['gender'],
+            $beforePayload['profile_id'],
+            $beforePayload['dynamic_profile'],
+            $beforePayload['extended_data'],
+            $beforePayload['md5'],
+            $beforePayload['gamets_last_updated'],
+            $beforePayload['bounty'],
+            $beforePayload['limbs'],
+            $beforePayload['blood'],
+            $beforePayload['hunger'],
+            $beforePayload['tags'],
+            $beforePayload['is_animal'],
+            $beforePayload['is_slave'],
+            $beforePayload['world_knowledge_tags'],
+            $beforePayload['snapshot_reason'],
+            $beforePayload['snapshot_hash'],
+            $beforePayload['source_created_at'],
+            $beforePayload['source_updated_at'],
+            $historyId,
+        ]
+    );
+    if ($updated === false) {
+        return false;
+    }
+
+    stobeLogInfo('NPC history snapshot rewritten', [
+        'npc_id' => intval($beforePayload['npc_id'] ?? 0),
+        'name' => $beforePayload['name'],
+        'reason' => $beforePayload['snapshot_reason'],
+        'history_id' => $historyId,
+    ]);
+    return true;
 }
 
 function stobeMaybeSnapshotNpcHistoryBeforeAfter(array|false $beforeRow, array|false $afterRow, string $reason): bool {
@@ -7919,7 +8118,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
 
-    $db->exec(
+    $profilePersisted = $db->exec(
         "INSERT INTO core_npc_master (
             name,
             npc_favorite,
@@ -8050,6 +8249,14 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             $forceAppearanceUpdate,
         ]
     );
+    if ($profilePersisted === false) {
+        stobeLogImport('storeNpcProfile core_npc_master upsert failed', [
+            'name' => $safeName,
+            'storage_id' => normalizeStorageIdToken($metadataArray['storage_id'] ?? ''),
+            'db_error' => $db->GetLastError(),
+        ], 'WARN');
+        return;
+    }
     if ($historyEnabled) {
         $historyAfterRow = stobeFetchNpcRowForHistoryByName($safeName);
         stobeMaybeSnapshotNpcHistoryBeforeAfter($historyBeforeRow, $historyAfterRow, $historyReason);
@@ -8398,6 +8605,16 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         ], 'DEBUG');
     }
     $historyRowBefore = stobeFetchNpcRowForHistoryByName($name);
+    $historyBaselineId = 0;
+    if ($historyRowBefore) {
+        $historyBaselineRow = $db->fetchOne(
+            "SELECT COALESCE(MAX(history_id), 0) AS history_id
+             FROM core_npc_master_history
+             WHERE npc_id = $1",
+            [intval($historyRowBefore['id'] ?? 0)]
+        );
+        $historyBaselineId = intval($historyBaselineRow['history_id'] ?? 0);
+    }
     $isBracketSnapshot = (strpos($incomingName, '[') !== false || strpos($name, '[') !== false);
     $rowBefore = false;
     if ($isBracketSnapshot) {
@@ -9813,6 +10030,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $originalNameForTraits = trim(strval($snapshot['original_name'] ?? ''));
     $traitSelection = selectBioTraitsForNpc($name, $race, $gender, $faction, $originalNameForTraits);
     $resolvedTraits = is_array($traitSelection['traits'] ?? null) ? $traitSelection['traits'] : [];
+    $traitSources = is_array($traitSelection['sources'] ?? null) ? $traitSelection['sources'] : [];
     $personality = trim(strval($resolvedTraits['personality'] ?? ''));
     if ($personality === '') {
         $personality = $personalityDefault;
@@ -9830,6 +10048,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $occupation = $occupationDefault;
     }
     if (
+        strval($traitSources['occupation'] ?? 'default') === 'default' &&
         $factionForOccupation !== '' &&
         $occupationFactionText !== '' &&
         stripos($occupation, $factionForOccupation) === false
@@ -9842,7 +10061,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $goals = trim(strval($resolvedTraits['goals'] ?? ''));
     if ($goals === '') {
         $goals = $goalsDefault;
-    } elseif (stripos($goals, 'survive') === false) {
+    } elseif (
+        strval($traitSources['goals'] ?? 'default') === 'default' &&
+        stripos($goals, 'survive') === false
+    ) {
         $goals .= ' | ' . $goalsDefault;
     }
     $appearanceTrait = normalizeBioAppearanceExtra(trim(strval($resolvedTraits['appearance'] ?? '')));
@@ -10256,19 +10478,27 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         ]
     );
 
-    if ($result !== false) {
-        stobeUpsertLocationZoneFromSnapshot($snapshot, $safeGamets, $name);
-        stobeAssignVoiceIdIfMissing(
-            $name,
-            $race,
-            $gender,
-            $faction,
-            [
-                'metadata' => $metadataForStorage,
-                'original_name' => $originalNameForTraits,
-            ]
-        );
+    if ($result === false) {
+        stobeLogImport('Snapshot core_npc_master upsert failed', [
+            'name' => $name,
+            'storage_id' => normalizeStorageIdToken($metadataForStorage['storage_id'] ?? ''),
+            'gamets' => $safeGamets,
+            'db_error' => $db->GetLastError(),
+        ], 'WARN');
+        return false;
     }
+
+    stobeUpsertLocationZoneFromSnapshot($snapshot, $safeGamets, $name);
+    stobeAssignVoiceIdIfMissing(
+        $name,
+        $race,
+        $gender,
+        $faction,
+        [
+            'metadata' => $metadataForStorage,
+            'original_name' => $originalNameForTraits,
+        ]
+    );
 
     $isSparseSnapshot = (
         $race === '' &&
@@ -10339,9 +10569,63 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     }
 
     $historyRowAfter = stobeFetchNpcRowForHistoryByName($name);
-    stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'snapshot_sync');
+    $rewroteSnapshotHistory = false;
+    if ($historyRowBefore && $historyRowAfter) {
+        $changedFields = stobeGetNpcHistoryChangedFields($historyRowBefore, $historyRowAfter);
+        $snapshotNoiseFields = ['gamets_last_updated', 'skills', 'relationships'];
+        $meaningfulSnapshotChanges = array_values(array_diff($changedFields, $snapshotNoiseFields));
+        $freshHistoryRows = $db->fetchAll(
+            "SELECT history_id, snapshot_reason, created
+             FROM core_npc_master_history
+             WHERE npc_id = $1
+               AND history_id > $2
+             ORDER BY history_id ASC",
+            [intval($historyRowAfter['id'] ?? 0), $historyBaselineId]
+        );
+        $freshAutoSnapshotIds = [];
+        foreach ($freshHistoryRows as $freshHistoryRow) {
+            $freshHistoryId = intval($freshHistoryRow['history_id'] ?? 0);
+            $freshHistoryReason = trim(strval($freshHistoryRow['snapshot_reason'] ?? ''));
+            $freshHistoryCreatedUnix = strtotime(strval($freshHistoryRow['created'] ?? ''));
+            if (
+                $freshHistoryId > 0
+                && $freshHistoryReason === 'snapshot'
+                && $freshHistoryCreatedUnix !== false
+                && max(0, time() - intval($freshHistoryCreatedUnix)) <= 30
+            ) {
+                $freshAutoSnapshotIds[] = $freshHistoryId;
+            }
+        }
 
-    return $result !== false;
+        if (count($freshAutoSnapshotIds) > 0 && count($meaningfulSnapshotChanges) === 0) {
+            $db->exec(
+                "DELETE FROM core_npc_master_history
+                 WHERE history_id = ANY($1::int[])",
+                ['{' . implode(',', $freshAutoSnapshotIds) . '}']
+            );
+            $rewroteSnapshotHistory = true;
+        } elseif (count($freshAutoSnapshotIds) > 0) {
+            $rewriteHistoryId = intval(end($freshAutoSnapshotIds));
+            if (stobeRewriteNpcHistorySnapshotById($rewriteHistoryId, $historyRowBefore, 'snapshot_sync')) {
+                $staleAutoSnapshotIds = array_values(array_filter($freshAutoSnapshotIds, static function (int $candidateId) use ($rewriteHistoryId): bool {
+                    return $candidateId !== $rewriteHistoryId;
+                }));
+                if (count($staleAutoSnapshotIds) > 0) {
+                    $db->exec(
+                        "DELETE FROM core_npc_master_history
+                         WHERE history_id = ANY($1::int[])",
+                        ['{' . implode(',', $staleAutoSnapshotIds) . '}']
+                    );
+                }
+                $rewroteSnapshotHistory = true;
+            }
+        }
+    }
+    if (!$rewroteSnapshotHistory) {
+        stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'snapshot_sync');
+    }
+
+    return true;
 }
 
 function getNpcById(int $id): array|false {
@@ -10499,7 +10783,31 @@ function updateNpcById(int $id, array $fields): void {
     $query = "UPDATE core_npc SET " . implode(', ', $setClauses) . ", updated_at = NOW() WHERE id = $" . $idIndex;
     $db->exec($query, $params);
     $historyRowAfter = stobeFetchNpcRowForHistoryById($id);
-    stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'ui_update');
+    $rewroteUiHistorySnapshot = false;
+    if ($historyRowBefore && $historyRowAfter) {
+        $latestHistory = $db->fetchOne(
+            "SELECT history_id, snapshot_reason, created
+             FROM core_npc_master_history
+             WHERE npc_id = $1
+             ORDER BY history_id DESC
+             LIMIT 1",
+            [$id]
+        );
+        $latestHistoryId = intval($latestHistory['history_id'] ?? 0);
+        $latestHistoryReason = trim(strval($latestHistory['snapshot_reason'] ?? ''));
+        $latestHistoryCreatedUnix = strtotime(strval($latestHistory['created'] ?? ''));
+        if (
+            $latestHistoryId > 0
+            && $latestHistoryReason === 'snapshot'
+            && $latestHistoryCreatedUnix !== false
+            && max(0, time() - intval($latestHistoryCreatedUnix)) <= 30
+        ) {
+            $rewroteUiHistorySnapshot = stobeRewriteNpcHistorySnapshotById($latestHistoryId, $historyRowBefore, 'ui_update');
+        }
+    }
+    if (!$rewroteUiHistorySnapshot) {
+        stobeMaybeSnapshotNpcHistoryBeforeAfter($historyRowBefore, $historyRowAfter, 'ui_update');
+    }
     if ($historyRowAfter) {
         $incomingFaction = array_key_exists('faction', $fields) ? strval($fields['faction']) : '';
         $npcName = strval($historyRowAfter['name'] ?? '');
@@ -10511,11 +10819,14 @@ function updateNpcById(int $id, array $fields): void {
 
 function stobeEnsureCoreProfileImportRulesTable(): void {
     static $ensured = false;
-    if ($ensured) {
-        return;
-    }
 
     $db = $GLOBALS["db"];
+    if ($ensured) {
+        $probe = $db->fetchOne("SELECT to_regclass('public.core_profile_import_rules') AS rel");
+        if (trim(strval($probe['rel'] ?? '')) !== '') {
+            return;
+        }
+    }
     $db->exec(
         "CREATE TABLE IF NOT EXISTS core_profile_import_rules (
             id SERIAL PRIMARY KEY,

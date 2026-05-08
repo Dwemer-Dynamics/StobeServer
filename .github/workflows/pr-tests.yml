@@ -1,0 +1,82 @@
+name: PR Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regressions:
+    name: PHP Regression Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18-trixie
+        env:
+          POSTGRES_DB: stobe
+          POSTGRES_USER: dwemer
+          POSTGRES_PASSWORD: dwemer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dwemer -d stobe"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: pgsql
+          coverage: none
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Verify database service
+        env:
+          PGPASSWORD: dwemer
+        run: |
+          psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -c "SELECT version();"
+          psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Run regression tests
+        env:
+          PGPASSWORD: dwemer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tests=(
+            "tests/bio_unique_regression.php"
+            "tests/diary_gamets_conversion.php"
+            "tests/npc_history_snapshot_regression.php"
+            "tests/playthrough_rollback_regression.php"
+            "tests/relationship_system_regression.php"
+            "tests/rename_snapshot_regression.php"
+            "tests/structured_dialogue_contract_regression.php"
+          )
+
+          reset_db() {
+            psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+            psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -f data/schema.sql
+            php debug/run_db_updates.php
+          }
+
+          for test_file in "${tests[@]}"; do
+            echo "::group::${test_file}"
+            reset_db
+            php "${test_file}"
+            echo "::endgroup::"
+          done
