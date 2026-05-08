@@ -3214,15 +3214,35 @@ function stobeBuildFactionOccupationText(string $rawFaction): string {
     return 'A member of the ' . $factionName . ' Faction';
 }
 
+function stobeBuildCanonicalFactionOccupationText(string $rawFaction): string {
+    $factionName = baseNameWithoutBracketSuffix($rawFaction);
+    if ($factionName === '') {
+        $factionName = trim($rawFaction);
+    }
+    $factionName = trim((string)preg_replace('/^faction\s*:\s*/iu', '', $factionName));
+    $factionName = trim((string)preg_replace('/\s{2,}/u', ' ', $factionName));
+    if ($factionName === '') {
+        return '';
+    }
+    return 'Faction: ' . $factionName;
+}
+
 function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFaction = ''): string {
     $occupation = trim($rawOccupation);
     if ($occupation === '') {
-        $fallbackText = stobeBuildFactionOccupationText($fallbackFaction);
+        $fallbackText = stobeBuildCanonicalFactionOccupationText($fallbackFaction);
         return $fallbackText;
     }
 
     if (preg_match('/^\s*faction(?:\s+member)?\s*:\s*(.+)$/iu', $occupation, $match) === 1) {
-        $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+        $normalized = stobeBuildCanonicalFactionOccupationText(strval($match[1] ?? ''));
+        if ($normalized !== '') {
+            return $normalized;
+        }
+    }
+
+    if (preg_match('/^\s*A member of the\s+(.+?)(?:\s+Faction)?\s*$/iu', $occupation, $match) === 1) {
+        $normalized = stobeBuildCanonicalFactionOccupationText(strval($match[1] ?? ''));
         if ($normalized !== '') {
             return $normalized;
         }
@@ -3231,8 +3251,18 @@ function stobeNormalizeOccupationText(string $rawOccupation, string $fallbackFac
     $occupation = preg_replace_callback(
         '/\bFaction\s*:\s*([^|\n\r]+)/iu',
         static function (array $match): string {
-            $normalized = stobeBuildFactionOccupationText(strval($match[1] ?? ''));
+            $normalized = stobeBuildCanonicalFactionOccupationText(strval($match[1] ?? ''));
             return $normalized !== '' ? $normalized : trim(strval($match[0] ?? ''));
+        },
+        $occupation
+    ) ?? $occupation;
+
+    $occupation = preg_replace_callback(
+        '/(^|\|\s*)A member of the\s+([^|\n\r]+?)(?:\s+Faction)?(?=\s*(?:\||$))/iu',
+        static function (array $match): string {
+            $prefix = strval($match[1] ?? '');
+            $normalized = stobeBuildCanonicalFactionOccupationText(strval($match[2] ?? ''));
+            return $prefix . ($normalized !== '' ? $normalized : trim(strval($match[0] ?? '')));
         },
         $occupation
     ) ?? $occupation;
@@ -5735,7 +5765,10 @@ function persistManualRename(
         return ['status' => 'error', 'message' => 'Failed to update profile'];
     }
 
-    $bootstrapOccupation = trim(strval($bootstrapProfile['occupation'] ?? ''));
+    $bootstrapOccupation = stobeNormalizeOccupationText(
+        trim(strval($bootstrapProfile['occupation'] ?? '')),
+        trim(strval($bootstrapProfile['faction'] ?? ($bootstrapProfile['faction_name'] ?? '')))
+    );
     if ($bootstrapOccupation !== '') {
         $db->exec(
             "UPDATE core_npc
