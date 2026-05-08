@@ -8816,6 +8816,611 @@ function stobeBuildKenshiMechanicsAlignmentPromptBlock(
     return str_replace(array_keys($replacements), array_values($replacements), $template);
 }
 
+/**
+ * PRMK v1 — Política Realismo Mecánicas Kenshi
+ *
+ * Builds a dynamic, state-aware XML block injected into every system prompt.
+ * Detects real NPC signals (hunger, wounds, slave status, current action) and
+ * generates hard constraints for the LLM: what must be considered, what to avoid,
+ * what actions are allowed, and what claims are forbidden in Kenshi's world.
+ *
+ * @param array  $npcData   NPC profile data array (hunger, blood, is_slave, etc.)
+ * @param array  $metadata  Additional metadata from extended_data or request context
+ * @param string $eventType 'chat' | 'rechat' | 'bored'
+ * @param string $playerCats Raw cats string (e.g. "320") for economic context
+ * @return string XML block to append to system prompt, or '' if no signals detected
+ */
+function stobeBuildPrmkContextBlock(
+    array $npcData,
+    array $metadata,
+    string $eventType,
+    string $playerCats = ''
+): string {
+    $event = strtolower(trim($eventType));
+    if ($event === '') {
+        $event = 'chat';
+    }
+
+    // --- Detect signals ---
+
+    // Hunger
+    $hungerRaw = $npcData['hunger'] ?? ($metadata['hunger'] ?? '');
+    $hungerRatio = stobeParseCurrentMaxRatio($hungerRaw);
+    $hungerPct = $hungerRatio['valid'] ? floatval($hungerRatio['pct']) : -1.0;
+    $hungerActive = $hungerPct >= 0.0 && $hungerPct < 45.0;
+    $hungerCritical = $hungerPct >= 0.0 && $hungerPct < 10.0;
+
+    // Blood / wounds
+    $bloodRaw = $npcData['blood'] ?? ($metadata['blood'] ?? '');
+    $bloodRatio = stobeParseCurrentMaxRatio($bloodRaw);
+    $bloodPct = $bloodRatio['valid'] ? floatval($bloodRatio['pct']) : -1.0;
+    $woundedActive = $bloodPct >= 0.0 && $bloodPct < 75.0;
+    $woundedCritical = $bloodPct >= 0.0 && $bloodPct < 25.0;
+
+    // Slave status
+    $isSlave = boolval($npcData['is_slave'] ?? ($metadata['is_slave'] ?? false));
+
+    // Character state (combat, fleeing, mining, idle...)
+    $charState = strtolower(trim(strval($npcData['character_state'] ?? ($metadata['character_state'] ?? ''))));
+    if ($charState === '') {
+        // Try extended_data
+        $extended = is_array($npcData['extended_data'] ?? null)
+            ? $npcData['extended_data']
+            : (is_string($npcData['extended_data'] ?? null) ? json_decode(strval($npcData['extended_data']), true) : []);
+        $charState = strtolower(trim(strval(($extended['character_state'] ?? ''))));
+    }
+    $inCombat = in_array($charState, ['combat', 'fleeing', 'attacking', 'flee'], true);
+    $isMining = $charState === 'mining';
+    $isWorking = in_array($charState, ['mining', 'farming', 'building', 'crafting', 'working'], true);
+
+    // Economic signal — low cats
+    $catsInt = intval(preg_replace('/[^0-9]/', '', $playerCats));
+    $lowCats = $playerCats !== '' && $catsInt < 500;
+
+    // If no signals detected, return empty (no block injected)
+    $hasAnySignal = $hungerActive || $woundedActive || $isSlave || $inCombat || $isWorking || $lowCats;
+    if (!$hasAnySignal) {
+        return '';
+    }
+
+    // --- Build signal list ---
+    $signalLines = [];
+    if ($hungerCritical) {
+        $signalLines[] = '    <signal name="hunger" level="near_starvation" urgency="95"/>';
+    } elseif ($hungerActive) {
+        $pctLabel = $hungerPct < 25.0 ? 'very_hungry' : 'hungry';
+        $urg = $hungerPct < 25.0 ? '75' : '55';
+        $signalLines[] = '    <signal name="hunger" level="' . $pctLabel . '" urgency="' . $urg . '"/>';
+    }
+    if ($woundedCritical) {
+        $signalLines[] = '    <signal name="wounds" level="critical" urgency="85"/>';
+    } elseif ($woundedActive) {
+        $pctLabel = $bloodPct < 50.0 ? 'badly_wounded' : 'lightly_wounded';
+        $urg = $bloodPct < 50.0 ? '65' : '40';
+        $signalLines[] = '    <signal name="wounds" level="' . $pctLabel . '" urgency="' . $urg . '"/>';
+    }
+    if ($isSlave) {
+        $signalLines[] = '    <signal name="slave_status" active="true" urgency="70"/>';
+    }
+    if ($inCombat) {
+        $signalLines[] = '    <signal name="combat" state="' . stobePromptXmlEscape($charState) . '" urgency="95"/>';
+    } elseif ($isWorking) {
+        $signalLines[] = '    <signal name="activity" state="' . stobePromptXmlEscape($charState) . '" urgency="10"/>';
+    }
+    if ($lowCats) {
+        $signalLines[] = '    <signal name="economy" level="low_cats" cats="' . $catsInt . '" urgency="40"/>';
+    }
+
+    // --- Build must_consider list ---
+    $mustLines = [];
+    if ($hungerCritical) {
+        $mustLines[] = '    <must_consider>This NPC is near starvation. Obtaining food is the immediate survival priority. Every statement and suggestion must reflect this urgency.</must_consider>';
+    } elseif ($hungerActive) {
+        $mustLines[] = '    <must_consider>This NPC is hungry. Food access and obtaining it should dominate their concerns and color their speech.</must_consider>';
+    }
+    if ($woundedCritical) {
+        $mustLines[] = '    <must_consider>This NPC is critically wounded. Survival — finding rest, basic wound care (rags, bandages), or retreating — is their top concern.</must_consider>';
+    } elseif ($woundedActive) {
+        $mustLines[] = '    <must_consider>This NPC has significant wounds. Pain, fatigue, and limited capacity are real. Do not ignore this in their speech or behavior.</must_consider>';
+    }
+    if ($isSlave) {
+        $mustLines[] = '    <must_consider>This NPC is a slave or has slave status. Captivity, risk of recapture, and social vulnerability are constant realities. Discretion, obedience under threat, or quiet resistance are natural.</must_consider>';
+    }
+    if ($inCombat) {
+        $mustLines[] = '    <must_consider>This NPC is in combat or fleeing. Their speech must reflect immediate danger, adrenaline, and survival focus. No casual conversation is appropriate.</must_consider>';
+    }
+    if ($isWorking && !$inCombat) {
+        $mustLines[] = '    <must_consider>This NPC is currently ' . stobePromptXmlEscape($charState) . '. Dialogue should acknowledge this activity (e.g., "while I work on this..." or interrupted focus).</must_consider>';
+    }
+    if ($lowCats) {
+        $mustLines[] = '    <must_consider>Resources are scarce (low cats). Practical economic options — trading, taking a job, looting, earning bounties — are priorities over luxury thinking.</must_consider>';
+    }
+
+    // --- Build avoid list ---
+    $avoidLines = [];
+    if ($hungerActive) {
+        $avoidLines[] = '    <avoid>Treating hunger as a minor inconvenience or changing subjects casually while the NPC has not addressed the need for food.</avoid>';
+    }
+    if ($woundedActive) {
+        $avoidLines[] = '    <avoid>Ignoring wounds or speaking as if at full capacity. Do not suggest strenuous activity without acknowledging the cost.</avoid>';
+    }
+    if ($inCombat) {
+        $avoidLines[] = '    <avoid>Initiating or continuing casual, reflective, or social conversation during combat or flight.</avoid>';
+    }
+    $avoidLines[] = '    <avoid>Suggesting resources, authorities, or solutions that do not exist in Kenshi (hospitals, police, weather shelter, modern tools, guaranteed safety).</avoid>';
+
+    // --- Forbidden claims (always present, Kenshi world-grounding) ---
+    $forbiddenLines = [
+        '      <claim>There are hospitals, medical clinics, or organized healing institutions</claim>',
+        '      <claim>Cold or heat weather affects survival (Kenshi has no temperature mechanics)</claim>',
+        '      <claim>Police, guards, or legal authority will provide protection or justice</claim>',
+        '      <claim>Automated machines or conveniences exist to ease labor</claim>',
+        '      <claim>The world is safe or neutral by default for someone without power or faction protection</claim>',
+    ];
+
+    // --- Allowed actions (Kenshi-valid verbs) ---
+    $allowedActions = 'kill, attack, steal, trade, loot, hunt, work, flee, hide, craft, mine, buy, sell, recruit, bribe, intimidate, explore, heal_with_bandages, rest, scavenge, escort, betray';
+
+    // --- Compute overall urgency ---
+    $urgency = 0;
+    if ($hungerCritical) {
+        $urgency = max($urgency, 95);
+    } elseif ($hungerActive) {
+        $urgency = max($urgency, $hungerPct < 25.0 ? 75 : 55);
+    }
+    if ($woundedCritical) {
+        $urgency = max($urgency, 85);
+    } elseif ($woundedActive) {
+        $urgency = max($urgency, $bloodPct < 50.0 ? 65 : 40);
+    }
+    if ($isSlave) {
+        $urgency = max($urgency, 70);
+    }
+    if ($inCombat) {
+        $urgency = max($urgency, 95);
+    }
+    if ($lowCats) {
+        $urgency = max($urgency, 40);
+    }
+
+    // --- Assemble block ---
+    $block = "<kenshi_mechanics_reality>\n";
+    $block .= "  <scope>Apply these grounding constraints before generating any response. They reflect the NPC's real current state.</scope>\n";
+    $block .= "  <event_type>" . stobePromptXmlEscape($event) . "</event_type>\n";
+    $block .= "  <active_signals>\n" . implode("\n", $signalLines) . "\n  </active_signals>\n";
+    $block .= "  <constraints>\n";
+    foreach ($mustLines as $line) {
+        $block .= $line . "\n";
+    }
+    foreach ($avoidLines as $line) {
+        $block .= $line . "\n";
+    }
+    $block .= "    <forbidden_claims>\n" . implode("\n", $forbiddenLines) . "\n    </forbidden_claims>\n";
+    $block .= "    <allowed_actions>" . $allowedActions . "</allowed_actions>\n";
+    $block .= "  </constraints>\n";
+    $block .= "  <urgency>" . $urgency . "</urgency>\n";
+    $block .= "</kenshi_mechanics_reality>";
+
+    return $block;
+}
+
+/**
+ * MIC v1 — Motor Intención Conversacional
+ *
+ * Server-side decision engine for bored and rechat events.
+ * Given a speaker NPC and a list of potential listener candidates, decides:
+ * - should_speak: whether the NPC should initiate/continue dialogue
+ * - target_candidates: ranked list with scores and reasons
+ * - intent_topic: the dominant topic the NPC has reason to raise
+ * - urgency: 0-100 scale of how urgent this communication is
+ * - delivery_mode: talk | whisper | shout
+ * - reason_trace: human-readable justification string
+ *
+ * @param array  $speakerData  Full NPC data for the potential speaker
+ * @param array  $listenerPool Array of candidate listener arrays, each with at least ['name' => ...]
+ *                             May include player entry (player data may be minimal)
+ * @param string $playerName   Normalized player name (for scoring player target priority)
+ * @param string $eventType    'bored' | 'rechat'
+ * @return array MIC decision struct
+ */
+function stobeBuildMicDecision(
+    array $speakerData,
+    array $listenerPool,
+    string $playerName = '',
+    string $eventType = 'bored'
+): array {
+    $result = [
+        'should_speak'      => true, // default: allow (conservative; gates below can suppress)
+        'target_candidates' => [],
+        'intent_topic'      => 'general',
+        'urgency'           => 20,
+        'delivery_mode'     => 'talk',
+        'reason_trace'      => '',
+    ];
+
+    // --- Extract speaker signals ---
+    $speakerName = normalizeParticipantNameToken(strval($speakerData['name'] ?? ''));
+
+    $hungerRaw = $speakerData['hunger'] ?? ($speakerData['metadata']['hunger'] ?? '');
+    $hungerRatio = stobeParseCurrentMaxRatio($hungerRaw);
+    $hungerPct = $hungerRatio['valid'] ? floatval($hungerRatio['pct']) : 100.0;
+    $hungerActive = $hungerPct < 45.0;
+    $hungerCritical = $hungerPct < 10.0;
+
+    $bloodRaw = $speakerData['blood'] ?? ($speakerData['metadata']['blood'] ?? '');
+    $bloodRatio = stobeParseCurrentMaxRatio($bloodRaw);
+    $bloodPct = $bloodRatio['valid'] ? floatval($bloodRatio['pct']) : 100.0;
+    $woundedActive = $bloodPct < 75.0;
+    $woundedCritical = $bloodPct < 25.0;
+
+    $isSlave = boolval($speakerData['is_slave'] ?? false);
+
+    $charState = strtolower(trim(strval($speakerData['character_state'] ?? '')));
+    if ($charState === '') {
+        $extended = is_array($speakerData['extended_data'] ?? null)
+            ? $speakerData['extended_data']
+            : (is_string($speakerData['extended_data'] ?? null) ? json_decode(strval($speakerData['extended_data']), true) : []);
+        $charState = strtolower(trim(strval(($extended['character_state'] ?? ''))));
+    }
+    $inCombat = in_array($charState, ['combat', 'fleeing', 'attacking', 'flee'], true);
+
+    $speakerFactionId = strtolower(trim(strval($speakerData['faction'] ?? '')));
+    $speakerInPlayerFaction = npcIsInPlayerFaction($speakerData);
+
+    // --- Determine intent topic and urgency ---
+    $urgency = 20;
+    $topic = 'general';
+    $reasons = [];
+    $deliveryMode = 'talk';
+
+    if ($inCombat) {
+        $topic = 'combat';
+        $urgency = 95;
+        $deliveryMode = 'shout';
+        $reasons[] = 'speaker_in_combat';
+    } elseif ($hungerCritical) {
+        $topic = 'food_critical';
+        $urgency = 90;
+        $reasons[] = 'hunger_critical';
+    } elseif ($hungerActive) {
+        $topic = 'food_needed';
+        $urgency = max($urgency, $hungerPct < 25.0 ? 70 : 50);
+        $reasons[] = 'hunger_active';
+    }
+
+    if ($woundedCritical) {
+        if ($urgency < 80) {
+            $topic = 'injury';
+            $urgency = 80;
+        }
+        $reasons[] = 'critically_wounded';
+        if ($deliveryMode !== 'shout') {
+            $deliveryMode = 'talk'; // injured but not shouting unless combat
+        }
+    } elseif ($woundedActive) {
+        if ($urgency < 40) {
+            $topic = 'injury';
+            $urgency = 40;
+        }
+        $reasons[] = 'wounded';
+    }
+
+    if ($isSlave) {
+        if ($urgency < 65) {
+            $topic = 'safety';
+            $urgency = 65;
+        }
+        $deliveryMode = 'whisper'; // slaves speak quietly about sensitive matters
+        $reasons[] = 'slave_status';
+    }
+
+    // Default urgency when no signals: low base
+    if (empty($reasons)) {
+        $reasons[] = 'idle_social';
+        $urgency = 20;
+        $topic = 'general';
+    }
+
+    $result['intent_topic'] = $topic;
+    $result['urgency'] = $urgency;
+    $result['delivery_mode'] = $deliveryMode;
+
+        // --- Score listener candidates ---
+    $scored = [];
+    foreach ($listenerPool as $candidate) {
+        $candName = normalizeParticipantNameToken(strval($candidate['name'] ?? ''));
+        if ($candName === '' || strcasecmp($candName, $speakerName) === 0) {
+            continue;
+        }
+
+        $score = 0.5; // base
+        $candReasons = [];
+
+        $isPlayer = ($playerName !== '' && strcasecmp($candName, $playerName) === 0);
+
+        if ($isPlayer) {
+            // Player target: neutral base, boosted by urgency
+            $candReasons[] = 'player';
+            if ($urgency >= 80) {
+                $score += 0.25; // high urgency → player is a valid target
+                $candReasons[] = 'high_urgency_override';
+            } elseif ($urgency >= 50) {
+                $score += 0.10;
+            }
+            if ($speakerInPlayerFaction) {
+                $score += 0.10;
+                $candReasons[] = 'same_faction_as_player';
+            }
+        } else {
+            // NPC candidate
+            $candData = $candidate; // listener pool entries may be full npcData arrays
+            $candFactionId = strtolower(trim(strval($candData['faction'] ?? '')));
+            $candInPlayerFaction = npcIsInPlayerFaction($candData);
+
+            if ($speakerFactionId !== '' && $candFactionId !== '' && $speakerFactionId === $candFactionId) {
+                $score += 0.25;
+                $candReasons[] = 'same_faction';
+            }
+            if ($candInPlayerFaction && $speakerInPlayerFaction) {
+                $score += 0.10;
+                $candReasons[] = 'both_in_player_faction';
+            }
+
+            // If topic is food: prefer candidate with trader role or likely has food
+            if (in_array($topic, ['food_needed', 'food_critical'], true)) {
+                $candOccupation = strtolower(strval($candData['occupation'] ?? ''));
+                if (strpos($candOccupation, 'trader') !== false || strpos($candOccupation, 'cook') !== false) {
+                    $score += 0.20;
+                    $candReasons[] = 'likely_has_food';
+                }
+            }
+
+            // Slave topic: prefer faction allies strongly
+            if ($topic === 'safety' && $isSlave) {
+                if ($speakerFactionId !== '' && $candFactionId === $speakerFactionId) {
+                    $score += 0.20;
+                    $candReasons[] = 'faction_ally_safety';
+                }
+            }
+        }
+
+        $scored[] = [
+            'name'    => $candName,
+            'score'   => round(min(1.0, $score), 3),
+            'reasons' => $candReasons,
+            'is_player' => $isPlayer,
+        ];
+    }
+
+    // Sort descending by score
+    usort($scored, static function (array $a, array $b): int {
+        return $b['score'] <=> $a['score'];
+    });
+
+    $result['target_candidates'] = $scored;
+    $result['reason_trace'] = implode(', ', $reasons);
+
+    return $result;
+}
+
+/**
+ * Build an XML prompt block from a MIC decision result.
+ * Injected into the system prompt to inform the LLM of the NPC's communicative intent.
+ *
+ * @param array $mic Result from stobeBuildMicDecision()
+ * @return string XML block, or '' if should_speak is false
+ */
+function stobeMicBuildPromptBlock(array $mic): string {
+    if (!boolval($mic['should_speak'] ?? true)) {
+        return '';
+    }
+
+    $topic = stobePromptXmlEscape(strval($mic['intent_topic'] ?? 'general'));
+    $urgency = intval($mic['urgency'] ?? 20);
+    $delivery = stobePromptXmlEscape(strval($mic['delivery_mode'] ?? 'talk'));
+    $trace = stobePromptXmlEscape(strval($mic['reason_trace'] ?? ''));
+
+    $topTarget = '';
+    $candidates = $mic['target_candidates'] ?? [];
+    if (count($candidates) > 0) {
+        $topTarget = stobePromptXmlEscape(strval($candidates[0]['name'] ?? ''));
+    }
+
+    $block = "<npc_intention>\n";
+    $block .= "  <intent_topic>" . $topic . "</intent_topic>\n";
+    $block .= "  <urgency>" . $urgency . "</urgency>\n";
+    $block .= "  <delivery_mode>" . $delivery . "</delivery_mode>\n";
+    if ($topTarget !== '') {
+        $block .= "  <preferred_target>" . $topTarget . "</preferred_target>\n";
+    }
+    if ($trace !== '') {
+        $block .= "  <reason>" . $trace . "</reason>\n";
+    }
+    $block .= "  <instruction>Let this intention shape what the NPC says and how — but do not reveal this metadata in dialogue.</instruction>\n";
+    $block .= "</npc_intention>";
+
+    return $block;
+}
+
+// ---------------------------------------------------------------------------
+// Conversation Floor System
+//
+// Implements urgency-based serialization of spontaneous NPC speech (bored/rechat).
+// Only one NPC can "hold the floor" per scene at a time. When multiple NPCs
+// want to speak simultaneously, the one with higher MIC urgency wins.
+// NPCs with lower urgency that arrive while the floor is occupied are silenced
+// for that cycle (the plugin will retry on the next timer tick naturally).
+//
+// The floor also functions as a context-freshness gate: a minimum hold time
+// (FLOOR_MIN_HOLD_SECONDS) ensures the previous speaker's response has been
+// persisted to the event log before the next NPC builds their context.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a deterministic scene key from a list of participant names.
+ * The key identifies the "conversation group" regardless of order.
+ * Names are normalized, sorted, then SHA1-hashed.
+ *
+ * @param array $participantNames Raw participant name strings
+ * @return string 40-char hex SHA1 scene key, or 'global' if list is empty
+ */
+function stobeComputeSceneKey(array $participantNames): string {
+    $normalized = [];
+    foreach ($participantNames as $name) {
+        $n = strtolower(trim(strval($name)));
+        if ($n !== '') {
+            $normalized[] = $n;
+        }
+    }
+    if (count($normalized) === 0) {
+        return 'global';
+    }
+    sort($normalized);
+    return sha1(implode('|', $normalized));
+}
+
+/**
+ * Read the current floor state for a scene.
+ * Returns the DB row as an array, or false if no floor is active (or expired).
+ *
+ * @param string $sceneKey Result of stobeComputeSceneKey()
+ * @return array|false Floor row array with keys: speaker, urgency, topic, acquired_epoch, expires_epoch
+ */
+function stobeGetConversationFloor(string $sceneKey): array|false {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $sceneKey === '') {
+        return false;
+    }
+    $now = time();
+    $row = $db->fetchOne(
+        "SELECT speaker, urgency, topic, acquired_epoch, expires_epoch
+           FROM conversation_floor
+          WHERE scene_key = $1
+            AND expires_epoch > $2",
+        [$sceneKey, $now]
+    );
+    return is_array($row) && count($row) > 0 ? $row : false;
+}
+
+/**
+ * Try to acquire the conversation floor for a speaker.
+ *
+ * Acquisition rules:
+ * - If no floor is active (or floor has expired) → always granted.
+ * - If a floor is active AND the incoming urgency is strictly greater than the
+ *   current holder's urgency → granted (higher urgency preempts).
+ * - Otherwise → denied (current holder keeps the floor).
+ *
+ * Floor TTL (time-to-live) is:
+ *   max(FLOOR_MIN_HOLD_SECONDS, FLOOR_BASE_TTL_SECONDS)
+ * where FLOOR_MIN_HOLD_SECONDS (default 8) ensures context freshness before
+ * the next NPC can speak, and FLOOR_BASE_TTL_SECONDS (default 30) is a safety
+ * expiry in case the floor is never released.
+ *
+ * @param string $sceneKey     Scene identifier
+ * @param string $speakerName  NPC acquiring the floor
+ * @param int    $urgency      MIC urgency (0-100); higher urgency can preempt
+ * @param string $topic        MIC intent_topic for logging
+ * @return bool True if floor was granted, false if denied
+ */
+function stobeAcquireConversationFloor(
+    string $sceneKey,
+    string $speakerName,
+    int $urgency,
+    string $topic = 'general'
+): bool {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $sceneKey === '' || $speakerName === '') {
+        return true; // graceful degradation: no DB → allow speech
+    }
+
+    // Configurable via general_settings.
+    // FLOOR_MIN_HOLD_SECONDS: context-freshness window between speeches.
+    // FLOOR_BASE_TTL_SECONDS: safety expiry if floor is never released.
+    $minHoldSeconds = max(0, min(120, getSettingInt('FLOOR_MIN_HOLD_SECONDS', 8)));
+    $baseTtlSeconds = max(1, min(300, getSettingInt('FLOOR_BASE_TTL_SECONDS', 30)));
+
+    $now    = time();
+    $ttl    = max($minHoldSeconds, $baseTtlSeconds);
+    $expires = $now + $ttl;
+
+    $current = stobeGetConversationFloor($sceneKey);
+
+    if ($current === false) {
+        // Floor is free — acquire it
+        $db->exec(
+            "INSERT INTO conversation_floor
+                (scene_key, speaker, urgency, topic, acquired_epoch, expires_epoch)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (scene_key) DO UPDATE
+               SET speaker = EXCLUDED.speaker,
+                   urgency  = EXCLUDED.urgency,
+                   topic    = EXCLUDED.topic,
+                   acquired_epoch = EXCLUDED.acquired_epoch,
+                   expires_epoch  = EXCLUDED.expires_epoch",
+            [$sceneKey, $speakerName, $urgency, $topic, $now, $expires]
+        );
+        return true;
+    }
+
+    $currentUrgency = intval($current['urgency'] ?? 0);
+
+    // Preemption: strictly greater urgency wins
+    if ($urgency > $currentUrgency) {
+        $db->exec(
+            "UPDATE conversation_floor
+                SET speaker = $1, urgency = $2, topic = $3,
+                    acquired_epoch = $4, expires_epoch = $5
+              WHERE scene_key = $6",
+            [$speakerName, $urgency, $topic, $now, $expires, $sceneKey]
+        );
+        return true;
+    }
+
+    // Denied: current holder has equal or higher urgency and floor is still valid
+    return false;
+}
+
+/**
+ * Release the conversation floor after the speaker has finished.
+ * Should be called after the LLM response is generated and stored.
+ * Leaves the row in DB with expires_epoch in the past so the freshness
+ * window (FLOOR_MIN_HOLD_SECONDS) still blocks immediate re-acquisition.
+ *
+ * @param string $sceneKey    Scene identifier
+ * @param string $speakerName Name of the NPC that should currently hold the floor
+ *                            (safety check: only release if we own it)
+ * @param int    $minHoldSeconds How long to keep the floor "cooling down" after release
+ */
+function stobeReleaseConversationFloor(
+    string $sceneKey,
+    string $speakerName,
+    int $minHoldSeconds = 8
+): void {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $sceneKey === '') {
+        return;
+    }
+
+    if ($minHoldSeconds <= 0) {
+        $minHoldSeconds = max(0, min(120, getSettingInt('FLOOR_MIN_HOLD_SECONDS', 8)));
+    }
+
+    // Set expires_epoch to now + minHold so context-freshness window is preserved
+    // but the floor can be re-acquired after the hold period.
+    // urgency is reset to 0 so any NPC can re-acquire after the hold.
+    $cooldownExpiry = time() + $minHoldSeconds;
+    $db->exec(
+        "UPDATE conversation_floor
+            SET urgency  = 0,
+                topic    = 'released',
+                expires_epoch = $1
+          WHERE scene_key = $2
+            AND LOWER(speaker) = LOWER($3)",
+        [$cooldownExpiry, $sceneKey, $speakerName]
+    );
+}
+
 function stobeResolveNpcPromptOverrides(array $npcData, array $metadata = []): array {
     $profileId = intval($npcData['profile_id'] ?? 0);
     if ($profileId <= 0 && function_exists('getDefaultNpcProfileId')) {
