@@ -225,11 +225,11 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.8.7';
+    $serverVersionDisplay = '0.8.8';
 }
 $serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
 if ($serverReleaseDate === '') {
-    $serverReleaseDate = '2026-05-07';
+    $serverReleaseDate = '2026-05-10';
 }
 
 $pluginVersionDisplay = 'N/A';
