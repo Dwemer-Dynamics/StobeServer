@@ -236,9 +236,12 @@ function stobeNormalizeSpeechTextForTts(string $line): string {
     return $speech;
 }
 
-function stobePocketTtsApplySettings(string $endpoint, array $settings): void {
+function stobePocketTtsApplySettings(string $provider, string $endpoint, array $settings): void {
     static $appliedCache = [];
     if ($endpoint === '') {
+        return;
+    }
+    if (!in_array($provider, ['pocket_tts', 'xtts'], true)) {
         return;
     }
 
@@ -273,6 +276,69 @@ function stobePocketTtsApplySettings(string $endpoint, array $settings): void {
     }
     curl_close($ch);
     $appliedCache[$cacheKey] = true;
+}
+
+function stobePostJsonToLocalTtsEndpoint(string $endpoint, string $payload, array $pathCandidates, string $accept = 'audio/wav'): array {
+    $responseBody = '';
+    $httpCode = 0;
+    $curlError = '';
+    $normalizedEndpoint = rtrim($endpoint, '/');
+    $attemptedUrls = [];
+
+    foreach ($pathCandidates as $pathCandidate) {
+        $path = trim(strval($pathCandidate));
+        if ($path === '') {
+            continue;
+        }
+        if (substr($path, 0, 1) !== '/') {
+            $path = '/' . $path;
+        }
+
+        $url = $normalizedEndpoint . $path;
+        if (isset($attemptedUrls[$url])) {
+            continue;
+        }
+        $attemptedUrls[$url] = true;
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: ' . $accept],
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_TIMEOUT => 45,
+        ]);
+        $attemptBinary = curl_exec($ch);
+        $attemptCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+        $attemptError = curl_error($ch);
+        curl_close($ch);
+
+        if (is_string($attemptBinary) && $attemptBinary !== '' && $attemptCode >= 200 && $attemptCode < 300) {
+            return [
+                'binary' => $attemptBinary,
+                'http_code' => $attemptCode,
+                'error' => $attemptError,
+                'response' => '',
+            ];
+        }
+
+        if (is_string($attemptBinary) && $attemptBinary !== '') {
+            $responseBody = $attemptBinary;
+        }
+        if ($attemptCode > 0) {
+            $httpCode = $attemptCode;
+        }
+        if ($attemptError !== '') {
+            $curlError = $attemptError;
+        }
+    }
+
+    return [
+        'binary' => false,
+        'http_code' => $httpCode,
+        'error' => $curlError,
+        'response' => $responseBody,
+    ];
 }
 
 function stobeEstimateWavDurationMs(string $binary): int {
@@ -1044,7 +1110,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         $language = 'en';
     }
 
-    stobePocketTtsApplySettings($endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());
+    stobePocketTtsApplySettings($provider, $endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());
     stobeMaybeSyncVoiceToLocalProvider($provider, $endpoint, $voiceId);
     stobeLogInfo('Local TTS request prepared', [
         'provider' => $provider,
@@ -1062,45 +1128,16 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         return false;
     }
 
-    $url = $endpoint . (in_array($provider, ['xtts', 'chatterbox'], true) ? '/tts_to_audio/' : '/tts_to_audio');
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: audio/wav'],
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_TIMEOUT => 45,
-    ]);
-    $binary = curl_exec($ch);
-    $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
-    $curlError = curl_error($ch);
-    curl_close($ch);
+    $pathCandidates = in_array($provider, ['xtts', 'chatterbox'], true)
+        ? ['/tts_to_audio/', '/tts_to_audio']
+        : ['/tts_to_audio', '/tts_to_audio/'];
+    $requestResult = stobePostJsonToLocalTtsEndpoint($endpoint, $payload, $pathCandidates);
+    $binary = $requestResult['binary'] ?? false;
+    $httpCode = intval($requestResult['http_code'] ?? 0);
+    $curlError = strval($requestResult['error'] ?? '');
+    $responseBody = strval($requestResult['response'] ?? '');
 
     if (!is_string($binary) || $binary === '' || $httpCode < 200 || $httpCode >= 300) {
-        $responseBody = is_string($binary) ? $binary : '';
-        if (in_array($provider, ['chatterbox', 'xtts'], true)) {
-            $ch = curl_init($endpoint . '/tts_to_audio/');
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST => true,
-                CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: audio/wav'],
-                CURLOPT_POSTFIELDS => $payload,
-                CURLOPT_TIMEOUT => 45,
-            ]);
-            $retry = curl_exec($ch);
-            $retryCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
-            curl_close($ch);
-            if (is_string($retry) && $retry !== '' && $retryCode >= 200 && $retryCode < 300) {
-                return $retry;
-            }
-            if (is_string($retry) && $retry !== '') {
-                $responseBody = $retry;
-            }
-            if ($retryCode > 0) {
-                $httpCode = $retryCode;
-            }
-        }
-
         if ($provider === 'xtts') {
             $responseDetail = '';
             if ($responseBody !== '') {
@@ -1132,25 +1169,23 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
                             'fallback_voiceid' => $fallbackVoiceId,
                             'endpoint' => $endpoint,
                         ]);
-                        $ch = curl_init($endpoint . '/tts_to_audio/');
-                        curl_setopt_array($ch, [
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_POST => true,
-                            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: audio/wav'],
-                            CURLOPT_POSTFIELDS => $fallbackPayload,
-                            CURLOPT_TIMEOUT => 45,
-                        ]);
-                        $fallbackBinary = curl_exec($ch);
-                        $fallbackCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
-                        curl_close($ch);
+                        $fallbackResult = stobePostJsonToLocalTtsEndpoint($endpoint, $fallbackPayload, $pathCandidates);
+                        $fallbackBinary = $fallbackResult['binary'] ?? false;
+                        $fallbackCode = intval($fallbackResult['http_code'] ?? 0);
+                        $fallbackError = strval($fallbackResult['error'] ?? '');
                         if (is_string($fallbackBinary) && $fallbackBinary !== '' && $fallbackCode >= 200 && $fallbackCode < 300) {
                             return $fallbackBinary;
                         }
                         if (is_string($fallbackBinary) && $fallbackBinary !== '') {
                             $responseBody = $fallbackBinary;
+                        } else {
+                            $responseBody = strval($fallbackResult['response'] ?? $responseBody);
                         }
                         if ($fallbackCode > 0) {
                             $httpCode = $fallbackCode;
+                        }
+                        if ($fallbackError !== '') {
+                            $curlError = $fallbackError;
                         }
                     }
                 }

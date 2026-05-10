@@ -41,7 +41,7 @@ function stobePlaythroughToBool(mixed $value): bool
         return intval($value) !== 0;
     }
     $normalized = strtolower(trim(strval($value)));
-    return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+    return in_array($normalized, ['1', 'true', 'yes', 'on', 't'], true);
 }
 
 function stobePlaythroughDecodeJsonStringList(string $raw): array

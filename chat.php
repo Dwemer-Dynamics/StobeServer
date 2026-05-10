@@ -409,7 +409,7 @@ $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
         ? 'Output contract: return only a direct conversational reply to the current speaker. Do not include scene narration, atmospheric description, third-person prose, or action tags.'
-        : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat'),
+        : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat', false, null, 'chat'),
 ];
 
 $llmConfig = getLlmConfigForNpc($npcData);
@@ -432,7 +432,7 @@ if ($llmConfig['api_key'] === '') {
         'mode' => $mode,
     ];
     if (!$narratorMode) {
-        $llmMeta['response_format'] = ['type' => 'json_object'];
+        $llmMeta['response_format'] = stobeBuildStructuredDialogueResponseFormat($targetNpc, $npcData, null, 'chat');
     }
     $rawResponse = callLLM($messages, $llmConfig, $llmMeta);
     if ($rawResponse === false || trim($rawResponse) === '') {

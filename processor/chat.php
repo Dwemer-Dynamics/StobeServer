@@ -888,7 +888,8 @@ $messages[] = [
             $targetNpc,
             $dialogueMode === 'cheat',
             false,
-            npcIsInPlayerFaction($npcData)
+            npcIsInPlayerFaction($npcData),
+            'chat'
         ),
 ];
 
@@ -935,7 +936,9 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             'event_type' => 'chat',
             'speaker' => $speaker,
             'action_config' => $actionConfig,
-            'response_format' => $narratorMode ? null : ['type' => 'json_object'],
+            'response_format' => $narratorMode
+                ? null
+                : stobeBuildStructuredDialogueResponseFormat($targetNpc, $npcData, npcIsInPlayerFaction($npcData), 'chat'),
         ]
     );
 
