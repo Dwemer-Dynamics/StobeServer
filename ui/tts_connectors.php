@@ -23,7 +23,8 @@ function ttsDefaultConfig(string $service): array {
     return [
         'provider' => $service,
         'language' => ($service === 'inworld') ? 'EN_US' : 'en',
-        'voiceid' => 'male1',
+        'fallback_male' => 'male1',
+        'fallback_female' => 'female1',
         'api_badge_id' => 0,
         'model_id' => ($service === 'cartesia') ? 'sonic-3' : (($service === 'inworld') ? 'inworld-tts-1' : ''),
         'workspace' => '',
@@ -42,6 +43,9 @@ function ttsNormalizeRow(array $row): array {
     if (isset($config['provider']) && trim(strval($config['provider'])) !== '') $service = ttsService(strval($config['provider']));
     $cfg = ttsDefaultConfig($service);
     foreach ($config as $k => $v) $cfg[$k] = $v;
+    $legacyVoiceId = trim(strval($config['voiceid'] ?? ''));
+    if (trim(strval($cfg['fallback_male'] ?? '')) === '') $cfg['fallback_male'] = $legacyVoiceId !== '' ? $legacyVoiceId : 'male1';
+    if (trim(strval($cfg['fallback_female'] ?? '')) === '') $cfg['fallback_female'] = $legacyVoiceId !== '' ? $legacyVoiceId : 'female1';
     $cfg['api_badge_id'] = intval($cfg['api_badge_id'] ?? 0);
     return [
         'id' => intval($row['id'] ?? 0),
@@ -66,10 +70,11 @@ function ttsBuildFields(array $payload, ?array $existing): array {
     $cfg = ttsDefaultConfig($service);
     foreach (ttsCfg($existing['config'] ?? '{}') as $k => $v) $cfg[$k] = $v;
     $cfg['provider'] = $service;
-    foreach (['language','voiceid','model_id','workspace'] as $k) if (array_key_exists($k, $payload)) $cfg[$k] = trim(strval($payload[$k]));
+    foreach (['language','fallback_male','fallback_female','model_id','workspace'] as $k) if (array_key_exists($k, $payload)) $cfg[$k] = trim(strval($payload[$k]));
     foreach (['stream_chunk_size','top_k'] as $k) if (array_key_exists($k, $payload) && trim(strval($payload[$k])) !== '') $cfg[$k] = intval($payload[$k]);
     foreach (['temperature','speed','length_penalty','repetition_penalty','top_p'] as $k) if (array_key_exists($k, $payload) && trim(strval($payload[$k])) !== '') $cfg[$k] = floatval($payload[$k]);
     $cfg['api_badge_id'] = intval($payload['api_badge_id'] ?? ($cfg['api_badge_id'] ?? 0));
+    unset($cfg['voiceid']);
 
     $fields = [
         'name' => trim(strval($payload['label'] ?? ($existing['name'] ?? ''))),
@@ -128,7 +133,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['save']) || isset($_P
         'url' => strval($_POST['url'] ?? ''),
         'api_badge_id' => strval($_POST['api_badge_id'] ?? ''),
         'language' => strval($_POST['language'] ?? ''),
-        'voiceid' => strval($_POST['voiceid'] ?? ''),
+        'fallback_male' => strval($_POST['fallback_male'] ?? ''),
+        'fallback_female' => strval($_POST['fallback_female'] ?? ''),
         'model_id' => strval($_POST['model_id'] ?? ''),
         'workspace' => strval($_POST['workspace'] ?? ''),
         'stream_chunk_size' => strval($_POST['stream_chunk_size'] ?? ''),
@@ -249,9 +255,14 @@ h1.api-title {
 <div class="help">Locale/language code sent to provider (for example `en`, `EN_US`).</div>
 </div>
 <div>
-<label for="voiceid">Fallback Voice ID</label>
-<input id="voiceid" type="text" name="voiceid" value="<?= h(strval($cfg['voiceid'] ?? 'male1')) ?>">
-<div class="help">Fallback voice identifier used when NPC-specific voice mapping is unavailable.</div>
+<label for="fallback_male">Fallback Male Voice ID</label>
+<input id="fallback_male" type="text" name="fallback_male" value="<?= h(strval($cfg['fallback_male'] ?? 'male1')) ?>">
+<div class="help">Used when an NPC has no voice mapping and the actor resolves as male or non-female.</div>
+</div>
+<div>
+<label for="fallback_female">Fallback Female Voice ID</label>
+<input id="fallback_female" type="text" name="fallback_female" value="<?= h(strval($cfg['fallback_female'] ?? 'female1')) ?>">
+<div class="help">Used when an NPC has no voice mapping and the actor resolves as female.</div>
 </div>
 </div>
 
@@ -346,7 +357,8 @@ h1.api-title {
       const connectorId = idInput ? idInput.value : '';
       if (!connectorId) { alert('Save connector first, then run test.'); return; }
       const prompt = 'The great father Chitrin was betrayed by his children; broken by their sins and their lack of faith.';
-      const voiceid = 'male1';
+      const fallbackMaleInput = document.getElementById('fallback_male');
+      const voiceid = fallbackMaleInput && fallbackMaleInput.value.trim() !== '' ? fallbackMaleInput.value.trim() : 'male1';
       const base = <?= json_encode(($webRoot !== '' ? $webRoot : '') . '/ui/ttstest.php', JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
       iframe.src = base + '?connector_id=' + encodeURIComponent(connectorId) + '&prompt=' + encodeURIComponent(prompt) + '&voiceid=' + encodeURIComponent(voiceid);
       modal.style.display = 'flex';

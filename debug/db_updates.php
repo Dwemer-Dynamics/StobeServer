@@ -938,6 +938,60 @@ PROMPT;
                 );
             }
         });
+        $applyPatch('core_tts_connector', 202605101600, static function () use ($db): void {
+            $db->exec("UPDATE core_tts_connector
+                       SET config = jsonb_set(
+                           jsonb_set(
+                               CASE
+                                   WHEN config IS NULL OR config = '[]'::jsonb OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+                                   ELSE config
+                               END,
+                               '{fallback_male}',
+                               to_jsonb(
+                                   CASE
+                                       WHEN COALESCE(BTRIM(config->>'fallback_male'), '') <> '' THEN BTRIM(config->>'fallback_male')
+                                       WHEN COALESCE(BTRIM(config->>'voiceid'), '') <> '' THEN BTRIM(config->>'voiceid')
+                                       ELSE 'male1'
+                                   END
+                               ),
+                               true
+                           ),
+                           '{fallback_female}',
+                           to_jsonb(
+                               CASE
+                                   WHEN COALESCE(BTRIM(config->>'fallback_female'), '') <> '' THEN BTRIM(config->>'fallback_female')
+                                   WHEN COALESCE(BTRIM(config->>'voiceid'), '') <> '' THEN BTRIM(config->>'voiceid')
+                                   ELSE 'female1'
+                               END
+                           ),
+                           true
+                       )
+                       WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'cartesia', 'inworld')");
+        });
+        $applyPatch('core_tts_connector', 202605101610, static function () use ($db): void {
+            $db->exec("UPDATE core_tts_connector
+                       SET config = jsonb_set(
+                           jsonb_set(
+                               CASE
+                                   WHEN config IS NULL OR config = '[]'::jsonb OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+                                   ELSE config
+                               END,
+                               '{fallback_male}',
+                               to_jsonb('male1'::text),
+                               true
+                           ),
+                           '{fallback_female}',
+                           to_jsonb('female1'::text),
+                           true
+                       )
+                       WHERE LOWER(name) IN (
+                           'pocket tts default',
+                           'xtts default',
+                           'chatterbox default',
+                           'cartesia default',
+                           'inworld default'
+                       )");
+        });
         $applyPatch('core_npc_master', 202603130215, static function () use ($db): void {
             $db->exec("
                 UPDATE core_npc_master

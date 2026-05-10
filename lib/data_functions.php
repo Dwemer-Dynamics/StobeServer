@@ -11541,7 +11541,8 @@ function deleteTtsConnector(int $id): void {
 function getDefaultPocketTtsConnectorConfig(): array {
     return [
         'language' => 'en',
-        'voiceid' => 'malenord',
+        'fallback_male' => 'male1',
+        'fallback_female' => 'female1',
         'stream_chunk_size' => 20,
         'temperature' => 0.9,
         'speed' => 1.0,

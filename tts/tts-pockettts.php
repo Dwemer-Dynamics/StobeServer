@@ -126,11 +126,12 @@ function stobeResolveNpcDataForTts(string $npcName, array|false $npcData = false
             'name' => $resolvedName,
             'profile_id' => $profileId > 0 ? $profileId : 0,
             'voiceid' => $voiceId,
+            'gender' => trim(strval($npcData['gender'] ?? '')),
         ];
     }
 
     $resolved = $db->fetchOne(
-        "SELECT id, name, profile_id, voiceid
+        "SELECT id, name, profile_id, voiceid, gender
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
          ORDER BY
@@ -147,6 +148,43 @@ function stobeResolveNpcDataForTts(string $npcName, array|false $npcData = false
         return $resolved;
     }
     return is_array($npcData) ? $npcData : false;
+}
+
+function stobeIsFemaleGender(mixed $value): bool {
+    $gender = strtolower(trim(strval($value)));
+    if ($gender === '') {
+        return false;
+    }
+
+    return in_array($gender, ['f', 'female', 'woman', 'girl', 'fem'], true)
+        || str_contains($gender, 'female');
+}
+
+function stobeNormalizeConnectorFallbackVoice(string $voiceId, string $defaultVoice): string {
+    $normalized = trim($voiceId);
+    if ($normalized !== '') {
+        return $normalized;
+    }
+
+    return $defaultVoice;
+}
+
+function stobeResolveConnectorFallbackVoices(array $connectorConfig): array {
+    $legacyVoiceId = trim(strval($connectorConfig['voiceid'] ?? ''));
+    $fallbackMale = stobeNormalizeConnectorFallbackVoice(
+        trim(strval($connectorConfig['fallback_male'] ?? '')),
+        $legacyVoiceId !== '' ? $legacyVoiceId : 'male1'
+    );
+    $fallbackFemale = stobeNormalizeConnectorFallbackVoice(
+        trim(strval($connectorConfig['fallback_female'] ?? '')),
+        $legacyVoiceId !== '' ? $legacyVoiceId : 'female1'
+    );
+
+    return [
+        'male' => $fallbackMale,
+        'female' => $fallbackFemale,
+        'legacy_voiceid' => $legacyVoiceId,
+    ];
 }
 
 function stobeResolveNpcVoiceIdByName(string $npcName): string {
@@ -540,6 +578,9 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         $language = 'en';
     }
 
+    $resolvedGender = trim(strval($resolvedNpcData['gender'] ?? $npcData['gender'] ?? ''));
+    $fallbackVoices = stobeResolveConnectorFallbackVoices($connectorConfig);
+    $fallbackVoiceId = stobeIsFemaleGender($resolvedGender) ? $fallbackVoices['female'] : $fallbackVoices['male'];
     $voiceId = '';
     $voiceSource = 'hard_default';
     $isNarrator = strcasecmp(trim($npcName), 'The Narrator') === 0;
@@ -557,12 +598,15 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
             $voiceId = $resolvedVoice;
             $voiceSource = 'npc_payload';
         } else {
-            $connectorVoice = trim(strval($connectorConfig['voiceid'] ?? ''));
-            if ($connectorVoice !== '') {
-                $voiceId = $connectorVoice;
-                $voiceSource = 'connector_default';
+            if ($fallbackVoiceId !== '') {
+                $voiceId = $fallbackVoiceId;
+                $voiceSource = ($fallbackVoices['legacy_voiceid'] !== '' &&
+                    !array_key_exists('fallback_male', $connectorConfig) &&
+                    !array_key_exists('fallback_female', $connectorConfig))
+                    ? 'connector_legacy_default'
+                    : 'connector_gender_fallback';
             } else {
-                $voiceId = 'malenord';
+                $voiceId = stobeIsFemaleGender($resolvedGender) ? 'female1' : 'male1';
             }
         }
     }
@@ -584,6 +628,10 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         'language' => $language,
         'voiceid' => $voiceId,
         'voiceid_source' => $voiceSource,
+        'gender' => $resolvedGender,
+        'fallback_voiceid' => $fallbackVoiceId,
+        'fallback_male' => $fallbackVoices['male'],
+        'fallback_female' => $fallbackVoices['female'],
         'settings' => $settings,
         'model_id' => trim(strval($connectorConfig['model_id'] ?? ($connectorConfig['model'] ?? ''))),
         'workspace' => trim(strval($connectorConfig['workspace'] ?? '')),
@@ -1101,9 +1149,9 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     if ($endpoint === '') {
         return false;
     }
-    $voiceId = trim(strval($runtime['voiceid'] ?? 'malenord'));
+    $voiceId = trim(strval($runtime['voiceid'] ?? ''));
     if ($voiceId === '') {
-        $voiceId = 'malenord';
+        $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
     $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
     if ($language === '') {
@@ -1155,7 +1203,12 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
                 stripos($responseDetail, 'speaker') !== false &&
                 stripos($responseDetail, 'not found') !== false
             ) {
-                $fallbackVoiceId = (stripos($voiceId, 'female') !== false) ? 'femalenord' : 'malenord';
+                $fallbackVoiceId = trim(strval($runtime['fallback_voiceid'] ?? ''));
+                if ($fallbackVoiceId === '') {
+                    $fallbackVoiceId = stobeIsFemaleGender($runtime['gender'] ?? '') ?
+                        trim(strval($runtime['fallback_female'] ?? 'female1')) :
+                        trim(strval($runtime['fallback_male'] ?? 'male1'));
+                }
                 if (strcasecmp($fallbackVoiceId, $voiceId) !== 0) {
                     $fallbackPayload = json_encode([
                         'text' => $speechText,
@@ -1223,9 +1276,9 @@ function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcD
     }
 
     $provider = trim(strval($runtime['provider'] ?? 'pocket_tts'));
-    $voiceId = trim(strval($runtime['voiceid'] ?? 'malenord'));
+    $voiceId = trim(strval($runtime['voiceid'] ?? ''));
     if ($voiceId === '') {
-        $voiceId = 'malenord';
+        $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
     $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
     if ($language === '') {
@@ -1342,12 +1395,10 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         $language = 'en';
     }
 
+    $fallbackVoices = stobeResolveConnectorFallbackVoices($connectorConfig);
     $voiceId = trim($voiceOverride);
     if ($voiceId === '') {
-        $voiceId = trim(strval($connectorConfig['voiceid'] ?? ''));
-    }
-    if ($voiceId === '') {
-        $voiceId = 'malenord';
+        $voiceId = $fallbackVoices['male'];
     }
 
     $settings = stobePocketTtsDefaultSettings();
@@ -1366,6 +1417,9 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         'endpoint' => $endpoint,
         'language' => $language,
         'voiceid' => $voiceId,
+        'fallback_voiceid' => $voiceId,
+        'fallback_male' => $fallbackVoices['male'],
+        'fallback_female' => $fallbackVoices['female'],
         'voiceid_source' => $voiceOverride !== '' ? 'test_override' : 'connector_default',
         'settings' => $settings,
         'model_id' => trim(strval($connectorConfig['model_id'] ?? ($connectorConfig['model'] ?? ''))),
@@ -1387,9 +1441,9 @@ function stobeSynthesizeTtsFromConnector(array $connector, string $text, string 
     }
 
     $provider = trim(strval($runtime['provider'] ?? 'pocket_tts'));
-    $voiceId = trim(strval($runtime['voiceid'] ?? 'malenord'));
+    $voiceId = trim(strval($runtime['voiceid'] ?? ''));
     if ($voiceId === '') {
-        $voiceId = 'malenord';
+        $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
     $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
     if ($language === '') {
