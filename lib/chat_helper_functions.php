@@ -64,6 +64,33 @@ function loadPromptTemplate(string $templateName): string {
         . "</general_instructions>";
 }
 
+function stobePromptStripEmptyTagBlock(string $prompt, string $tag): string
+{
+    $safeTag = trim($tag);
+    if ($safeTag === '') {
+        return $prompt;
+    }
+
+    $pattern = '/(?:\R[ \t]*)?<' . preg_quote($safeTag, '/') . '>\s*<\/' . preg_quote($safeTag, '/') . '>(?:[ \t]*\R)?/isu';
+    $updated = preg_replace($pattern, "\n", $prompt);
+    return is_string($updated) ? $updated : $prompt;
+}
+
+function stobePromptCollapseBlankLines(string $prompt): string
+{
+    $collapsed = preg_replace('/(?:\R[ \t]*){3,}/u', "\n\n", trim($prompt));
+    return is_string($collapsed) ? trim($collapsed) : trim($prompt);
+}
+
+function stobePromptCleanupBaseTemplateBlocks(string $prompt): string
+{
+    foreach (['basic_summary', 'personality', 'appearance', 'relationships', 'occupation', 'skills', 'speech_style', 'goals'] as $tag) {
+        $prompt = stobePromptStripEmptyTagBlock($prompt, $tag);
+    }
+
+    return stobePromptCollapseBlankLines($prompt);
+}
+
 function parseActionAllowlistSetting(string $rawAllowlist): array {
     $trimmed = trim($rawAllowlist);
     if ($trimmed === '') {
@@ -430,6 +457,10 @@ function stobeFilterPartyActionGuidanceByMembership(string $guidance, ?bool $inP
 }
 
 function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $npcData = []): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'available_actions_list')) {
+        return $prompt;
+    }
+
     $config = stobeBuildActionConfigForNpc($eventType, $npcData);
     if (!boolval($config['enabled'] ?? false)) {
         return $prompt;
@@ -3211,6 +3242,10 @@ function stobeResolveWorldPromptContext(mixed $context = null): array {
 }
 
 function stobeBuildGameTimePromptBlock(mixed $gamets, mixed $worldContext = null): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'world')) {
+        return '';
+    }
+
     $safeGamets = stobeGametsNormalize($gamets);
     $dateLabel = stobeGametsDateLabel($safeGamets);
     $world = stobeResolveWorldPromptContext($worldContext);
@@ -6103,6 +6138,13 @@ function buildWorldStateBlock(array $npcData): string {
     $fields = [];
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
     $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $includeWorld = stobePromptContextOptionEnabled('enabled_sections', 'world');
+    $includeCurrentCondition = stobePromptContextOptionEnabled('enabled_state_subsections', 'current_condition');
+    $includeActivityState = stobePromptContextOptionEnabled('enabled_state_subsections', 'activity_state');
+    $includeEquipment = stobePromptContextOptionEnabled('enabled_state_subsections', 'equipment');
+    $includePersonalInventory = stobePromptContextOptionEnabled('enabled_state_subsections', 'personal_inventory');
+    $includeMerchantInventory = stobePromptContextOptionEnabled('enabled_state_subsections', 'merchant_inventory');
+    $includeBounty = stobePromptContextOptionEnabled('enabled_character_subsections', 'bounty');
     $parseFlag = static function (mixed $value): ?bool {
         if (is_bool($value)) {
             return $value;
@@ -6190,7 +6232,7 @@ function buildWorldStateBlock(array $npcData): string {
         $seenLocationParts[$dedupeKey] = true;
         $locationParts[] = $candidate;
     }
-    if (count($locationParts) > 0) {
+    if ($includeWorld && count($locationParts) > 0) {
         $locationText = implode(', ', $locationParts);
         $locationFlags = [];
         $indoorsFlag = $parseFlag($environment['indoors'] ?? null);
@@ -6225,7 +6267,7 @@ function buildWorldStateBlock(array $npcData): string {
         return null;
     };
     $weatherCode = $parseWeatherCode($environment['weather'] ?? ($metadata['weather'] ?? null));
-    if ($weatherCode !== null) {
+    if ($includeWorld && $weatherCode !== null) {
         $weatherLabelMap = [
             0 => 'Clear',
             1 => 'Duststorm',
@@ -6235,7 +6277,7 @@ function buildWorldStateBlock(array $npcData): string {
             5 => 'Rain',
         ];
         $fields['weather'] = $weatherLabelMap[$weatherCode] ?? 'Unknown';
-    } else {
+    } elseif ($includeWorld) {
         $weatherText = $pickEnvironmentToken(
             $environment,
             ['weather_name', 'weather_state', 'weather_type']
@@ -6246,18 +6288,20 @@ function buildWorldStateBlock(array $npcData): string {
         }
     }
 
-    $bloodState = stobeDescribeBloodStatus($npcData['blood'] ?? '');
-    if ($bloodState !== '') {
-        $fields['blood'] = $bloodState;
-    }
+    if ($includeCurrentCondition) {
+        $bloodState = stobeDescribeBloodStatus($npcData['blood'] ?? '');
+        if ($bloodState !== '') {
+            $fields['blood'] = $bloodState;
+        }
 
-    $hungerState = stobeDescribeHungerStatus($npcData['hunger'] ?? '');
-    if ($hungerState !== '') {
-        $fields['hunger'] = $hungerState;
+        $hungerState = stobeDescribeHungerStatus($npcData['hunger'] ?? '');
+        if ($hungerState !== '') {
+            $fields['hunger'] = $hungerState;
+        }
     }
 
     $characterState = trim(strval($metadata['character_state'] ?? ''));
-    if ($characterState !== '' && strtolower($characterState) !== 'normal') {
+    if ($includeActivityState && $characterState !== '' && strtolower($characterState) !== 'normal') {
         $fields['state'] = $characterState;
     }
 
@@ -6278,39 +6322,41 @@ function buildWorldStateBlock(array $npcData): string {
         }
     }
 
-    $currentAction = trim(strval($metadata['current_action'] ?? ''));
-    if ($currentAction === '') {
-        if (($activitySignals['is_attacking'] ?? false) === true) {
-            $currentAction = 'attacking';
-        } elseif (($activitySignals['is_in_combat'] ?? false) === true) {
-            $currentAction = 'combat';
-        } elseif (($activitySignals['is_sneaking'] ?? false) === true) {
-            $currentAction = 'sneaking';
-        } elseif (($activitySignals['is_running'] ?? false) === true) {
-            $currentAction = 'running';
-        } elseif (($activitySignals['is_moving'] ?? false) === true) {
-            $currentAction = 'moving';
-        } elseif ($characterState !== '' && strtolower($characterState) !== 'normal') {
-            $currentAction = strtolower($characterState);
-        } else {
-            $currentAction = 'idle';
+    if ($includeActivityState) {
+        $currentAction = trim(strval($metadata['current_action'] ?? ''));
+        if ($currentAction === '') {
+            if (($activitySignals['is_attacking'] ?? false) === true) {
+                $currentAction = 'attacking';
+            } elseif (($activitySignals['is_in_combat'] ?? false) === true) {
+                $currentAction = 'combat';
+            } elseif (($activitySignals['is_sneaking'] ?? false) === true) {
+                $currentAction = 'sneaking';
+            } elseif (($activitySignals['is_running'] ?? false) === true) {
+                $currentAction = 'running';
+            } elseif (($activitySignals['is_moving'] ?? false) === true) {
+                $currentAction = 'moving';
+            } elseif ($characterState !== '' && strtolower($characterState) !== 'normal') {
+                $currentAction = strtolower($characterState);
+            } else {
+                $currentAction = 'idle';
+            }
         }
-    }
-    $fields['current_action'] = $currentAction;
+        $fields['current_action'] = $currentAction;
 
-    if (count($activityFlags) > 0) {
-        $fields['action_flags'] = implode(', ', $activityFlags);
-    }
+        if (count($activityFlags) > 0) {
+            $fields['action_flags'] = implode(', ', $activityFlags);
+        }
 
-    $attackTarget = trim(strval($metadata['attack_target'] ?? ''));
-    if ($attackTarget !== '') {
-        $fields['attack_target'] = $attackTarget;
+        $attackTarget = trim(strval($metadata['attack_target'] ?? ''));
+        if ($attackTarget !== '') {
+            $fields['attack_target'] = $attackTarget;
+        }
     }
 
     $bounty = function_exists('stobeBountyAmountFromPayload')
         ? stobeBountyAmountFromPayload($npcData['bounty'] ?? [])
         : intval($npcData['bounty'] ?? 0);
-    if ($bounty > 0) {
+    if ($includeBounty && $bounty > 0) {
         $fields['bounty'] = number_format($bounty) . ' Cats';
     }
 
@@ -6327,7 +6373,7 @@ function buildWorldStateBlock(array $npcData): string {
         $equipmentRaw = stobeEnrichItemCsvWithDescriptions($equipmentRaw, 14, 0, 4000);
     }
     $equipment = truncatePromptValue($equipmentRaw, 3200);
-    if ($equipment !== '') {
+    if ($includeEquipment && $equipment !== '') {
         $fields['equipment'] = $equipment;
     }
 
@@ -6341,7 +6387,7 @@ function buildWorldStateBlock(array $npcData): string {
         $inventoryRaw = stobeEnrichItemCsvWithDescriptions($inventoryRaw, 16, 0, 4500);
     }
     $inventory = truncatePromptValue($inventoryRaw, 3600);
-    if ($inventory !== '') {
+    if ($includePersonalInventory && $inventory !== '') {
         $fields['personal_inventory'] = $inventory;
     }
 
@@ -6350,23 +6396,25 @@ function buildWorldStateBlock(array $npcData): string {
             ?? ($inventoryContext['trader_inventory'] ?? '')
     ));
     $merchantInventory = truncatePromptValue($merchantInventoryRaw, 3600);
-    if ($merchantInventory !== '') {
+    if ($includeMerchantInventory && $merchantInventory !== '') {
         $fields['merchant_inventory'] = $merchantInventory;
     }
 
     $roboticLimbList = stobeParseRoboticLimbList($metadata['robotic_limbs'] ?? []);
-    $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '', $roboticLimbList);
-    if ($limbState !== '') {
-        $fields['limb_status'] = $limbState;
-    }
+    if ($includeCurrentCondition) {
+        $limbState = stobeDescribeLimbStatus($npcData['limbs'] ?? '', $roboticLimbList);
+        if ($limbState !== '') {
+            $fields['limb_status'] = $limbState;
+        }
 
-    $roboticLabels = stobeFormatRoboticLimbLabels($roboticLimbList, 6);
-    if (count($roboticLabels) > 0) {
-        $fields['robotic_limbs'] = implode(', ', $roboticLabels);
-    } else {
-        $hasRobotics = $parseFlag($metadata['has_robotic_limbs'] ?? null);
-        if ($hasRobotics === true) {
-            $fields['robotic_limbs'] = 'Robotics detected';
+        $roboticLabels = stobeFormatRoboticLimbLabels($roboticLimbList, 6);
+        if (count($roboticLabels) > 0) {
+            $fields['robotic_limbs'] = implode(', ', $roboticLabels);
+        } else {
+            $hasRobotics = $parseFlag($metadata['has_robotic_limbs'] ?? null);
+            if ($hasRobotics === true) {
+                $fields['robotic_limbs'] = 'Robotics detected';
+            }
         }
     }
 
@@ -6733,6 +6781,13 @@ function stobePromptHasPlayerFactionContext(array $npcData): bool {
 }
 
 function stobeBuildPlayerFactionPromptBlock(array $npcData): string {
+    if (
+        !stobePromptContextOptionEnabled('enabled_sections', 'knowledge')
+        || !stobePromptContextOptionEnabled('enabled_knowledge_subsections', 'player_faction_prompt')
+    ) {
+        return '';
+    }
+
     $customPrompt = stobeGetPlayerFactionPromptSetting();
     if (trim($customPrompt) === '') {
         return '';
@@ -7029,6 +7084,10 @@ function stobeResolveBountyPromptText(mixed $rawBounty, mixed $rawBountyInfo = n
 }
 
 function stobeBuildNpcBountyPromptBlock(array $npcData): string {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'bounty')) {
+        return '';
+    }
+
     $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
     $rawBounty = $npcData['bounty'] ?? ($metadata['bounty'] ?? null);
     $rawBountyInfo = $npcData['bounty_info']
@@ -7053,6 +7112,10 @@ function stobeBuildNearbyEntryBountyText(array $entry): string {
 }
 
 function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName = ''): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'nearby_actors')) {
+        return '';
+    }
+
     $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
     $actors = stobeExtractSceneArray($extendedData, 'nearby_actors');
     if (count($actors) === 0) {
@@ -7500,6 +7563,10 @@ function stobeBuildNearbyActorsFromPeopleScope(string $peopleRaw): array {
 }
 
 function stobeBuildNearbyItemsPromptBlock(array $npcData): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'nearby_items')) {
+        return '';
+    }
+
     $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
     $items = stobeExtractSceneArray($extendedData, 'nearby_items');
     if (count($items) === 0) {
@@ -7558,6 +7625,10 @@ function stobeBuildNearbyItemsPromptBlock(array $npcData): string {
 }
 
 function stobeBuildPointsOfInterestPromptBlock(array $npcData): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'points_of_interest')) {
+        return '';
+    }
+
     $extendedData = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
     $points = stobeExtractSceneArray($extendedData, 'points_of_interest');
     if (count($points) === 0) {
@@ -7661,6 +7732,10 @@ function stobeBuildScenePromptBlock(array $npcData, string $speakerName = ''): s
 }
 
 function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName = ''): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'combat_priority')) {
+        return '';
+    }
+
     if (count($npcData) === 0) {
         return '';
     }
@@ -7922,6 +7997,10 @@ function nearbyEntryIsInPlayerFaction(array $entry): bool {
 }
 
 function buildNearbyPlayerAlliesPrompt(array $nearby, string $speakerName): string {
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'nearby_player_allies')) {
+        return '';
+    }
+
     if (count($nearby) === 0) {
         return '';
     }
@@ -8125,6 +8204,10 @@ function stobeResolveNpcPromptOverrides(array $npcData, array $metadata = []): a
 }
 
 function stobeBuildNpcAppearanceText(array $npcData): string {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'appearance')) {
+        return '';
+    }
+
     $appearance = trim(strval($npcData['appearance'] ?? ''));
     if ($appearance !== '') {
         return truncatePromptValue($appearance, 280);
@@ -8139,6 +8222,10 @@ function stobeBuildNpcAppearanceText(array $npcData): string {
 }
 
 function stobeBuildNpcConditionText(array $npcData, array $metadata): string {
+    if (!stobePromptContextOptionEnabled('enabled_state_subsections', 'current_condition')) {
+        return '';
+    }
+
     $parts = [];
 
     $health = trim(strval($npcData['health'] ?? ($metadata['health'] ?? '')));
@@ -8183,7 +8270,11 @@ function stobeBuildNpcConditionText(array $npcData, array $metadata): string {
     }
 
     $characterState = trim(strval($metadata['character_state'] ?? ''));
-    if ($characterState !== '' && strtolower($characterState) !== 'normal') {
+    if (
+        stobePromptContextOptionEnabled('enabled_state_subsections', 'activity_state')
+        && $characterState !== ''
+        && strtolower($characterState) !== 'normal'
+    ) {
         $parts[] = 'State: ' . $characterState;
     }
 
@@ -8412,6 +8503,10 @@ function stobeExtractSkillValues(array $npcData): array {
 }
 
 function stobeBuildNpcSkillsText(array $npcData): string {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'skills')) {
+        return '';
+    }
+
     $maps = stobeSkillGroupMaps();
     $values = stobeExtractSkillValues($npcData);
 
@@ -8722,6 +8817,10 @@ function stobeGetNpcRelationshipMap(array|false $npcData): array {
 }
 
 function stobeBuildNpcRelationshipsText(string $speakerName, string $conversationTarget, array|false $npcData = false): string {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'relationships')) {
+        return '';
+    }
+
     $speaker = normalizeParticipantNameToken($speakerName);
     if (!is_array($npcData)) {
         $npcData = getNpcData($speaker);
@@ -9747,6 +9846,16 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
         $geo = getEventGeoFromPlayerSnapshot();
     }
 
+    $includeBasicSummary = stobePromptContextOptionEnabled('enabled_character_subsections', 'basic_summary');
+    $includePersonality = stobePromptContextOptionEnabled('enabled_character_subsections', 'personality');
+    $includeOccupation = stobePromptContextOptionEnabled('enabled_character_subsections', 'occupation');
+    $includeSpeechStyle = stobePromptContextOptionEnabled('enabled_character_subsections', 'speech_style');
+    $includeGoals = stobePromptContextOptionEnabled('enabled_character_subsections', 'goals');
+    $includeAppearance = stobePromptContextOptionEnabled('enabled_character_subsections', 'appearance');
+    $includeCurrentCondition = stobePromptContextOptionEnabled('enabled_state_subsections', 'current_condition');
+    $includeEquipment = stobePromptContextOptionEnabled('enabled_state_subsections', 'equipment');
+    $includePersonalInventory = stobePromptContextOptionEnabled('enabled_state_subsections', 'personal_inventory');
+
     $lines = ['<speaker_context>'];
     $lines[] = '  <name>' . stobePromptXmlEscape($safeSpeaker) . '</name>';
     if ($speakerRace !== '') {
@@ -9758,31 +9867,31 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
     if ($speakerGender !== '') {
         $lines[] = '  <gender>' . stobePromptXmlEscape($speakerGender) . '</gender>';
     }
-    if ($speakerOccupation !== '') {
+    if ($speakerOccupation !== '' && $includeOccupation) {
         $lines[] = '  <occupation>' . stobePromptXmlEscape($speakerOccupation) . '</occupation>';
     }
-    if ($speakerSummary !== '') {
+    if ($speakerSummary !== '' && $includeBasicSummary) {
         $lines[] = '  <summary>' . stobePromptXmlEscape($speakerSummary) . '</summary>';
     }
-    if ($speakerPersonality !== '') {
+    if ($speakerPersonality !== '' && $includePersonality) {
         $lines[] = '  <personality>' . stobePromptXmlEscape($speakerPersonality) . '</personality>';
     }
-    if ($speakerSpeechStyle !== '') {
+    if ($speakerSpeechStyle !== '' && $includeSpeechStyle) {
         $lines[] = '  <speech_style>' . stobePromptXmlEscape($speakerSpeechStyle) . '</speech_style>';
     }
-    if ($speakerGoals !== '') {
+    if ($speakerGoals !== '' && $includeGoals) {
         $lines[] = '  <goals>' . stobePromptXmlEscape($speakerGoals) . '</goals>';
     }
-    if ($speakerAppearance !== '') {
+    if ($speakerAppearance !== '' && $includeAppearance) {
         $lines[] = '  <appearance>' . stobePromptXmlEscape($speakerAppearance) . '</appearance>';
     }
-    if ($speakerCondition !== '') {
+    if ($speakerCondition !== '' && $includeCurrentCondition) {
         $lines[] = '  <current_condition>' . stobePromptXmlEscape($speakerCondition) . '</current_condition>';
     }
-    if ($speakerEquipment !== '') {
+    if ($speakerEquipment !== '' && $includeEquipment) {
         $lines[] = '  <equipment>' . stobePromptXmlEscape($speakerEquipment) . '</equipment>';
     }
-    if ($speakerInventory !== '') {
+    if ($speakerInventory !== '' && $includePersonalInventory) {
         $lines[] = '  <inventory>' . stobePromptXmlEscape($speakerInventory) . '</inventory>';
     }
     if ($speakerRelationships !== '') {
@@ -10017,6 +10126,21 @@ function buildSystemPrompt(
     if ($npcOccupation === '') {
         $npcOccupation = 'Wasteland drifter.';
     }
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'basic_summary')) {
+        $npcBackstory = '';
+    }
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'personality')) {
+        $npcPersonality = '';
+    }
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'occupation')) {
+        $npcOccupation = '';
+    }
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'speech_style')) {
+        $npcSpeechStyle = '';
+    }
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'goals')) {
+        $npcGoals = '';
+    }
     $npcRelationships = stobeBuildNpcRelationshipsText($npcName, $playerName, $npcData);
     $npcAppearance = stobeBuildNpcAppearanceText($npcData);
     $npcBountyBlock = stobeBuildNpcBountyPromptBlock($npcData);
@@ -10053,7 +10177,9 @@ function buildSystemPrompt(
         '#NPC_SKILLS#' => $npcSkills,
         '#NPC_SPEECHSTYLE#' => stobePromptXmlEscape($npcSpeechStyle),
         '#NPC_GOALS#' => stobePromptXmlEscape($npcGoals),
-        '#NPC_MIDDLE_TERM_MEMORY#' => stobeBuildMiddleTermMemoryPromptBlock($npcData, $npcName),
+        '#NPC_MIDDLE_TERM_MEMORY#' => stobePromptContextOptionEnabled('enabled_character_subsections', 'middle_term_memory')
+            ? stobeBuildMiddleTermMemoryPromptBlock($npcData, $npcName)
+            : '',
         '#PLAYER_NAME#' => stobePromptXmlEscape($playerName),
         '#PLAYER_CATS#' => stobePromptXmlEscape($playerCats),
         '#GENERAL_INSTRUCTIONS#' => stobePromptXmlEscape($generalInstructions),
@@ -10066,7 +10192,9 @@ function buildSystemPrompt(
     } elseif ($worldStateBlock !== '') {
         $prompt .= "\n\n" . $worldStateBlock;
     }
-    if ($inPlayerFaction) {
+    $prompt = stobePromptCleanupBaseTemplateBlocks($prompt);
+
+    if ($inPlayerFaction && stobePromptContextOptionEnabled('enabled_sections', 'player_faction_funds')) {
         $prompt .= "\n\n<player_faction_funds>\n"
             . "  <cats>" . stobePromptXmlEscape($playerCats) . "</cats>\n"
             . "  <note>cats is the currently available shared funds for this character's player-side squad/faction.</note>\n"
@@ -10074,26 +10202,28 @@ function buildSystemPrompt(
     }
 
     $playerFactionPromptBlock = stobeBuildPlayerFactionPromptBlock($npcData);
-
-    $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
-    $forcedRaceHints = stobeWorldKnowledgeResolveForcedRaceHints($npcName, $npcData, $playerName, $eventType);
-    $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
     $knowledgeHints = [];
-    $seenKnowledgeHints = [];
-    foreach (array_merge($forcedRaceHints, $loreHints) as $hint) {
-        $line = trim(strval($hint));
-        if ($line === '') {
-            continue;
+    $knowledgeEnabled = stobePromptContextOptionEnabled('enabled_sections', 'knowledge');
+    if ($knowledgeEnabled && stobePromptContextOptionEnabled('enabled_knowledge_subsections', 'world_knowledge')) {
+        $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
+        $forcedRaceHints = stobeWorldKnowledgeResolveForcedRaceHints($npcName, $npcData, $playerName, $eventType);
+        $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
+        $seenKnowledgeHints = [];
+        foreach (array_merge($forcedRaceHints, $loreHints) as $hint) {
+            $line = trim(strval($hint));
+            if ($line === '') {
+                continue;
+            }
+            $lineKey = strtolower($line);
+            if (isset($seenKnowledgeHints[$lineKey])) {
+                continue;
+            }
+            $seenKnowledgeHints[$lineKey] = true;
+            $knowledgeHints[] = $line;
         }
-        $lineKey = strtolower($line);
-        if (isset($seenKnowledgeHints[$lineKey])) {
-            continue;
-        }
-        $seenKnowledgeHints[$lineKey] = true;
-        $knowledgeHints[] = $line;
     }
 
-    if (count($knowledgeHints) > 0 || $playerFactionPromptBlock !== '') {
+    if ($knowledgeEnabled && (count($knowledgeHints) > 0 || $playerFactionPromptBlock !== '')) {
         $prompt .= "\n\n<knowledge>";
         foreach ($knowledgeHints as $hint) {
             $prompt .= "\n  <entry>" . stobePromptXmlEscape($hint) . "</entry>";
@@ -10118,7 +10248,7 @@ function buildSystemPrompt(
         $prompt .= "\n\n" . $combatPriorityBlock;
     }
 
-    return $prompt;
+    return stobePromptCollapseBlankLines($prompt);
 }
 
 function buildAutochatRewriteSpeakerPrompt(

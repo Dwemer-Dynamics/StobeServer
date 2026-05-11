@@ -363,7 +363,7 @@ if ($mode === 'cheat') {
         . "  <request>" . stobePromptXmlEscape($message) . "</request>\n"
         . "</cheat_request>";
 }
-if (!empty($nearby)) {
+if (!empty($nearby) && stobePromptContextOptionEnabled('enabled_sections', 'nearby_context_json')) {
     $nearbyJson = json_encode($nearby, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (is_string($nearbyJson) && $nearbyJson !== '') {
         $systemPrompt .= "\n\n<nearby_context_json>"
@@ -371,7 +371,7 @@ if (!empty($nearby)) {
             . "</nearby_context_json>";
     }
 }
-if (!empty($context)) {
+if (!empty($context) && stobePromptContextOptionEnabled('enabled_sections', 'detailed_context_json')) {
     $contextJson = json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (is_string($contextJson) && $contextJson !== '') {
         $systemPrompt .= "\n\n<detailed_context_json>"

@@ -2225,6 +2225,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('AUTO_LOCK_PROFILE',    'true',         'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.'),
 ('PLAYER_FACTION_CUSTOM_NAME', '',       'Optional custom display name for the player faction in prompts.'),
 ('PLAYER_FACTION_PROMPT', '',            'Optional player-faction instruction block injected into prompts.'),
+('PROMPT_CONTEXT_OPTIONS', '{"enabled_sections":["world","knowledge","player_faction_funds","available_actions_list","nearby_actors","nearby_player_allies","nearby_items","points_of_interest","combat_priority","nearby_context_json","detailed_context_json"],"enabled_character_subsections":["basic_summary","personality","appearance","relationships","occupation","bounty","skills","speech_style","goals","middle_term_memory"],"enabled_state_subsections":["current_condition","activity_state","equipment","personal_inventory","merchant_inventory"],"enabled_knowledge_subsections":["world_knowledge","player_faction_prompt"]}', 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
 

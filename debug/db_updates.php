@@ -1749,6 +1749,18 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      updated_at = NOW()"
             );
         });
+        $applyPatch('general_settings', 202605110001, static function () use ($db): void {
+            $defaultPromptContextOptions = json_encode(stobeGetDefaultPromptContextOptions(), JSON_UNESCAPED_SLASHES);
+            $description = 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.';
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ($1, $2, $3, NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()",
+                ['PROMPT_CONTEXT_OPTIONS', $defaultPromptContextOptions, $description]
+            );
+        });
 
         stobeLogInfo('DB updates completed (release consolidator)');
     }

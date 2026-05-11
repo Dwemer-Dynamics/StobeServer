@@ -33,6 +33,11 @@ try {
                 'description' => 'Optional player-faction instruction block injected into prompts.',
             ],
             [
+                'id' => 'PROMPT_CONTEXT_OPTIONS',
+                'value' => json_encode(stobeGetDefaultPromptContextOptions(), JSON_UNESCAPED_SLASHES),
+                'description' => 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.',
+            ],
+            [
                 'id' => 'ALWAYS_INSERT_RACE',
                 'value' => 'true',
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
@@ -65,6 +70,34 @@ try {
 function h(mixed $value): string
 {
     return htmlspecialchars((string)$value, ENT_QUOTES, "UTF-8");
+}
+
+function stobePromptContextBucketTitle(string $bucket): string
+{
+    return match ($bucket) {
+        'enabled_sections' => 'Sections',
+        'enabled_character_subsections' => 'Character Profile',
+        'enabled_state_subsections' => 'State & Inventory',
+        'enabled_knowledge_subsections' => 'Knowledge Details',
+        default => ucwords(str_replace('_', ' ', strtolower($bucket))),
+    };
+}
+
+function stobeFindSettingDescription(array $rows, string $id, string $default = ''): string
+{
+    $needle = strtoupper(trim($id));
+    if ($needle === '') {
+        return $default;
+    }
+
+    foreach ($rows as $row) {
+        $rowId = strtoupper(trim(strval($row['id'] ?? '')));
+        if ($rowId === $needle) {
+            return strval($row['description'] ?? $default);
+        }
+    }
+
+    return $default;
 }
 
 function stobeSettingsWebRoot(): string
@@ -109,6 +142,9 @@ function stobeHideFromGlobalSettingsUi(string $id): bool
         return true;
     }
     if ($idUpper === 'STOBE_QUICKSTART_COMPLETED') {
+        return true;
+    }
+    if ($idUpper === 'PROMPT_CONTEXT_OPTIONS') {
         return true;
     }
     if (in_array($idUpper, ['MEMORY_TIME_DELAY', 'MEMORY_CONTEXT_SIZE', 'MEMORY_BIAS_A', 'MEMORY_BIAS_B'], true)) {
@@ -258,11 +294,59 @@ function stobePrettySettingLabel(string $id): string
     return ucwords(str_replace('_', ' ', strtolower($idUpper)));
 }
 
+function stobeRenderPromptContextSection(
+    string $promptContextSectionTitle,
+    array $promptContextCatalog,
+    array $currentPromptContextOptions
+): string {
+    ob_start();
+    ?>
+    <section class="content-section" data-group="context-selections">
+        <h2><?= h($promptContextSectionTitle) ?></h2>
+        <div class="prompt-context-wrap">
+            <div class="prompt-context-intro">
+                Choose which prompt-context blocks Stobe includes in system prompts. All options default to on; disable only what you want excluded.
+            </div>
+            <?php foreach ($promptContextCatalog as $bucket => $options): ?>
+                <div class="prompt-context-group">
+                    <h3><?= h(stobePromptContextBucketTitle($bucket)) ?></h3>
+                    <div class="prompt-context-grid">
+                        <?php foreach ($options as $optionId => $meta): ?>
+                            <?php
+                                $checked = in_array($optionId, $currentPromptContextOptions[$bucket] ?? [], true);
+                                $inputName = 'prompt_context_' . $bucket . '[]';
+                            ?>
+                            <label class="prompt-context-card">
+                                <input
+                                    type="checkbox"
+                                    name="<?= h($inputName) ?>"
+                                    value="<?= h($optionId) ?>"
+                                    <?= $checked ? 'checked' : '' ?>
+                                >
+                                <span>
+                                    <div class="prompt-context-label"><?= h($meta['label'] ?? $optionId) ?></div>
+                                    <div class="prompt-context-desc"><?= h($meta['description'] ?? '') ?></div>
+                                </span>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </section>
+    <?php
+
+    return strval(ob_get_clean());
+}
+
 $isEmbed = (isset($_GET['embed']) && strval($_GET['embed']) === '1');
 $webRoot = stobeSettingsWebRoot();
 $selfPage = $webRoot . '/ui/settings.php' . ($isEmbed ? '?embed=1' : '');
 
 $settingsRows = stobeFetchGeneralSettingsRows();
+$promptContextSectionTitle = 'Context Selections';
+$promptContextCatalog = stobeGetPromptContextOptionCatalog();
+$currentPromptContextOptions = stobeGetPromptContextOptions();
 $statusMessage = '';
 $savedCount = 0;
 
@@ -289,7 +373,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $savedCount++;
         }
     }
+    $postedPromptContextOptions = stobeNormalizePromptContextOptions([
+        'enabled_sections' => array_values(array_map('strval', $_POST['prompt_context_enabled_sections'] ?? [])),
+        'enabled_character_subsections' => array_values(array_map('strval', $_POST['prompt_context_enabled_character_subsections'] ?? [])),
+        'enabled_state_subsections' => array_values(array_map('strval', $_POST['prompt_context_enabled_state_subsections'] ?? [])),
+        'enabled_knowledge_subsections' => array_values(array_map('strval', $_POST['prompt_context_enabled_knowledge_subsections'] ?? [])),
+    ]);
+    if ($postedPromptContextOptions !== $currentPromptContextOptions) {
+        $promptContextDescription = stobeFindSettingDescription(
+            $settingsRows,
+            'PROMPT_CONTEXT_OPTIONS',
+            'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.'
+        );
+        setSetting(
+            'PROMPT_CONTEXT_OPTIONS',
+            json_encode($postedPromptContextOptions, JSON_UNESCAPED_SLASHES),
+            'general',
+            $promptContextDescription
+        );
+        $savedCount++;
+    }
     $settingsRows = stobeFetchGeneralSettingsRows();
+    $currentPromptContextOptions = stobeGetPromptContextOptions();
     $statusMessage = $savedCount > 0 ? ('Saved ' . $savedCount . ' setting(s).') : 'No changes detected.';
 }
 
@@ -553,6 +658,63 @@ uksort($grouped, function ($a, $b) {
             color: #ff9a9a;
             margin-top: 8px;
         }
+        .prompt-context-wrap {
+            display: grid;
+            gap: 14px;
+        }
+        .prompt-context-intro {
+            color: #bbb;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 4px;
+        }
+        .prompt-context-group {
+            border: 1px solid rgba(230, 183, 108, 0.18);
+            border-radius: 8px;
+            padding: 12px;
+            background: linear-gradient(180deg, rgba(31, 31, 31, 0.82), rgba(24, 24, 24, 0.9));
+        }
+        .prompt-context-group h3 {
+            margin: 0 0 10px 0;
+            font-size: 0.96rem;
+            color: #ead7ac;
+        }
+        .prompt-context-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 10px;
+        }
+        .prompt-context-card {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px;
+            align-items: start;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #3a3a3a;
+            background: rgba(20, 20, 20, 0.65);
+            cursor: pointer;
+        }
+        .prompt-context-card:hover {
+            border-color: rgba(230, 183, 108, 0.35);
+            background: rgba(28, 28, 28, 0.82);
+        }
+        .prompt-context-card input[type="checkbox"] {
+            margin-top: 3px;
+            accent-color: #176529;
+            transform: scale(1.1);
+        }
+        .prompt-context-label {
+            color: #f1e7cf;
+            font-size: 0.92rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .prompt-context-desc {
+            color: #bbb;
+            font-size: 12px;
+            line-height: 1.45;
+        }
         @media (max-width: 1000px) {
             .provider-card {
                 grid-template-columns: 1fr;
@@ -596,6 +758,7 @@ uksort($grouped, function ($a, $b) {
 
     <form method="post" action="<?= h($selfPage) ?>" id="stobeSettingsForm">
         <div class="content-grid" id="settingsGrid">
+            <?php $promptContextSectionRendered = false; ?>
             <?php foreach ($grouped as $groupName => $rows): ?>
                 <section class="content-section" data-group="<?= h(strtolower($groupName)) ?>">
                     <h2><?= h($groupName) ?></h2>
@@ -660,7 +823,14 @@ uksort($grouped, function ($a, $b) {
                         <?php endforeach; ?>
                     </div>
                 </section>
+                <?php if (!$promptContextSectionRendered && $groupName === 'World Knowledge'): ?>
+                    <?= stobeRenderPromptContextSection($promptContextSectionTitle, $promptContextCatalog, $currentPromptContextOptions) ?>
+                    <?php $promptContextSectionRendered = true; ?>
+                <?php endif; ?>
             <?php endforeach; ?>
+            <?php if (!$promptContextSectionRendered): ?>
+                <?= stobeRenderPromptContextSection($promptContextSectionTitle, $promptContextCatalog, $currentPromptContextOptions) ?>
+            <?php endif; ?>
         </div>
     </form>
 </main>
