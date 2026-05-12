@@ -2505,6 +2505,36 @@ function stobePromptXmlEscape(mixed $value): string {
     return htmlspecialchars($text, ENT_COMPAT | ENT_XML1, 'UTF-8');
 }
 
+function stobeBuildPlayerInputPromptContent(string $speaker, string $targetNpc, string $message): string
+{
+    $safeSpeaker = trim($speaker);
+    $safeTarget = trim($targetNpc);
+    $safeMessage = trim($message);
+
+    if ($safeSpeaker === '') {
+        return ($safeTarget !== '' && $safeMessage !== '')
+            ? $safeMessage . ' (talking to: ' . $safeTarget . ')'
+            : $safeMessage;
+    }
+
+    $content = $safeSpeaker . ': ' . $safeMessage;
+    if ($safeTarget !== '') {
+        $content .= ' (talking to: ' . $safeTarget . ')';
+    }
+
+    return trim($content);
+}
+
+function stobeBuildRechatPromptContent(string $previousSpeaker, string $previousTarget, string $previousMessage): string
+{
+    $safeMessage = trim($previousMessage);
+    if ($safeMessage === '') {
+        return 'Continue the conversation naturally.';
+    }
+
+    return stobeBuildPlayerInputPromptContent($previousSpeaker, $previousTarget, $safeMessage);
+}
+
 function stobeNormalizeWorldEnvironmentPayload(mixed $rawEnvironment): array {
     if (is_array($rawEnvironment)) {
         return $rawEnvironment;
@@ -3318,7 +3348,7 @@ function stobeSanitizePromptContextLine(string $line): string {
 
     $parsed = parseDialogueEventData($clean);
     $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
-    $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+    $target = stobeNormalizeDialogueTargetToken(strval($parsed['target'] ?? ''));
     $message = trim(strval($parsed['message'] ?? ''));
 
     if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
@@ -3370,7 +3400,7 @@ function stobeNormalizeContextHistoryDataLine(string $historyData): string {
         }
         if ($message !== '') {
             $line = $speaker !== '' ? ($speaker . ': ' . $message) : $message;
-            $listener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
+            $listener = stobeNormalizeDialogueTargetToken(strval($structured['listener'] ?? ''));
             if ($listener !== '') {
                 $line .= ' (talking to: ' . $listener . ')';
             }
@@ -3387,7 +3417,7 @@ function stobeNormalizeContextHistoryDataLine(string $historyData): string {
         if ($message !== '') {
             $character = normalizeParticipantNameToken(strval($structured['character'] ?? ''));
             $line = $character !== '' ? ($character . ': ' . $message) : $message;
-            $listener = normalizeParticipantNameToken(strval($structured['listener'] ?? ''));
+            $listener = stobeNormalizeDialogueTargetToken(strval($structured['listener'] ?? ''));
             if ($listener !== '') {
                 $line .= ' (talking to: ' . $listener . ')';
             }
@@ -3398,8 +3428,58 @@ function stobeNormalizeContextHistoryDataLine(string $historyData): string {
     return stobeSanitizePromptContextLine($singleLine);
 }
 
+function stobeNormalizeDialogueTargetToken(string $rawTarget): string {
+    $target = normalizeParticipantNameToken($rawTarget);
+    if ($target === '') {
+        return '';
+    }
+
+    $lower = strtolower(trim($target));
+    if (in_array($lower, ['unknown', 'none', 'n/a', 'null', 'unset', 'neutral'], true)) {
+        return '';
+    }
+
+    return $target;
+}
+
 function stobeIsMergeableRecentContextType(string $historyType): bool {
     return in_array($historyType, ['infonpc', 'infonpc_close', 'infoloc', 'location', 'infoitems'], true);
+}
+
+function stobeRecentContextSingletonTypeKey(string $historyType): string {
+    $normalizedType = strtolower(trim($historyType));
+    if ($normalizedType === 'infonpc') {
+        return 'infonpc';
+    }
+
+    return '';
+}
+
+function stobeRemoveRecentContextMessageAtIndex(
+    array &$messages,
+    array &$messageTypes,
+    array &$messageKeys,
+    array &$messageDialogueMeta,
+    array &$messageTransferTradeMeta,
+    int $index
+): void {
+    if ($index < 0 || $index >= count($messages)) {
+        return;
+    }
+
+    array_splice($messages, $index, 1);
+    if ($index < count($messageTypes)) {
+        array_splice($messageTypes, $index, 1);
+    }
+    if ($index < count($messageKeys)) {
+        array_splice($messageKeys, $index, 1);
+    }
+    if ($index < count($messageDialogueMeta)) {
+        array_splice($messageDialogueMeta, $index, 1);
+    }
+    if ($index < count($messageTransferTradeMeta)) {
+        array_splice($messageTransferTradeMeta, $index, 1);
+    }
 }
 
 function stobeBuildRecentContextDedupeKey(string $historyType, string $historyData): string {
@@ -3418,22 +3498,159 @@ function stobeBuildRecentContextDialogueMeta(string $historyType, string $histor
     }
 
     $parsed = parseDialogueEventData($historyData);
-    $speaker = strtolower(trim(strval($parsed['speaker'] ?? '')));
-    $message = trim(strval($parsed['message'] ?? ''));
-    if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
-        $message = stobeSanitizeDialogueMessageForLog($message);
+    $speakerDisplay = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
+    $messageDisplay = trim(strval($parsed['message'] ?? ''));
+    if ($messageDisplay !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $messageDisplay = stobeSanitizeDialogueMessageForLog($messageDisplay);
     }
-    $message = strtolower(trim(preg_replace('/\s+/u', ' ', $message) ?? $message));
-    if ($speaker === '' || $message === '') {
+    $messageDisplay = trim(preg_replace('/\s+/u', ' ', $messageDisplay) ?? $messageDisplay);
+    if ($speakerDisplay === '' || $messageDisplay === '') {
         return [];
     }
 
-    $target = strtolower(trim(strval($parsed['target'] ?? '')));
+    $speaker = strtolower($speakerDisplay);
+    $message = strtolower($messageDisplay);
+    $targetDisplay = stobeNormalizeDialogueTargetToken(strval($parsed['target'] ?? ''));
+    $target = strtolower($targetDisplay);
     return [
         'speaker' => $speaker,
         'message' => $message,
         'target' => $target,
-        'has_target' => $target !== '',
+        'has_target' => $targetDisplay !== '',
+        'speaker_display' => $speakerDisplay,
+        'message_display' => $messageDisplay,
+        'target_display' => $targetDisplay,
+        'history_type' => strtolower(trim($historyType)),
+    ];
+}
+
+function stobeBuildRecentContextDialogueLine(array $dialogueMeta): string {
+    $speaker = normalizeParticipantNameToken(strval($dialogueMeta['speaker_display'] ?? ($dialogueMeta['speaker'] ?? '')));
+    $message = trim(strval($dialogueMeta['message_display'] ?? ($dialogueMeta['message'] ?? '')));
+    $target = stobeNormalizeDialogueTargetToken(strval($dialogueMeta['target_display'] ?? ($dialogueMeta['target'] ?? '')));
+    if ($speaker === '' || $message === '') {
+        return '';
+    }
+
+    $line = $speaker . ': ' . $message;
+    if ($target !== '') {
+        $line .= ' (talking to: ' . $target . ')';
+    }
+
+    return stobeSanitizePromptContextLine($line);
+}
+
+function stobeRecentContextSpeakerUsesAssistantRole(array $dialogueMeta, string $assistantPerspectiveNpc): bool {
+    $perspectiveNpc = normalizeParticipantNameToken($assistantPerspectiveNpc);
+    if ($perspectiveNpc === '' || count($dialogueMeta) === 0) {
+        return false;
+    }
+
+    $speaker = normalizeParticipantNameToken(
+        strval($dialogueMeta['speaker_display'] ?? ($dialogueMeta['speaker'] ?? ''))
+    );
+    if ($speaker === '' || (function_exists('stobeIsNarratorName') && stobeIsNarratorName($speaker))) {
+        return false;
+    }
+
+    return strcasecmp($speaker, $perspectiveNpc) === 0;
+}
+
+function stobeBuildRecentContextAssistantContent(array $dialogueMeta): string {
+    $character = normalizeParticipantNameToken(
+        strval($dialogueMeta['speaker_display'] ?? ($dialogueMeta['speaker'] ?? ''))
+    );
+    $message = trim(strval($dialogueMeta['message_display'] ?? ($dialogueMeta['message'] ?? '')));
+    $listener = stobeNormalizeDialogueTargetToken(
+        strval($dialogueMeta['target_display'] ?? ($dialogueMeta['target'] ?? ''))
+    );
+    if ($message !== '' && function_exists('stobeSanitizeDialogueMessageForLog')) {
+        $message = stobeSanitizeDialogueMessageForLog($message);
+    }
+    $message = trim(preg_replace('/\s+/u', ' ', $message) ?? $message);
+    if ($character === '' || $message === '') {
+        return '';
+    }
+
+    $payload = [
+        'character' => $character,
+        'listener' => $listener,
+        'mood' => '',
+        'action' => 'Talk',
+        'target' => '',
+        'message' => $message,
+    ];
+    return strval(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function stobeBuildRecentContextMessagePayload(
+    string $historyData,
+    array $dialogueMeta = [],
+    string $assistantPerspectiveNpc = ''
+): array {
+    if (stobeRecentContextSpeakerUsesAssistantRole($dialogueMeta, $assistantPerspectiveNpc)) {
+        $assistantContent = stobeBuildRecentContextAssistantContent($dialogueMeta);
+        if ($assistantContent !== '') {
+            return [
+                'role' => 'assistant',
+                'content' => $assistantContent,
+            ];
+        }
+    }
+
+    return [
+        'role' => 'user',
+        'content' => " (...\n" . $historyData . "\n...)",
+    ];
+}
+
+function stobeMergeRecentContextDialogueMeta(array $previousMeta, array $currentMeta): array {
+    if (count($previousMeta) === 0 || count($currentMeta) === 0) {
+        return [];
+    }
+
+    if (strval($previousMeta['speaker'] ?? '') !== strval($currentMeta['speaker'] ?? '')) {
+        return [];
+    }
+
+    $previousMessage = trim(strval($previousMeta['message_display'] ?? ''));
+    $currentMessage = trim(strval($currentMeta['message_display'] ?? ''));
+    if ($previousMessage === '' || $currentMessage === '') {
+        return [];
+    }
+
+    $previousTarget = strval($previousMeta['target'] ?? '');
+    $currentTarget = strval($currentMeta['target'] ?? '');
+    if ($previousTarget !== '' && $currentTarget !== '' && $previousTarget !== $currentTarget) {
+        return [];
+    }
+
+    $mergedMessage = trim($previousMessage . ' ' . $currentMessage);
+    $mergedMessage = preg_replace('/\s+/u', ' ', $mergedMessage) ?? $mergedMessage;
+    if ($mergedMessage === '') {
+        return [];
+    }
+
+    $mergedTargetDisplay = stobeNormalizeDialogueTargetToken(
+        strval($currentMeta['target_display'] ?? '')
+    );
+    if ($mergedTargetDisplay === '') {
+        $mergedTargetDisplay = stobeNormalizeDialogueTargetToken(
+            strval($previousMeta['target_display'] ?? '')
+        );
+    }
+
+    return [
+        'speaker' => strval($previousMeta['speaker'] ?? ''),
+        'message' => strtolower($mergedMessage),
+        'target' => strtolower($mergedTargetDisplay),
+        'has_target' => $mergedTargetDisplay !== '',
+        'speaker_display' => normalizeParticipantNameToken(
+            strval($previousMeta['speaker_display'] ?? ($currentMeta['speaker_display'] ?? ''))
+        ),
+        'message_display' => $mergedMessage,
+        'target_display' => $mergedTargetDisplay,
+        'history_type' => strval($currentMeta['history_type'] ?? ($previousMeta['history_type'] ?? 'chat')),
     ];
 }
 
@@ -3639,12 +3856,28 @@ function stobeBuildRecentContextTransferTradeLine(array $meta): string {
     return stobeSanitizePromptContextLine($line);
 }
 
-function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets = 0, int $maxMessages = 64): array {
+function stobeBuildRecentContextTextMessagePayload(string $historyLine, string $assistantPerspectiveNpc = ''): array {
+    $dialogueCandidate = trim($historyLine);
+    if (preg_match('/^\[[^\]]+\]\s*(.+)$/s', $dialogueCandidate, $matches) === 1) {
+        $dialogueCandidate = trim(strval($matches[1] ?? ''));
+    }
+
+    $dialogueMeta = stobeBuildRecentContextDialogueMeta('chat', $dialogueCandidate);
+    return stobeBuildRecentContextMessagePayload($historyLine, $dialogueMeta, $assistantPerspectiveNpc);
+}
+
+function stobeBuildRecentContextMessages(
+    array $eventHistory,
+    int $currentGamets = 0,
+    int $maxMessages = 64,
+    string $assistantPerspectiveNpc = ''
+): array {
     $messages = [];
     $messageTypes = [];
     $messageKeys = [];
     $messageDialogueMeta = [];
     $messageTransferTradeMeta = [];
+    $singletonTypeIndexes = [];
     $lastLocation = '';
     $safeCurrentGamets = max(0, intval($currentGamets));
 
@@ -3673,6 +3906,9 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         if ($historyType === 'infoaction') {
             continue;
         }
+        if ($historyType === 'infonpc' || $historyType === 'infonpc_close') {
+            continue;
+        }
         if ($historyType === 'inputtext' || $historyType === 'inputtext_s') {
             continue;
         }
@@ -3690,13 +3926,31 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
             $historyData = '[' . $historyType . '] ' . $historyData;
         }
 
-        $messages[] = [
-            'role' => 'user',
-            'content' => " (...\n" . $historyData . "\n...)",
-        ];
         $dedupeKey = stobeBuildRecentContextDedupeKey($historyType, $historyData);
         $dialogueMeta = stobeBuildRecentContextDialogueMeta($historyType, $historyData);
         $transferTradeMeta = stobeParseRecentContextTransferTradeMeta($historyType, $historyData);
+        $messages[] = stobeBuildRecentContextMessagePayload($historyData, $dialogueMeta, $assistantPerspectiveNpc);
+
+        $singletonTypeKey = stobeRecentContextSingletonTypeKey($historyType);
+        if ($singletonTypeKey !== '' && array_key_exists($singletonTypeKey, $singletonTypeIndexes)) {
+            $singletonIndex = intval($singletonTypeIndexes[$singletonTypeKey]);
+            stobeRemoveRecentContextMessageAtIndex(
+                $messages,
+                $messageTypes,
+                $messageKeys,
+                $messageDialogueMeta,
+                $messageTransferTradeMeta,
+                $singletonIndex
+            );
+
+            foreach ($singletonTypeIndexes as $key => $storedIndex) {
+                $storedIndex = intval($storedIndex);
+                if ($storedIndex > $singletonIndex) {
+                    $singletonTypeIndexes[$key] = $storedIndex - 1;
+                }
+            }
+        }
+
         $lastIndex = count($messages) - 1;
         $priorIndex = $lastIndex - 1;
 
@@ -3724,6 +3978,28 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
             if ($dialogueVariantDecision === 'skip_current') {
                 array_pop($messages);
                 continue;
+            }
+
+            $mergedDialogueMeta = stobeMergeRecentContextDialogueMeta($previousDialogueMeta, $dialogueMeta);
+            if (count($mergedDialogueMeta) > 0) {
+                $mergedDialogueLine = stobeBuildRecentContextDialogueLine($mergedDialogueMeta);
+                if ($mergedDialogueLine !== '') {
+                    $mergedType = strval($messageTypes[$priorIndex] ?? $historyType);
+                    $messages[$priorIndex] = stobeBuildRecentContextMessagePayload(
+                        $mergedDialogueLine,
+                        $mergedDialogueMeta,
+                        $assistantPerspectiveNpc
+                    );
+                    $messageTypes[$priorIndex] = $mergedType !== '' ? $mergedType : $historyType;
+                    $messageKeys[$priorIndex] = stobeBuildRecentContextDedupeKey(
+                        $messageTypes[$priorIndex],
+                        $mergedDialogueLine
+                    );
+                    $messageDialogueMeta[$priorIndex] = $mergedDialogueMeta;
+                    $messageTransferTradeMeta[$priorIndex] = [];
+                    array_pop($messages);
+                    continue;
+                }
             }
 
             $previousTransferTradeMeta = [];
@@ -3767,6 +4043,9 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
         $messageKeys[] = $dedupeKey;
         $messageDialogueMeta[] = $dialogueMeta;
         $messageTransferTradeMeta[] = $transferTradeMeta;
+        if ($singletonTypeKey !== '') {
+            $singletonTypeIndexes[$singletonTypeKey] = count($messageTypes) - 1;
+        }
     }
 
     $safeMax = max(8, min(120, $maxMessages));
@@ -3776,7 +4055,11 @@ function stobeBuildRecentContextMessages(array $eventHistory, int $currentGamets
     return $messages;
 }
 
-function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMessages = 32): array {
+function stobeBuildRecentContextMessagesFromText(
+    string $historyText,
+    int $maxMessages = 32,
+    string $assistantPerspectiveNpc = ''
+): array {
     $messages = [];
     $lines = preg_split('/\R+/', trim($historyText)) ?: [];
     foreach ($lines as $line) {
@@ -3788,13 +4071,13 @@ function stobeBuildRecentContextMessagesFromText(string $historyText, int $maxMe
         if (preg_match('/^\[\s*infoaction\b/i', $clean) === 1) {
             continue;
         }
+        if (preg_match('/^\[\s*infonpc(?:_close)?\b/i', $clean) === 1) {
+            continue;
+        }
         if (preg_match('/^\[\s*inputtext(?:_s)?\b/i', $clean) === 1) {
             continue;
         }
-        $messages[] = [
-            'role' => 'user',
-            'content' => " (...\n" . $clean . "\n...)",
-        ];
+        $messages[] = stobeBuildRecentContextTextMessagePayload($clean, $assistantPerspectiveNpc);
     }
     $safeMax = max(4, min(80, $maxMessages));
     if (count($messages) > $safeMax) {
@@ -3842,12 +4125,213 @@ function stobeBuildMemoryEventContextMessages(
     return $messages;
 }
 
+function stobeGetAllowedRechatModes(): array
+{
+    return ['tight', 'conversational', 'group', 'random'];
+}
+
+function stobeNormalizeRechatModeValue(string $mode, string $default = 'random'): string
+{
+    $allowedModes = stobeGetAllowedRechatModes();
+    $normalizedMode = strtolower(trim($mode));
+    if (in_array($normalizedMode, $allowedModes, true)) {
+        return $normalizedMode;
+    }
+
+    $normalizedDefault = strtolower(trim($default));
+    if (in_array($normalizedDefault, $allowedModes, true)) {
+        return $normalizedDefault;
+    }
+
+    return 'random';
+}
+
+function stobeGetConfiguredRechatMode(): string
+{
+    return stobeNormalizeRechatModeValue(strval(getSetting('RECHAT_MODE', 'random')), 'random');
+}
+
+function stobeNormalizeRechatActorList(array $names): array
+{
+    $normalized = [];
+    $seen = [];
+    foreach ($names as $entry) {
+        $candidateRaw = '';
+        if (is_array($entry)) {
+            $candidateRaw = strval($entry['name'] ?? ($entry['target'] ?? ($entry['listener'] ?? '')));
+        } elseif (is_string($entry)) {
+            $candidateRaw = $entry;
+        }
+        $candidate = normalizeParticipantNameToken($candidateRaw);
+        if ($candidate === '') {
+            continue;
+        }
+        $key = strtolower($candidate);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $normalized[] = $candidate;
+    }
+
+    return $normalized;
+}
+
+function stobeBuildRechatModeSeed(array $members): string
+{
+    $normalizedMembers = stobeNormalizeRechatActorList($members);
+    if (count($normalizedMembers) > 1) {
+        usort($normalizedMembers, static function (string $a, string $b): int {
+            return strcasecmp($a, $b);
+        });
+    }
+
+    return implode('|', $normalizedMembers);
+}
+
+function stobeResolveEffectiveRechatMode(string $configuredMode, array $members, string $seed = ''): string
+{
+    $normalizedMode = stobeNormalizeRechatModeValue($configuredMode, 'random');
+    if ($normalizedMode !== 'random') {
+        return $normalizedMode;
+    }
+
+    $seedText = trim($seed);
+    if ($seedText === '') {
+        $seedText = stobeBuildRechatModeSeed($members);
+    }
+    if ($seedText === '') {
+        $seedText = 'stobe_random_rechat';
+    }
+
+    $rolledModes = ['tight', 'conversational', 'group'];
+    $hashPrefix = substr(hash('sha256', $seedText . '|rechat_mode'), 0, 8);
+    $hashValue = intval(hexdec($hashPrefix));
+    $modeIndex = $hashValue % count($rolledModes);
+    return $rolledModes[$modeIndex];
+}
+
+function stobeIsStrictRechatResponseEnabled(): bool
+{
+    return getSettingBool('ENFORCE_STRICT_RECHAT_RESPONSE', false);
+}
+
+function stobeBuildRechatResponderCandidates(
+    string $rechatMode,
+    string $speakerName,
+    string $listenerHint = '',
+    string $rechatTargetHint = '',
+    string $incomingProfile = '',
+    array $audience = [],
+    string $playerName = '',
+    bool $speakerRechatEnabled = false,
+    string $initiatorName = '',
+    string $forcedResponder = ''
+): array {
+    $normalizedMode = stobeNormalizeRechatModeValue($rechatMode, 'conversational');
+    if ($normalizedMode === 'random') {
+        $normalizedMode = 'conversational';
+    }
+
+    $normalizedSpeaker = normalizeParticipantNameToken($speakerName);
+    $normalizedListener = normalizeParticipantNameToken($listenerHint);
+    $normalizedTargetHint = normalizeParticipantNameToken($rechatTargetHint);
+    $normalizedIncomingProfile = normalizeParticipantNameToken($incomingProfile);
+    $normalizedPlayer = normalizeParticipantNameToken($playerName);
+    $normalizedInitiator = normalizeParticipantNameToken($initiatorName);
+    $normalizedForcedResponder = normalizeParticipantNameToken($forcedResponder);
+    $normalizedAudience = stobeNormalizeRechatActorList($audience);
+
+    $candidates = [];
+    $seen = [];
+    $pushCandidate = static function (string $rawName, string $source) use (
+        &$candidates,
+        &$seen,
+        $normalizedSpeaker,
+        $normalizedPlayer,
+        $speakerRechatEnabled,
+        $normalizedInitiator
+    ): void {
+        $candidateName = normalizeParticipantNameToken($rawName);
+        if ($candidateName === '') {
+            return;
+        }
+        if (stobeIsNarratorName($candidateName)) {
+            return;
+        }
+        if ($normalizedSpeaker !== '' && strcasecmp($candidateName, $normalizedSpeaker) === 0) {
+            return;
+        }
+        if ($normalizedPlayer !== '' && strcasecmp($candidateName, $normalizedPlayer) === 0) {
+            return;
+        }
+        if (
+            !$speakerRechatEnabled
+            && $normalizedInitiator !== ''
+            && strcasecmp($candidateName, $normalizedInitiator) === 0
+        ) {
+            return;
+        }
+
+        $candidateKey = strtolower($candidateName);
+        if (isset($seen[$candidateKey])) {
+            return;
+        }
+        $seen[$candidateKey] = true;
+        $candidates[] = [
+            'name' => $candidateName,
+            'source' => $source,
+        ];
+    };
+
+    if ($normalizedForcedResponder !== '') {
+        $pushCandidate($normalizedForcedResponder, 'forced_limb_loss');
+    }
+
+    if ($normalizedMode === 'tight') {
+        $pushCandidate($normalizedListener, 'previous_target');
+        return $candidates;
+    }
+
+    if ($normalizedMode === 'conversational') {
+        $pushCandidate($normalizedTargetHint, 'rechat_target_hint');
+        $pushCandidate($normalizedListener, 'previous_target');
+        foreach ($normalizedAudience as $audienceName) {
+            $pushCandidate($audienceName, 'audience');
+        }
+        $pushCandidate($normalizedIncomingProfile, 'incoming_profile_hint');
+        return $candidates;
+    }
+
+    foreach ($normalizedAudience as $audienceName) {
+        if ($normalizedTargetHint !== '' && strcasecmp($audienceName, $normalizedTargetHint) === 0) {
+            continue;
+        }
+        if ($normalizedListener !== '' && strcasecmp($audienceName, $normalizedListener) === 0) {
+            continue;
+        }
+        if ($normalizedIncomingProfile !== '' && strcasecmp($audienceName, $normalizedIncomingProfile) === 0) {
+            continue;
+        }
+        $pushCandidate($audienceName, 'group_audience');
+    }
+    $pushCandidate($normalizedTargetHint, 'rechat_target_hint');
+    $pushCandidate($normalizedListener, 'previous_target');
+    $pushCandidate($normalizedIncomingProfile, 'incoming_profile_hint');
+    foreach ($normalizedAudience as $audienceName) {
+        $pushCandidate($audienceName, 'audience_fallback');
+    }
+
+    return $candidates;
+}
+
 function stobeBuildTurnGuidanceUserPrompt(
     string $npcName,
     string $previousSpeaker = '',
     bool $endConversationNaturally = false,
     bool $cheatMode = false,
-    string $cheatInstruction = ''
+    string $cheatInstruction = '',
+    string $strictListener = ''
 ): string {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
@@ -3855,8 +4339,11 @@ function stobeBuildTurnGuidanceUserPrompt(
     }
 
     $safeSpeaker = normalizeParticipantNameToken($previousSpeaker);
+    $safeStrictListener = normalizeParticipantNameToken($strictListener);
     $targetLine = 'Address whoever just spoke.';
-    if ($safeSpeaker !== '') {
+    if ($safeStrictListener !== '') {
+        $targetLine = 'Address ' . $safeStrictListener . ' directly and nobody else.';
+    } elseif ($safeSpeaker !== '') {
         $targetLine = 'Address ' . $safeSpeaker . ' directly.';
     }
 
@@ -3866,14 +4353,24 @@ function stobeBuildTurnGuidanceUserPrompt(
         if ($instructionText !== '') {
             $guidance .= ' Cheat instruction: "' . $instructionText . '".';
         }
+        if ($safeStrictListener !== '') {
+            $guidance .= ' The listener must be exactly ' . $safeStrictListener . '.';
+        }
         $guidance .= ' ' . $targetLine
             . ' Write the next dialogue line so it obeys the cheat instruction. Be original and avoid repeating phraseology from recent context history.';
         return $guidance;
     }
 
-    $responseInstruction = $endConversationNaturally
-        ? 'Respond naturally to whoever just spoke and end the conversation naturally.'
-        : 'Respond naturally to whoever just spoke.';
+    if ($safeStrictListener !== '') {
+        $responseInstruction = $endConversationNaturally
+            ? 'Respond naturally to ' . $safeStrictListener . ' and end the conversation naturally.'
+            : 'Respond naturally to ' . $safeStrictListener . '.';
+        $responseInstruction .= ' The listener must be exactly ' . $safeStrictListener . '.';
+    } else {
+        $responseInstruction = $endConversationNaturally
+            ? 'Respond naturally to whoever just spoke and end the conversation naturally.'
+            : 'Respond naturally to whoever just spoke.';
+    }
 
     return 'Dialogue turn for ' . $safeNpc . '. ' . $responseInstruction . ' '
         . $targetLine
@@ -4046,12 +4543,21 @@ function stobeResolveStructuredDialogueContractParts(
     ];
 }
 
-function stobeBuildStructuredDialogueSchemaPrompt(string $npcName, array $actions, array $moods): array
+function stobeBuildStructuredDialogueSchemaPrompt(
+    string $npcName,
+    array $actions,
+    array $moods,
+    string $strictListener = ''
+): array
 {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
         $safeNpc = 'the NPC';
     }
+    $safeStrictListener = normalizeParticipantNameToken($strictListener);
+    $listenerDescription = $safeStrictListener !== ''
+        ? 'must be exactly ' . $safeStrictListener . ' because this is a strict rechat response'
+        : 'who ' . $safeNpc . ' is addressing';
 
     $moodDescription = count($moods) > 0
         ? 'choose exactly one mood while speaking from this list, never combine moods: ' . implode('|', $moods)
@@ -4059,7 +4565,7 @@ function stobeBuildStructuredDialogueSchemaPrompt(string $npcName, array $action
 
     return [
         'character' => $safeNpc,
-        'listener' => 'who ' . $safeNpc . ' is addressing',
+        'listener' => $listenerDescription,
         'message' => 'lines of dialogue',
         'mood' => $moodDescription,
         'action' => implode('|', $actions),
@@ -4074,7 +4580,8 @@ function stobeBuildStructuredDialogueResponseFormat(
     string $npcName,
     array|false $npcData = false,
     ?bool $inPlayerFaction = null,
-    string $eventType = 'chat'
+    string $eventType = 'chat',
+    string $strictListener = ''
 ): array {
     $parts = stobeResolveStructuredDialogueContractParts($npcName, $npcData, $inPlayerFaction, $eventType);
     $safeNpc = strval($parts['safe_npc'] ?? '');
@@ -4083,6 +4590,16 @@ function stobeBuildStructuredDialogueResponseFormat(
     }
     $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
     $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
+    $safeStrictListener = normalizeParticipantNameToken($strictListener);
+    $listenerProperty = [
+        'type' => 'string',
+        'description' => $safeStrictListener !== ''
+            ? 'must be exactly ' . $safeStrictListener . ' because this is a strict rechat response'
+            : 'who ' . $safeNpc . ' is addressing',
+    ];
+    if ($safeStrictListener !== '') {
+        $listenerProperty['enum'] = [$safeStrictListener];
+    }
 
     return [
         'type' => 'json_schema',
@@ -4097,10 +4614,7 @@ function stobeBuildStructuredDialogueResponseFormat(
                         'description' => 'must be exactly ' . $safeNpc,
                         'enum' => [$safeNpc],
                     ],
-                    'listener' => [
-                        'type' => 'string',
-                        'description' => 'who ' . $safeNpc . ' is addressing',
-                    ],
+                    'listener' => $listenerProperty,
                     'message' => [
                         'type' => 'string',
                         'description' => 'lines of ' . $safeNpc . '\'s dialogue',
@@ -4154,13 +4668,15 @@ function stobeBuildOutputContractUserPrompt(
     bool $preferAction = false,
     bool $streamTextMode = false,
     ?bool $inPlayerFaction = null,
-    string $eventType = 'chat'
+    string $eventType = 'chat',
+    string $strictListener = ''
 ): string {
     $parts = stobeResolveStructuredDialogueContractParts($npcName, false, $inPlayerFaction, $eventType);
     $safeNpc = strval($parts['safe_npc'] ?? '');
     if ($safeNpc === '') {
         $safeNpc = 'the NPC';
     }
+    $safeStrictListener = normalizeParticipantNameToken($strictListener);
 
     $actionLine = $preferAction
         ? '(If another action is even remotely contextually appropriate, use it, even if in doubt).'
@@ -4173,9 +4689,12 @@ function stobeBuildOutputContractUserPrompt(
     $actionLine .= " FORCE_DRINK is only valid on knocked-out, unconscious, imprisoned, or carried targets.";
     $actionLine .= " PICKUP_NPC is only valid on nearby helpless targets and only when this NPC is not already carrying someone.";
     $actionLine .= " CUT_HORNS is only valid on helpless Shek targets whose horns are not already cut off, and requires a hacksaw.";
+    if ($safeStrictListener !== '') {
+        $actionLine .= ' The listener field must be exactly ' . $safeStrictListener . '. Do not address anyone else.';
+    }
     $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
     $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
-    $schema = stobeBuildStructuredDialogueSchemaPrompt($safeNpc, $actions, $moods);
+    $schema = stobeBuildStructuredDialogueSchemaPrompt($safeNpc, $actions, $moods, $safeStrictListener);
 
     return $actionLine
         . " Use <speech_style> for reference.\n"
@@ -10344,7 +10863,7 @@ function rewriteSpeakerMessageForAutochat(
         ],
     ];
     if (trim($historyText) !== '') {
-        $historyMessages = stobeBuildRecentContextMessagesFromText($historyText, 24);
+        $historyMessages = stobeBuildRecentContextMessagesFromText($historyText, 24, $speakerName);
         foreach ($historyMessages as $historyMessage) {
             $messages[] = $historyMessage;
         }
@@ -10413,7 +10932,7 @@ function extractDialogueTarget(string $source): array {
         $target = trim(strval($matches[1] ?? ''));
         $cleaned = trim(preg_replace('/\s*\(talking to:\s*[^\)]+\)\s*/i', ' ', $text) ?? '');
         return [
-            'target' => normalizeParticipantNameToken($target),
+            'target' => stobeNormalizeDialogueTargetToken($target),
             'cleaned' => $cleaned,
         ];
     }
@@ -10424,7 +10943,7 @@ function extractDialogueTarget(string $source): array {
 function parseDialogueEventData(string $eventData): array {
     $targetExtract = extractDialogueTarget($eventData);
     $cleaned = trim(strval($targetExtract['cleaned'] ?? ''));
-    $target = normalizeParticipantNameToken(strval($targetExtract['target'] ?? ''));
+    $target = stobeNormalizeDialogueTargetToken(strval($targetExtract['target'] ?? ''));
 
     $speaker = '';
     $message = $cleaned;
@@ -10519,7 +11038,8 @@ function buildRechatSystemPrompt(
     string $previousMessage,
     string $previousTarget = '',
     int $currentGamets = 0,
-    array $specialContext = []
+    array $specialContext = [],
+    string $strictListener = ''
 ): string {
     $speakerForBasePrompt = $previousSpeaker !== '' ? $previousSpeaker : getSetting('PLAYER_NAME', 'Drifter');
     $prompt = buildSystemPrompt($npcName, $npcData, $speakerForBasePrompt, $previousMessage, true, 'rechat', $currentGamets);
@@ -10566,12 +11086,100 @@ function buildRechatSystemPrompt(
     return $prompt . "\n\n" . implode("\n", $xml);
 }
 
-function formatResponse(string $actor, string $action, string $message, string $ttsHash = '', int $ttsDurationMs = 0): string {
+function stobeGenerateUtteranceId(): string {
+    $prefix = 'utt_';
+    try {
+        return $prefix . bin2hex(random_bytes(12));
+    } catch (Throwable $exception) {
+        return $prefix . md5(uniqid('stobe', true) . '|' . microtime(true) . '|' . mt_rand());
+    }
+}
+
+function stobeRegisterGeneratedSpeechChunk(
+    string $actor,
+    string $action,
+    string $message,
+    string $utteranceId,
+    string $eventType = '',
+    string $listener = ''
+): void {
+    if (strcasecmp(trim($action), 'ScriptQueue') !== 0) {
+        return;
+    }
+    $safeActor = trim($actor);
+    $safeMessage = trim($message);
+    $safeUtteranceId = trim($utteranceId);
+    if ($safeActor === '' || $safeMessage === '' || $safeUtteranceId === '') {
+        return;
+    }
+    $safeEventType = strtolower(trim($eventType));
+    $safeListener = normalizeParticipantNameToken($listener);
+    if ($safeListener === '') {
+        $safeListener = trim($listener);
+    }
+
+    if (!isset($GLOBALS['__stobe_generated_speech_chunks']) || !is_array($GLOBALS['__stobe_generated_speech_chunks'])) {
+        $GLOBALS['__stobe_generated_speech_chunks'] = [];
+    }
+    $GLOBALS['__stobe_generated_speech_chunks'][] = [
+        'actor' => $safeActor,
+        'action' => $action,
+        'message' => $safeMessage,
+        'utterance_id' => $safeUtteranceId,
+        'event_type' => $safeEventType,
+        'listener' => $safeListener,
+    ];
+}
+
+function stobeMarkGeneratedSpeechChunkCursor(): int {
+    $chunks = $GLOBALS['__stobe_generated_speech_chunks'] ?? [];
+    if (!is_array($chunks)) {
+        $chunks = [];
+        $GLOBALS['__stobe_generated_speech_chunks'] = $chunks;
+    }
+    return count($chunks);
+}
+
+function stobeTakeGeneratedSpeechChunksSince(int $cursor): array {
+    $chunks = $GLOBALS['__stobe_generated_speech_chunks'] ?? [];
+    if (!is_array($chunks)) {
+        $chunks = [];
+    }
+
+    $safeCursor = max(0, intval($cursor));
+    if ($safeCursor >= count($chunks)) {
+        return [];
+    }
+
+    $taken = array_slice($chunks, $safeCursor);
+    $GLOBALS['__stobe_generated_speech_chunks'] = array_slice($chunks, 0, $safeCursor);
+    return array_values($taken);
+}
+
+function stobeTakeGeneratedSpeechChunks(): array {
+    return stobeTakeGeneratedSpeechChunksSince(0);
+}
+
+function formatResponse(
+    string $actor,
+    string $action,
+    string $message,
+    string $ttsHash = '',
+    int $ttsDurationMs = 0,
+    string $utteranceId = ''
+): string {
+    $metadata = [];
+    if ($utteranceId !== '') {
+        $metadata[] = 'uid=' . $utteranceId;
+    }
     if ($ttsHash !== '') {
-        if ($ttsDurationMs > 0) {
-            return "{$actor}|{$action}|{$message}|tts={$ttsHash}|ttsd={$ttsDurationMs}\r\n";
-        }
-        return "{$actor}|{$action}|{$message}|tts={$ttsHash}\r\n";
+        $metadata[] = 'tts=' . $ttsHash;
+    }
+    if ($ttsDurationMs > 0) {
+        $metadata[] = 'ttsd=' . $ttsDurationMs;
+    }
+    if (count($metadata) > 0) {
+        return "{$actor}|{$action}|{$message}|" . implode('|', $metadata) . "\r\n";
     }
     return "{$actor}|{$action}|{$message}\r\n";
 }
@@ -10594,13 +11202,15 @@ function stobeLogOutputToPlugin(
     string $message,
     string $wirePayload,
     string $ttsHash = '',
-    int $ttsDurationMs = 0
+    int $ttsDurationMs = 0,
+    string $utteranceId = ''
 ): void {
     $entry = [
         'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
         'actor' => $actor,
         'action' => $action,
         'message' => $message,
+        'utterance_id' => $utteranceId,
         'tts_hash' => $ttsHash,
         'tts_duration_ms' => $ttsDurationMs,
         'wire_payload' => trim($wirePayload),
@@ -10914,6 +11524,51 @@ function stobeResolveDialogueListenerTarget(string $listener, array $allowedName
     }
 }
 
+function stobeResolveRechatReplyTarget(
+    string $responseListener,
+    array $allowedNames,
+    string $defaultReplyTarget = '',
+    string $strictReplyTarget = '',
+    string $speakerName = ''
+): string {
+    $safeStrictReplyTarget = normalizeParticipantNameToken($strictReplyTarget);
+    if ($safeStrictReplyTarget !== '') {
+        $resolvedStrictTarget = stobeResolveDialogueListenerTarget(
+            $safeStrictReplyTarget,
+            $allowedNames,
+            $safeStrictReplyTarget
+        );
+        return $resolvedStrictTarget !== '' ? $resolvedStrictTarget : $safeStrictReplyTarget;
+    }
+
+    $safeDefaultReplyTarget = normalizeParticipantNameToken($defaultReplyTarget);
+    $replyTarget = stobeResolveDialogueListenerTarget(
+        $responseListener,
+        $allowedNames,
+        $safeDefaultReplyTarget
+    );
+    if ($replyTarget === '') {
+        $replyTarget = $safeDefaultReplyTarget;
+    }
+
+    $safeSpeakerName = normalizeParticipantNameToken($speakerName);
+    if (
+        $replyTarget !== ''
+        && $safeSpeakerName !== ''
+        && strcasecmp($replyTarget, $safeSpeakerName) === 0
+        && $safeDefaultReplyTarget !== ''
+        && strcasecmp($safeDefaultReplyTarget, $safeSpeakerName) !== 0
+    ) {
+        $replyTarget = stobeResolveDialogueListenerTarget(
+            $safeDefaultReplyTarget,
+            $allowedNames,
+            $safeDefaultReplyTarget
+        );
+    }
+
+    return $replyTarget;
+}
+
 function stobeComputeStructuredStreamMessageDelta(string $previousMessage, string $currentMessage): string {
     if ($currentMessage === '' || $currentMessage === $previousMessage) {
         return '';
@@ -10973,6 +11628,15 @@ function stobeStreamDialogueViaLlm(
     $structuredResponseFormat = is_array($streamMeta['response_format'] ?? null)
         ? $streamMeta['response_format']
         : null;
+    $streamEventType = strtolower(trim(strval($meta['stream_event_type'] ?? $eventType)));
+    if ($streamEventType === '') {
+        $streamEventType = strtolower(trim($eventType));
+    }
+    $streamListener = normalizeParticipantNameToken(strval($meta['stream_listener'] ?? ''));
+    $streamGamets = max(0, intval($meta['stream_gamets'] ?? 0));
+    if ($streamListener === '') {
+        $streamListener = trim(strval($meta['stream_listener'] ?? ''));
+    }
 
     if (is_array($structuredResponseFormat)) {
         $rawResponse = '';
@@ -10986,7 +11650,10 @@ function stobeStreamDialogueViaLlm(
             &$messageStreamBuffer,
             &$chunksEmitted,
             $actor,
-            $actorData
+            $actorData,
+            $streamEventType,
+            $streamListener,
+            $streamGamets
         ): void {
             if ($deltaText !== '') {
                 $messageStreamBuffer .= $deltaText;
@@ -11013,7 +11680,7 @@ function stobeStreamDialogueViaLlm(
                     if ($sentenceChunk === '') {
                         continue;
                     }
-                    streamResponse($actor, 'ScriptQueue', $sentenceChunk, $actorData, []);
+                    streamResponse($actor, 'ScriptQueue', $sentenceChunk, $actorData, [], $streamEventType, $streamListener, $streamGamets);
                     $chunksEmitted++;
                 }
             }
@@ -11038,7 +11705,7 @@ function stobeStreamDialogueViaLlm(
                 if ($remainingChunk === '') {
                     continue;
                 }
-                streamResponse($actor, 'ScriptQueue', $remainingChunk, $actorData, []);
+                streamResponse($actor, 'ScriptQueue', $remainingChunk, $actorData, [], $streamEventType, $streamListener, $streamGamets);
                 $chunksEmitted++;
             }
         };
@@ -11150,7 +11817,7 @@ function stobeStreamDialogueViaLlm(
     $streamed = stobeCallLLMStream(
         $messages,
         $llmConfig,
-        function (string $delta) use (&$rawResponse, &$streamBuffer, &$chunksEmitted, $actor, $actorData, $eventType, $actionConfig, &$streamActionSeen, &$rawActions): void {
+        function (string $delta) use (&$rawResponse, &$streamBuffer, &$chunksEmitted, $actor, $actorData, $eventType, $actionConfig, &$streamActionSeen, &$rawActions, $streamEventType, $streamListener, $streamGamets): void {
             if ($delta === '') {
                 return;
             }
@@ -11189,13 +11856,13 @@ function stobeStreamDialogueViaLlm(
                         $seenKey = strtolower($normalizedChunkAction);
                         if (!isset($streamActionSeen[$seenKey])) {
                             $streamActionSeen[$seenKey] = true;
-                            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedChunkAction]);
+                            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedChunkAction], $streamEventType, $streamListener, $streamGamets);
                         }
                     }
                     $chunkText = sanitizeForKenshi(trim(strval($chunkExtraction['text'] ?? $chunk)));
                     $chunkText = stobeStripParentheticalDialogueText($chunkText);
                     if ($chunkText !== '') {
-                        streamResponse($actor, 'ScriptQueue', $chunkText, $actorData, []);
+                        streamResponse($actor, 'ScriptQueue', $chunkText, $actorData, [], $streamEventType, $streamListener, $streamGamets);
                         $chunksEmitted++;
                     }
                 }
@@ -11257,13 +11924,13 @@ function stobeStreamDialogueViaLlm(
             $seenKey = strtolower($normalizedRemainingAction);
             if (!isset($streamActionSeen[$seenKey])) {
                 $streamActionSeen[$seenKey] = true;
-                streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedRemainingAction]);
+                streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedRemainingAction], $streamEventType, $streamListener, $streamGamets);
             }
         }
         $remainingText = sanitizeForKenshi(trim(strval($remainingExtraction['text'] ?? '')));
         $remainingText = stobeStripParentheticalDialogueText($remainingText);
         if ($remainingText !== '') {
-            streamResponse($actor, 'ScriptQueue', $remainingText, $actorData, []);
+            streamResponse($actor, 'ScriptQueue', $remainingText, $actorData, [], $streamEventType, $streamListener, $streamGamets);
             $chunksEmitted++;
         }
     }
@@ -11277,7 +11944,7 @@ function stobeStreamDialogueViaLlm(
         $seenKey = strtolower($normalizedAction);
         if (!isset($streamActionSeen[$seenKey])) {
             $streamActionSeen[$seenKey] = true;
-            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedAction]);
+            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedAction], $streamEventType, $streamListener, $streamGamets);
         }
     }
 
@@ -11298,7 +11965,10 @@ function streamResponse(
     string $action,
     string $message,
     array|false $actorData = false,
-    array $actions = []
+    array $actions = [],
+    string $deliveryEventType = '',
+    string $deliveryListener = '',
+    int $deliveryGamets = 0
 ): void {
     // Normalize accidental raw JSON payloads (including truncated JSON) before
     // splitting into streamed lines.
@@ -11313,6 +11983,9 @@ function streamResponse(
     }
 
     $queuedActions = 0;
+    $effectiveDeliveryGamets = $deliveryGamets > 0
+        ? $deliveryGamets
+        : intval($_POST['gamets'] ?? $_GET['gamets'] ?? 0);
     $actionConfig = stobeBuildActionConfigForNpc(
         'chat',
         is_array($actorData) ? $actorData : false
@@ -11342,6 +12015,7 @@ function streamResponse(
     }
 
     $sentAny = false;
+    $stopStreaming = false;
     $ttsEnabled = stobeIsTtsEnabledForCurrentRequest();
     if (strcasecmp($action, 'ScriptQueue') === 0 && !$ttsEnabled) {
         stobeLogInfo('TTS skipped for stream response', [
@@ -11352,6 +12026,9 @@ function streamResponse(
         ]);
     }
     foreach ($rawLines as $rawLine) {
+        if ($stopStreaming) {
+            break;
+        }
         $line = rtrim(strval($rawLine), "\r");
         if (strcasecmp($action, 'ScriptQueue') === 0) {
             $line = stobeStripParentheticalDialogueText($line);
@@ -11368,9 +12045,22 @@ function streamResponse(
         }
 
         foreach ($lineChunks as $chunkRaw) {
+            if ($stopStreaming) {
+                break;
+            }
             $chunk = trim(strval($chunkRaw));
             if ($chunk === '') {
                 continue;
+            }
+
+            if (function_exists('connection_aborted') && connection_aborted()) {
+                stobeLogInfo('Stream response stopped after client disconnect', [
+                    'actor' => $actor,
+                    'action' => $action,
+                    'queued_actions' => $queuedActions,
+                ]);
+                $stopStreaming = true;
+                break;
             }
 
             $ttsHash = '';
@@ -11381,9 +12071,29 @@ function streamResponse(
                 $ttsDurationMs = intval($ttsResult['duration_ms'] ?? 0);
             }
 
-            $wirePayload = formatResponse($actor, $action, $chunk, $ttsHash, $ttsDurationMs);
+            $utteranceId = '';
+            if (strcasecmp($action, 'ScriptQueue') === 0) {
+                $utteranceId = stobeGenerateUtteranceId();
+                if ($effectiveDeliveryGamets > 0) {
+                    stobePersistGeneratedSpeechChunk(
+                        [
+                            'actor' => $actor,
+                            'action' => $action,
+                            'message' => $chunk,
+                            'utterance_id' => $utteranceId,
+                            'event_type' => $deliveryEventType,
+                            'listener' => $deliveryListener,
+                        ],
+                        $effectiveDeliveryGamets,
+                        $deliveryEventType,
+                        $deliveryListener
+                    );
+                }
+            }
+
+            $wirePayload = formatResponse($actor, $action, $chunk, $ttsHash, $ttsDurationMs, $utteranceId);
             echo $wirePayload;
-            stobeLogOutputToPlugin($actor, $action, $chunk, $wirePayload, $ttsHash, $ttsDurationMs);
+            stobeLogOutputToPlugin($actor, $action, $chunk, $wirePayload, $ttsHash, $ttsDurationMs, $utteranceId);
             if (ob_get_length()) {
                 ob_flush();
             }
@@ -11393,9 +12103,28 @@ function streamResponse(
     }
 
     if (!$sentAny && $queuedActions === 0) {
-        $wirePayload = formatResponse($actor, $action, '...');
+        $utteranceId = '';
+        if (strcasecmp($action, 'ScriptQueue') === 0) {
+            $utteranceId = stobeGenerateUtteranceId();
+            if ($effectiveDeliveryGamets > 0) {
+                stobePersistGeneratedSpeechChunk(
+                    [
+                        'actor' => $actor,
+                        'action' => $action,
+                        'message' => '...',
+                        'utterance_id' => $utteranceId,
+                        'event_type' => $deliveryEventType,
+                        'listener' => $deliveryListener,
+                    ],
+                    $effectiveDeliveryGamets,
+                    $deliveryEventType,
+                    $deliveryListener
+                );
+            }
+        }
+        $wirePayload = formatResponse($actor, $action, '...', '', 0, $utteranceId);
         echo $wirePayload;
-        stobeLogOutputToPlugin($actor, $action, '...', $wirePayload);
+        stobeLogOutputToPlugin($actor, $action, '...', $wirePayload, '', 0, $utteranceId);
         if (ob_get_length()) {
             ob_flush();
         }

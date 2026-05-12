@@ -241,14 +241,18 @@ $eventHistory = $narratorMode
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $mode, $speaker);
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
-    $historyType = $row['type'] ?? 'event';
-    $historyData = $row['data'] ?? '';
-    if ($historyData !== '') {
-        $historyLines[] = '[' . $historyType . '] ' . $historyData;
+    $line = stobeFormatEventHistoryLine(is_array($row) ? $row : [], false);
+    if ($line !== '') {
+        $historyLines[] = $line;
     }
 }
 $historyText = implode("\n", $historyLines);
-$historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$historyMessages = stobeBuildRecentContextMessages(
+    $eventHistory,
+    intval($gamets),
+    64,
+    $narratorMode ? '' : $targetNpc
+);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $targetNpc,
@@ -346,12 +350,7 @@ if ($deliveryStyleInstruction !== '') {
         . "  <instruction>" . stobePromptXmlEscape($deliveryStyleInstruction) . "</instruction>\n"
         . "</speech_mode>";
 }
-$userMessage = "<player_input>\n"
-    . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
-    . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-    . "  <mode>" . stobePromptXmlEscape($mode) . "</mode>\n"
-    . "  <text>" . stobePromptXmlEscape($message) . "</text>\n"
-    . "</player_input>";
+$userMessage = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
 if ($mode === 'cheat') {
     $priorityInstruction = "PRIORITY INSTRUCTION - {$targetNpc} must do this, even if it breaks character roleplay: {$message}";
     $systemPrompt .= "\n\n<cheatmode>\n"

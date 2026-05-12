@@ -286,11 +286,15 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
             stobeLogWarn('Random narration skipped: missing database handle');
             return false;
         }
+        $deliveryVisibilitySql = function_exists('stobeBuildEventlogDeliveryVisibilitySql')
+            ? stobeBuildEventlogDeliveryVisibilitySql('eventlog')
+            : '1=1';
 
         $lastNarrativeEvent = $db->fetchOne(
             "SELECT type
              FROM eventlog
              WHERE type IN ('chat', 'rechat', 'narration')
+               AND {$deliveryVisibilitySql}
              ORDER BY rowid DESC
              LIMIT 1"
         );
@@ -310,6 +314,7 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
                 "SELECT COUNT(*) AS count
                  FROM eventlog
                  WHERE type IN ('chat', 'rechat', 'inputtext', 'inputtext_s')
+                   AND {$deliveryVisibilitySql}
                    AND rowid > COALESCE(
                        (
                            SELECT MAX(rowid)
@@ -484,10 +489,7 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
                 $responseText = 'A hush settles over the moment as the wasteland watches in silence.';
             }
 
-            $storeTs = $timestamp > 0 ? $timestamp : time();
-            $chatEventData = $narratorName . ': ' . $responseText . ' (talking to: ' . $speaker . ')';
-            storeEvent('narration', $storeTs, intval($gamets), $chatEventData);
-            streamResponse($narratorName, 'ScriptQueue', $responseText, $narratorData, []);
+            streamResponse($narratorName, 'ScriptQueue', $responseText, $narratorData, [], 'narration', $speaker, intval($gamets));
 
             stobeLogInfo('Random narration triggered', [
                 'roll' => $roll,

@@ -37,20 +37,6 @@ if ($name === '') {
     exit;
 }
 
-$snapshotKeys = array_keys($snapshot);
-$medicalKeys = [];
-if (isset($snapshot['medical']) && is_array($snapshot['medical'])) {
-    $medicalKeys = array_keys($snapshot['medical']);
-}
-stobeLogImport('npc_snapshot ingress', [
-    'name' => $name,
-    'snapshot_keys' => $snapshotKeys,
-    'medical_keys' => $medicalKeys,
-    'has_stats' => is_array($snapshot['stats'] ?? null),
-    'has_nearby' => is_array($snapshot['nearby'] ?? null),
-    'nearby_count' => is_array($snapshot['nearby'] ?? null) ? count($snapshot['nearby']) : 0,
-]);
-
 $source = trim(strval($input['source'] ?? ($snapshot['source'] ?? 'npc_snapshot')));
 $gamets = intval($input['game_ts'] ?? 0);
 if ($gamets <= 0) {
@@ -101,19 +87,6 @@ if (is_array($nearbyEntries)) {
             if (is_array($decodedNearMedical)) {
                 $nearMedical = $decodedNearMedical;
             }
-        }
-        $hasNearMedical = is_array($nearMedical) && count($nearMedical) > 0;
-        $isRenamedNearby = strpos($nearName, '[') !== false;
-
-        if ($isRenamedNearby) {
-            stobeLogImport('nearby renamed npc ingest candidate', [
-                'observer' => $name,
-                'near_name' => $nearName,
-                'near_storage_id' => $nearStorageId,
-                'has_medical' => $hasNearMedical,
-                'has_stats' => is_array($entry['stats'] ?? null) && count($entry['stats']) > 0,
-                'keys' => array_keys($entry),
-            ], 'DEBUG');
         }
 
         // Keep imported nearby NPC snapshots minimal; appearance remains blank.
@@ -174,25 +147,6 @@ if (is_array($nearbyEntries)) {
             ],
         ], max(0, $gamets));
 
-        if ($storedNearbySnapshot && $isRenamedNearby) {
-            stobeLogImport('nearby renamed npc hydrated', [
-                'observer' => $name,
-                'near_name' => $nearName,
-                'near_storage_id' => $nearStorageId,
-                'source' => $source,
-            ], 'DEBUG');
-        }
-
-        if (!$storedNearbySnapshot && $isRenamedNearby) {
-            stobeLogImport('nearby renamed npc skipped snapshot hydration', [
-                'observer' => $name,
-                'near_name' => $nearName,
-                'near_storage_id' => $nearStorageId,
-                'has_medical' => $hasNearMedical,
-                'nearby_keys' => array_keys($entry),
-            ], 'DEBUG');
-        }
-
         if (!$storedNearbySnapshot) {
             $nearOccupation = stobeBuildFactionOccupationText($nearFaction);
             storeNpcProfile($nearName, [
@@ -240,23 +194,6 @@ if ($race !== '') {
 if (!$isInventoryLiveSync) {
     storeEvent('npc_snapshot', time(), max(0, $gamets), $summary);
 }
-stobeLogInfo('npc_snapshot stored', [
-    'name' => $name,
-    'source' => $source,
-    'gamets' => max(0, $gamets),
-    'nearby_observed' => $nearbyObserved,
-    'inventory_live_sync' => $isInventoryLiveSync,
-    'inventory_item_count' => intval($snapshot['inventory_item_count'] ?? 0),
-]);
-stobeLogImport('npc_snapshot persisted', [
-    'name' => $name,
-    'source' => $source,
-    'gamets' => max(0, $gamets),
-    'nearby_observed' => $nearbyObserved,
-    'is_slave' => boolval($snapshot['is_slave'] ?? false),
-    'inventory_live_sync' => $isInventoryLiveSync,
-    'inventory_item_count' => intval($snapshot['inventory_item_count'] ?? 0),
-]);
 
 echo json_encode([
     "status" => "ok",

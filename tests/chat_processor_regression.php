@@ -112,9 +112,23 @@ function chatProcessorOutputLines(string $output): array
         if ($trimmed === '') {
             continue;
         }
-        $normalized[] = $trimmed;
+        $normalized[] = chatProcessorNormalizeWireLine($trimmed);
     }
     return $normalized;
+}
+
+function chatProcessorNormalizeWireLine(string $line): string
+{
+    $trimmed = trim($line);
+    if ($trimmed === '') {
+        return '';
+    }
+
+    if (preg_match('/^([^|]+\|[^|]+\|[^|]*)(?:\|.*)?$/', $trimmed, $match) === 1) {
+        return strval($match[1]);
+    }
+
+    return $trimmed;
 }
 
 chatProcessorForceNoApiKey();
@@ -128,7 +142,7 @@ $inlineOutput = chatProcessorRun(
 );
 chatProcessorAssertSame(
     $inlineTarget . '|ScriptQueue|No OpenRouter API key configured yet.',
-    trim($inlineOutput),
+    chatProcessorNormalizeWireLine($inlineOutput),
     'inline target extraction should still produce the API-key fallback response'
 );
 $inlineRows = chatProcessorEventRows();
@@ -175,7 +189,7 @@ chatProcessorAssertSameList(
     'autochat without an API key should stream the speaker line before the NPC fallback reply'
 );
 $autochatRows = chatProcessorEventRows();
-chatProcessorAssertSameInt(3, count($autochatRows), 'autochat fallback should store input, mirrored chat, and fallback reply');
+chatProcessorAssertSameInt(4, count($autochatRows), 'autochat fallback should store input, mirrored chat, tracked speaker output, and fallback reply');
 chatProcessorAssertSame(
     $autochatSpeaker . ': Keep walking (talking to: ' . $autochatTarget . ')',
     strval($autochatRows[0]['data'] ?? ''),
@@ -187,8 +201,13 @@ chatProcessorAssertSame(
     'autochat fallback should preserve the mirrored chat row'
 );
 chatProcessorAssertSame(
-    $autochatTarget . ': No OpenRouter API key configured yet. (talking to: ' . $autochatSpeaker . ')',
+    $autochatSpeaker . ': Keep walking (talking to: ' . $autochatTarget . ')',
     strval($autochatRows[2]['data'] ?? ''),
+    'autochat fallback should persist the streamed speaker line as a tracked utterance'
+);
+chatProcessorAssertSame(
+    $autochatTarget . ': No OpenRouter API key configured yet. (talking to: ' . $autochatSpeaker . ')',
+    strval($autochatRows[3]['data'] ?? ''),
     'autochat fallback should store the NPC reply after the speaker line'
 );
 

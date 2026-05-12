@@ -162,7 +162,12 @@ foreach (array_reverse($eventHistory) as $row) {
     $historyLines[] = $line;
 }
 $historyText = implode("\n", $historyLines);
-$historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$historyMessages = stobeBuildRecentContextMessages(
+    $eventHistory,
+    intval($gamets),
+    64,
+    $speakerNpc
+);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($speakerData) ? $speakerData : [],
     $speakerNpc,
@@ -239,6 +244,8 @@ $streamResult = stobeStreamDialogueViaLlm(
         'npc_name' => $speakerNpc,
         'event_type' => 'bored',
         'action_config' => $actionConfig,
+        'stream_event_type' => 'bored',
+        'stream_gamets' => $gamets,
         'response_format' => stobeBuildStructuredDialogueResponseFormat($speakerNpc, $speakerData, npcIsInPlayerFaction($speakerData), 'bored'),
     ]
 );
@@ -272,14 +279,7 @@ if ($responseText === '' && count($responseActions) === 0) {
     return;
 }
 
-$responseTextForStore = $responseText;
-if ($responseTextForStore === '' && count($responseActions) > 0) {
-    $responseTextForStore = '[action issued]';
-}
-
-$chatEventData = $speakerNpc . ': ' . $responseTextForStore . ' (talking to: ' . $listener . ')';
 storeActionEvents($speakerNpc, $responseActions, $gamets, $listener, 'bored');
-storeEvent('chat', time(), $gamets, $chatEventData);
 
 stobeLogInfo('Bored event response generated', [
     'speaker' => $speakerNpc,
@@ -297,8 +297,8 @@ stobeLogInfo('Bored event response generated', [
 
 if ($alreadyStreamed) {
     if (count($responseActions) > 0 && !$actionsStreamedInLlm) {
-        streamResponse($speakerNpc, 'ScriptQueue', '', $speakerData, $responseActions);
+        streamResponse($speakerNpc, 'ScriptQueue', '', $speakerData, $responseActions, 'bored', $listener, $gamets);
     }
 } else {
-    streamResponse($speakerNpc, 'ScriptQueue', $responseText, $speakerData, $responseActions);
+    streamResponse($speakerNpc, 'ScriptQueue', $responseText, $speakerData, $responseActions, 'bored', $listener, $gamets);
 }

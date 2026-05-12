@@ -33,9 +33,24 @@ try {
                 'description' => 'Optional player-faction instruction block injected into prompts.',
             ],
             [
+                'id' => 'RECHAT_MODE',
+                'value' => 'random',
+                'description' => 'Controls how Stobe chooses the next rechat responder: tight, conversational, group, or random.',
+            ],
+            [
+                'id' => 'ENFORCE_STRICT_RECHAT_RESPONSE',
+                'value' => 'false',
+                'description' => 'When true, rechat replies must target the actor who just spoke.',
+            ],
+            [
                 'id' => 'PROMPT_CONTEXT_OPTIONS',
                 'value' => json_encode(stobeGetDefaultPromptContextOptions(), JSON_UNESCAPED_SLASHES),
                 'description' => 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.',
+            ],
+            [
+                'id' => 'SPEAKER_RECHAT',
+                'value' => 'false',
+                'description' => 'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.',
             ],
             [
                 'id' => 'ALWAYS_INSERT_RACE',
@@ -170,6 +185,9 @@ function stobeSettingLooksBoolean(string $value): bool
 function stobeSettingType(string $id, string $value): string
 {
     $idUpper = strtoupper($id);
+    if ($idUpper === 'RECHAT_MODE') {
+        return 'select';
+    }
     if (stobeSettingLooksBoolean($value)) {
         return 'bool';
     }
@@ -191,13 +209,36 @@ function stobeSettingType(string $id, string $value): string
     return 'text';
 }
 
+function stobeSettingSelectOptions(string $id): array
+{
+    return match (strtoupper(trim($id))) {
+        'RECHAT_MODE' => [
+            'tight' => 'Tight',
+            'conversational' => 'Conversational',
+            'group' => 'Group',
+            'random' => 'Random',
+        ],
+        default => [],
+    };
+}
+
 function stobeNormalizeSettingValue(string $id, string $rawValue, string $type): string
 {
-    $idUpper = strtoupper($id);
     $value = trim($rawValue);
     if ($type === 'bool') {
         $lower = strtolower($value);
         return in_array($lower, ['1', 'true', 'yes', 'on'], true) ? 'true' : 'false';
+    }
+    if ($type === 'select') {
+        $options = stobeSettingSelectOptions($id);
+        $normalized = strtolower($value);
+        if (isset($options[$normalized])) {
+            return $normalized;
+        }
+        if (strtoupper(trim($id)) === 'RECHAT_MODE') {
+            return 'random';
+        }
+        return array_key_first($options) ?? '';
     }
     return $rawValue;
 }
@@ -218,14 +259,19 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'BORED_EVENT_')) {
         return 'Bored Event';
     }
-    if (str_starts_with($idUpper, 'RECHAT_') || str_starts_with($idUpper, 'TALK_') || str_starts_with($idUpper, 'SHOUT_') || str_starts_with($idUpper, 'WHISPER_')) {
-        return 'Conversation';
+    if (
+        str_starts_with($idUpper, 'RECHAT_')
+        || str_starts_with($idUpper, 'TALK_')
+        || str_starts_with($idUpper, 'SHOUT_')
+        || str_starts_with($idUpper, 'WHISPER_')
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE'], true)
+    ) {
+        return 'Rechat';
     }
     if (in_array($idUpper, [
         'CONTEXT_HISTORY',
         'HTTP_TIMEOUT',
         'BRACKET_ORIGINAL_NAME',
-        'SPEAKER_RECHAT',
         'PLAYER_NAME',
         'AUTO_LOCK_PROFILE',
         'RELATIONSHIP_SYSTEM',
@@ -247,7 +293,7 @@ function stobeGroupSortWeight(string $group): int
     static $weights = [
         'Prompting' => 5,
         'Core' => 10,
-        'Conversation' => 20,
+        'Rechat' => 20,
         'Bored Event' => 30,
         'Memory' => 40,
         'World Knowledge' => 50,
@@ -278,6 +324,8 @@ function stobePrettySettingLabel(string $id): string
         'PLAYER_FACTION_PROMPT' => 'Player Faction Prompt',
         'ALWAYS_INSERT_RACE' => 'Always Insert Race Knowledge',
         'BRACKET_ORIGINAL_NAME' => 'Bracket Original Name',
+        'RECHAT_MODE' => 'Rechat Mode',
+        'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
         'SPEAKER_RECHAT' => 'Speaker Rechat',
         'PROMPT_HEAD' => 'Prompt Head',
         'EMOTEMOODS' => 'Emote Moods',
@@ -422,7 +470,9 @@ foreach ($grouped as $groupName => $rows) {
             'PROMPT_HEAD' => 0,
             'EMOTEMOODS' => 1,
             'BRACKET_ORIGINAL_NAME' => 0,
-            'SPEAKER_RECHAT' => 1,
+            'RECHAT_MODE' => 0,
+            'ENFORCE_STRICT_RECHAT_RESPONSE' => 1,
+            'SPEAKER_RECHAT' => 2,
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
@@ -611,6 +661,7 @@ uksort($grouped, function ($a, $b) {
         .provider-body input[type="text"],
         .provider-body input[type="password"],
         .provider-body input[type="number"],
+        .provider-body select,
         .provider-body textarea {
             flex: 1;
             width: 100%;
@@ -621,6 +672,7 @@ uksort($grouped, function ($a, $b) {
             color: #e9efff;
         }
         .provider-body input:focus,
+        .provider-body select:focus,
         .provider-body textarea:focus {
             border-color: rgba(230, 183, 108, 0.5);
             outline: none;
@@ -799,6 +851,15 @@ uksort($grouped, function ($a, $b) {
                                 </div>
                                 <div class="provider-body">
                                     <?php if ($type === 'bool'): ?>
+                                    <?php elseif ($type === 'select'): ?>
+                                        <?php $selectOptions = stobeSettingSelectOptions($id); ?>
+                                        <select id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]">
+                                            <?php foreach ($selectOptions as $optionValue => $optionLabel): ?>
+                                                <option value="<?= h($optionValue) ?>" <?= strtolower(trim($value)) === $optionValue ? 'selected' : '' ?>>
+                                                    <?= h($optionLabel) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
                                     <?php elseif ($type === 'textarea'): ?>
                                         <textarea id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]"><?= h($value) ?></textarea>
                                     <?php elseif ($type === 'int'): ?>

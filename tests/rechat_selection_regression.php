@@ -37,6 +37,15 @@ function rechatSelectionClearEventlog(): void
     $GLOBALS['db']->exec('DELETE FROM eventlog');
 }
 
+function rechatSelectionDeleteNpc(string $name): void
+{
+    $safeName = trim($name);
+    if ($safeName === '') {
+        return;
+    }
+    $GLOBALS['db']->delete('core_npc', ['name' => $safeName]);
+}
+
 function rechatSelectionForceNoApiKey(): void
 {
     $db = $GLOBALS['db'];
@@ -83,11 +92,14 @@ function rechatSelectionRun(string $eventType, string $eventData, array $query =
 rechatSelectionForceNoApiKey();
 storeNpcProfile('UT_RECHAT_SELECTION_SPEAKER_OFF', []);
 storeNpcProfile('UT_RECHAT_SELECTION_SPEAKER_ON', []);
+storeNpcProfile('UT_RECHAT_SELECTION_GROUP_SPEAKER', []);
 setSetting('RANDOM_NARATION', '0');
+setSetting('RECHAT_MODE', 'conversational');
 
 $speakerOff = 'UT_RECHAT_SELECTION_SPEAKER_OFF';
 $initiatorOff = 'UT_RECHAT_SELECTION_INITIATOR_OFF';
 $peopleOff = '["' . $speakerOff . '","' . $initiatorOff . '"]';
+rechatSelectionDeleteNpc($initiatorOff);
 setSetting('SPEAKER_RECHAT', 'false');
 rechatSelectionClearEventlog();
 $offOutput = rechatSelectionRun(
@@ -115,6 +127,7 @@ rechatSelectionAssert(
 $speakerOn = 'UT_RECHAT_SELECTION_SPEAKER_ON';
 $initiatorOn = 'UT_RECHAT_SELECTION_INITIATOR_ON';
 $peopleOn = '["' . $speakerOn . '","' . $initiatorOn . '"]';
+rechatSelectionDeleteNpc($initiatorOn);
 setSetting('SPEAKER_RECHAT', 'true');
 rechatSelectionClearEventlog();
 $onOutput = rechatSelectionRun(
@@ -137,6 +150,36 @@ rechatSelectionAssertSameInt(
 rechatSelectionAssert(
     is_array(getNpcData($initiatorOn)),
     'enabled speaker rechat should allow the initiator to be selected and JIT-created as the responder candidate'
+);
+
+$groupSpeaker = 'UT_RECHAT_SELECTION_GROUP_SPEAKER';
+$groupTarget = 'UT_RECHAT_SELECTION_GROUP_TARGET';
+$groupPeople = '["' . $groupSpeaker . '","' . $groupTarget . '"]';
+rechatSelectionDeleteNpc($groupTarget);
+setSetting('SPEAKER_RECHAT', 'false');
+setSetting('RECHAT_MODE', 'group');
+rechatSelectionClearEventlog();
+$groupOutput = rechatSelectionRun(
+    'rechat',
+    $groupSpeaker . ': Hold position. (talking to: ' . $groupTarget . ')',
+    [
+        'mode' => 'talk',
+        'profile' => $groupTarget,
+        'people' => $groupPeople,
+        'initiator' => $groupTarget,
+        'rechat_target' => $groupTarget,
+    ],
+    $groupPeople
+);
+rechatSelectionAssertSame('ok', $groupOutput, 'group-mode rechat should still return ok when direct-target fallback is selected without API access');
+rechatSelectionAssertSameInt(
+    0,
+    count($GLOBALS['db']->fetchAll('SELECT rowid FROM eventlog')),
+    'group-mode fallback selection should not store duplicate rechat rows when API access is absent'
+);
+rechatSelectionAssert(
+    getNpcData($groupTarget) === false,
+    'group-mode direct fallback must still respect disabled speaker rechat and avoid selecting the initiator'
 );
 
 echo "All rechat selection regression tests passed.\n";

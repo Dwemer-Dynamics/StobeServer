@@ -1761,6 +1761,46 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 ['PROMPT_CONTEXT_OPTIONS', $defaultPromptContextOptions, $description]
             );
         });
+        $applyPatch('general_settings', 202605110002, static function () use ($db): void {
+            $definitions = [
+                [
+                    'id' => 'RECHAT_MODE',
+                    'value' => 'random',
+                    'description' => 'Controls how Stobe chooses the next rechat responder: tight, conversational, group, or random.',
+                ],
+                [
+                    'id' => 'ENFORCE_STRICT_RECHAT_RESPONSE',
+                    'value' => 'false',
+                    'description' => 'When true, rechat replies must target the actor who just spoke.',
+                ],
+                [
+                    'id' => 'SPEAKER_RECHAT',
+                    'value' => 'false',
+                    'description' => 'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.',
+                ],
+            ];
+
+            foreach ($definitions as $definition) {
+                $db->exec(
+                    "INSERT INTO general_settings (id, value, description, updated_at)
+                     VALUES ($1, $2, $3, NOW())
+                     ON CONFLICT (id) DO UPDATE
+                     SET description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [
+                        strval($definition['id'] ?? ''),
+                        strval($definition['value'] ?? ''),
+                        strval($definition['description'] ?? ''),
+                    ]
+                );
+            }
+        });
+        $applyPatch('general_settings', 202605110003, static function () use ($db): void {
+            $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS utterance_id TEXT");
+            $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS delivery_state TEXT");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_utterance_id ON eventlog (utterance_id)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_delivery_state ON eventlog (delivery_state)");
+        });
 
         stobeLogInfo('DB updates completed (release consolidator)');
     }

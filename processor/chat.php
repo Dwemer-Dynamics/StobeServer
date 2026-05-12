@@ -607,7 +607,12 @@ foreach (array_reverse($eventHistory) as $row) {
     }
 }
 $historyText = implode("\n", $historyLines);
-$historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$historyMessages = stobeBuildRecentContextMessages(
+    $eventHistory,
+    intval($gamets),
+    64,
+    $narratorMode ? '' : $targetNpc
+);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $targetNpc,
@@ -696,7 +701,7 @@ if ($dialogueMode === 'autochat' && trim($message) !== '') {
         'message_length' => strlen($message),
     ]);
     // Emit the player's autochat line before NPC generation so audio order is natural.
-    streamResponse($speaker, 'ScriptQueue', $message);
+    streamResponse($speaker, 'ScriptQueue', $message, false, [], 'chat', $targetNpc, $gamets);
 }
 
 if (!$narratorMode) {
@@ -825,12 +830,7 @@ if ($manualActionActive) {
     }
     $systemPrompt .= "</manual_action_context>";
 }
-$userContent = "<player_input>\n"
-    . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
-    . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-    . "  <mode>" . stobePromptXmlEscape($dialogueMode) . "</mode>\n"
-    . "  <text>" . stobePromptXmlEscape($message) . "</text>\n"
-    . "</player_input>";
+$userContent = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
 if ($manualActionActive) {
     $userContent .= "\n<manual_action_event>\n"
         . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
@@ -936,6 +936,8 @@ if ($manualActionActive && $manualActionCannotSpeak) {
             'event_type' => 'chat',
             'speaker' => $speaker,
             'action_config' => $actionConfig,
+            'stream_event_type' => 'chat',
+            'stream_gamets' => $gamets,
             'response_format' => $narratorMode
                 ? null
                 : stobeBuildStructuredDialogueResponseFormat($targetNpc, $npcData, npcIsInPlayerFaction($npcData), 'chat'),
@@ -1015,22 +1017,12 @@ if ($responseText === '' && count($responseActions) === 0) {
     $responseText = '...';
 }
 
-$storedResponseText = $responseText;
-if ($storedResponseText === '' && count($responseActions) > 0) {
-    $storedResponseText = '[action issued]';
-} elseif ($storedResponseText === '') {
-    $storedResponseText = '...';
-}
-
 storeActionEvents($targetNpc, $responseActions, $gamets, $replyTarget, 'chat');
-
-$chatEventData = $targetNpc . ': ' . $storedResponseText . ' (talking to: ' . $replyTarget . ')';
-storeEvent('chat', time(), $gamets, $chatEventData);
 
 if ($alreadyStreamed) {
     if (count($responseActions) > 0 && !$actionsStreamedInLlm) {
-        streamResponse($targetNpc, 'ScriptQueue', '', $npcData, $responseActions);
+        streamResponse($targetNpc, 'ScriptQueue', '', $npcData, $responseActions, 'chat', $replyTarget, $gamets);
     }
 } else {
-    streamResponse($targetNpc, 'ScriptQueue', $responseText, $npcData, $responseActions);
+    streamResponse($targetNpc, 'ScriptQueue', $responseText, $npcData, $responseActions, 'chat', $replyTarget, $gamets);
 }

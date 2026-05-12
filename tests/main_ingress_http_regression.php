@@ -32,6 +32,20 @@ function mainIngressAssertSameInt(int $expected, int $actual, string $message): 
     }
 }
 
+function mainIngressNormalizeWireLine(string $line): string
+{
+    $trimmed = trim($line);
+    if ($trimmed === '') {
+        return '';
+    }
+
+    if (preg_match('/^([^|]+\|[^|]+\|[^|]*)(?:\|.*)?$/', $trimmed, $match) === 1) {
+        return strval($match[1]);
+    }
+
+    return $trimmed;
+}
+
 function mainIngressForceNoApiKey(): void
 {
     $db = $GLOBALS['db'];
@@ -169,7 +183,7 @@ try {
     );
     mainIngressAssertSameInt(200, intval($response['status']), 'main.php inputtext request should return HTTP 200');
     mainIngressAssert(
-        strpos(strval($response['body']), $target . '|ScriptQueue|No OpenRouter API key configured yet.') !== false,
+        mainIngressNormalizeWireLine(strval($response['body'])) === $target . '|ScriptQueue|No OpenRouter API key configured yet.',
         'main.php inputtext request should stream deterministic no-API-key fallback'
     );
 

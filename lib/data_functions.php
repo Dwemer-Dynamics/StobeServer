@@ -2082,10 +2082,102 @@ function stobeEnsureEventlogGeoColumn(): bool {
     }
 }
 
-function storeEvent(string $type, int $ts, int $gamets, string $data, string $sess = 'pending'): void {
+function stobeEnsureEventlogDeliveryColumns(): bool {
+    static $checked = false;
+    static $available = false;
+    if ($checked) {
+        return $available;
+    }
+    $checked = true;
+
+    $db = $GLOBALS["db"] ?? null;
+    if (!$db) {
+        $available = false;
+        return false;
+    }
+
+    try {
+        $columns = $db->fetchAll(
+            "SELECT column_name
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'eventlog'
+               AND column_name IN ('utterance_id', 'delivery_state')"
+        );
+        $present = [];
+        foreach ((array)$columns as $columnRow) {
+            $columnName = strtolower(trim(strval($columnRow['column_name'] ?? '')));
+            if ($columnName !== '') {
+                $present[$columnName] = true;
+            }
+        }
+        if (isset($present['utterance_id']) && isset($present['delivery_state'])) {
+            $available = true;
+            return true;
+        }
+    } catch (Throwable $exception) {
+        $available = false;
+        return false;
+    }
+
+    try {
+        $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS utterance_id TEXT");
+        $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS delivery_state TEXT");
+        $available = true;
+        return true;
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to ensure eventlog delivery columns');
+        $available = false;
+        return false;
+    }
+}
+
+function stobeBuildEventlogDeliveryVisibilitySql(string $tableAlias = 'eventlog'): string {
+    if (!stobeEnsureEventlogDeliveryColumns()) {
+        return '1=1';
+    }
+
+    $qualified = trim($tableAlias);
+    if ($qualified !== '') {
+        $qualified = rtrim($qualified, '.') . '.';
+    }
+
+    return "(COALESCE(NULLIF({$qualified}utterance_id, ''), '') = ''"
+        . " OR LOWER(COALESCE({$qualified}delivery_state, 'spoken')) = 'spoken')";
+}
+
+function stobeEventlogRowIsVisibleForContext(array $row): bool {
+    $utteranceId = trim(strval($row['utterance_id'] ?? ''));
+    if ($utteranceId === '') {
+        return true;
+    }
+
+    $deliveryState = strtolower(trim(strval($row['delivery_state'] ?? 'spoken')));
+    return ($deliveryState === 'spoken');
+}
+
+function storeEvent(
+    string $type,
+    int $ts,
+    int $gamets,
+    string $data,
+    string $sess = 'pending',
+    string $utteranceId = '',
+    string $deliveryState = '',
+    bool $trackMemory = true
+): ?array {
     $normalizedType = strtolower(trim($type));
     if ($normalizedType === 'npc_snapshot' || $normalizedType === 'playerinfo') {
-        return;
+        return null;
+    }
+
+    $safeUtteranceId = trim($utteranceId);
+    $normalizedDeliveryState = strtolower(trim($deliveryState));
+    if ($safeUtteranceId !== '' && $normalizedDeliveryState === '') {
+        $normalizedDeliveryState = 'pending';
+    }
+    if ($safeUtteranceId === '') {
+        $normalizedDeliveryState = '';
     }
 
     $rawData = strval($data);
@@ -2105,17 +2197,23 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     $locationCache = $GLOBALS["CACHE_LOCATION"] ?? '';
 
     if (
+        $safeUtteranceId === ''
+        && (
         $normalizedType === 'chat'
         && strcasecmp(trim($sess), 'inputtext_chat_mirror') !== 0
         && stobeShouldSkipMirroredPlayerChatRow($db, $data, $eventLocalTs)
+        )
     ) {
-        return;
+        return null;
     }
     if (
+        $safeUtteranceId === ''
+        && (
         ($normalizedType === 'chat' || $normalizedType === 'rechat')
         && stobeShouldSkipDuplicateDialogueEchoRow($db, $normalizedType, $data, $eventLocalTs, $gamets)
+        )
     ) {
-        return;
+        return null;
     }
 
     $geoPayloadInput = [
@@ -2144,7 +2242,40 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
     ]);
 
     $inserted = null;
-    if (stobeEnsureEventlogGeoColumn()) {
+    $hasGeoColumn = stobeEnsureEventlogGeoColumn();
+    $hasDeliveryColumns = stobeEnsureEventlogDeliveryColumns();
+    if ($hasGeoColumn && $hasDeliveryColumns) {
+        $inserted = $db->fetchOne(
+            "INSERT INTO eventlog (
+                type,
+                ts,
+                gamets,
+                data,
+                sess,
+                localts,
+                people,
+                location,
+                geo,
+                utterance_id,
+                delivery_state
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+             RETURNING rowid, localts",
+            [
+                $type,
+                $ts,
+                $gamets,
+                $data,
+                $sess,
+                $eventLocalTs,
+                $peopleCache,
+                $locationCache,
+                $geoJson,
+                ($safeUtteranceId !== '' ? $safeUtteranceId : null),
+                ($normalizedDeliveryState !== '' ? $normalizedDeliveryState : null),
+            ]
+        );
+    } elseif ($hasGeoColumn) {
         $inserted = $db->fetchOne(
             "INSERT INTO eventlog (type, ts, gamets, data, sess, localts, people, location, geo)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
@@ -2191,7 +2322,11 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
         ]);
     }
 
-    if (function_exists('stobeMemoryTrackEvent')) {
+    $shouldTrackMemory = (
+        $trackMemory
+        && ($safeUtteranceId === '' || $normalizedDeliveryState === '' || $normalizedDeliveryState === 'spoken')
+    );
+    if ($shouldTrackMemory && function_exists('stobeMemoryTrackEvent')) {
         stobeMemoryTrackEvent(
             strval($type),
             intval($ts),
@@ -2202,6 +2337,245 @@ function storeEvent(string $type, int $ts, int $gamets, string $data, string $se
             $eventLocalTs
         );
     }
+
+    return is_array($inserted) ? $inserted : null;
+}
+
+function stobePersistGeneratedSpeechChunk(
+    array $chunk,
+    int $gamets,
+    string $defaultEventType = '',
+    string $defaultListener = ''
+): ?array {
+    $fallbackEventType = strtolower(trim($defaultEventType));
+    $fallbackListener = normalizeParticipantNameToken($defaultListener);
+    if ($fallbackListener === '') {
+        $fallbackListener = trim($defaultListener);
+    }
+
+    $action = trim(strval($chunk['action'] ?? ''));
+    if ($action !== '' && strcasecmp($action, 'ScriptQueue') !== 0) {
+        return null;
+    }
+
+    $actor = normalizeParticipantNameToken(strval($chunk['actor'] ?? ''));
+    if ($actor === '') {
+        $actor = trim(strval($chunk['actor'] ?? ''));
+    }
+    $message = stobeStripParentheticalDialogueText(trim(strval($chunk['message'] ?? '')));
+    $utteranceId = trim(strval($chunk['utterance_id'] ?? ''));
+    if ($actor === '' || $message === '' || $utteranceId === '' || $gamets <= 0) {
+        return null;
+    }
+
+    $chunkEventType = strtolower(trim(strval($chunk['event_type'] ?? '')));
+    if ($chunkEventType === '') {
+        $chunkEventType = $fallbackEventType;
+    }
+    if ($chunkEventType === '') {
+        $chunkEventType = 'chat';
+    }
+
+    $chunkListener = normalizeParticipantNameToken(strval($chunk['listener'] ?? ''));
+    if ($chunkListener === '') {
+        $chunkListener = trim(strval($chunk['listener'] ?? ''));
+    }
+    if (function_exists('stobeNormalizeDialogueTargetToken')) {
+        $chunkListener = stobeNormalizeDialogueTargetToken($chunkListener);
+    }
+    if ($chunkListener === '') {
+        $chunkListener = $fallbackListener;
+    }
+    if ($chunkListener !== '' && function_exists('stobeNormalizeDialogueTargetToken')) {
+        $chunkListener = stobeNormalizeDialogueTargetToken($chunkListener);
+    }
+
+    $chatEventData = $actor . ': ' . $message;
+    if ($chunkListener !== '') {
+        $chatEventData .= ' (talking to: ' . $chunkListener . ')';
+    }
+    $inserted = storeEvent(
+        $chunkEventType,
+        time(),
+        $gamets,
+        $chatEventData,
+        'pending',
+        $utteranceId,
+        'pending',
+        false
+    );
+    $persistedRowId = intval($inserted['rowid'] ?? 0);
+    $persistedLocalTs = intval($inserted['localts'] ?? 0);
+
+    return [
+        'rowid' => $persistedRowId,
+        'localts' => $persistedLocalTs,
+        'utterance_id' => $utteranceId,
+        'event_type' => $chunkEventType,
+        'listener' => $chunkListener,
+    ];
+}
+
+function stobePersistGeneratedSpeechChunks(
+    array $chunks,
+    int $gamets,
+    string $defaultEventType = '',
+    string $defaultListener = ''
+): int {
+    $stored = 0;
+    foreach ($chunks as $chunk) {
+        if (!is_array($chunk)) {
+            continue;
+        }
+        if (is_array(stobePersistGeneratedSpeechChunk($chunk, $gamets, $defaultEventType, $defaultListener))) {
+            $stored++;
+        }
+    }
+
+    return $stored;
+}
+
+function stobeFetchEventlogRowsByUtteranceId(
+    $db,
+    string $utteranceId,
+    int $waitForRowsMs = 0,
+    int $pollIntervalMs = 100
+): array {
+    $safeUtteranceId = trim($utteranceId);
+    if ($safeUtteranceId === '' || !$db) {
+        return [];
+    }
+
+    $remainingMs = max(0, intval($waitForRowsMs));
+    $sleepMs = max(25, intval($pollIntervalMs));
+    $attempt = 0;
+    $maxWaitMs = $remainingMs;
+
+    while (true) {
+        $rows = $db->fetchAll(
+            "SELECT rowid, type, ts, gamets, data, people, location, localts, delivery_state
+             FROM eventlog
+             WHERE utterance_id = $1
+             ORDER BY rowid ASC",
+            [$safeUtteranceId]
+        );
+        if (is_array($rows) && count($rows) > 0) {
+            return $rows;
+        }
+        if ($remainingMs <= 0) {
+            stobeLogWarn('Speech delivery lookup missed utterance row', [
+                'utterance_id' => $safeUtteranceId,
+                'attempts' => $attempt,
+                'waited_ms' => max(0, $maxWaitMs - $remainingMs),
+            ]);
+            return [];
+        }
+
+        usleep($sleepMs * 1000);
+        $remainingMs -= $sleepMs;
+        $attempt++;
+    }
+}
+
+function stobeApplySpeechDeliveryUpdates(array $updates): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeEnsureEventlogDeliveryColumns()) {
+        return [
+            'applied' => 0,
+            'spoken' => 0,
+            'cancelled' => 0,
+            'memory_rows' => 0,
+        ];
+    }
+
+    $normalizedUpdates = [];
+    foreach ($updates as $update) {
+        if (!is_array($update)) {
+            continue;
+        }
+        $utteranceId = trim(strval($update['utterance_id'] ?? ''));
+        $deliveryState = strtolower(trim(strval($update['delivery_state'] ?? '')));
+        if ($utteranceId === '' || !in_array($deliveryState, ['spoken', 'cancelled'], true)) {
+            continue;
+        }
+        if (!isset($normalizedUpdates[$utteranceId]) || $deliveryState === 'spoken') {
+            $normalizedUpdates[$utteranceId] = $deliveryState;
+        }
+    }
+
+    $result = [
+        'applied' => 0,
+        'spoken' => 0,
+        'cancelled' => 0,
+        'memory_rows' => 0,
+    ];
+
+    foreach ($normalizedUpdates as $utteranceId => $deliveryState) {
+        $rows = stobeFetchEventlogRowsByUtteranceId($db, $utteranceId, 5000, 100);
+        if (!is_array($rows) || count($rows) === 0) {
+            stobeLogWarn('Speech delivery update had no matching utterance rows', [
+                'utterance_id' => $utteranceId,
+                'requested_state' => $deliveryState,
+            ]);
+            continue;
+        }
+
+        if ($deliveryState === 'spoken') {
+            $db->exec(
+                "UPDATE eventlog
+                 SET delivery_state = 'spoken',
+                     sess = CASE
+                         WHEN LOWER(COALESCE(sess, '')) IN ('', 'pending', 'cancelled') THEN 'complete'
+                         ELSE sess
+                     END
+                 WHERE utterance_id = $1
+                   AND LOWER(COALESCE(delivery_state, 'pending')) <> 'spoken'",
+                [$utteranceId]
+            );
+
+            foreach ($rows as $row) {
+                $previousState = strtolower(trim(strval($row['delivery_state'] ?? 'pending')));
+                if ($previousState === 'spoken') {
+                    continue;
+                }
+                $result['spoken']++;
+                $result['applied']++;
+                if (function_exists('stobeMemoryTrackEvent')) {
+                    $memoryStored = stobeMemoryTrackEvent(
+                        strval($row['type'] ?? ''),
+                        intval($row['ts'] ?? 0),
+                        intval($row['gamets'] ?? 0),
+                        strval($row['data'] ?? ''),
+                        strval($row['people'] ?? ''),
+                        strval($row['location'] ?? ''),
+                        intval($row['localts'] ?? 0)
+                    );
+                    $result['memory_rows'] += max(0, $memoryStored);
+                }
+            }
+            continue;
+        }
+
+        $db->exec(
+            "UPDATE eventlog
+             SET delivery_state = 'cancelled',
+                 sess = 'cancelled'
+             WHERE utterance_id = $1
+               AND LOWER(COALESCE(delivery_state, 'pending')) = 'pending'",
+            [$utteranceId]
+        );
+
+        foreach ($rows as $row) {
+            $previousState = strtolower(trim(strval($row['delivery_state'] ?? 'pending')));
+            if ($previousState !== 'pending' && $previousState !== '') {
+                continue;
+            }
+            $result['cancelled']++;
+            $result['applied']++;
+        }
+    }
+
+    return $result;
 }
 
 function stobeNormalizeDialogueForMirrorDedupe(string $rawMessage): string {
@@ -3051,7 +3425,9 @@ function stobeLoadRecentDialogueTargetForSpeaker(string $speakerName): string {
     }
 
     $targetExtract = extractDialogueTarget($data);
-    $target = normalizeParticipantNameToken(strval($targetExtract['target'] ?? ''));
+    $target = function_exists('stobeNormalizeDialogueTargetToken')
+        ? stobeNormalizeDialogueTargetToken(strval($targetExtract['target'] ?? ''))
+        : normalizeParticipantNameToken(strval($targetExtract['target'] ?? ''));
     if ($target === '' || strcasecmp($target, $speaker) === 0) {
         return '';
     }
@@ -3148,7 +3524,9 @@ function stobeSanitizeEventDataForLog(string $normalizedType, string $rawData): 
         if ($message === '') {
             $message = stobeSanitizeDialogueMessageForLog($clean);
         }
-        $target = normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
+        $target = function_exists('stobeNormalizeDialogueTargetToken')
+            ? stobeNormalizeDialogueTargetToken(strval($parsed['target'] ?? ''))
+            : normalizeParticipantNameToken(strval($parsed['target'] ?? ''));
         if ($target === '' && $speaker !== '') {
             $target = stobeInferDialogueTargetForLog($speaker);
         }
@@ -5605,7 +5983,7 @@ function batchIdentityRenameDecisions(array $identities): array {
                 'attempted_candidates' => $uniqueCandidates,
                 'persist_result' => $renamePersistResult,
             ], 'WARN');
-            $results[] = ['serial' => $serial, 'status' => 'ok'];
+            $results[] = ['serial' => $serial, 'status' => 'retry'];
             continue;
         }
         if (count($context) > 0) {
@@ -5858,9 +6236,11 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
         $limit = 50;
     }
     $excludeTypes = "'prechat','setconf','status_msg','user_input'";
+    $deliveryVisibilitySql = stobeBuildEventlogDeliveryVisibilitySql('eventlog');
 
     $query = "SELECT * FROM eventlog
-              WHERE type NOT IN ({$excludeTypes})";
+              WHERE type NOT IN ({$excludeTypes})
+                AND {$deliveryVisibilitySql}";
     $params = [];
 
     if ($actorFilter) {
@@ -8962,34 +9342,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $hungerValue = strval(intval($hungerData['current'])) . '/' . strval(intval($hungerData['max']));
     $statsPayload = $snapshot['stats'] ?? [];
     $statsCount = is_array($statsPayload) ? count($statsPayload) : 0;
-
-    if ($isBracketSnapshot) {
-        stobeLogImport('Bracket snapshot ingest begin', [
-            'incoming_name' => $incomingName,
-            'resolved_name' => $name,
-            'storage_id' => $storageId,
-            'matched_by' => $matchedBy,
-            'gamets' => max(0, $gamets),
-            'race' => $race,
-            'faction' => $faction,
-            'gender' => $gender,
-            'stats_count' => $statsCount,
-            'has_medical_payload' => $hasMedicalPayload,
-            'has_medical' => $hasMedical,
-            'snapshot_keys' => array_keys($snapshot),
-            'row_before' => is_array($rowBefore)
-                ? [
-                    'race' => trim(strval($rowBefore['race'] ?? '')),
-                    'faction' => trim(strval($rowBefore['faction'] ?? '')),
-                    'gender' => trim(strval($rowBefore['gender'] ?? '')),
-                    'equipment_len' => strlen(trim(strval($rowBefore['equipment'] ?? ''))),
-                    'skills_len' => strlen(trim(strval($rowBefore['skills'] ?? ''))),
-                    'storage_id' => trim(strval($rowBefore['storage_id'] ?? '')),
-                    'gamets_last_updated' => intval($rowBefore['gamets_last_updated'] ?? 0),
-                ]
-                : null,
-        ], 'DEBUG');
-    }
 
     $missingFields = [];
     if ($faction === '') {
