@@ -91,6 +91,7 @@ function npc_bios_read_uploaded_csv(string $tmpPath): array
 
 $db = $GLOBALS["db"];
 $validTypes = ["personality", "backstory", "speechstyle", "occupation", "appearance", "goals"];
+$maxBrowseRows = 5000;
 $isEmbed = isset($_GET["embed"]) && strval($_GET["embed"]) === "1";
 
 $activeTab = strtolower(npc_bios_trim($_GET["tab"] ?? "bio_random"));
@@ -602,7 +603,7 @@ $randomRows = $db->fetchAll(
      FROM combined_bio_random v
      $randomWhere
      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(COALESCE(v.type, '')), v.id DESC
-     LIMIT 1000",
+     LIMIT " . intval($maxBrowseRows),
     $randomParams
 );
 
@@ -633,7 +634,7 @@ $uniqueRows = $db->fetchAll(
      FROM combined_bio_unique v
      $uniqueWhere
      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(COALESCE(v.type, '')), v.id DESC
-     LIMIT 1000",
+     LIMIT " . intval($maxBrowseRows),
     $uniqueParams
 );
 
@@ -661,7 +662,7 @@ $tokenRows = $db->fetchAll(
      FROM combined_rename_token_global v
      $tokenWhere
      ORDER BY LOWER(COALESCE(v.token, '')), v.id DESC
-     LIMIT 1000",
+     LIMIT " . intval($maxBrowseRows),
     $tokenParams
 );
 
