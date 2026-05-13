@@ -1080,6 +1080,28 @@ PROMPT;
                 true
             );
         });
+        $applyPatch('bio_random_speechstyle', 202605130001, static function () use ($runSqlSeedFile): void {
+            $speechstyleSeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'speechstyle_bio_random_upsert.sql';
+            $runSqlSeedFile(
+                $speechstyleSeed,
+                'bio_random speechstyle seed file missing',
+                'bio_random speechstyle seed file empty',
+                'bio_random speechstyle seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
+        $applyPatch('bio_random_faction_goals', 202605130001, static function () use ($runSqlSeedFile): void {
+            $factionGoalsSeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'faction_bio_goals_upsert.sql';
+            $runSqlSeedFile(
+                $factionGoalsSeed,
+                'bio_random faction goals seed file missing',
+                'bio_random faction goals seed file empty',
+                'bio_random faction goals seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
 
         $applyPatch('bio_unique', 202603130208, static function () use ($db, $runBioUniqueSeedBundle): void {
             $runBioUniqueSeedBundle();
