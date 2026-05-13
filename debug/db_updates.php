@@ -1052,19 +1052,30 @@ PROMPT;
             $runSqlSeedFile($seed, 'rename_token_global category characters seed file missing', 'rename_token_global category characters seed file empty', 'rename_token_global category characters seed file normalized to empty SQL');
         });
 
-        $applyPatch('bio_random', 202603130207, static function () use ($runSqlSeedFile): void {
+        $applyPatch('bio_random', 202605130002, static function () use ($runSqlSeedFile): void {
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_bio_random_upsert.sql';
             $runSqlSeedFile($seed, 'bio_random seed file missing', 'bio_random seed file empty', 'bio_random seed file normalized to empty SQL', true, false);
             $occ = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_rename_token_bio_random_occupation_upsert.sql';
             $runSqlSeedFile($occ, 'bio_random rename-token occupation seed file missing', 'bio_random rename-token occupation seed file empty', 'bio_random rename-token occupation seed normalized to empty SQL', true, true);
         });
-        $applyPatch('bio_random_faction_backstory', 202605120002, static function () use ($runSqlSeedFile): void {
+        $applyPatch('bio_random_faction_backstory', 202605130003, static function () use ($runSqlSeedFile): void {
             $factionBackstory = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'faction_bio_backstory_upsert.sql';
             $runSqlSeedFile(
                 $factionBackstory,
                 'bio_random faction backstory seed file missing',
                 'bio_random faction backstory seed file empty',
                 'bio_random faction backstory seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
+        $applyPatch('bio_random_personality', 202605130002, static function () use ($runSqlSeedFile): void {
+            $personalitySeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'personality_bio_random_upsert.sql';
+            $runSqlSeedFile(
+                $personalitySeed,
+                'bio_random personality seed file missing',
+                'bio_random personality seed file empty',
+                'bio_random personality seed normalized to empty SQL',
                 true,
                 true
             );
