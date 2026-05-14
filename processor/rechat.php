@@ -21,11 +21,6 @@ $normalizeDialogueSignature = static function (string $rawEventData): string {
 $normalizedEventData = trim($eventData);
 $normalizedEventData = preg_replace('/(\(talking to:\s*[^\)]+\))\s*\d+\s*$/i', '$1', $normalizedEventData) ?? $normalizedEventData;
 if ($normalizedEventData !== trim($eventData)) {
-    stobeLogDebug('Rechat incoming payload sanitized', [
-        'event_type' => $eventType,
-        'before' => substr($eventData, 0, 180),
-        'after' => substr($normalizedEventData, 0, 180),
-    ]);
     $eventData = $normalizedEventData;
 }
 
@@ -33,12 +28,6 @@ $storeIncomingEvent = $normalizedEventType !== 'rechat';
 if (!$storeIncomingEvent) {
     // `rechat` requests are trigger echoes for the *previous* spoken line.
     // Persisting them causes duplicate chat/rechat rows in eventlog.
-    $currentSignature = $normalizeDialogueSignature($eventData);
-    stobeLogDebug('Rechat incoming trigger skipped (no eventlog write)', [
-        'event_type' => $eventType,
-        'gamets' => intval($gamets),
-        'signature' => substr($currentSignature, 0, 180),
-    ]);
 } else {
     storeEvent($eventType, $timestamp, $gamets, $eventData);
 }
@@ -430,49 +419,12 @@ if ($forcedResponder !== '') {
     }
 }
 
-$candidateNames = [];
-$seen = [];
 $resolvedInitiatorName = $resolveParticipantName(
     $participants,
     $initiatorName,
     $initiatorStorageId
 );
-$pushCandidateName = static function (string $rawName) use (&$candidateNames, &$seen, $previousSpeaker, $playerName): void {
-    $name = normalizeParticipantNameToken($rawName);
-    if ($name === '') {
-        return;
-    }
-    if (stobeIsNarratorName($name)) {
-        return;
-    }
-    if (strcasecmp($name, $previousSpeaker) === 0) {
-        return;
-    }
-    if ($playerName !== '' && strcasecmp($name, $playerName) === 0) {
-        return;
-    }
-    $key = strtolower($name);
-    if (isset($seen[$key])) {
-        return;
-    }
-    $seen[$key] = true;
-    $candidateNames[] = $name;
-};
-
-if (count($participants) > 1) {
-    shuffle($participants);
-}
-foreach ($participants as $participant) {
-    if (is_array($participant)) {
-        $pushCandidateName(strval($participant['name'] ?? ''));
-    } elseif (is_string($participant)) {
-        $parsedParticipant = extractParticipantIdentityToken($participant);
-        $pushCandidateName(strval($parsedParticipant['name'] ?? ''));
-    }
-}
-$pushCandidateName($incomingProfile);
-$pushCandidateName($resolvedRechatTargetName);
-$pushCandidateName($forcedResponder);
+$audienceNames = stobeNormalizeRechatActorList(array_values($conversationScopeNames));
 
 $speakerNpcData = getNpcData($previousSpeaker);
 $speakerEnvironment = $extractEnvironment($speakerNpcData, $previousSpeaker);
@@ -499,6 +451,21 @@ if (count($chainParticipants) > 1) {
         return strcasecmp($a, $b);
     });
 }
+$rechatModeSeed = implode('|', [
+    'initiator=' . strtolower($resolvedInitiatorName),
+    'initiator_sid=' . strtolower($initiatorStorageId),
+    'participants=' . strtolower(implode('|', $chainParticipants)),
+    'request_mode=' . strtolower($requestMode),
+]);
+$configuredRechatMode = stobeGetConfiguredRechatMode();
+$effectiveRechatMode = stobeResolveEffectiveRechatMode(
+    $configuredRechatMode,
+    array_merge(
+        [$previousSpeaker, $previousTarget, $resolvedRechatTargetName, $incomingProfile, $resolvedInitiatorName],
+        $audienceNames
+    ),
+    $rechatModeSeed
+);
 $chainSeed = implode('|', [
     'initiator=' . strtolower($resolvedInitiatorName),
     'initiator_sid=' . strtolower($initiatorStorageId),
@@ -562,61 +529,62 @@ if (!$forcedReactionActive && $requestedDepth > 0 && $requestedDepth > $effectiv
     return;
 }
 $isFinalRechatTurn = ($requestedDepth > 0 && $requestedDepth >= $effectiveRechatMaxDepth);
-stobeLogDebug('Rechat depth budget resolved', [
-    'previous_speaker' => $previousSpeaker,
-    'requested_depth' => $requestedDepth,
-    'max_rounds' => $maxRoundsForDepth,
-    'effective_max_depth' => $effectiveRechatMaxDepth,
-    'is_final_turn' => $isFinalRechatTurn,
-    'rechat_probability' => $rechatProbability,
-]);
 
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/llm_dispatcher.php');
 
-$responderCandidates = [];
-$responderSeen = [];
-$pushResponderCandidate = static function (string $rawName, string $source) use (
-    &$responderCandidates,
-    &$responderSeen,
+$responderCandidates = stobeBuildRechatResponderCandidates(
+    $effectiveRechatMode,
     $previousSpeaker,
+    $previousTarget,
+    $resolvedRechatTargetName,
+    $incomingProfile,
+    $audienceNames,
     $playerName,
     $speakerRechatEnabled,
-    $resolvedInitiatorName
-): void {
-    $name = normalizeParticipantNameToken($rawName);
-    if ($name === '') {
-        return;
-    }
-    if (stobeIsNarratorName($name)) {
-        return;
-    }
-    if (strcasecmp($name, $previousSpeaker) === 0) {
-        return;
-    }
-    if ($playerName !== '' && strcasecmp($name, $playerName) === 0) {
-        return;
-    }
-    if (!$speakerRechatEnabled && $resolvedInitiatorName !== '' && strcasecmp($name, $resolvedInitiatorName) === 0) {
-        return;
-    }
-    $key = strtolower($name);
-    if (isset($responderSeen[$key])) {
-        return;
-    }
-    $responderSeen[$key] = true;
-    $responderCandidates[] = [
-        'name' => $name,
-        'source' => $source,
-    ];
-};
+    $resolvedInitiatorName,
+    $forcedReactionActive ? $forcedResponder : ''
+);
+if ($effectiveRechatMode === 'group') {
+    $appendDirectFallbackCandidate = static function (string $rawName, string $source) use (
+        &$responderCandidates,
+        $previousSpeaker,
+        $playerName,
+        $speakerRechatEnabled,
+        $resolvedInitiatorName
+    ): void {
+        $candidateName = normalizeParticipantNameToken($rawName);
+        if ($candidateName === '' || stobeIsNarratorName($candidateName)) {
+            return;
+        }
+        if ($previousSpeaker !== '' && strcasecmp($candidateName, $previousSpeaker) === 0) {
+            return;
+        }
+        if ($playerName !== '' && strcasecmp($candidateName, $playerName) === 0) {
+            return;
+        }
+        if (
+            !$speakerRechatEnabled
+            && $resolvedInitiatorName !== ''
+            && strcasecmp($candidateName, $resolvedInitiatorName) === 0
+        ) {
+            return;
+        }
+        foreach ($responderCandidates as $existingCandidate) {
+            $existingName = normalizeParticipantNameToken(strval($existingCandidate['name'] ?? ''));
+            if ($existingName !== '' && strcasecmp($existingName, $candidateName) === 0) {
+                return;
+            }
+        }
+        $responderCandidates[] = [
+            'name' => $candidateName,
+            'source' => $source,
+        ];
+    };
 
-if ($forcedReactionActive) {
-    $pushResponderCandidate($forcedResponder, 'forced_limb_loss');
-}
-$pushResponderCandidate($incomingProfile, 'incoming_profile');
-if ($resolvedRechatTargetName !== '' && strcasecmp($resolvedRechatTargetName, $incomingProfile) !== 0) {
-    $pushResponderCandidate($resolvedRechatTargetName, 'plugin_rechat_target');
+    $appendDirectFallbackCandidate($resolvedRechatTargetName, 'group_direct_rechat_target');
+    $appendDirectFallbackCandidate($previousTarget, 'group_direct_previous_target');
+    $appendDirectFallbackCandidate($incomingProfile, 'group_direct_incoming_profile');
 }
 
 $respondingNpc = '';
@@ -626,6 +594,7 @@ $skipCounts = [
     'missing_data' => 0,
     'incapacitated' => 0,
     'ineligible' => 0,
+    'environment_mismatch' => 0,
 ];
 $skipSamples = [];
 $selectionOrder = [];
@@ -684,6 +653,16 @@ foreach ($responderCandidates as $candidate) {
         continue;
     }
 
+    $candidateEnvironment = $extractEnvironment($candidateData, $candidateName);
+    $environmentCompatibility = $isEnvironmentCompatible($speakerEnvironment, $candidateEnvironment);
+    if (!$isForcedLimbCandidate && !boolval($environmentCompatibility['ok'] ?? false)) {
+        $skipCounts['environment_mismatch']++;
+        if (count($skipSamples) < 6) {
+            $skipSamples[] = $candidateName . ':environment_' . strval($environmentCompatibility['reason'] ?? 'mismatch');
+        }
+        continue;
+    }
+
     $respondingNpc = $candidateName;
     $npcData = $candidateData;
     $selectionSource = $candidateSource;
@@ -694,12 +673,15 @@ if ($respondingNpc === '' || !$npcData) {
     if ($forcedReactionActive) {
         stobeConsumeLimbLossRechatReaction(intval($forcedLimbLossReaction['rowid'] ?? 0));
     }
-    stobeLogInfo('Rechat skipped: no valid responder after profile-target selection', [
+    stobeLogInfo('Rechat skipped: no valid responder after mode-based selection', [
         'previous_speaker' => $previousSpeaker,
+        'previous_target' => $previousTarget,
         'requested_profile' => $incomingProfile,
         'requested_rechat_target' => $requestedRechatTargetName,
         'requested_rechat_target_sid' => $requestedRechatTargetStorageId,
         'resolved_rechat_target' => $resolvedRechatTargetName,
+        'configured_rechat_mode' => $configuredRechatMode,
+        'effective_rechat_mode' => $effectiveRechatMode,
         'forced_limb_loss_rowid' => intval($forcedLimbLossReaction['rowid'] ?? 0),
         'forced_limb_loss_victim' => $forcedResponder,
         'selection_order' => $selectionOrder,
@@ -724,19 +706,6 @@ if ($forcedReactionActive && strcasecmp($respondingNpc, $forcedResponder) !== 0)
     ]);
 }
 
-stobeLogInfo('Rechat responder selected', [
-    'responding_npc' => $respondingNpc,
-    'selection_source' => $selectionSource,
-    'requested_profile' => $incomingProfile,
-    'resolved_rechat_target' => $resolvedRechatTargetName,
-    'forced_limb_loss_victim' => $forcedResponder,
-    'selection_order' => $selectionOrder,
-    'skip_counts' => $skipCounts,
-    'skip_samples' => $skipSamples,
-    'previous_speaker' => $previousSpeaker,
-    'speaker_environment' => $speakerEnvironment,
-]);
-
 $contextHistory = getNpcProfileIntegerSetting(
     $npcData,
     ['CONTEXT_HISTORY'],
@@ -756,7 +725,12 @@ foreach (array_reverse($eventHistory) as $row) {
     $historyLines[] = $line;
 }
 $historyText = implode("\n", $historyLines);
-$historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$historyMessages = stobeBuildRecentContextMessages(
+    $eventHistory,
+    intval($gamets),
+    64,
+    $respondingNpc
+);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $respondingNpc,
@@ -791,6 +765,10 @@ if ($isFinalRechatTurn) {
     $rechatSpecialContext['current_depth'] = $requestedDepth;
     $rechatSpecialContext['max_depth'] = $effectiveRechatMaxDepth;
 }
+$strictRechatListener = '';
+if (!$hasLimbLossSpecialContext && stobeIsStrictRechatResponseEnabled()) {
+    $strictRechatListener = $previousSpeaker;
+}
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($npcData) ? $npcData : [])
     . "\n\n"
@@ -801,26 +779,14 @@ $systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($npcData) ? $npc
         $previousMessage,
         $previousTarget,
         intval($gamets),
-        $rechatSpecialContext
+        $rechatSpecialContext,
+        $strictRechatListener
     );
 $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $respondingNpc);
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
-$userLine = trim($previousSpeaker . ': ' . $previousMessage);
-if ($userLine === ':' || $userLine === '') {
-    $userLine = "<rechat_input>\n"
-        . "  <previous_speaker>" . stobePromptXmlEscape($previousSpeaker) . "</previous_speaker>\n"
-        . "  <previous_target>" . stobePromptXmlEscape($previousTarget) . "</previous_target>\n"
-        . "  <instruction>Continue the conversation naturally.</instruction>\n"
-        . "</rechat_input>";
-} else {
-    $userLine = "<rechat_input>\n"
-        . "  <previous_speaker>" . stobePromptXmlEscape($previousSpeaker) . "</previous_speaker>\n"
-        . "  <previous_target>" . stobePromptXmlEscape($previousTarget) . "</previous_target>\n"
-        . "  <previous_message>" . stobePromptXmlEscape($previousMessage) . "</previous_message>\n"
-        . "</rechat_input>";
-}
+$userLine = stobeBuildRechatPromptContent($previousSpeaker, $previousTarget, $previousMessage);
 
 $messages = [
     [
@@ -837,7 +803,14 @@ $messages[] = [
 ];
 $messages[] = [
     'role' => 'user',
-    'content' => stobeBuildTurnGuidanceUserPrompt($respondingNpc, $previousSpeaker, $isFinalRechatTurn),
+    'content' => stobeBuildTurnGuidanceUserPrompt(
+        $respondingNpc,
+        $previousSpeaker,
+        $isFinalRechatTurn,
+        false,
+        '',
+        $strictRechatListener
+    ),
 ];
 $messages[] = [
     'role' => 'user',
@@ -846,7 +819,8 @@ $messages[] = [
         false,
         false,
         npcIsInPlayerFaction($npcData),
-        'rechat'
+        'rechat',
+        $strictRechatListener
     ),
 ];
 
@@ -875,7 +849,15 @@ $streamResult = stobeStreamDialogueViaLlm(
         'npc_name' => $respondingNpc,
         'event_type' => 'rechat',
         'action_config' => $actionConfig,
-        'response_format' => stobeBuildStructuredDialogueResponseFormat($respondingNpc, $npcData, npcIsInPlayerFaction($npcData), 'rechat'),
+        'stream_event_type' => 'rechat',
+        'stream_gamets' => $gamets,
+        'response_format' => stobeBuildStructuredDialogueResponseFormat(
+            $respondingNpc,
+            $npcData,
+            npcIsInPlayerFaction($npcData),
+            'rechat',
+            $strictRechatListener
+        ),
     ]
 );
 
@@ -897,7 +879,7 @@ if ($defaultReplyTarget === '') {
     $defaultReplyTarget = $previousTarget;
 }
 if ($defaultReplyTarget === '') {
-    $defaultReplyTarget = $playerName !== '' ? $playerName : 'Unknown';
+    $defaultReplyTarget = $playerName;
 }
 
 $listenerCandidates = array_values($conversationScopeNames);
@@ -906,28 +888,18 @@ $listenerCandidates[] = $previousTarget;
 $listenerCandidates[] = $playerName;
 $listenerCandidates[] = $resolvedRechatTargetName;
 $listenerCandidates[] = $respondingNpc;
-foreach ($candidateNames as $candidateName) {
+foreach ($audienceNames as $candidateName) {
     $listenerCandidates[] = $candidateName;
 }
-$replyTarget = stobeResolveDialogueListenerTarget($responseListener, $listenerCandidates, $defaultReplyTarget);
+$replyTarget = stobeResolveRechatReplyTarget(
+    $responseListener,
+    $listenerCandidates,
+    $defaultReplyTarget,
+    $strictRechatListener,
+    $respondingNpc
+);
 if ($replyTarget === '') {
     $replyTarget = $defaultReplyTarget;
-}
-if (
-    $replyTarget !== ''
-    && strcasecmp($replyTarget, $respondingNpc) === 0
-    && $defaultReplyTarget !== ''
-    && strcasecmp($defaultReplyTarget, $respondingNpc) !== 0
-) {
-    $replyTarget = $defaultReplyTarget;
-}
-if ($responseListener !== '' && strcasecmp($responseListener, $replyTarget) !== 0) {
-    stobeLogDebug('Rechat listener remapped to known participant', [
-        'responding_npc' => $respondingNpc,
-        'parsed_listener' => $responseListener,
-        'resolved_listener' => $replyTarget,
-        'fallback_listener' => $defaultReplyTarget,
-    ]);
 }
 
 $relationshipEval = stobeEvaluateRelationshipsForTurn(
@@ -944,17 +916,6 @@ $responseText = stobeStripParentheticalDialogueText(
 $responseText = stobeStripParentheticalDialogueText($responseText);
 
 if ($responseText === '' && count($responseActions) === 0) {
-    echo "ok";
-    return;
-}
-
-if ($responseText === '' && count($responseActions) > 0) {
-    $responseTextForStore = '[action issued]';
-} else {
-    $responseTextForStore = $responseText;
-}
-
-if ($responseTextForStore === '') {
     echo "ok";
     return;
 }
@@ -982,10 +943,8 @@ if ($hasLimbLossSpecialContext) {
     }
 }
 
-$chatEventData = $respondingNpc . ': ' . $responseTextForStore . ' (talking to: ' . $replyTarget . ')';
 $responseEventType = 'rechat';
 storeActionEvents($respondingNpc, $responseActions, $gamets, $replyTarget, $responseEventType);
-storeEvent($responseEventType, time(), $gamets, $chatEventData);
 if ($hasLimbLossSpecialContext) {
     stobeConsumeLimbLossRechatReaction(intval($rechatSpecialContext['rowid'] ?? 0));
 }
@@ -994,6 +953,9 @@ stobeLogInfo('Rechat response generated', [
     'responding_npc' => $respondingNpc,
     'previous_speaker' => $previousSpeaker,
     'target' => $replyTarget,
+    'configured_rechat_mode' => $configuredRechatMode,
+    'effective_rechat_mode' => $effectiveRechatMode,
+    'strict_listener' => $strictRechatListener,
     'speaker_environment' => $speakerEnvironment,
     'responder_environment' => $extractEnvironment($npcData, $respondingNpc),
     'response_length' => strlen($responseText),
@@ -1012,8 +974,8 @@ stobeLogInfo('Rechat response generated', [
 
 if ($alreadyStreamed) {
     if (count($responseActions) > 0 && !$actionsStreamedInLlm) {
-        streamResponse($respondingNpc, 'ScriptQueue', '', $npcData, $responseActions);
+        streamResponse($respondingNpc, 'ScriptQueue', '', $npcData, $responseActions, 'rechat', $replyTarget, $gamets);
     }
 } else {
-    streamResponse($respondingNpc, 'ScriptQueue', $responseText, $npcData, $responseActions);
+    streamResponse($respondingNpc, 'ScriptQueue', $responseText, $npcData, $responseActions, 'rechat', $replyTarget, $gamets);
 }

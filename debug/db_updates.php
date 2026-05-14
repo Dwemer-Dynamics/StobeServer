@@ -938,6 +938,60 @@ PROMPT;
                 );
             }
         });
+        $applyPatch('core_tts_connector', 202605101600, static function () use ($db): void {
+            $db->exec("UPDATE core_tts_connector
+                       SET config = jsonb_set(
+                           jsonb_set(
+                               CASE
+                                   WHEN config IS NULL OR config = '[]'::jsonb OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+                                   ELSE config
+                               END,
+                               '{fallback_male}',
+                               to_jsonb(
+                                   CASE
+                                       WHEN COALESCE(BTRIM(config->>'fallback_male'), '') <> '' THEN BTRIM(config->>'fallback_male')
+                                       WHEN COALESCE(BTRIM(config->>'voiceid'), '') <> '' THEN BTRIM(config->>'voiceid')
+                                       ELSE 'male1'
+                                   END
+                               ),
+                               true
+                           ),
+                           '{fallback_female}',
+                           to_jsonb(
+                               CASE
+                                   WHEN COALESCE(BTRIM(config->>'fallback_female'), '') <> '' THEN BTRIM(config->>'fallback_female')
+                                   WHEN COALESCE(BTRIM(config->>'voiceid'), '') <> '' THEN BTRIM(config->>'voiceid')
+                                   ELSE 'female1'
+                               END
+                           ),
+                           true
+                       )
+                       WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'cartesia', 'inworld')");
+        });
+        $applyPatch('core_tts_connector', 202605101610, static function () use ($db): void {
+            $db->exec("UPDATE core_tts_connector
+                       SET config = jsonb_set(
+                           jsonb_set(
+                               CASE
+                                   WHEN config IS NULL OR config = '[]'::jsonb OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+                                   ELSE config
+                               END,
+                               '{fallback_male}',
+                               to_jsonb('male1'::text),
+                               true
+                           ),
+                           '{fallback_female}',
+                           to_jsonb('female1'::text),
+                           true
+                       )
+                       WHERE LOWER(name) IN (
+                           'pocket tts default',
+                           'xtts default',
+                           'chatterbox default',
+                           'cartesia default',
+                           'inworld default'
+                       )");
+        });
         $applyPatch('core_npc_master', 202603130215, static function () use ($db): void {
             $db->exec("
                 UPDATE core_npc_master
@@ -998,11 +1052,55 @@ PROMPT;
             $runSqlSeedFile($seed, 'rename_token_global category characters seed file missing', 'rename_token_global category characters seed file empty', 'rename_token_global category characters seed file normalized to empty SQL');
         });
 
-        $applyPatch('bio_random', 202603130207, static function () use ($runSqlSeedFile): void {
+        $applyPatch('bio_random', 202605130002, static function () use ($runSqlSeedFile): void {
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_bio_random_upsert.sql';
             $runSqlSeedFile($seed, 'bio_random seed file missing', 'bio_random seed file empty', 'bio_random seed file normalized to empty SQL', true, false);
             $occ = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_rename_token_bio_random_occupation_upsert.sql';
             $runSqlSeedFile($occ, 'bio_random rename-token occupation seed file missing', 'bio_random rename-token occupation seed file empty', 'bio_random rename-token occupation seed normalized to empty SQL', true, true);
+        });
+        $applyPatch('bio_random_faction_backstory', 202605130003, static function () use ($runSqlSeedFile): void {
+            $factionBackstory = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'faction_bio_backstory_upsert.sql';
+            $runSqlSeedFile(
+                $factionBackstory,
+                'bio_random faction backstory seed file missing',
+                'bio_random faction backstory seed file empty',
+                'bio_random faction backstory seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
+        $applyPatch('bio_random_personality', 202605130002, static function () use ($runSqlSeedFile): void {
+            $personalitySeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'personality_bio_random_upsert.sql';
+            $runSqlSeedFile(
+                $personalitySeed,
+                'bio_random personality seed file missing',
+                'bio_random personality seed file empty',
+                'bio_random personality seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
+        $applyPatch('bio_random_speechstyle', 202605130001, static function () use ($runSqlSeedFile): void {
+            $speechstyleSeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'speechstyle_bio_random_upsert.sql';
+            $runSqlSeedFile(
+                $speechstyleSeed,
+                'bio_random speechstyle seed file missing',
+                'bio_random speechstyle seed file empty',
+                'bio_random speechstyle seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
+        $applyPatch('bio_random_faction_goals', 202605130001, static function () use ($runSqlSeedFile): void {
+            $factionGoalsSeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'faction_bio_goals_upsert.sql';
+            $runSqlSeedFile(
+                $factionGoalsSeed,
+                'bio_random faction goals seed file missing',
+                'bio_random faction goals seed file empty',
+                'bio_random faction goals seed normalized to empty SQL',
+                true,
+                true
+            );
         });
 
         $applyPatch('bio_unique', 202603130208, static function () use ($db, $runBioUniqueSeedBundle): void {
@@ -1694,6 +1792,58 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  SET description = EXCLUDED.description,
                      updated_at = NOW()"
             );
+        });
+        $applyPatch('general_settings', 202605110001, static function () use ($db): void {
+            $defaultPromptContextOptions = json_encode(stobeGetDefaultPromptContextOptions(), JSON_UNESCAPED_SLASHES);
+            $description = 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.';
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ($1, $2, $3, NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()",
+                ['PROMPT_CONTEXT_OPTIONS', $defaultPromptContextOptions, $description]
+            );
+        });
+        $applyPatch('general_settings', 202605110002, static function () use ($db): void {
+            $definitions = [
+                [
+                    'id' => 'RECHAT_MODE',
+                    'value' => 'random',
+                    'description' => 'Controls how Stobe chooses the next rechat responder: tight, conversational, group, or random.',
+                ],
+                [
+                    'id' => 'ENFORCE_STRICT_RECHAT_RESPONSE',
+                    'value' => 'false',
+                    'description' => 'When true, rechat replies must target the actor who just spoke.',
+                ],
+                [
+                    'id' => 'SPEAKER_RECHAT',
+                    'value' => 'false',
+                    'description' => 'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.',
+                ],
+            ];
+
+            foreach ($definitions as $definition) {
+                $db->exec(
+                    "INSERT INTO general_settings (id, value, description, updated_at)
+                     VALUES ($1, $2, $3, NOW())
+                     ON CONFLICT (id) DO UPDATE
+                     SET description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [
+                        strval($definition['id'] ?? ''),
+                        strval($definition['value'] ?? ''),
+                        strval($definition['description'] ?? ''),
+                    ]
+                );
+            }
+        });
+        $applyPatch('general_settings', 202605110003, static function () use ($db): void {
+            $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS utterance_id TEXT");
+            $db->exec("ALTER TABLE eventlog ADD COLUMN IF NOT EXISTS delivery_state TEXT");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_utterance_id ON eventlog (utterance_id)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_delivery_state ON eventlog (delivery_state)");
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

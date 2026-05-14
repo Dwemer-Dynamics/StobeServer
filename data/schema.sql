@@ -19,12 +19,16 @@ CREATE TABLE IF NOT EXISTS eventlog (
     ts BIGINT,
     people TEXT,
     location TEXT,
-    geo JSONB DEFAULT '{}'::jsonb
+    geo JSONB DEFAULT '{}'::jsonb,
+    utterance_id TEXT,
+    delivery_state TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_eventlog_type ON eventlog (type);
 CREATE INDEX IF NOT EXISTS idx_eventlog_gamets ON eventlog (gamets DESC, ts DESC, rowid DESC);
 CREATE INDEX IF NOT EXISTS idx_eventlog_localts ON eventlog (localts DESC);
+CREATE INDEX IF NOT EXISTS idx_eventlog_utterance_id ON eventlog (utterance_id);
+CREATE INDEX IF NOT EXISTS idx_eventlog_delivery_state ON eventlog (delivery_state);
 CREATE TABLE IF NOT EXISTS diarylog (
     rowid BIGSERIAL PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -2225,6 +2229,10 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('AUTO_LOCK_PROFILE',    'true',         'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.'),
 ('PLAYER_FACTION_CUSTOM_NAME', '',       'Optional custom display name for the player faction in prompts.'),
 ('PLAYER_FACTION_PROMPT', '',            'Optional player-faction instruction block injected into prompts.'),
+('RECHAT_MODE', 'random',                'Controls how Stobe chooses the next rechat responder: tight, conversational, group, or random.'),
+('ENFORCE_STRICT_RECHAT_RESPONSE', 'false', 'When true, rechat replies must target the actor who just spoke.'),
+('SPEAKER_RECHAT', 'false',              'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.'),
+('PROMPT_CONTEXT_OPTIONS', '{"enabled_sections":["world","knowledge","player_faction_funds","available_actions_list","nearby_actors","nearby_player_allies","nearby_items","points_of_interest","combat_priority","nearby_context_json","detailed_context_json"],"enabled_character_subsections":["basic_summary","personality","appearance","relationships","occupation","bounty","skills","speech_style","goals","middle_term_memory"],"enabled_state_subsections":["current_condition","activity_state","equipment","personal_inventory","merchant_inventory"],"enabled_knowledge_subsections":["world_knowledge","player_faction_prompt"]}', 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
 
@@ -2416,7 +2424,7 @@ INSERT INTO core_tts_connector (
     'pocket_tts',
     'http://127.0.0.1:8020',
     TRUE,
-    '{"language":"en","voiceid":"malenord","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'
+    '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'
 )
 ON CONFLICT (name) DO UPDATE SET
     connector_type = EXCLUDED.connector_type,
@@ -2425,11 +2433,40 @@ ON CONFLICT (name) DO UPDATE SET
     config = EXCLUDED.config;
 
 INSERT INTO core_tts_connector (name, connector_type, base_url, is_default, config) VALUES
-('XTTS Default', 'xtts', 'http://127.0.0.1:8020', FALSE, '{"language":"en","voiceid":"malenord","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
-('Chatterbox Default', 'chatterbox', 'http://127.0.0.1:8020', FALSE, '{"language":"en","voiceid":"malenord","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
-('Cartesia Default', 'cartesia', '', FALSE, '{"language":"en","voiceid":"malenord","model_id":"sonic-3"}'),
-('Inworld Default', 'inworld', '', FALSE, '{"language":"EN_US","voiceid":"malenord","model_id":"inworld-tts-1","workspace":""}')
+('XTTS Default', 'xtts', 'http://127.0.0.1:8020', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
+('Chatterbox Default', 'chatterbox', 'http://127.0.0.1:8020', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
+('Cartesia Default', 'cartesia', '', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","model_id":"sonic-3"}'),
+('Inworld Default', 'inworld', '', FALSE, '{"language":"EN_US","fallback_male":"male1","fallback_female":"female1","model_id":"inworld-tts-1","workspace":""}')
 ON CONFLICT (name) DO NOTHING;
+
+UPDATE core_tts_connector
+SET config = jsonb_set(
+    jsonb_set(
+        CASE
+            WHEN config IS NULL OR config = '[]'::jsonb OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+            ELSE config
+        END,
+        '{fallback_male}',
+        to_jsonb(
+            CASE
+                WHEN COALESCE(BTRIM(config->>'fallback_male'), '') <> '' THEN BTRIM(config->>'fallback_male')
+                WHEN COALESCE(BTRIM(config->>'voiceid'), '') <> '' THEN BTRIM(config->>'voiceid')
+                ELSE 'male1'
+            END
+        ),
+        true
+    ),
+    '{fallback_female}',
+    to_jsonb(
+        CASE
+            WHEN COALESCE(BTRIM(config->>'fallback_female'), '') <> '' THEN BTRIM(config->>'fallback_female')
+            WHEN COALESCE(BTRIM(config->>'voiceid'), '') <> '' THEN BTRIM(config->>'voiceid')
+            ELSE 'female1'
+        END
+    ),
+    true
+)
+WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'cartesia', 'inworld');
 
 INSERT INTO core_profiles (
     label,

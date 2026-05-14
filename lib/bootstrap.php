@@ -18,6 +18,43 @@ if (!isset($GLOBALS['DBDRIVER']) || !is_string($GLOBALS['DBDRIVER']) || $GLOBALS
     $GLOBALS['DBDRIVER'] = 'postgresql';
 }
 
+if (!function_exists('stobeBootstrapIsRunningTestScript')) {
+    function stobeBootstrapIsRunningTestScript(): bool
+    {
+        $script = str_replace('\\', '/', strval($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        return strpos($script, '/tests/') !== false;
+    }
+}
+
+if (!function_exists('stobeBootstrapAssertSafeTestDatabase')) {
+    function stobeBootstrapAssertSafeTestDatabase(): void
+    {
+        if (!stobeBootstrapIsRunningTestScript()) {
+            return;
+        }
+
+        $dbName = trim(strval(getenv('STOBE_DB_NAME') ?: 'stobe'));
+        $allowLive = strtolower(trim(strval(getenv('STOBE_ALLOW_LIVE_TEST_DB') ?: '')));
+        $explicitlyAllowed = in_array($allowLive, ['1', 'true', 'yes', 'on'], true);
+        $looksLikeTestDb = preg_match('/(?:^|[_-])(test|tests|ci)(?:$|[_-])/i', $dbName) === 1
+            || preg_match('/(?:test|tests|ci)$/i', $dbName) === 1;
+
+        if ($explicitlyAllowed || $looksLikeTestDb) {
+            return;
+        }
+
+        $message = 'Refusing to run StobeServer tests against database "' . $dbName . '". '
+            . 'Set STOBE_DB_NAME to a dedicated test database such as stobe_test, '
+            . 'or set STOBE_ALLOW_LIVE_TEST_DB=1 if you intentionally want to risk that database.';
+        if (PHP_SAPI === 'cli') {
+            fwrite(STDERR, $message . PHP_EOL);
+        }
+        throw new RuntimeException($message);
+    }
+}
+
+stobeBootstrapAssertSafeTestDatabase();
+
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'postgresql.class.php');
 if (!isset($GLOBALS['db']) || !($GLOBALS['db'] instanceof sql)) {
     $GLOBALS['db'] = new sql();

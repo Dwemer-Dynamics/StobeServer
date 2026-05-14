@@ -241,14 +241,18 @@ $eventHistory = $narratorMode
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $mode, $speaker);
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
-    $historyType = $row['type'] ?? 'event';
-    $historyData = $row['data'] ?? '';
-    if ($historyData !== '') {
-        $historyLines[] = '[' . $historyType . '] ' . $historyData;
+    $line = stobeFormatEventHistoryLine(is_array($row) ? $row : [], false);
+    if ($line !== '') {
+        $historyLines[] = $line;
     }
 }
 $historyText = implode("\n", $historyLines);
-$historyMessages = stobeBuildRecentContextMessages($eventHistory, intval($gamets));
+$historyMessages = stobeBuildRecentContextMessages(
+    $eventHistory,
+    intval($gamets),
+    64,
+    $narratorMode ? '' : $targetNpc
+);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $targetNpc,
@@ -346,12 +350,7 @@ if ($deliveryStyleInstruction !== '') {
         . "  <instruction>" . stobePromptXmlEscape($deliveryStyleInstruction) . "</instruction>\n"
         . "</speech_mode>";
 }
-$userMessage = "<player_input>\n"
-    . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
-    . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
-    . "  <mode>" . stobePromptXmlEscape($mode) . "</mode>\n"
-    . "  <text>" . stobePromptXmlEscape($message) . "</text>\n"
-    . "</player_input>";
+$userMessage = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
 if ($mode === 'cheat') {
     $priorityInstruction = "PRIORITY INSTRUCTION - {$targetNpc} must do this, even if it breaks character roleplay: {$message}";
     $systemPrompt .= "\n\n<cheatmode>\n"
@@ -363,7 +362,7 @@ if ($mode === 'cheat') {
         . "  <request>" . stobePromptXmlEscape($message) . "</request>\n"
         . "</cheat_request>";
 }
-if (!empty($nearby)) {
+if (!empty($nearby) && stobePromptContextOptionEnabled('enabled_sections', 'nearby_context_json')) {
     $nearbyJson = json_encode($nearby, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (is_string($nearbyJson) && $nearbyJson !== '') {
         $systemPrompt .= "\n\n<nearby_context_json>"
@@ -371,7 +370,7 @@ if (!empty($nearby)) {
             . "</nearby_context_json>";
     }
 }
-if (!empty($context)) {
+if (!empty($context) && stobePromptContextOptionEnabled('enabled_sections', 'detailed_context_json')) {
     $contextJson = json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (is_string($contextJson) && $contextJson !== '') {
         $systemPrompt .= "\n\n<detailed_context_json>"

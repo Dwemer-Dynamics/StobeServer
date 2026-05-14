@@ -12,7 +12,8 @@
  * Response body:
  * [
  *   {"serial": 123, "status": "rename", "new_name": "John [Starving Bandit]"},
- *   {"serial": 124, "status": "ok"}
+ *   {"serial": 124, "status": "ok"},
+ *   {"serial": 125, "status": "retry"}
  * ]
  */
 
