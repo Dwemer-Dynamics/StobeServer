@@ -43,7 +43,14 @@ function rechatSelectionDeleteNpc(string $name): void
     if ($safeName === '') {
         return;
     }
-    $GLOBALS['db']->delete('core_npc', ['name' => $safeName]);
+    $row = $GLOBALS['db']->fetchOne(
+        "SELECT id FROM core_npc WHERE LOWER(name) = LOWER($1) LIMIT 1",
+        [$safeName]
+    );
+    $npcId = intval($row['id'] ?? 0);
+    if ($npcId > 0) {
+        deleteNpc($npcId);
+    }
 }
 
 function rechatSelectionForceNoApiKey(): void
