@@ -182,10 +182,7 @@ if ($responseText === '') {
     $responseText = 'Welcome back. The wastes have not slowed down while you were away.';
 }
 
-$chatEventData = $narratorName . ': ' . $responseText . ' (talking to: ' . $speaker . ')';
-storeEvent('chat', time(), intval($gamets), $chatEventData);
-
-streamResponse($narratorName, 'ScriptQueue', $responseText, $narratorData, []);
+streamResponse($narratorName, 'ScriptQueue', $responseText, $narratorData, [], 'chat', $speaker, intval($gamets));
 
 $GLOBALS['CACHE_PEOPLE'] = $priorPeopleScope;
 echo "ok";

@@ -119,6 +119,12 @@ function stobeFormatEventHistoryLine(array $row, bool $includeGamets = true): st
         return '';
     }
     $historyData = trim(strval($row['data'] ?? ''));
+    if ($historyData !== '' && function_exists('stobeNormalizeContextHistoryDataLine')) {
+        $normalizedHistoryData = stobeNormalizeContextHistoryDataLine($historyData);
+        if ($normalizedHistoryData !== '') {
+            $historyData = $normalizedHistoryData;
+        }
+    }
     if ($historyData === '') {
         return '';
     }

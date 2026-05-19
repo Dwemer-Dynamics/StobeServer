@@ -2246,11 +2246,15 @@ function stobeRegularMemoryFetchContextTokens(string $npcName, int $limit = 5): 
     } elseif ($limit > 20) {
         $limit = 20;
     }
+    $deliveryVisibilitySql = function_exists('stobeBuildEventlogDeliveryVisibilitySql')
+        ? stobeBuildEventlogDeliveryVisibilitySql('eventlog')
+        : '1=1';
 
     $rows = $db->fetchAll(
         "SELECT data
          FROM eventlog
          WHERE type = 'chat'
+           AND {$deliveryVisibilitySql}
            AND LOWER(COALESCE(people, '')) LIKE LOWER($1)
          ORDER BY gamets DESC
          LIMIT " . intval($limit),

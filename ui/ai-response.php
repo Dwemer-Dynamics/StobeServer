@@ -294,6 +294,21 @@ function formatWorldKnowledgeTopics(mixed $rawPromptValue): string
     return implode(", ", $topics);
 }
 
+function formatPromptModalMessageBodyHtml(mixed $content): string
+{
+    if (is_array($content)) {
+        $content = json_encode($content, JSON_PRETTY_PRINT);
+    } else {
+        $content = (string)$content;
+    }
+
+    $escapedContent = htmlspecialchars((string)$content, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8");
+
+    return '<div class="prompt-modal-message-body" style="color: #ce9178; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; margin-top: 5px; background: #1e1e1e; padding: 10px; border-radius: 5px;">'
+        . $escapedContent
+        . "</div>";
+}
+
 function formatPromptModalHtml(mixed $rawPromptValue): string
 {
     $rawPrompt = normalizeAiResponseLogMarkup($rawPromptValue);
@@ -347,13 +362,6 @@ function formatPromptModalHtml(mixed $rawPromptValue): string
 
             $role = $msg["role"];
             $content = $msg["content"];
-            if (is_array($content)) {
-                $content = json_encode($content, JSON_PRETTY_PRINT);
-            } else {
-                $content = (string)$content;
-            }
-
-            $escapedContent = htmlspecialchars($content, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8");
             $roleColor = $role === "system" ? "#4ec9b0" : ($role === "user" ? "#dcdcaa" : "#c586c0");
 
             $formattedPrompt .= '<div style="margin: 10px 0; border-left: 3px solid ' . $roleColor . '; padding-left: 15px;">';
@@ -363,9 +371,7 @@ function formatPromptModalHtml(mixed $rawPromptValue): string
                 . "</span>";
             $formattedPrompt .= '<span style="color: #6b7280; font-size: 12px;">#' . intval($msgIndex) . "</span>";
             $formattedPrompt .= "</div>";
-            $formattedPrompt .= '<div style="color: #ce9178; white-space: pre-wrap; margin-top: 5px; max-height: 400px; overflow-y: auto; background: #1e1e1e; padding: 10px; border-radius: 5px;">'
-                . $escapedContent
-                . "</div>";
+            $formattedPrompt .= formatPromptModalMessageBodyHtml($content);
             $formattedPrompt .= "</div>";
         }
 

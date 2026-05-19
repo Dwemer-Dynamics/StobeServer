@@ -134,12 +134,16 @@ function stobeBuildDiaryHistoryTextForGametsRange(
     $db = $GLOBALS["db"];
     $excludeSql = stobeAutoDiaryEventTypeSqlList(stobeAutoDiaryRelevantEventExcludeTypes());
     $like = '%' . $safeNpcName . '%';
+    $deliveryVisibilitySql = function_exists('stobeBuildEventlogDeliveryVisibilitySql')
+        ? stobeBuildEventlogDeliveryVisibilitySql('eventlog')
+        : '1=1';
     $rows = $db->fetchAll(
         "SELECT *
          FROM eventlog
          WHERE gamets >= $1
            AND gamets <= $2
            AND LOWER(COALESCE(type, '')) NOT IN ($excludeSql)
+           AND {$deliveryVisibilitySql}
            AND (people LIKE $3 OR data LIKE $3)
          ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) ASC, ts ASC, rowid ASC
          LIMIT " . intval($limit),
@@ -177,12 +181,16 @@ function stobeCountRelevantDiaryEventsForGametsRange(string $npcName, int $start
     $db = $GLOBALS["db"];
     $excludeSql = stobeAutoDiaryEventTypeSqlList(stobeAutoDiaryRelevantEventExcludeTypes());
     $like = '%' . $safeNpcName . '%';
+    $deliveryVisibilitySql = function_exists('stobeBuildEventlogDeliveryVisibilitySql')
+        ? stobeBuildEventlogDeliveryVisibilitySql('eventlog')
+        : '1=1';
     $row = $db->fetchOne(
         "SELECT COUNT(*) AS total
          FROM eventlog
          WHERE gamets >= $1
            AND gamets <= $2
            AND LOWER(COALESCE(type, '')) NOT IN ($excludeSql)
+           AND {$deliveryVisibilitySql}
            AND (people LIKE $3 OR data LIKE $3)",
         [$startGamets, $endGamets, $like]
     );

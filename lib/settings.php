@@ -87,6 +87,205 @@ function getSettingFloat(string $id, float $default = 0.0): float {
     return floatval(getSetting($id, strval($default)));
 }
 
+function stobeGetPromptContextOptionCatalog(): array {
+    return [
+        'enabled_sections' => [
+            'world' => [
+                'label' => '<world>',
+                'description' => 'In-game date, location, weather, and floor context.',
+            ],
+            'knowledge' => [
+                'label' => '<knowledge>',
+                'description' => 'Top-level knowledge block for lore hints and optional player-faction prompt entries.',
+            ],
+            'player_faction_funds' => [
+                'label' => '<player_faction_funds>',
+                'description' => 'Shared cats available to player-faction NPCs.',
+            ],
+            'available_actions_list' => [
+                'label' => '<available_actions_list>',
+                'description' => 'Available in-game actions the actor may choose from.',
+            ],
+            'nearby_actors' => [
+                'label' => '<nearby_actors>',
+                'description' => 'Nearby NPCs, creatures, and social scene participants.',
+            ],
+            'nearby_player_allies' => [
+                'label' => '<nearby_player_allies>',
+                'description' => 'Nearby squadmates or allied player-faction members.',
+            ],
+            'nearby_items' => [
+                'label' => '<nearby_items>',
+                'description' => 'Nearby item list with short descriptions.',
+            ],
+            'points_of_interest' => [
+                'label' => '<points_of_interest>',
+                'description' => 'Nearby locations or notable destinations.',
+            ],
+            'combat_priority' => [
+                'label' => '<combat_priority>',
+                'description' => 'Emergency combat-priority guidance when the actor is actively fighting.',
+            ],
+            'nearby_context_json' => [
+                'label' => '<nearby_context_json>',
+                'description' => 'Raw nearby actor payload appended as escaped JSON.',
+            ],
+            'detailed_context_json' => [
+                'label' => '<detailed_context_json>',
+                'description' => 'Raw detailed scene payload appended as escaped JSON.',
+            ],
+        ],
+        'enabled_character_subsections' => [
+            'basic_summary' => [
+                'label' => '<basic_summary>',
+                'description' => 'Core backstory or biography summary.',
+            ],
+            'personality' => [
+                'label' => '<personality>',
+                'description' => 'Behavioral traits and temperament.',
+            ],
+            'appearance' => [
+                'label' => '<appearance>',
+                'description' => 'Physical appearance and identifying features.',
+            ],
+            'relationships' => [
+                'label' => '<relationships>',
+                'description' => 'Named relationship map and social ties.',
+            ],
+            'occupation' => [
+                'label' => '<occupation>',
+                'description' => 'Job, role, or social function.',
+            ],
+            'bounty' => [
+                'label' => '<bounty>',
+                'description' => 'Bounty summary when applicable.',
+            ],
+            'skills' => [
+                'label' => '<skills>',
+                'description' => 'Grouped skill proficiency summary.',
+            ],
+            'speech_style' => [
+                'label' => '<speech_style>',
+                'description' => 'How the actor tends to speak.',
+            ],
+            'goals' => [
+                'label' => '<goals>',
+                'description' => 'Current motivations and ambitions.',
+            ],
+            'middle_term_memory' => [
+                'label' => '<middle_term_memory>',
+                'description' => 'Latest packed middle-term memory summary.',
+            ],
+        ],
+        'enabled_state_subsections' => [
+            'current_condition' => [
+                'label' => '<character_state>.condition',
+                'description' => 'Condition and physiology details such as health, blood, hunger, limbs, and intoxication.',
+            ],
+            'activity_state' => [
+                'label' => '<character_state>.activity',
+                'description' => 'Current action, combat/activity flags, and attack target.',
+            ],
+            'equipment' => [
+                'label' => '<character_state>.equipment',
+                'description' => 'Currently equipped gear.',
+            ],
+            'personal_inventory' => [
+                'label' => '<character_state>.inventory',
+                'description' => 'Personal inventory contents.',
+            ],
+            'merchant_inventory' => [
+                'label' => '<character_state>.merchant_inventory',
+                'description' => 'Merchant inventory when the actor is a trader.',
+            ],
+        ],
+        'enabled_knowledge_subsections' => [
+            'world_knowledge' => [
+                'label' => '<knowledge>.world_entries',
+                'description' => 'World-knowledge entries retrieved from Stobe lore data.',
+            ],
+            'player_faction_prompt' => [
+                'label' => '<knowledge>.player_faction_prompt',
+                'description' => 'Optional player-faction instruction entry inside the knowledge block.',
+            ],
+        ],
+    ];
+}
+
+function stobeGetDefaultPromptContextOptions(): array
+{
+    $catalog = stobeGetPromptContextOptionCatalog();
+    $defaults = [];
+    foreach ($catalog as $bucket => $options) {
+        $defaults[$bucket] = array_keys($options);
+    }
+
+    return $defaults;
+}
+
+function stobeNormalizePromptContextOptions($rawOptions): array
+{
+    $catalog = stobeGetPromptContextOptionCatalog();
+    $defaults = stobeGetDefaultPromptContextOptions();
+
+    if (is_string($rawOptions) && trim($rawOptions) !== '') {
+        $decoded = json_decode($rawOptions, true);
+        if (is_array($decoded)) {
+            $rawOptions = $decoded;
+        }
+    }
+
+    if (!is_array($rawOptions)) {
+        return $defaults;
+    }
+
+    $normalized = [];
+    foreach ($defaults as $bucket => $defaultIds) {
+        $hasBucket = array_key_exists($bucket, $rawOptions);
+        $rawIds = $hasBucket ? $rawOptions[$bucket] : $defaultIds;
+        if (!is_array($rawIds)) {
+            $rawIds = $hasBucket ? [] : $defaultIds;
+        }
+
+        $allowedIds = array_keys($catalog[$bucket] ?? []);
+        $enabled = [];
+        foreach ($rawIds as $id) {
+            $id = strval($id);
+            if ($id !== '' && in_array($id, $allowedIds, true) && !in_array($id, $enabled, true)) {
+                $enabled[] = $id;
+            }
+        }
+
+        $normalized[$bucket] = $hasBucket
+            ? $enabled
+            : (!empty($enabled) ? $enabled : $defaultIds);
+    }
+
+    return $normalized;
+}
+
+function stobeGetPromptContextOptions(): array
+{
+    static $cachedRaw = null;
+    static $cachedOptions = null;
+
+    $rawValue = getSetting('PROMPT_CONTEXT_OPTIONS', '');
+    if (is_array($cachedOptions) && $cachedRaw === $rawValue) {
+        return $cachedOptions;
+    }
+
+    $cachedRaw = $rawValue;
+    $cachedOptions = stobeNormalizePromptContextOptions($rawValue);
+    return $cachedOptions;
+}
+
+function stobePromptContextOptionEnabled(string $bucket, string $id): bool
+{
+    $options = stobeGetPromptContextOptions();
+    $enabled = $options[$bucket] ?? [];
+    return in_array($id, $enabled, true);
+}
+
 function normalizeDialogueMode(string $mode): string {
     $normalized = strtolower(trim($mode));
     if ($normalized === '') {
