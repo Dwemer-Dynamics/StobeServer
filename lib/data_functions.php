@@ -6103,12 +6103,25 @@ function persistManualRename(
         }
     }
     $newRow = $db->fetchOne(
-        "SELECT id, name FROM core_npc WHERE LOWER(name) = LOWER($1) LIMIT 1",
+        "SELECT id, name, COALESCE(metadata->>'storage_id', '') AS storage_id
+         FROM core_npc
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1",
         [$newNormalized]
     );
 
     if (!$oldRow) {
         if ($newRow) {
+            $newRowStorageId = normalizeStorageIdToken(strval($newRow['storage_id'] ?? ''));
+            $sameStorageId = false;
+            if ($storageIdNormalized !== '' && $newRowStorageId !== '') {
+                $requestedVariants = array_map('strtolower', buildStorageIdSearchVariants($storageIdNormalized));
+                $existingVariants = array_map('strtolower', buildStorageIdSearchVariants($newRowStorageId));
+                $sameStorageId = count(array_intersect($requestedVariants, $existingVariants)) > 0;
+            }
+            if (!$sameStorageId) {
+                return ['status' => 'error', 'message' => 'Name already exists'];
+            }
             if (count($bootstrapProfile) > 0) {
                 storeNpcProfile($newNormalized, $bootstrapProfile);
             }
