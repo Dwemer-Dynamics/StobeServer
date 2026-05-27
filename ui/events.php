@@ -28,29 +28,86 @@ function formatGameTs(mixed $value): string
     return stobeGametsDisplayWithRaw($value);
 }
 
-function eventsUrl(int $page, int $limit, bool $autorefresh = false): string
+function eventsUrl(int $page, int $limit, bool $autorefresh = false, array $extraParams = []): string
 {
-    $url = "events.php?page=" . max(1, $page) . "&limit=" . max(10, $limit);
-    if ($autorefresh) {
-        $url .= "&autorefresh=true";
+    $params = array_merge([
+        "page" => max(1, $page),
+        "limit" => max(10, $limit),
+    ], $extraParams);
+    if ($autorefresh && !isset($params["autorefresh"])) {
+        $params["autorefresh"] = "true";
     }
-    return $url;
+    return "events.php?" . http_build_query($params);
 }
 
-function stobeEventsHiddenTypes(): array
+function stobeEventsDefaultHiddenTypes(): array
 {
     return ['inputtext', 'inputtext_s', 'bored', 'infonpc', 'infonpc_close', 'infoloc'];
 }
 
-function stobeEventsHiddenTypePlaceholders(int $startIndex = 1): string
+function stobeEventsTypePlaceholders(int $count, int $startIndex = 1): string
 {
     $placeholders = [];
     $nextIndex = max(1, $startIndex);
-    foreach (stobeEventsHiddenTypes() as $_unusedType) {
+    for ($idx = 0; $idx < max(0, $count); $idx++) {
         $placeholders[] = '$' . $nextIndex;
         $nextIndex++;
     }
     return implode(', ', $placeholders);
+}
+
+function stobeNormalizeTypeList(array $types): array
+{
+    $normalized = [];
+    foreach ($types as $type) {
+        $type = trim((string)$type);
+        if ($type === '') {
+            continue;
+        }
+        $normalized[$type] = $type;
+    }
+    return array_values($normalized);
+}
+
+function stobeEventsPersistedHiddenConfKey(): string
+{
+    return 'stobe_eventlog_hidden_types';
+}
+
+function stobeEventsPersistedHiddenTypes(): array
+{
+    $rawValue = trim(getConfOpt(stobeEventsPersistedHiddenConfKey(), ''));
+    if ($rawValue === '') {
+        return [];
+    }
+
+    $decoded = json_decode($rawValue, true);
+    if (is_array($decoded)) {
+        return stobeNormalizeTypeList($decoded);
+    }
+
+    return stobeNormalizeTypeList(explode(',', $rawValue));
+}
+
+function stobeEventsSavePersistedHiddenTypes(array $types): void
+{
+    $db = $GLOBALS["db"];
+    $normalized = stobeNormalizeTypeList($types);
+    $confKey = stobeEventsPersistedHiddenConfKey();
+    if (empty($normalized)) {
+        $db->exec("DELETE FROM conf_opts WHERE id = $1", [$confKey]);
+        return;
+    }
+
+    setConfOpt($confKey, json_encode(array_values($normalized), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+
+function stobeEventsAllHiddenTypes(array $persistedHiddenTypes = []): array
+{
+    return stobeNormalizeTypeList(array_merge(
+        stobeEventsDefaultHiddenTypes(),
+        $persistedHiddenTypes
+    ));
 }
 
 function safeFetchAll(sql $db, string $query, array $params = []): array
@@ -87,6 +144,33 @@ $page = isset($_GET["page"]) ? intval($_GET["page"]) : 1;
 $page = max(1, $page);
 $offset = ($page - 1) * $limit;
 $isAutoRefresh = isset($_GET["autorefresh"]) && $_GET["autorefresh"];
+$persistedHiddenTypes = stobeEventsPersistedHiddenTypes();
+$allHiddenTypes = stobeEventsAllHiddenTypes($persistedHiddenTypes);
+
+if (isset($_GET["hide_event_type"])) {
+    $typeToHide = trim((string)$_GET["hide_event_type"]);
+    if ($typeToHide !== '') {
+        $persistedHiddenTypes[] = $typeToHide;
+        stobeEventsSavePersistedHiddenTypes($persistedHiddenTypes);
+    }
+    header("Location: " . eventsUrl(1, $limit, $isAutoRefresh));
+    exit;
+}
+
+if (isset($_GET["show_event_type"])) {
+    $typeToShow = trim((string)$_GET["show_event_type"]);
+    if ($typeToShow !== '') {
+        $persistedHiddenTypes = array_values(array_filter(
+            $persistedHiddenTypes,
+            static function ($type) use ($typeToShow) {
+                return $type !== $typeToShow;
+            }
+        ));
+        stobeEventsSavePersistedHiddenTypes($persistedHiddenTypes);
+    }
+    header("Location: " . eventsUrl(1, $limit, $isAutoRefresh));
+    exit;
+}
 
 // Handle delete all.
 if (isset($_GET["reset"]) && $_GET["reset"]) {
@@ -99,17 +183,19 @@ if (isset($_GET["reset"]) && $_GET["reset"]) {
 if (isset($_GET["delete_last"])) {
     $delCount = intval($_GET["delete_last"]);
     if (in_array($delCount, [20, 50, 100], true)) {
+        $hiddenTypePlaceholders = stobeEventsTypePlaceholders(count($allHiddenTypes), 2);
         safeExec(
             $db,
             "DELETE FROM eventlog
              WHERE rowid IN (
                  SELECT rowid FROM eventlog
+                 WHERE type NOT IN (" . $hiddenTypePlaceholders . ")
                  ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
                  LIMIT $1
              )",
-            [$delCount]
+            array_merge([$delCount], $allHiddenTypes)
         );
-        header("Location: events.php");
+        header("Location: " . eventsUrl($page, $limit, $isAutoRefresh));
         exit;
     }
 }
@@ -134,19 +220,18 @@ if (isset($_POST["delete_selected"])) {
                 $params[] = $rowid;
             }
             safeExec($db, "DELETE FROM eventlog WHERE rowid IN (" . implode(",", $placeholders) . ")", $params);
-            header("Location: events.php?deleted=" . count($sanitizedRowids));
+            header("Location: " . eventsUrl($page, $limit, $isAutoRefresh, ["deleted" => count($sanitizedRowids)]));
             exit;
         }
     }
-    header("Location: events.php?error=invalid_delete");
+    header("Location: " . eventsUrl($page, $limit, $isAutoRefresh, ["error" => "invalid_delete"]));
     exit;
 }
 
 // Live updates endpoint.
 if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
     $sinceRowId = isset($_GET["since_rowid"]) ? max(0, intval($_GET["since_rowid"])) : 0;
-    $hiddenTypes = stobeEventsHiddenTypes();
-    $hiddenTypePlaceholders = stobeEventsHiddenTypePlaceholders(2);
+    $hiddenTypePlaceholders = stobeEventsTypePlaceholders(count($allHiddenTypes), 2);
     $liveRows = safeFetchAll(
         $db,
         "SELECT rowid, type, data, people, location, gamets, localts, ts
@@ -155,7 +240,7 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
            AND type NOT IN (" . $hiddenTypePlaceholders . ")
          ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
          LIMIT 50",
-        array_merge([$sinceRowId], $hiddenTypes)
+        array_merge([$sinceRowId], $allHiddenTypes)
     );
 
     $payloadRows = [];
@@ -181,10 +266,9 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
     exit;
 }
 
-$hiddenTypes = stobeEventsHiddenTypes();
-$hiddenTypePlaceholders = stobeEventsHiddenTypePlaceholders(1);
-$limitPlaceholder = '$' . (count($hiddenTypes) + 1);
-$offsetPlaceholder = '$' . (count($hiddenTypes) + 2);
+$hiddenTypePlaceholders = stobeEventsTypePlaceholders(count($allHiddenTypes), 1);
+$limitPlaceholder = '$' . (count($allHiddenTypes) + 1);
+$offsetPlaceholder = '$' . (count($allHiddenTypes) + 2);
 $rows = safeFetchAll(
     $db,
     "SELECT rowid, type, data, people, location, gamets, localts, ts
@@ -192,7 +276,7 @@ $rows = safeFetchAll(
      WHERE type NOT IN (" . $hiddenTypePlaceholders . ")
      ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
      LIMIT " . $limitPlaceholder . " OFFSET " . $offsetPlaceholder,
-    array_merge($hiddenTypes, [$limit, $offset])
+    array_merge($allHiddenTypes, [$limit, $offset])
 );
 
 $totalRecordsRow = safeFetchOne(
@@ -200,10 +284,20 @@ $totalRecordsRow = safeFetchOne(
     "SELECT COUNT(*) AS total
      FROM eventlog
      WHERE type NOT IN (" . $hiddenTypePlaceholders . ")",
-    $hiddenTypes
+    $allHiddenTypes
 );
 $totalRecords = intval($totalRecordsRow["total"] ?? 0);
 $totalPages = max(1, (int)ceil($totalRecords / $limit));
+
+$visibleTypeRows = safeFetchAll(
+    $db,
+    "SELECT type, COUNT(*) AS total
+     FROM eventlog
+     WHERE type NOT IN (" . $hiddenTypePlaceholders . ")
+     GROUP BY type
+     ORDER BY type ASC",
+    $allHiddenTypes
+);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -404,7 +498,7 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
 
             <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 20px 0;">
                 <button id="live-toggle-btn-eventlog" onclick="toggleAutoRefreshEventLog()" class="btn-base <?= $isAutoRefresh ? "btn-secondary" : "btn-primary" ?>" style="padding: 8px 12px; font-size: 0.9em;" title="Toggle live monitoring">
-                    <?= $isAutoRefresh ? "Stop Live" : "Monitor Live" ?>
+                    <?= $isAutoRefresh ? "Stop Live" : "Auto Refresh" ?>
                 </button>
                 <span id="live-indicator-eventlog" style="margin-left: 10px; color: #28a745; font-weight: bold; font-size: 0.9em; <?= $isAutoRefresh ? "" : "display:none;" ?>">
                     LIVE
@@ -414,10 +508,16 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                     <button id="deleteSelectedBtn" onclick="deleteSelectedEvents()" class="btn-base btn-danger" style="padding: 6px 10px; font-size: 0.8em; display: none;">
                         Delete Selected (<span id="selectedCount">0</span>)
                     </button>
-                    <button onclick="if(confirm('Are you sure you want to delete the last 20 events?')) window.location.href='events.php?delete_last=20'" class="btn-base btn-danger" style="padding: 6px 10px; font-size: 0.8em;">Delete Latest 20</button>
-                    <button onclick="if(confirm('Are you sure you want to delete the last 50 events?')) window.location.href='events.php?delete_last=50'" class="btn-base btn-danger" style="padding: 6px 10px; font-size: 0.8em;">Delete Latest 50</button>
-                    <button onclick="if(confirm('Are you sure you want to delete the last 100 events?')) window.location.href='events.php?delete_last=100'" class="btn-base btn-danger" style="padding: 6px 10px; font-size: 0.8em;">Delete Latest 100</button>
-                    <button onclick="deleteAllEventsConfirm()" class="btn-base btn-danger" style="padding: 6px 10px; font-size: 0.8em; background-color: #dc2626; font-weight: bold;">Delete ALL</button>
+                    <div style="display: inline-flex; gap: 5px; align-items: center; flex-wrap: nowrap; white-space: nowrap;">
+                        <select id="delete-action-select" style="padding: 5px 8px; border-radius: 4px; border: 1px solid #666; background: #2a2a2a; color: #f8f9fa; min-width: 170px; font-size: 0.8em;">
+                            <option value="">Delete...</option>
+                            <option value="20">Delete Latest 20</option>
+                            <option value="50">Delete Latest 50</option>
+                            <option value="100">Delete Latest 100</option>
+                            <option value="all">Delete ALL</option>
+                        </select>
+                        <button onclick="handleDeletePresetAction()" class="btn-base btn-danger" style="padding: 6px 10px; font-size: 0.8em;">Delete</button>
+                    </div>
                 </div>
             </div>
 
@@ -429,6 +529,18 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                 <?php if ($page < $totalPages): ?>
                     <a class="btn-base" href="<?= h(eventsUrl($page + 1, $limit, $isAutoRefresh)) ?>">Next</a>
                 <?php endif; ?>
+                <span class="info-message" style="padding:0 0 0 8px;">Hide:</span>
+                <select id="event-type-filter" onchange="applyEventLogTypeFilter(this.value)" style="padding: 5px 8px; border-radius: 4px; border: 1px solid #666; background: #2a2a2a; color: #f8f9fa; min-width: 150px; max-width: 180px; font-size: 0.8em;">
+                    <option value="">Hide event...</option>
+                    <?php foreach ($visibleTypeRows as $typeRow): ?>
+                        <?php $eventTypeValue = trim((string)($typeRow["type"] ?? "")); ?>
+                        <?php if ($eventTypeValue === "") { continue; } ?>
+                        <option value="<?= h($eventTypeValue) ?>"><?= h($eventTypeValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <?php foreach ($persistedHiddenTypes as $hiddenEventType): ?>
+                    <button type="button" onclick='removeHiddenEventType(<?= json_encode($hiddenEventType) ?>)' class="btn-base" style="padding: 4px 8px; font-size: 0.75em; background: #3a3a3a; color: #f8f9fa; border-color: #555;"><?= h($hiddenEventType) ?> ×</button>
+                <?php endforeach; ?>
             </div>
 
             <div id="eventlog-table-container" class="table-container">
@@ -488,14 +600,79 @@ let lastRowIdEventLog = 0;
 let totalNewEventsEventLog = 0;
 const currentPageEventLog = <?= intval($page) ?>;
 const currentLimitEventLog = <?= intval($limit) ?>;
+const deleteLatestEventLogUrls = {
+    20: <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh, ["delete_last" => 20])) ?>,
+    50: <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh, ["delete_last" => 50])) ?>,
+    100: <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh, ["delete_last" => 100])) ?>
+};
 
 function deleteAllEventsConfirm() {
     const userInput = prompt("THIS WILL DELETE ALL EVENTS IN THE EVENT LOG!\n\nEvents are used for AI context. This action cannot be undone.\n\nTo confirm this dangerous operation, please type exactly: Delete");
     if (userInput === "Delete") {
-        window.location.href = "events.php?reset=true";
+        window.location.href = <?= json_encode(eventsUrl(1, $limit, $isAutoRefresh, ["reset" => "true"])) ?>;
     } else if (userInput !== null) {
         alert("Operation cancelled. You must type exactly \"Delete\" to confirm.");
     }
+}
+
+function handleDeletePresetAction() {
+    const select = document.getElementById("delete-action-select");
+    const action = select ? String(select.value || "") : "";
+    if (!action) {
+        return;
+    }
+
+    if (action === "all") {
+        if (select) {
+            select.value = "";
+        }
+        deleteAllEventsConfirm();
+        return;
+    }
+
+    const deleteCount = parseInt(action, 10);
+    if (![20, 50, 100].includes(deleteCount)) {
+        if (select) {
+            select.value = "";
+        }
+        return;
+    }
+
+    if (confirm(`Are you sure you want to delete the last ${deleteCount} events?`)) {
+        window.location.href = deleteLatestEventLogUrls[deleteCount];
+    } else if (select) {
+        select.value = "";
+    }
+}
+
+function applyEventLogTypeFilter(eventType) {
+    if (!eventType) {
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("hide_event_type", eventType);
+    url.searchParams.set("page", "1");
+    url.searchParams.set("limit", String(currentLimitEventLog));
+    if (isLiveModeEventLog) {
+        url.searchParams.set("autorefresh", "true");
+    }
+    window.location.href = url.toString();
+}
+
+function removeHiddenEventType(eventType) {
+    if (!eventType) {
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("show_event_type", eventType);
+    url.searchParams.set("page", "1");
+    url.searchParams.set("limit", String(currentLimitEventLog));
+    if (isLiveModeEventLog) {
+        url.searchParams.set("autorefresh", "true");
+    }
+    window.location.href = url.toString();
 }
 
 function updateSelectedCount() {
@@ -533,7 +710,7 @@ function deleteSelectedEvents() {
 
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = "events.php";
+    form.action = <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh)) ?>;
 
     const deleteInput = document.createElement("input");
     deleteInput.type = "hidden";
@@ -585,7 +762,9 @@ function updateEventTableEventLog() {
     }
 
     const sinceRowId = lastRowIdEventLog;
-    fetch("events.php?ajax=eventlog_updates&since_rowid=" + sinceRowId)
+    const updatesUrl = new URL(<?= json_encode(eventsUrl($page, $limit, false, ["ajax" => "eventlog_updates"])) ?>, window.location.href);
+    updatesUrl.searchParams.set("since_rowid", String(sinceRowId));
+    fetch(updatesUrl.toString())
         .then((response) => response.json())
         .then((data) => {
             if (data.success && Array.isArray(data.data) && data.data.length > 0) {
@@ -672,7 +851,7 @@ function toggleAutoRefreshEventLog() {
         totalNewEventsEventLog = 0;
         autoRefreshIntervalEventLog = setInterval(updateEventTableEventLog, 5000);
     } else {
-        btn.textContent = "Monitor Live";
+        btn.textContent = "Auto Refresh";
         btn.className = "btn-base btn-primary";
         btn.style.padding = "8px 12px";
         btn.style.fontSize = "0.9em";
