@@ -850,7 +850,7 @@ if (count($wordCloud) > 0) {
         <h1>Stobe Dashboard</h1>
 
         <div class="dashboard-buttons">
-            <button onclick="window.open('https://dwemerdynamics.hostwiki.io/', '_blank')" class="dashboard-btn">
+            <button onclick="window.open('https://dwemerdynamics.com/stobe/index.html', '_blank')" class="dashboard-btn">
                 <span class="btn-icon">&#x1F4DA;</span> Dwemer Dynamics Wiki
             </button>
             <button onclick="window.open('https://docs.google.com/spreadsheets/d/1UtAR_r18wskmTMMsg8IlhVvr1Fn9tHvRJT8drH6RuzY/edit?gid=1257158105#gid=1257158105', '_blank')" class="dashboard-btn">

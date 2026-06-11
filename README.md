@@ -55,3 +55,7 @@ StobeServer is DB-config driven:
 - PHP 8.2+ with Apache
 - PostgreSQL with pgvector
 - DwemerDistro/WSL runtime (recommended deployment target)
+
+## PR Submissions
+
+Building AI systems is complex, and changes can unintentionally affect other connected systems. Before opening a pull request, follow the repository PR template and make sure the change has been discussed with either `RANGROO` or `tyler.maister` in Discord. When adding new features, prefer making them optional or toggleable where practical.
