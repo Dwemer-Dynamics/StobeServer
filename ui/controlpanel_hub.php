@@ -51,6 +51,7 @@ $tabs = [
     ['id' => 'server_logs', 'label' => 'Server Logs', 'page' => '', 'url' => $distroDebuggerStobeEmbedUrl, 'status' => 'wired', 'embed' => false],
     ['id' => 'audio_image_cache', 'label' => 'Audio & Image Cache', 'page' => '', 'url' => ($webRoot !== '' ? $webRoot : '') . '/soundcache/', 'status' => 'wired', 'embed' => false],
     ['id' => 'request_logs', 'label' => 'Request Logs', 'page' => 'request_logs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'world_knowledge_audit', 'label' => 'World Knowledge Audit', 'page' => 'world_knowledge_audit.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'cost_breakdown', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'response_queue', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'relationship_logs', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],

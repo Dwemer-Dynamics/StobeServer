@@ -839,6 +839,17 @@ if (trim(strval($llmConfig['api_key'] ?? '')) === '') {
     return;
 }
 
+$tentativeStreamListener = $strictRechatListener;
+if ($tentativeStreamListener === '') {
+    $tentativeStreamListener = $previousSpeaker;
+}
+if ($tentativeStreamListener === '') {
+    $tentativeStreamListener = $previousTarget;
+}
+if ($tentativeStreamListener === '') {
+    $tentativeStreamListener = $playerName;
+}
+
 $streamResult = stobeStreamDialogueViaLlm(
     $respondingNpc,
     $npcData,
@@ -850,6 +861,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'event_type' => 'rechat',
         'action_config' => $actionConfig,
         'stream_event_type' => 'rechat',
+        'stream_listener' => $tentativeStreamListener,
         'stream_gamets' => $gamets,
         'response_format' => stobeBuildStructuredDialogueResponseFormat(
             $respondingNpc,
