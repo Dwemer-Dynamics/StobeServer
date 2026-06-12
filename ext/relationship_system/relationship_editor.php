@@ -270,6 +270,9 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
                     <p style="color:#888; font-size:0.9em; margin-bottom:12px;">
                         Uses recent event history (up to 200 entries) involving this NPC to infer affinity scores, relationship types, and optional notes.
                     </p>
+                    <div style="background:#3a2a0a; border:1px solid #b8860b; border-radius:6px; color:#fde68a; padding:10px 12px; margin-bottom:12px; font-size:0.88em; line-height:1.35;">
+                        <strong>Merge warning:</strong> AI results are merged into the current table. Existing entries with the same target name may be overwritten.
+                    </div>
                     <div style="margin-bottom:12px;">
                         <label style="color:#ccc; font-size:0.85em;">Optional Direction</label>
                         <textarea id="build-ai-direction" placeholder="Optional guidance (example: prioritize recent betrayals over old alliances)."
@@ -631,6 +634,21 @@ function syncRelationshipsToHidden() {
     document.getElementById('relationships_jsonb').value = JSON.stringify(relationships);
 }
 
+function getCurrentRelationshipsFromHidden() {
+    const hidden = document.getElementById('relationships_jsonb');
+    if (!hidden || !hidden.value.trim()) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(hidden.value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (e) {
+        console.warn('Failed to parse current relationships JSON before AI merge:', e);
+        return {};
+    }
+}
+
 // Details Modal Functions
 const relationSuggestions = [
     // Family
@@ -846,18 +864,23 @@ async function buildWithAI() {
         const result = await response.json();
 
         if (result.ok && result.relationships) {
+            const mergedRelationships = {
+                ...getCurrentRelationshipsFromHidden(),
+                ...result.relationships
+            };
+
             // Update the hidden field
-            document.getElementById('relationships_jsonb').value = JSON.stringify(result.relationships);
+            document.getElementById('relationships_jsonb').value = JSON.stringify(mergedRelationships);
 
             // Rebuild the table
-            rebuildRelTable(result.relationships);
+            rebuildRelTable(mergedRelationships);
 
             // Show success with model info
             let statusMsg = `AI built ${result.count} relationship(s) from ${result.event_count || 0} event(s)`;
             if (result.model) {
                 statusMsg += ` using ${result.model}`;
             }
-            statusMsg += `. Click "Save NPC" to store.`;
+            statusMsg += `. Matching existing targets may have been overwritten. Click "Save NPC" to store.`;
             showStatus(statusMsg, '#86efac');
         } else {
             showStatus(`Error: ${result.error || 'Unknown error'}`, '#ef4444');
