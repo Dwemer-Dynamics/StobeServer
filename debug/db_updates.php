@@ -174,18 +174,21 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 return;
             }
             $map = [];
+            $normalizeHeader = static function ($value): string {
+                $key = preg_replace('/^\xEF\xBB\xBF/', '', strval($value));
+                $key = strtolower(trim(strval($key)));
+                $key = preg_replace('/[^a-z0-9]+/', '_', $key);
+                return trim(strval($key), '_');
+            };
             foreach ($header as $i => $nameRaw) {
-                $name = trim(strval($nameRaw ?? ''));
-                if ($i === 0) {
-                    $name = preg_replace('/^\xEF\xBB\xBF/', '', $name) ?? $name;
-                }
+                $name = $normalizeHeader($nameRaw ?? '');
                 if ($name !== '') {
-                    $map[strtolower($name)] = intval($i);
+                    $map[$name] = intval($i);
                 }
             }
-            $pick = static function (array $row, array $columnMap, array $aliases, int $fallback = -1): string {
+            $pick = static function (array $row, array $columnMap, array $aliases, int $fallback = -1) use ($normalizeHeader): string {
                 foreach ($aliases as $alias) {
-                    $k = strtolower(trim(strval($alias)));
+                    $k = $normalizeHeader($alias);
                     if ($k !== '' && array_key_exists($k, $columnMap)) {
                         return trim(strval($row[intval($columnMap[$k])] ?? ''));
                     }
@@ -194,6 +197,11 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
             };
             while (($row = fgetcsv($h)) !== false) {
                 if (!is_array($row)) {
+                    continue;
+                }
+                if (count(array_filter($row, static function ($value): bool {
+                    return trim(strval($value)) !== '';
+                })) === 0) {
                     continue;
                 }
                 $topic = $pick($row, $map, ['topic', 'stringid', 'baseid'], 0);

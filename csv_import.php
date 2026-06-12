@@ -28,7 +28,7 @@ function stobeCsvHeaderMap(array $header): array
 {
     $map = [];
     foreach ($header as $idx => $name) {
-        $key = strtolower(trim(strval($name)));
+        $key = stobeCsvNormalizeHeader($name);
         if ($key === '') {
             continue;
         }
@@ -37,10 +37,18 @@ function stobeCsvHeaderMap(array $header): array
     return $map;
 }
 
+function stobeCsvNormalizeHeader($value): string
+{
+    $key = preg_replace('/^\xEF\xBB\xBF/', '', strval($value));
+    $key = strtolower(trim(strval($key)));
+    $key = preg_replace('/[^a-z0-9]+/', '_', $key);
+    return trim(strval($key), '_');
+}
+
 function stobeCsvPick(array $row, array $map, array $aliases, int $fallback = -1): string
 {
     foreach ($aliases as $alias) {
-        $k = strtolower(trim(strval($alias)));
+        $k = stobeCsvNormalizeHeader($alias);
         if ($k !== '' && array_key_exists($k, $map)) {
             return trim(strval($row[intval($map[$k])] ?? ''));
         }
@@ -262,6 +270,11 @@ while (($row = fgetcsv($stream, 0, ',')) !== false) {
     if (!is_array($row) || count($row) === 0) {
         continue;
     }
+    if (count(array_filter($row, static function ($value): bool {
+        return trim(strval($value)) !== '';
+    })) === 0) {
+        continue;
+    }
 
     if ($resolvedType === 'bio_random_import') {
         $type = strtolower(stobeCsvPick($row, $map, ['type', 'stringid', 'baseid'], 0));
@@ -371,7 +384,7 @@ while (($row = fgetcsv($stream, 0, ',')) !== false) {
         $payload = [
             'topic' => stobeCsvPick($row, $map, ['topic', 'stringid', 'baseid'], 0),
             'topic_desc' => stobeCsvPick($row, $map, ['topic_desc', 'description'], 2),
-            'topic_desc_basic' => stobeCsvPick($row, $map, ['topic_desc_basic', 'basic_description']),
+            'topic_desc_basic' => stobeCsvPick($row, $map, ['topic_desc_basic', 'basic_description'], 3),
             'knowledge_class' => stobeCsvPick($row, $map, ['knowledge_class']),
             'knowledge_class_basic' => stobeCsvPick($row, $map, ['knowledge_class_basic']),
             'aliases' => stobeCsvPick($row, $map, ['aliases']),

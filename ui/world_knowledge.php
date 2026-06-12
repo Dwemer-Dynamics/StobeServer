@@ -15,6 +15,14 @@ function world_knowledgeTrim(mixed $value): string
     return trim(strval($value));
 }
 
+function world_knowledgeNormalizeHeader(mixed $value): string
+{
+    $key = preg_replace('/^\xEF\xBB\xBF/', '', strval($value));
+    $key = strtolower(trim(strval($key)));
+    $key = preg_replace('/[^a-z0-9]+/', '_', $key);
+    return trim(strval($key), '_');
+}
+
 function world_knowledgePreferredDescription(array $row): string
 {
     $basic = world_knowledgeTrim($row['topic_desc_basic'] ?? '');
@@ -147,8 +155,18 @@ $editRow = false;
 if (isset($_GET['action']) && $_GET['action'] === 'download_example') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="world_knowledge_example.csv"');
-    echo "topic,tags,topic_desc\n";
-    echo "\"trade_ninjas\",\"factions,trade\",\"A covert trade-focused faction with strict internal discipline.\"\n";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['topic', 'topic_desc', 'topic_desc_basic', 'knowledge_class', 'knowledge_class_basic', 'aliases', 'tags']);
+    fputcsv($out, [
+        'trade_ninjas',
+        'A covert trade-focused faction with strict internal discipline.',
+        'Trade Ninjas are covert traders with strict internal discipline.',
+        '',
+        '',
+        'trade ninjas, trade_ninjas',
+        'factions,trade',
+    ]);
+    fclose($out);
     exit;
 }
 
@@ -156,17 +174,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_custom_descriptions') 
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="world_knowledge_export_' . date('Y-m-d_H-i-s') . '.csv"');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['topic', 'tags', 'topic_desc']);
+    fputcsv($out, ['topic', 'topic_desc', 'topic_desc_basic', 'knowledge_class', 'knowledge_class_basic', 'aliases', 'tags']);
     $exportRows = $GLOBALS["db"]->fetchAll(
-        "SELECT topic, tags, topic_desc
+        "SELECT topic, topic_desc, topic_desc_basic, knowledge_class, knowledge_class_basic, aliases, tags
          FROM world_knowledge
          ORDER BY LOWER(topic) ASC"
     );
     foreach ($exportRows as $row) {
         fputcsv($out, [
             strval($row['topic'] ?? ''),
-            strval($row['tags'] ?? ''),
             strval($row['topic_desc'] ?? ''),
+            strval($row['topic_desc_basic'] ?? ''),
+            strval($row['knowledge_class'] ?? ''),
+            strval($row['knowledge_class_basic'] ?? ''),
+            strval($row['aliases'] ?? ''),
+            strval($row['tags'] ?? ''),
         ]);
     }
     fclose($out);
@@ -222,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $map = [];
                 if (is_array($header)) {
                     foreach ($header as $idx => $name) {
-                        $key = strtolower(trim(strval($name)));
+                        $key = world_knowledgeNormalizeHeader($name);
                         if ($key !== '') {
                             $map[$key] = intval($idx);
                         }
@@ -233,9 +255,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!is_array($row) || count($row) === 0) {
                         continue;
                     }
+                    if (count(array_filter($row, static function ($value): bool {
+                        return trim(strval($value)) !== '';
+                    })) === 0) {
+                        continue;
+                    }
                     $pick = static function (array $rowData, array $columnMap, array $aliases, int $fallbackIndex = -1): string {
                         foreach ($aliases as $alias) {
-                            $k = strtolower(trim($alias));
+                            $k = world_knowledgeNormalizeHeader($alias);
                             if ($k !== '' && array_key_exists($k, $columnMap)) {
                                 $idx = intval($columnMap[$k]);
                                 return trim(strval($rowData[$idx] ?? ''));
@@ -251,7 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'topic' => $pick($row, $map, ['topic', 'stringid', 'baseid'], 0),
                         'topic_desc' => $pick($row, $map, ['topic_desc', 'description'], 2),
                         'knowledge_class' => $pick($row, $map, ['knowledge_class']),
-                        'topic_desc_basic' => $pick($row, $map, ['topic_desc_basic', 'basic_description']),
+                        'topic_desc_basic' => $pick($row, $map, ['topic_desc_basic', 'basic_description'], 3),
                         'knowledge_class_basic' => $pick($row, $map, ['knowledge_class_basic']),
                         'aliases' => $pick($row, $map, ['aliases']),
                         'tags' => $pick($row, $map, ['tags', 'category', 'name'], 1),
