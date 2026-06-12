@@ -307,13 +307,13 @@ PROMPT;
 
         // Include optional extended fields if present
         if (!empty($data['relation'])) {
-            $relationships[$target]['relation'] = substr(trim($data['relation']), 0, 20);
+            $relationships[$target]['relation'] = trim($data['relation']);
         }
         if (!empty($data['best'])) {
-            $relationships[$target]['best'] = substr(trim($data['best']), 0, 50);
+            $relationships[$target]['best'] = trim($data['best']);
         }
         if (!empty($data['worst'])) {
-            $relationships[$target]['worst'] = substr(trim($data['worst']), 0, 50);
+            $relationships[$target]['worst'] = trim($data['worst']);
         }
 
         $logExtra = '';

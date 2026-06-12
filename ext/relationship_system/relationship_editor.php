@@ -337,15 +337,14 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
                 <div style="background:#1a1a1a; border:1px solid #4a4a4a; border-radius:8px; padding:20px; max-width:500px; width:90%;">
                     <h3 style="margin:0 0 8px 0; color:#e6b76c;">Details: <span id="details-target-name"></span></h3>
                     <p style="color:#888; font-size:0.8em; margin-bottom:12px;">
-                        &#x26A0;&#xFE0F; Keep brief - injected into AI context. Relation: 1-2 words. Events: short phrases.
+                        &#x26A0;&#xFE0F; These details are injected into AI context. Keep them useful and relevant.
                     </p>
 
                     <!-- Relationship Detail (specific role) -->
                     <div style="margin-bottom:10px;">
-                        <label style="color:#ccc; font-size:0.85em;">Relationship Detail <small style="color:#666;">(1-2 words)</small></label>
+                        <label style="color:#ccc; font-size:0.85em;">Relationship Detail</label>
                         <div style="display:flex; gap:6px; margin-top:4px;">
                             <input type="text" id="details-relation" placeholder="son, ex-wife, employer"
-                                   maxlength="20"
                                    style="flex:1; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px;">
                             <button type="button" onclick="showRelationSuggestions()" title="Common suggestions"
                                     style="background:#2a2a2a; border:1px solid #4a4a4a; border-radius:4px; color:#888; padding:4px 8px; cursor:pointer; font-size:0.9em;">
@@ -359,25 +358,22 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
 
                     <!-- Recent Note -->
                     <div style="margin-bottom:10px;">
-                        <label style="color:#ccc; font-size:0.85em;">Recent Interaction <small style="color:#666;">(short phrase)</small></label>
+                        <label style="color:#ccc; font-size:0.85em;">Recent Interaction</label>
                         <input type="text" id="details-note" placeholder="shared a drink, had argument"
-                               maxlength="40"
                                style="width:100%; margin-top:4px; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px;">
                     </div>
 
                     <!-- Best Event -->
                     <div style="margin-bottom:10px;">
-                        <label style="color:#86efac; font-size:0.85em;">Best Memory <small style="color:#666;">(short phrase)</small></label>
+                        <label style="color:#86efac; font-size:0.85em;">Best Memory</label>
                         <input type="text" id="details-best" placeholder="opened gate for Ulfric, saved life"
-                               maxlength="50"
                                style="width:100%; margin-top:4px; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px;">
                     </div>
 
                     <!-- Worst Event -->
                     <div style="margin-bottom:10px;">
-                        <label style="color:#ef4444; font-size:0.85em;">Worst Memory <small style="color:#666;">(short phrase)</small></label>
+                        <label style="color:#ef4444; font-size:0.85em;">Worst Memory</label>
                         <input type="text" id="details-worst" placeholder="killed his brother, betrayed trust"
-                               maxlength="50"
                                style="width:100%; margin-top:4px; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px;">
                     </div>
 
