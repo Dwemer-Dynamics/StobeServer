@@ -1444,13 +1444,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
     if (profileTestCloseBtn) {
         profileTestCloseBtn.addEventListener('click', closeProfileTestModal);
     }
-    if (profileTestModal) {
-        profileTestModal.addEventListener('click', function (event) {
-            if (event.target === profileTestModal) {
-                closeProfileTestModal();
-            }
-        });
-    }
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && profileTestModal && profileTestModal.style.display === 'flex') {
             closeProfileTestModal();
@@ -1474,17 +1467,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             }
         });
     }
-    if (importModal) {
-        importModal.addEventListener('click', function (event) {
-            if (event.target === importModal) {
-                closeModal(importModal);
-                if (importForm) {
-                    importForm.reset();
-                }
-            }
-        });
-    }
-
     const rulesModal = document.getElementById('import_rules_modal');
     const rulesOpenBtn = document.getElementById('open_import_rules_btn');
     const rulesCloseBtn = document.getElementById('close_rules_modal');
@@ -1697,13 +1679,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             }
             if (action === 'delete') {
                 deleteRule(id);
-            }
-        });
-    }
-    if (rulesModal) {
-        rulesModal.addEventListener('click', function (event) {
-            if (event.target === rulesModal) {
-                closeModal(rulesModal);
             }
         });
     }
