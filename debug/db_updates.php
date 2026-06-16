@@ -1110,11 +1110,113 @@ PROMPT;
                 true
             );
         });
+        $applyPatch('bio_random', 202606150001, static function () use ($db): void {
+            $db->exec("ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("UPDATE bio_random SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("UPDATE bio_random_custom SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("DROP VIEW IF EXISTS combined_bio_random");
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_bio_random AS
+                 SELECT
+                    c.id,
+                    c.type,
+                    c.description,
+                    c.name,
+                    c.race,
+                    c.gender,
+                    c.faction,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled
+                 FROM bio_random_custom c
+                 UNION ALL
+                 SELECT
+                    b.id,
+                    b.type,
+                    b.description,
+                    b.name,
+                    b.race,
+                    b.gender,
+                    b.faction,
+                    b.created_at,
+                    b.updated_at,
+                    b.is_enabled
+                 FROM bio_random b
+                 LEFT JOIN bio_random_custom c
+                   ON LOWER(b.type) = LOWER(c.type)
+                  AND LOWER(b.description) = LOWER(c.description)
+                  AND LOWER(COALESCE(b.name, '')) = LOWER(COALESCE(c.name, ''))
+                 WHERE c.id IS NULL"
+            );
+        });
+
+        $applyPatch('rename_token_global', 202606150001, static function () use ($db): void {
+            $db->exec("ALTER TABLE rename_token_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("ALTER TABLE rename_token_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("UPDATE rename_token_global SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("UPDATE rename_token_global_custom SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("DROP VIEW IF EXISTS combined_rename_token_global");
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_rename_token_global AS
+                 SELECT
+                    c.id,
+                    c.token,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled
+                 FROM rename_token_global_custom c
+                 UNION ALL
+                 SELECT
+                    g.id,
+                    g.token,
+                    g.created_at,
+                    g.updated_at,
+                    g.is_enabled
+                 FROM rename_token_global g
+                 LEFT JOIN rename_token_global_custom c ON LOWER(g.token) = LOWER(c.token)
+                 WHERE c.token IS NULL"
+            );
+        });
 
         $applyPatch('bio_unique', 202603130208, static function () use ($db, $runBioUniqueSeedBundle): void {
             $runBioUniqueSeedBundle();
             $db->exec("DELETE FROM bio_unique WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
             $db->exec("DELETE FROM bio_unique_custom WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
+        });
+
+        $applyPatch('bio_unique', 202606150001, static function () use ($db): void {
+            $db->exec("ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("UPDATE bio_unique SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("UPDATE bio_unique_custom SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("DROP VIEW IF EXISTS combined_bio_unique");
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_bio_unique AS
+                 SELECT
+                    c.id,
+                    c.name,
+                    c.type,
+                    c.description,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled
+                 FROM bio_unique_custom c
+                 UNION ALL
+                 SELECT
+                    b.id,
+                    b.name,
+                    b.type,
+                    b.description,
+                    b.created_at,
+                    b.updated_at,
+                    b.is_enabled
+                 FROM bio_unique b
+                 LEFT JOIN bio_unique_custom c
+                   ON LOWER(b.name) = LOWER(c.name)
+                  AND LOWER(b.type) = LOWER(c.type)
+                 WHERE c.id IS NULL"
+            );
         });
 
         $applyPatch('world_knowledge_seed', 202603130209, static function () use ($importWorldKnowledgeCsv): void {

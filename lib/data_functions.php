@@ -5191,6 +5191,7 @@ function loadBioUniqueTraitSelections(string $name): array {
                 "SELECT name, type, description
                  FROM combined_bio_unique
                  WHERE LOWER(name) = $1
+                   AND COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY id ASC",
                 [$lookupKeys[0]]
             );
@@ -5199,6 +5200,7 @@ function loadBioUniqueTraitSelections(string $name): array {
                 "SELECT name, type, description
                  FROM combined_bio_unique
                  WHERE LOWER(name) IN ($1, $2)
+                   AND COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY
                     CASE
                         WHEN LOWER(name) = $1 THEN 0
@@ -5280,6 +5282,7 @@ function loadBioRandomCandidates(
         $rows = $db->fetchAll(
             "SELECT type, description, race, gender, faction, name
              FROM combined_bio_random
+             WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY id ASC"
         );
     } catch (Throwable $exception) {
@@ -5759,6 +5762,7 @@ function loadServerRenameEligibilityTokens(): array {
             $rows = $db->fetchAll(
                 "SELECT token
                  FROM combined_rename_token_global
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY token ASC"
             );
             foreach ($rows as $row) {

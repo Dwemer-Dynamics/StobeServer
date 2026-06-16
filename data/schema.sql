@@ -414,6 +414,7 @@ WHERE c.name IS NULL;
 CREATE TABLE IF NOT EXISTS rename_token_global (
     id SERIAL PRIMARY KEY,
     token VARCHAR(128) UNIQUE NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -421,9 +422,13 @@ CREATE TABLE IF NOT EXISTS rename_token_global (
 CREATE TABLE IF NOT EXISTS rename_token_global_custom (
     id SERIAL PRIMARY KEY,
     token VARCHAR(128) UNIQUE NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE rename_token_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE rename_token_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_rename_token_global_token_lower ON rename_token_global (LOWER(token));
 CREATE INDEX IF NOT EXISTS idx_rename_token_global_custom_token_lower ON rename_token_global_custom (LOWER(token));
@@ -433,14 +438,16 @@ SELECT
     c.id,
     c.token,
     c.created_at,
-    c.updated_at
+    c.updated_at,
+    c.is_enabled
 FROM rename_token_global_custom c
 UNION ALL
 SELECT
     g.id,
     g.token,
     g.created_at,
-    g.updated_at
+    g.updated_at,
+    g.is_enabled
 FROM rename_token_global g
 LEFT JOIN rename_token_global_custom c ON LOWER(g.token) = LOWER(c.token)
 WHERE c.token IS NULL;
@@ -456,6 +463,7 @@ CREATE TABLE IF NOT EXISTS bio_random (
     race VARCHAR(64) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     faction VARCHAR(128) DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_random_type_check
@@ -471,6 +479,7 @@ CREATE TABLE IF NOT EXISTS bio_random_custom (
     race VARCHAR(64) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     faction VARCHAR(128) DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_random_custom_type_check
@@ -499,7 +508,8 @@ SELECT
     c.gender,
     c.faction,
     c.created_at,
-    c.updated_at
+    c.updated_at,
+    c.is_enabled
 FROM bio_random_custom c
 UNION ALL
 SELECT
@@ -511,7 +521,8 @@ SELECT
     b.gender,
     b.faction,
     b.created_at,
-    b.updated_at
+    b.updated_at,
+    b.is_enabled
 FROM bio_random b
 LEFT JOIN bio_random_custom c
   ON LOWER(b.type) = LOWER(c.type)
@@ -526,6 +537,7 @@ CREATE TABLE IF NOT EXISTS bio_unique (
     name VARCHAR(255) NOT NULL,
     type VARCHAR(32) NOT NULL,
     description TEXT NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_unique_type_check
@@ -538,12 +550,16 @@ CREATE TABLE IF NOT EXISTS bio_unique_custom (
     name VARCHAR(255) NOT NULL,
     type VARCHAR(32) NOT NULL,
     description TEXT NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT bio_unique_custom_type_check
         CHECK (LOWER(type) IN ('personality', 'backstory', 'speechstyle', 'occupation', 'appearance', 'goals')),
     CONSTRAINT bio_unique_custom_name_type_key UNIQUE (name, type)
 );
+
+ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_bio_unique_name ON bio_unique (LOWER(name));
 CREATE INDEX IF NOT EXISTS idx_bio_unique_type ON bio_unique (LOWER(type));
@@ -557,7 +573,8 @@ SELECT
     c.type,
     c.description,
     c.created_at,
-    c.updated_at
+    c.updated_at,
+    c.is_enabled
 FROM bio_unique_custom c
 UNION ALL
 SELECT
@@ -566,7 +583,8 @@ SELECT
     b.type,
     b.description,
     b.created_at,
-    b.updated_at
+    b.updated_at,
+    b.is_enabled
 FROM bio_unique b
 LEFT JOIN bio_unique_custom c
   ON LOWER(b.name) = LOWER(c.name)
@@ -1208,6 +1226,7 @@ CREATE TABLE IF NOT EXISTS bio_random (
     race VARCHAR(64) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     faction VARCHAR(128) DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -1218,6 +1237,7 @@ ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS name VARCHAR(255) DEFAULT '';
 ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS race VARCHAR(64) DEFAULT '';
 ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS gender VARCHAR(16) DEFAULT '';
 ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS faction VARCHAR(128) DEFAULT '';
+ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_random ALTER COLUMN type SET NOT NULL;
@@ -1254,6 +1274,7 @@ CREATE TABLE IF NOT EXISTS bio_random_custom (
     race VARCHAR(64) DEFAULT '',
     gender VARCHAR(16) DEFAULT '',
     faction VARCHAR(128) DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -1264,6 +1285,7 @@ ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS name VARCHAR(255) DEFAULT
 ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS race VARCHAR(64) DEFAULT '';
 ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS gender VARCHAR(16) DEFAULT '';
 ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS faction VARCHAR(128) DEFAULT '';
+ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_random_custom ALTER COLUMN type SET NOT NULL;
@@ -1313,7 +1335,8 @@ SELECT
     c.gender,
     c.faction,
     c.created_at,
-    c.updated_at
+    c.updated_at,
+    c.is_enabled
 FROM bio_random_custom c
 UNION ALL
 SELECT
@@ -1325,7 +1348,8 @@ SELECT
     b.gender,
     b.faction,
     b.created_at,
-    b.updated_at
+    b.updated_at,
+    b.is_enabled
 FROM bio_random b
 LEFT JOIN bio_random_custom c
   ON LOWER(b.type) = LOWER(c.type)
@@ -1339,6 +1363,7 @@ CREATE TABLE IF NOT EXISTS bio_unique (
     name VARCHAR(255) NOT NULL,
     type VARCHAR(32) NOT NULL,
     description TEXT NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -1346,6 +1371,7 @@ ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS id SERIAL;
 ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS name VARCHAR(255);
 ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS type VARCHAR(32);
 ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_unique ALTER COLUMN name SET NOT NULL;
@@ -1380,6 +1406,7 @@ CREATE TABLE IF NOT EXISTS bio_unique_custom (
     name VARCHAR(255) NOT NULL,
     type VARCHAR(32) NOT NULL,
     description TEXT NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -1387,6 +1414,7 @@ ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS id SERIAL;
 ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS name VARCHAR(255);
 ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS type VARCHAR(32);
 ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE bio_unique_custom ALTER COLUMN name SET NOT NULL;
@@ -1428,7 +1456,8 @@ SELECT
     c.type,
     c.description,
     c.created_at,
-    c.updated_at
+    c.updated_at,
+    c.is_enabled
 FROM bio_unique_custom c
 UNION ALL
 SELECT
@@ -1437,7 +1466,8 @@ SELECT
     b.type,
     b.description,
     b.created_at,
-    b.updated_at
+    b.updated_at,
+    b.is_enabled
 FROM bio_unique b
 LEFT JOIN bio_unique_custom c
   ON LOWER(b.name) = LOWER(c.name)
