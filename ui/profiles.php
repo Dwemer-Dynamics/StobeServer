@@ -143,6 +143,43 @@ function unique_profile_label(string $base, int $excludeId = 0): string {
         if ($i > 200) { return trim($base) . ' ' . time(); }
     }
 }
+function normalize_imported_profile_label(string $rawLabel, string $fileName = ''): string {
+    $label = trim($rawLabel);
+    $label = preg_replace('/(?:\s*\(Imported\))+$/i', '', $label);
+    $label = is_string($label) ? trim($label) : '';
+
+    if ($label === '' && trim($fileName) !== '') {
+        $baseName = basename(str_replace('\\', '/', $fileName));
+        $baseName = preg_replace('/\.json$/i', '', $baseName);
+        $baseName = preg_replace('/[_-]+/', ' ', is_string($baseName) ? $baseName : '');
+        $label = is_string($baseName) ? trim($baseName) : '';
+    }
+
+    return $label !== '' ? $label : 'Imported Profile';
+}
+function unique_imported_profile_label(string $label): string {
+    $label = trim($label) !== '' ? trim($label) : 'Imported Profile';
+    $db = $GLOBALS['db'];
+    $row = $db->fetchOne("SELECT id FROM core_profiles WHERE LOWER(label)=LOWER($1) LIMIT 1", [$label]);
+    if (intval($row['id'] ?? 0) <= 0) {
+        return $label;
+    }
+
+    $base = $label . ' (Imported)';
+    $candidate = $base;
+    $i = 2;
+    while (true) {
+        $row = $db->fetchOne("SELECT id FROM core_profiles WHERE LOWER(label)=LOWER($1) LIMIT 1", [$candidate]);
+        if (intval($row['id'] ?? 0) <= 0) {
+            return $candidate;
+        }
+        $candidate = $base . ' ' . $i;
+        $i++;
+        if ($i > 200) {
+            return $base . ' ' . time();
+        }
+    }
+}
 
 $db = $GLOBALS['db'];
 $isEmbed = is_embed();
@@ -254,8 +291,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     $rawJson = '';
+    $importFileName = '';
     if (isset($_FILES['import_file']) && is_array($_FILES['import_file'])) {
         $tmpPath = strval($_FILES['import_file']['tmp_name'] ?? '');
+        $importFileName = strval($_FILES['import_file']['name'] ?? '');
         $err = intval($_FILES['import_file']['error'] ?? UPLOAD_ERR_NO_FILE);
         if ($err === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
             $rawJson = strval(file_get_contents($tmpPath) ?: '');
@@ -281,17 +320,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     }
 
     $labelInput = trim(strval($_POST['import_label'] ?? ''));
-    $baseLabel = $labelInput !== '' ? $labelInput : trim(strval($profileData['label'] ?? ''));
-    if ($baseLabel === '') {
-        $baseLabel = 'Imported Profile';
-    }
+    $baseLabel = $labelInput !== ''
+        ? normalize_imported_profile_label($labelInput, $importFileName)
+        : normalize_imported_profile_label(strval($profileData['label'] ?? ''), $importFileName);
+
+    $makeDefaultNpc = coerceBoolean($_POST['make_default_npc'] ?? false);
+    $migrateOldDefaultNpcs = coerceBoolean($_POST['migrate_old_default_npcs'] ?? false);
+    $makePlayerFactionProfile = coerceBoolean($_POST['make_player_faction_profile'] ?? false);
+    $migratePlayerFactionNpcs = coerceBoolean($_POST['migrate_player_faction_npcs'] ?? false);
+
+    $previousDefaultRow = $db->fetchOne(
+        "SELECT id FROM core_profiles WHERE COALESCE(is_default_npc, FALSE) = TRUE ORDER BY id ASC LIMIT 1"
+    );
+    $previousDefaultProfileId = intval($previousDefaultRow['id'] ?? 0);
+    $previousPlayerFactionRow = $db->fetchOne(
+        "SELECT id FROM core_profiles WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE ORDER BY id ASC LIMIT 1"
+    );
+    $previousPlayerFactionProfileId = intval($previousPlayerFactionRow['id'] ?? 0);
 
     $metadataRaw = $profileData['metadata'] ?? [];
     $metadata = normalize_json_obj($metadataRaw, getDefaultCoreProfileMetadataJson());
     $newId = saveCoreProfile([
-        'label' => unique_profile_label($baseLabel),
-        'is_default_npc' => false,
-        'is_player_faction_profile' => false,
+        'label' => unique_imported_profile_label($baseLabel),
+        'is_default_npc' => $makeDefaultNpc,
+        'is_player_faction_profile' => $makePlayerFactionProfile,
         'prompt_head' => strval($profileData['prompt_head'] ?? ''),
         'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
         'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
@@ -310,7 +362,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
         exit;
     }
 
-    header('Location: ' . page_url(['edit' => $newId, 'notice' => 'profile_imported']));
+    $noticeParts = ['Profile imported'];
+    if ($migrateOldDefaultNpcs) {
+        $where = "profile_id IS NULL";
+        $params = [];
+        if ($previousDefaultProfileId > 0) {
+            $where .= " OR profile_id = $1";
+            $params[] = $previousDefaultProfileId;
+        }
+        $countRow = $db->fetchOne("SELECT COUNT(*) AS c FROM core_npc WHERE {$where}", $params);
+        $migratedDefaultCount = intval($countRow['c'] ?? 0);
+        $db->exec("UPDATE core_npc SET profile_id = " . intval($newId) . ", updated_at = NOW() WHERE {$where}", $params);
+        $noticeParts[] = 'moved ' . $migratedDefaultCount . ' default/unassigned NPCs';
+    }
+
+    if ($migratePlayerFactionNpcs && $previousPlayerFactionProfileId > 0) {
+        $countRow = $db->fetchOne(
+            "SELECT COUNT(*) AS c FROM core_npc WHERE profile_id = $1",
+            [$previousPlayerFactionProfileId]
+        );
+        $migratedPlayerFactionCount = intval($countRow['c'] ?? 0);
+        $db->exec(
+            "UPDATE core_npc SET profile_id = $1, updated_at = NOW() WHERE profile_id = $2",
+            [$newId, $previousPlayerFactionProfileId]
+        );
+        $noticeParts[] = 'moved ' . $migratedPlayerFactionCount . ' player-faction NPCs';
+    }
+
+    header('Location: ' . page_url(['edit' => $newId, 'notice' => implode('; ', $noticeParts)]));
     exit;
 }
 
@@ -1018,6 +1097,25 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                     <div>
                         <label for="import_label">Optional New Label Override</label>
                         <input id="import_label" name="import_label" type="text" placeholder="Leave blank to use file profile label">
+                    </div>
+                    <div style="padding:12px; background:#1f1f1f; border:1px solid #3a3a3a; border-radius:8px;">
+                        <div style="font-weight:700; color:#e6b76c; margin-bottom:8px;">Import Assignment Options</div>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="make_default_npc" value="1" style="margin-top:3px;">
+                            <span>Make Default Profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="migrate_old_default_npcs" value="1" style="margin-top:3px;">
+                            <span>Move current default NPCs to this profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="make_player_faction_profile" value="1" style="margin-top:3px;">
+                            <span>Make Player Faction Profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:0; cursor:pointer;">
+                            <input type="checkbox" name="migrate_player_faction_npcs" value="1" style="margin-top:3px;">
+                            <span>Move current player-faction NPCs to this profile</span>
+                        </label>
                     </div>
                     <div class="setting-desc" style="margin-top:2px;">
                         Imports profile prompt head/prompt, metadata, and connector assignments (when matching connector ids exist in Stobe).
