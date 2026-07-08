@@ -19,7 +19,6 @@ function ttsSpecs(): array {
     ];
 }
 function ttsDefaultUrl(string $service): string { return in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''; }
-function ttsOmniVoiceUrl(): string { return 'http://127.0.0.1:8021'; }
 function ttsSupportsOmniVoice(string $service): bool { return in_array($service, ['pocket_tts','xtts','chatterbox'], true); }
 function ttsDefaultConfig(string $service): array {
     return [
@@ -87,8 +86,6 @@ function ttsBuildFields(array $payload, ?array $existing): array {
         'is_default' => ttsBool($payload['is_default'] ?? ($existing['is_default'] ?? false)),
         'config' => $cfg,
     ];
-    if ($cfg['use_omnivoice']) $fields['base_url'] = ttsOmniVoiceUrl();
-    elseif (ttsSupportsOmniVoice($service) && $fields['base_url'] === ttsOmniVoiceUrl()) $fields['base_url'] = ttsDefaultUrl($service);
     if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox'], true)) $fields['base_url'] = ttsDefaultUrl($service);
     if ($existing && isset($existing['id'])) $fields['id'] = intval($existing['id']);
     return $fields;
@@ -247,7 +244,7 @@ h1.api-title {
 <div id="row_url">
 <label for="url">URL</label>
 <input id="url" type="text" name="url" value="<?= h($editItem['url']) ?>">
-<div class="help">Base endpoint for this TTS provider. Local providers usually use `http://127.0.0.1:8020`, or `http://127.0.0.1:8021` through OmniVoice.</div>
+<div class="help">Base endpoint for this TTS provider. When OmniVoice is enabled, runtime requests route to `http://127.0.0.1:8021` without changing this URL.</div>
 </div>
 
 <div id="row_omnivoice" style="margin-top:8px;">
@@ -344,11 +341,8 @@ Use OmniVoice
   const rowWorkspaceAuth = document.getElementById('row_workspace_auth');
   const rowUrl = document.getElementById('row_url');
   const rowOmnivoice = document.getElementById('row_omnivoice');
-  const omniVoiceToggle = document.getElementById('use_omnivoice');
-  const urlInput = document.getElementById('url');
   const rowModel = document.getElementById('row_model_workspace');
   const rowLocal = document.getElementById('row_local_tuning');
-  function defaultUrlForService(s){ return (s==='pocket_tts'||s==='xtts'||s==='chatterbox') ? 'http://127.0.0.1:8020' : ''; }
   function applyService(s){
     if (!serviceInput) return;
     serviceInput.value = s;
@@ -364,14 +358,9 @@ Use OmniVoice
     if (rowWorkspaceAuth) rowWorkspaceAuth.style.display = inworld ? '' : 'none';
     if (rowUrl) rowUrl.style.display = local ? '' : 'none';
     if (rowOmnivoice) rowOmnivoice.style.display = local ? '' : 'none';
-    if (omniVoiceToggle && omniVoiceToggle.checked && local && urlInput) urlInput.value = 'http://127.0.0.1:8021';
   }
   buttons.forEach(function(b){ b.addEventListener('click', function(){ applyService(b.getAttribute('data-service')); }); });
   if (serviceInput) applyService(serviceInput.value || 'pocket_tts');
-  if (omniVoiceToggle && urlInput) omniVoiceToggle.addEventListener('change', function(){
-    if (omniVoiceToggle.checked) urlInput.value = 'http://127.0.0.1:8021';
-    else if (urlInput.value.trim() === 'http://127.0.0.1:8021' && serviceInput) urlInput.value = defaultUrlForService(serviceInput.value);
-  });
   const testBtn = document.getElementById('btn_test_connector');
   const modal = document.getElementById('tts_test_modal');
   const iframe = document.getElementById('tts_test_iframe');
