@@ -325,6 +325,7 @@ function stobeQuickstartFilterDefaultTtsConnectors(array $rows): array
         'pocket tts default',
         'xtts default',
         'chatterbox default',
+        'omnivoice default',
         'cartesia default',
         'inworld default',
     ];
@@ -355,6 +356,9 @@ function stobeQuickstartTtsProviderKey(string $connectorName): string
     if (str_contains($name, 'chatterbox')) {
         return 'chatterbox';
     }
+    if (str_contains($name, 'omnivoice')) {
+        return 'omnivoice';
+    }
     if (str_contains($name, 'cartesia')) {
         return 'cartesia';
     }
@@ -366,6 +370,9 @@ function stobeQuickstartTtsProviderKey(string $connectorName): string
 
 function stobeQuickstartLocalTtsDefaultUrl(string $provider): string
 {
+    if ($provider === 'omnivoice') {
+        return 'http://127.0.0.1:8021';
+    }
     if (in_array($provider, ['pocket_tts', 'xtts', 'chatterbox'], true)) {
         return 'http://127.0.0.1:8020';
     }
@@ -1016,7 +1023,7 @@ foreach ($targetProfileRows as $profileRow) {
 
         <section class="qs-section">
             <h2>TTS Connector</h2>
-            <p class="qs-help">Choose one of the default TTS connectors (Pocket TTS, XTTS, Chatterbox, Cartesia, Inworld). This applies to both Default Profile and Player Faction.</p>
+            <p class="qs-help">Choose one of the default TTS connectors (Pocket TTS, XTTS, Chatterbox, OmniVoice, Cartesia, Inworld). This applies to both Default Profile and Player Faction.</p>
             <div class="qs-field">
                 <label for="tts_connector_id">TTS Connector</label>
                 <select id="tts_connector_id" name="tts_connector_id">
@@ -1073,7 +1080,7 @@ foreach ($targetProfileRows as $profileRow) {
 
             <div id="local-tts-block" class="qs-field" style="display:none;">
                 <div class="qs-callout">
-                    For `Pocket TTS`, `XTTS`, and `Chatterbox`, ensure the service is installed and running in your Dwemer Distro.
+                    For `Pocket TTS`, `XTTS`, `Chatterbox`, and `OmniVoice`, ensure the service is installed and running in your Dwemer Distro.
                 </div>
                 <input id="local_tts_probe_url" type="hidden" value="">
                 <div id="local_tts_probe_status" class="qs-status"></div>
@@ -1156,7 +1163,7 @@ function updateConditionalApiFields() {
     const inworldInput = document.getElementById('inworld_api_key');
     const inworldWorkspaceInput = document.getElementById('inworld_workspace');
 
-    const isLocalTts = provider === 'pocket_tts' || provider === 'xtts' || provider === 'chatterbox';
+    const isLocalTts = provider === 'pocket_tts' || provider === 'xtts' || provider === 'chatterbox' || provider === 'omnivoice';
     const showCartesia = provider === 'cartesia';
     const showInworld = provider === 'inworld';
 

@@ -14,19 +14,18 @@ function ttsSpecs(): array {
         'pocket_tts' => ['label' => 'Pocket TTS', 'local' => true],
         'xtts' => ['label' => 'XTTS', 'local' => true],
         'chatterbox' => ['label' => 'Chatterbox', 'local' => true],
+        'omnivoice' => ['label' => 'OmniVoice', 'local' => true],
         'cartesia' => ['label' => 'Cartesia', 'local' => false],
         'inworld' => ['label' => 'Inworld', 'local' => false],
     ];
 }
-function ttsDefaultUrl(string $service): string { return in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''; }
-function ttsSupportsOmniVoice(string $service): bool { return in_array($service, ['pocket_tts','xtts','chatterbox'], true); }
+function ttsDefaultUrl(string $service): string { return $service === 'omnivoice' ? 'http://127.0.0.1:8021' : (in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''); }
 function ttsDefaultConfig(string $service): array {
     return [
         'provider' => $service,
-        'language' => ($service === 'inworld') ? 'EN_US' : 'en',
-        'fallback_male' => 'male1',
-        'fallback_female' => 'female1',
-        'use_omnivoice' => false,
+        'language' => ($service === 'inworld') ? 'EN_US' : ($service === 'omnivoice' ? 'sk' : 'en'),
+        'fallback_male' => $service === 'omnivoice' ? 'default_male' : 'male1',
+        'fallback_female' => $service === 'omnivoice' ? 'default_female' : 'female1',
         'api_badge_id' => 0,
         'model_id' => ($service === 'cartesia') ? 'sonic-3' : (($service === 'inworld') ? 'inworld-tts-1' : ''),
         'workspace' => '',
@@ -73,7 +72,6 @@ function ttsBuildFields(array $payload, ?array $existing): array {
     foreach (ttsCfg($existing['config'] ?? '{}') as $k => $v) $cfg[$k] = $v;
     $cfg['provider'] = $service;
     foreach (['language','fallback_male','fallback_female','model_id','workspace'] as $k) if (array_key_exists($k, $payload)) $cfg[$k] = trim(strval($payload[$k]));
-    $cfg['use_omnivoice'] = ttsSupportsOmniVoice($service) && ttsBool($payload['use_omnivoice'] ?? ($cfg['use_omnivoice'] ?? false));
     foreach (['stream_chunk_size','top_k'] as $k) if (array_key_exists($k, $payload) && trim(strval($payload[$k])) !== '') $cfg[$k] = intval($payload[$k]);
     foreach (['temperature','speed','length_penalty','repetition_penalty','top_p'] as $k) if (array_key_exists($k, $payload) && trim(strval($payload[$k])) !== '') $cfg[$k] = floatval($payload[$k]);
     $cfg['api_badge_id'] = intval($payload['api_badge_id'] ?? ($cfg['api_badge_id'] ?? 0));
@@ -86,7 +84,7 @@ function ttsBuildFields(array $payload, ?array $existing): array {
         'is_default' => ttsBool($payload['is_default'] ?? ($existing['is_default'] ?? false)),
         'config' => $cfg,
     ];
-    if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox'], true)) $fields['base_url'] = ttsDefaultUrl($service);
+    if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox','omnivoice'], true)) $fields['base_url'] = ttsDefaultUrl($service);
     if ($existing && isset($existing['id'])) $fields['id'] = intval($existing['id']);
     return $fields;
 }
@@ -134,7 +132,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['save']) || isset($_P
         'label' => trim(strval($_POST['label'] ?? '')),
         'service' => strval($_POST['service'] ?? 'pocket_tts'),
         'url' => strval($_POST['url'] ?? ''),
-        'use_omnivoice' => isset($_POST['use_omnivoice']) ? 'true' : 'false',
         'api_badge_id' => strval($_POST['api_badge_id'] ?? ''),
         'language' => strval($_POST['language'] ?? ''),
         'fallback_male' => strval($_POST['fallback_male'] ?? ''),
@@ -244,15 +241,7 @@ h1.api-title {
 <div id="row_url">
 <label for="url">URL</label>
 <input id="url" type="text" name="url" value="<?= h($editItem['url']) ?>">
-<div class="help">Base endpoint for this TTS provider. When OmniVoice is enabled, runtime requests route to `http://127.0.0.1:8021` without changing this URL.</div>
-</div>
-
-<div id="row_omnivoice" style="margin-top:8px;">
-<label style="display:flex;gap:8px;align-items:center;color:#e9efff;font-weight:500;">
-<input id="use_omnivoice" type="checkbox" name="use_omnivoice" value="true" <?= ttsBool($cfg['use_omnivoice'] ?? false) ? 'checked' : '' ?>>
-Use OmniVoice
-</label>
-<div class="help">Routes Pocket TTS, XTTS, or Chatterbox through local OmniVoice at `http://127.0.0.1:8021`.</div>
+<div class="help">Base endpoint for this TTS provider. Local Pocket TTS, XTTS, and Chatterbox usually use `http://127.0.0.1:8020`; OmniVoice uses `http://127.0.0.1:8021`.</div>
 </div>
 
 <label>Provider</label>
@@ -340,14 +329,13 @@ Use OmniVoice
   const rowApiBadge = document.getElementById('row_api_badge');
   const rowWorkspaceAuth = document.getElementById('row_workspace_auth');
   const rowUrl = document.getElementById('row_url');
-  const rowOmnivoice = document.getElementById('row_omnivoice');
   const rowModel = document.getElementById('row_model_workspace');
   const rowLocal = document.getElementById('row_local_tuning');
   function applyService(s){
     if (!serviceInput) return;
     serviceInput.value = s;
     buttons.forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-service') === s); });
-    const local = (s==='pocket_tts'||s==='xtts'||s==='chatterbox');
+    const local = (s==='pocket_tts'||s==='xtts'||s==='chatterbox'||s==='omnivoice');
     const cloud = (s==='cartesia'||s==='inworld');
     const inworld = (s==='inworld');
     const showApiBadge = (s==='cartesia'||s==='inworld'||s==='chatterbox');
@@ -357,7 +345,6 @@ Use OmniVoice
     if (rowNameBadge) rowNameBadge.style.gridTemplateColumns = showApiBadge ? '1fr 1fr' : '1fr';
     if (rowWorkspaceAuth) rowWorkspaceAuth.style.display = inworld ? '' : 'none';
     if (rowUrl) rowUrl.style.display = local ? '' : 'none';
-    if (rowOmnivoice) rowOmnivoice.style.display = local ? '' : 'none';
   }
   buttons.forEach(function(b){ b.addEventListener('click', function(){ applyService(b.getAttribute('data-service')); }); });
   if (serviceInput) applyService(serviceInput.value || 'pocket_tts');

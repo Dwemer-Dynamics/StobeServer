@@ -74,6 +74,7 @@ require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'utils_game_timestamp.p
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-pockettts.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-xtts.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-chatterbox.php');
+require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-omnivoice.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-cartesia.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-inworld.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'data_functions.php');

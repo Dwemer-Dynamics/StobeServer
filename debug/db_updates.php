@@ -974,7 +974,7 @@ PROMPT;
                            ),
                            true
                        )
-                       WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'cartesia', 'inworld')");
+                       WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'cartesia', 'inworld')");
         });
         $applyPatch('core_tts_connector', 202605101610, static function () use ($db): void {
             $db->exec("UPDATE core_tts_connector
@@ -996,9 +996,29 @@ PROMPT;
                            'pocket tts default',
                            'xtts default',
                            'chatterbox default',
+                           'omnivoice default',
                            'cartesia default',
                            'inworld default'
                        )");
+        });
+        $applyPatch('core_tts_connector', 202607071200, static function () use ($db): void {
+            $db->exec("INSERT INTO core_tts_connector (
+                           name,
+                           connector_type,
+                           base_url,
+                           is_default,
+                           config
+                       ) VALUES (
+                           'OmniVoice Default',
+                           'omnivoice',
+                           'http://127.0.0.1:8021',
+                           FALSE,
+                           '{\"language\":\"sk\",\"fallback_male\":\"default_male\",\"fallback_female\":\"default_female\",\"stream_chunk_size\":20,\"temperature\":0.9,\"speed\":1.0,\"length_penalty\":1.0,\"repetition_penalty\":5.0,\"top_p\":0.85,\"top_k\":50,\"enable_text_splitting\":true}'::jsonb
+                       )
+                       ON CONFLICT (name) DO UPDATE SET
+                           connector_type = EXCLUDED.connector_type,
+                           base_url = EXCLUDED.base_url,
+                           config = EXCLUDED.config");
         });
         $applyPatch('core_npc_master', 202603130215, static function () use ($db): void {
             $db->exec("

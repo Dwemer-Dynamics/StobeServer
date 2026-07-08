@@ -44,15 +44,6 @@ function stobeTtsBool(mixed $value): bool {
     return in_array(strtolower(trim(strval($value))), ['1', 'true', 'yes', 'on'], true);
 }
 
-function stobeTtsProviderSupportsOmniVoice(string $provider): bool {
-    return in_array($provider, ['pocket_tts', 'xtts', 'chatterbox'], true);
-}
-
-function stobeTtsUseOmniVoice(array $connectorConfig, string $provider): bool {
-    return stobeTtsProviderSupportsOmniVoice($provider)
-        && stobeTtsBool($connectorConfig['use_omnivoice'] ?? false);
-}
-
 function stobeGetDefaultTtsConnector(): array|false {
     $db = $GLOBALS["db"];
     $connector = $db->fetchOne(
@@ -485,6 +476,7 @@ function stobeNormalizeTtsConnectorType(string $type): string {
         'pockettts', 'pocketts', 'pocket_tts' => 'pocket_tts',
         'xtts', 'xtts_fastapi' => 'xtts',
         'chatterbox' => 'chatterbox',
+        'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
         'cartesia' => 'cartesia',
         'inworld' => 'inworld',
         default => 'pocket_tts',
@@ -597,11 +589,8 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
     if ($endpoint === '') {
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
-    $useOmniVoice = stobeTtsUseOmniVoice($connectorConfig, $provider);
-    if ($useOmniVoice) {
-        $endpoint = 'http://127.0.0.1:8021';
-    } elseif ($endpoint === '' && stobeTtsProviderSupportsOmniVoice($provider)) {
-        $endpoint = 'http://127.0.0.1:8020';
+    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
+        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
     }
     $endpoint = rtrim($endpoint, '/');
     $language = trim(strval($connectorConfig['language'] ?? ''));
@@ -656,7 +645,6 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         'connector_id' => intval(is_array($connector) ? ($connector['id'] ?? 0) : 0),
         'connector_name' => strval(is_array($connector) ? ($connector['name'] ?? '') : ''),
         'endpoint' => $endpoint,
-        'use_omnivoice' => $useOmniVoice,
         'language' => $language,
         'voiceid' => $voiceId,
         'voiceid_source' => $voiceSource,
@@ -1193,7 +1181,12 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     $isAudioCppPocketTts = $provider === 'pocket_tts'
         && stobePocketTtsIsAudioCpp($endpoint);
 
-    if (!$isAudioCppPocketTts) {
+    if ($provider === 'omnivoice') {
+        $languagePayload = json_encode(['language' => $language], JSON_UNESCAPED_UNICODE);
+        if (is_string($languagePayload) && $languagePayload !== '') {
+            stobePostJsonToLocalTtsEndpoint($endpoint, $languagePayload, ['/active_language'], 'application/json');
+        }
+    } elseif (!$isAudioCppPocketTts) {
         stobePocketTtsApplySettings($provider, $endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());
         stobeMaybeSyncVoiceToLocalProvider($provider, $endpoint, $voiceId);
     }
@@ -1229,7 +1222,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
 
     $pathCandidates = $isAudioCppPocketTts
         ? ['/v1/audio/speech']
-        : (in_array($provider, ['xtts', 'chatterbox'], true)
+        : (in_array($provider, ['xtts', 'chatterbox', 'omnivoice'], true)
             ? ['/tts_to_audio/', '/tts_to_audio']
             : ['/tts_to_audio', '/tts_to_audio/']);
     $requestResult = stobePostJsonToLocalTtsEndpoint($endpoint, $payload, $pathCandidates);
@@ -1239,7 +1232,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     $responseBody = strval($requestResult['response'] ?? '');
 
     if (!is_string($binary) || $binary === '' || $httpCode < 200 || $httpCode >= 300) {
-        if ($provider === 'xtts') {
+        if (in_array($provider, ['xtts', 'omnivoice'], true)) {
             $responseDetail = '';
             if ($responseBody !== '') {
                 $decodedError = json_decode($responseBody, true);
@@ -1270,7 +1263,8 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
                     ], JSON_UNESCAPED_UNICODE);
 
                     if (is_string($fallbackPayload) && $fallbackPayload !== '') {
-                        stobeLogWarn('XTTS speaker missing, retrying fallback voice', [
+                        stobeLogWarn('Local TTS speaker missing, retrying fallback voice', [
+                            'provider' => $provider,
                             'requested_voiceid' => $voiceId,
                             'fallback_voiceid' => $fallbackVoiceId,
                             'endpoint' => $endpoint,
@@ -1375,6 +1369,8 @@ function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcD
         $binary = stobeSynthesizeViaXtts($speechText, $runtime);
     } elseif ($provider === 'chatterbox') {
         $binary = stobeSynthesizeViaChatterbox($speechText, $runtime);
+    } elseif ($provider === 'omnivoice') {
+        $binary = stobeSynthesizeViaOmniVoice($speechText, $runtime);
     } elseif ($provider === 'cartesia') {
         $binary = stobeSynthesizeViaCartesia($speechText, $runtime);
         $voiceId = trim(strval($runtime['voiceid'] ?? $voiceId));
@@ -1438,11 +1434,8 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
     if ($endpoint === '') {
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
-    $useOmniVoice = stobeTtsUseOmniVoice($connectorConfig, $provider);
-    if ($useOmniVoice) {
-        $endpoint = 'http://127.0.0.1:8021';
-    } elseif ($endpoint === '' && stobeTtsProviderSupportsOmniVoice($provider)) {
-        $endpoint = 'http://127.0.0.1:8020';
+    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
+        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
     }
     $endpoint = rtrim($endpoint, '/');
     $language = trim(strval($connectorConfig['language'] ?? ''));
@@ -1470,7 +1463,6 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         'connector_id' => intval($connector['id'] ?? 0),
         'connector_name' => strval($connector['name'] ?? ''),
         'endpoint' => $endpoint,
-        'use_omnivoice' => $useOmniVoice,
         'language' => $language,
         'voiceid' => $voiceId,
         'fallback_voiceid' => $voiceId,
@@ -1534,6 +1526,8 @@ function stobeSynthesizeTtsFromConnector(array $connector, string $text, string 
         $binary = stobeSynthesizeViaXtts($speechText, $runtime);
     } elseif ($provider === 'chatterbox') {
         $binary = stobeSynthesizeViaChatterbox($speechText, $runtime);
+    } elseif ($provider === 'omnivoice') {
+        $binary = stobeSynthesizeViaOmniVoice($speechText, $runtime);
     } elseif ($provider === 'cartesia') {
         $binary = stobeSynthesizeViaCartesia($speechText, $runtime);
         $voiceId = trim(strval($runtime['voiceid'] ?? $voiceId));

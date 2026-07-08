@@ -11846,6 +11846,7 @@ function stobeNormalizeTtsConnectorTypeForStorage(string $rawType): string {
         'pockettts', 'pocketts', 'pocket_tts' => 'pocket_tts',
         'xtts', 'xtts_fastapi' => 'xtts',
         'chatterbox' => 'chatterbox',
+        'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
         'cartesia' => 'cartesia',
         'inworld' => 'inworld',
         default => 'pocket_tts',
