@@ -20,10 +20,50 @@ function ttsSpecs(): array {
     ];
 }
 function ttsDefaultUrl(string $service): string { return $service === 'omnivoice' ? 'http://127.0.0.1:8021' : (in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''); }
+function ttsOmniVoiceLanguageLabel(string $languageId): string {
+    static $fallbackLabels = ['cs'=>'Czech','en'=>'English','es'=>'Spanish','ro'=>'Romanian','ru'=>'Russian','sk'=>'Slovak'];
+    $languageId = strtolower(trim($languageId));
+    if ($languageId === '') return '';
+    $profilePath = '/home/dwemer/omnivoice-tts/languages/' . $languageId . '.json';
+    if (is_file($profilePath) && is_readable($profilePath)) {
+        $profile = json_decode(strval(@file_get_contents($profilePath)), true);
+        if (is_array($profile)) {
+            $label = trim(strval($profile['display_name'] ?? $profile['omnivoice_language'] ?? ''));
+            if ($label !== '') return $label;
+        }
+    }
+    return $fallbackLabels[$languageId] ?? strtoupper($languageId);
+}
+function ttsOmniVoicePreparedLanguages(): array {
+    $voicesPath = '/home/dwemer/omnivoice-tts/voices';
+    if (!is_dir($voicesPath) || !is_readable($voicesPath)) return [];
+    $entries = @scandir($voicesPath);
+    if (!is_array($entries)) return [];
+    $options = [];
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') continue;
+        $languageId = strtolower(trim($entry));
+        if ($languageId === '' || !preg_match('/^[a-z][a-z0-9-]*$/', $languageId)) continue;
+        $languagePath = $voicesPath . DIRECTORY_SEPARATOR . $entry;
+        if (!is_dir($languagePath) || !is_readable($languagePath)) continue;
+        $voiceCount = 0;
+        $voiceEntries = @scandir($languagePath);
+        if (is_array($voiceEntries)) {
+            foreach ($voiceEntries as $voiceEntry) {
+                if ($voiceEntry === '.' || $voiceEntry === '..') continue;
+                if (is_dir($languagePath . DIRECTORY_SEPARATOR . $voiceEntry)) $voiceCount++;
+            }
+        }
+        if ($voiceCount < 1) continue;
+        $options[$languageId] = ['id'=>$languageId,'label'=>ttsOmniVoiceLanguageLabel($languageId),'voice_count'=>$voiceCount];
+    }
+    uasort($options, fn($a, $b) => strcasecmp(strval($a['label'] ?? ''), strval($b['label'] ?? '')));
+    return array_values($options);
+}
 function ttsDefaultConfig(string $service): array {
     return [
         'provider' => $service,
-        'language' => ($service === 'inworld') ? 'EN_US' : ($service === 'omnivoice' ? 'sk' : 'en'),
+        'language' => ($service === 'inworld') ? 'EN_US' : ($service === 'omnivoice' ? '' : 'en'),
         'fallback_male' => $service === 'omnivoice' ? 'default_male' : 'male1',
         'fallback_female' => $service === 'omnivoice' ? 'default_female' : 'female1',
         'api_badge_id' => 0,
@@ -252,8 +292,34 @@ h1.api-title {
 <div class="grid2">
 <div>
 <label for="language">Language</label>
+<?php if (($editItem['service'] ?? '') === 'omnivoice' && !empty(ttsOmniVoicePreparedLanguages())): ?>
+<?php
+    $omniLanguages = ttsOmniVoicePreparedLanguages();
+    $currentOmniLanguage = strtolower(trim(strval($cfg['language'] ?? '')));
+    $preparedLanguageIds = array_map(fn($option) => strval($option['id'] ?? ''), $omniLanguages);
+    $currentLanguagePrepared = $currentOmniLanguage !== '' && in_array($currentOmniLanguage, $preparedLanguageIds, true);
+    $selectedOmniLanguage = $currentLanguagePrepared ? $currentOmniLanguage : strval($omniLanguages[0]['id'] ?? '');
+?>
+<select id="language" name="language">
+<?php foreach ($omniLanguages as $languageOption): ?>
+<?php
+    $languageId = strval($languageOption['id'] ?? '');
+    $voiceCount = intval($languageOption['voice_count'] ?? 0);
+    $languageLabel = strval($languageOption['label'] ?? strtoupper($languageId));
+    $optionLabel = $languageLabel . ' (' . $languageId . ', ' . $voiceCount . ' voice' . ($voiceCount === 1 ? '' : 's') . ')';
+?>
+<option value="<?= h($languageId) ?>" <?= $selectedOmniLanguage === $languageId ? 'selected' : '' ?>><?= h($optionLabel) ?></option>
+<?php endforeach; ?>
+</select>
+<?php if ($currentOmniLanguage !== '' && !$currentLanguagePrepared): ?>
+<div class="help">Saved language <?= h($currentOmniLanguage) ?> has no prepared voices. Save this connector to switch to an installed language.</div>
+<?php else: ?>
+<div class="help">Prepared OmniVoice language library used for synthesis.</div>
+<?php endif; ?>
+<?php else: ?>
 <input id="language" type="text" name="language" value="<?= h(strval($cfg['language'] ?? 'en')) ?>">
 <div class="help">Locale/language code sent to provider (for example `en`, `EN_US`).</div>
+<?php endif; ?>
 </div>
 <div>
 <label for="fallback_male">Fallback Male Voice ID</label>

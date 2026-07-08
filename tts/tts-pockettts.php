@@ -594,7 +594,7 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
     }
     $endpoint = rtrim($endpoint, '/');
     $language = trim(strval($connectorConfig['language'] ?? ''));
-    if ($language === '') {
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
 
@@ -1173,15 +1173,15 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     if ($voiceId === '') {
         $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
-    $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
-    if ($language === '') {
+    $language = strtolower(trim(strval($runtime['language'] ?? '')));
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
 
     $isAudioCppPocketTts = $provider === 'pocket_tts'
         && stobePocketTtsIsAudioCpp($endpoint);
 
-    if ($provider === 'omnivoice') {
+    if ($provider === 'omnivoice' && $language !== '') {
         $languagePayload = json_encode(['language' => $language], JSON_UNESCAPED_UNICODE);
         if (is_string($languagePayload) && $languagePayload !== '') {
             stobePostJsonToLocalTtsEndpoint($endpoint, $languagePayload, ['/active_language'], 'application/json');
@@ -1210,11 +1210,14 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         ];
         $payload = json_encode(array_merge($payloadData, stobePocketTtsAudioCppVoicePayload($voiceId)), JSON_UNESCAPED_UNICODE);
     } else {
-        $payload = json_encode([
+        $payloadData = [
             'text' => $speechText,
             'speaker_wav' => $voiceId,
-            'language' => $language,
-        ], JSON_UNESCAPED_UNICODE);
+        ];
+        if ($language !== '') {
+            $payloadData['language'] = $language;
+        }
+        $payload = json_encode($payloadData, JSON_UNESCAPED_UNICODE);
     }
     if (!is_string($payload) || $payload === '') {
         return false;
@@ -1256,11 +1259,14 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
                         trim(strval($runtime['fallback_male'] ?? 'male1'));
                 }
                 if (strcasecmp($fallbackVoiceId, $voiceId) !== 0) {
-                    $fallbackPayload = json_encode([
+                    $fallbackPayloadData = [
                         'text' => $speechText,
                         'speaker_wav' => $fallbackVoiceId,
-                        'language' => $language,
-                    ], JSON_UNESCAPED_UNICODE);
+                    ];
+                    if ($language !== '') {
+                        $fallbackPayloadData['language'] = $language;
+                    }
+                    $fallbackPayload = json_encode($fallbackPayloadData, JSON_UNESCAPED_UNICODE);
 
                     if (is_string($fallbackPayload) && $fallbackPayload !== '') {
                         stobeLogWarn('Local TTS speaker missing, retrying fallback voice', [
@@ -1327,8 +1333,8 @@ function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcD
     if ($voiceId === '') {
         $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
-    $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
-    if ($language === '') {
+    $language = strtolower(trim(strval($runtime['language'] ?? '')));
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
     $modelId = trim(strval($runtime['model_id'] ?? ''));
@@ -1439,7 +1445,7 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
     }
     $endpoint = rtrim($endpoint, '/');
     $language = trim(strval($connectorConfig['language'] ?? ''));
-    if ($language === '') {
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
 
@@ -1493,8 +1499,8 @@ function stobeSynthesizeTtsFromConnector(array $connector, string $text, string 
     if ($voiceId === '') {
         $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
-    $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
-    if ($language === '') {
+    $language = strtolower(trim(strval($runtime['language'] ?? '')));
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
     $modelId = trim(strval($runtime['model_id'] ?? ''));

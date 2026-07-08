@@ -1013,7 +1013,7 @@ PROMPT;
                            'omnivoice',
                            'http://127.0.0.1:8021',
                            FALSE,
-                           '{\"language\":\"sk\",\"fallback_male\":\"default_male\",\"fallback_female\":\"default_female\",\"stream_chunk_size\":20,\"temperature\":0.9,\"speed\":1.0,\"length_penalty\":1.0,\"repetition_penalty\":5.0,\"top_p\":0.85,\"top_k\":50,\"enable_text_splitting\":true}'::jsonb
+                           '{\"language\":\"\",\"fallback_male\":\"default_male\",\"fallback_female\":\"default_female\",\"stream_chunk_size\":20,\"temperature\":0.9,\"speed\":1.0,\"length_penalty\":1.0,\"repetition_penalty\":5.0,\"top_p\":0.85,\"top_k\":50,\"enable_text_splitting\":true}'::jsonb
                        )
                        ON CONFLICT (name) DO UPDATE SET
                            connector_type = EXCLUDED.connector_type,
