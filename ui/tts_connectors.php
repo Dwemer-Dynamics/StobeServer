@@ -78,6 +78,41 @@ function ttsOmniVoicePreparedLanguages(): array {
     uasort($options, fn($a, $b) => strcasecmp(strval($a['label'] ?? ''), strval($b['label'] ?? '')));
     return array_values($options);
 }
+function ttsOmniVoiceEnsureLanguage(string $endpoint, string $language, string $scope, array $voices = []): array {
+    $endpoint = rtrim(trim($endpoint), '/');
+    $language = strtolower(trim($language));
+    if ($endpoint === '' || $language === '') return ['ok'=>false,'status'=>'skipped','error'=>'OmniVoice endpoint or language is empty.'];
+    $payload = [
+        'language' => $language,
+        'scope' => $scope,
+        'voices' => array_values(array_filter(array_map('strval', $voices), fn($voice) => trim($voice) !== '')),
+        'make_active' => true,
+        'start' => true,
+    ];
+    $ch = curl_init($endpoint . '/ensure_language');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Accept: application/json']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $response = curl_exec($ch);
+    $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+    $curlError = curl_error($ch);
+    curl_close($ch);
+    if ($response === false || $curlError !== '') return ['ok'=>false,'status'=>'unreachable','error'=>$curlError ?: 'Unable to reach OmniVoice.'];
+    $decoded = json_decode(strval($response), true);
+    if (!is_array($decoded)) return ['ok'=>false,'status'=>'bad_response','error'=>'OmniVoice returned a non-JSON response.','http_code'=>$httpCode];
+    $decoded['http_code'] = $httpCode;
+    return $decoded;
+}
+function ttsOmniVoiceEnsureNotice(array $result, string $language): string {
+    if (!($result['ok'] ?? false)) return 'Connector saved. OmniVoice setup could not be started for ' . $language . ': ' . strval($result['error'] ?? 'unknown error');
+    $status = strtolower(strval($result['status'] ?? ''));
+    if ($status === 'ready') return 'Connector saved. OmniVoice ' . $language . ' is ready.';
+    if (in_array($status, ['building','queued','running'], true)) return 'Connector saved. OmniVoice ' . $language . ' preparation started in the background.';
+    return 'Connector saved. OmniVoice ' . $language . ' status: ' . ($status !== '' ? $status : 'unknown') . '.';
+}
 function ttsDefaultConfig(string $service): array {
     return [
         'provider' => $service,
@@ -208,7 +243,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['save']) || isset($_P
     $savedId = 0;
     if (isset($_POST['save']) && intval($_POST['id'] ?? 0) > 0) $savedId = $svc->update(intval($_POST['id']), $payload);
     else $savedId = $svc->create($payload);
-    header('Location: ' . $withEmbed('tts_connectors.php?edit=' . intval($savedId))); exit;
+    $notice = '';
+    if (ttsService($payload['service']) === 'omnivoice') {
+        $endpoint = trim(strval($payload['url'] ?? '')) !== '' ? trim(strval($payload['url'])) : ttsDefaultUrl('omnivoice');
+        $language = strtolower(trim(strval($payload['language'] ?? '')));
+        if ($language !== '') {
+            $ensure = ttsOmniVoiceEnsureLanguage($endpoint, $language, 'voice_set', [
+                strval($payload['fallback_male'] ?? ''),
+                strval($payload['fallback_female'] ?? ''),
+            ]);
+            $notice = ttsOmniVoiceEnsureNotice($ensure, $language);
+        }
+    }
+    $target = 'tts_connectors.php?edit=' . intval($savedId);
+    if ($notice !== '') $target .= '&notice=' . urlencode($notice);
+    header('Location: ' . $withEmbed($target)); exit;
 }
 if (isset($_GET['delete'])) {
     $id = intval($_GET['delete']);

@@ -399,6 +399,64 @@ function stobePostJsonToLocalTtsEndpoint(string $endpoint, string $payload, arra
     ];
 }
 
+function stobeEnsureOmniVoiceVoiceSet(string $endpoint, string $language, array $voices): string {
+    if ($language === '') {
+        return 'ready';
+    }
+
+    $voiceList = [];
+    foreach ($voices as $voice) {
+        $voice = trim(strval($voice));
+        if ($voice !== '' && !in_array($voice, $voiceList, true)) {
+            $voiceList[] = $voice;
+        }
+    }
+
+    $payload = json_encode([
+        'language' => $language,
+        'scope' => 'voice_set',
+        'voices' => $voiceList,
+        'make_active' => true,
+        'start' => true,
+    ], JSON_UNESCAPED_UNICODE);
+    if (!is_string($payload) || $payload === '') {
+        return 'failed';
+    }
+
+    $result = stobePostJsonToLocalTtsEndpoint($endpoint, $payload, ['/ensure_language'], 'application/json');
+    $httpCode = intval($result['http_code'] ?? 0);
+    $body = '';
+    if (is_string($result['binary'] ?? false) && ($result['binary'] ?? '') !== '') {
+        $body = strval($result['binary']);
+    } else {
+        $body = strval($result['response'] ?? '');
+    }
+    $decoded = json_decode($body, true);
+    if ($httpCode < 200 || $httpCode >= 300 || !is_array($decoded) || !($decoded['ok'] ?? false)) {
+        stobeLogWarn('OmniVoice language readiness check failed', [
+            'endpoint' => $endpoint,
+            'language' => $language,
+            'http_code' => $httpCode,
+            'response' => substr($body, 0, 220),
+        ]);
+        return 'failed';
+    }
+
+    $status = strtolower(trim(strval($decoded['status'] ?? '')));
+    if ($status === 'ready') {
+        return 'ready';
+    }
+    if (in_array($status, ['building', 'queued', 'running'], true)) {
+        stobeLogWarn('OmniVoice voice library is preparing', [
+            'endpoint' => $endpoint,
+            'language' => $language,
+            'voices' => $voiceList,
+        ]);
+        return 'building';
+    }
+    return $status !== '' ? $status : 'not_ready';
+}
+
 function stobeEstimateWavDurationMs(string $binary): int {
     $length = strlen($binary);
     if ($length < 12) {
@@ -1182,9 +1240,28 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         && stobePocketTtsIsAudioCpp($endpoint);
 
     if ($provider === 'omnivoice' && $language !== '') {
+        $fallbackVoiceId = trim(strval($runtime['fallback_voiceid'] ?? ''));
+        if ($fallbackVoiceId === '') {
+            $fallbackVoiceId = stobeIsFemaleGender($runtime['gender'] ?? '') ?
+                trim(strval($runtime['fallback_female'] ?? 'female1')) :
+                trim(strval($runtime['fallback_male'] ?? 'male1'));
+        }
+        $ensureStatus = stobeEnsureOmniVoiceVoiceSet($endpoint, $language, [$voiceId, $fallbackVoiceId]);
+        if ($ensureStatus !== 'ready') {
+            return false;
+        }
         $languagePayload = json_encode(['language' => $language], JSON_UNESCAPED_UNICODE);
         if (is_string($languagePayload) && $languagePayload !== '') {
-            stobePostJsonToLocalTtsEndpoint($endpoint, $languagePayload, ['/active_language'], 'application/json');
+            $switchResult = stobePostJsonToLocalTtsEndpoint($endpoint, $languagePayload, ['/active_language'], 'application/json');
+            $switchCode = intval($switchResult['http_code'] ?? 0);
+            if ($switchCode < 200 || $switchCode >= 300) {
+                stobeLogWarn('OmniVoice active language switch failed', [
+                    'endpoint' => $endpoint,
+                    'language' => $language,
+                    'http_code' => $switchCode,
+                ]);
+                return false;
+            }
         }
     } elseif (!$isAudioCppPocketTts) {
         stobePocketTtsApplySettings($provider, $endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());

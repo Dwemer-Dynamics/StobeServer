@@ -1023,7 +1023,7 @@ foreach ($targetProfileRows as $profileRow) {
 
         <section class="qs-section">
             <h2>TTS Connector</h2>
-            <p class="qs-help">Choose one of the default TTS connectors (Pocket TTS, XTTS, Chatterbox, OmniVoice, Cartesia, Inworld). This applies to both Default Profile and Player Faction.</p>
+            <p class="qs-help">Choose one of the default TTS connectors (OmniVoice, Pocket TTS, XTTS, Chatterbox, Cartesia, Inworld). This applies to both Default Profile and Player Faction.</p>
             <div class="qs-field">
                 <label for="tts_connector_id">TTS Connector</label>
                 <select id="tts_connector_id" name="tts_connector_id">
@@ -1163,7 +1163,7 @@ function updateConditionalApiFields() {
     const inworldInput = document.getElementById('inworld_api_key');
     const inworldWorkspaceInput = document.getElementById('inworld_workspace');
 
-    const isLocalTts = provider === 'pocket_tts' || provider === 'xtts' || provider === 'chatterbox' || provider === 'omnivoice';
+    const isLocalTts = provider === 'omnivoice' || provider === 'pocket_tts' || provider === 'xtts' || provider === 'chatterbox';
     const showCartesia = provider === 'cartesia';
     const showInworld = provider === 'inworld';
 
