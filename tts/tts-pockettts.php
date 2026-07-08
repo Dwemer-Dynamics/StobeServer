@@ -191,8 +191,13 @@ function stobePocketTtsIsAudioCpp(string $endpoint): bool {
     return preg_match('/\:8086(?:\/|$)/', $endpoint) === 1 || strpos($endpoint, '/v1/audio/speech') !== false;
 }
 
-function stobePocketTtsAudioCppVoice(): string {
-    return 'alba';
+function stobePocketTtsAudioCppVoicePayload(string $voiceId): array {
+    $samplePath = stobeFindVoiceSamplePath($voiceId);
+    if ($samplePath !== '' && is_file($samplePath) && is_readable($samplePath)) {
+        return ['voice_ref' => $samplePath];
+    }
+
+    return ['voice' => 'alba'];
 }
 
 function stobeResolveNpcVoiceIdByName(string $npcName): string {
@@ -1184,13 +1189,13 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         if ($modelId === '') {
             $modelId = 'pocket-tts';
         }
-        $payload = json_encode([
+        $payloadData = [
             'model' => $modelId,
             'input' => $speechText,
-            'voice' => stobePocketTtsAudioCppVoice(),
             'language' => $language,
             'response_format' => 'wav',
-        ], JSON_UNESCAPED_UNICODE);
+        ];
+        $payload = json_encode(array_merge($payloadData, stobePocketTtsAudioCppVoicePayload($voiceId)), JSON_UNESCAPED_UNICODE);
     } else {
         $payload = json_encode([
             'text' => $speechText,
