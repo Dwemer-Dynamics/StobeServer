@@ -187,33 +187,12 @@ function stobeResolveConnectorFallbackVoices(array $connectorConfig): array {
     ];
 }
 
-function stobePocketTtsApiFormat(array $connectorConfig, string $endpoint): string {
-    $rawFormat = $connectorConfig['api_format'] ?? '';
-    $format = is_scalar($rawFormat) ? strtolower(trim(strval($rawFormat))) : '';
-    if (in_array($format, ['audio_cpp', 'audiocpp'], true)) {
-        return 'audio_cpp';
-    }
-    if ($format === 'legacy') {
-        return 'legacy';
-    }
-    return preg_match('/\:8086(?:\/|$)/', $endpoint) === 1 ? 'audio_cpp' : 'legacy';
+function stobePocketTtsIsAudioCpp(string $endpoint): bool {
+    return preg_match('/\:8086(?:\/|$)/', $endpoint) === 1 || strpos($endpoint, '/v1/audio/speech') !== false;
 }
 
-function stobePocketTtsAudioCppVoice(string $voiceId, array $runtime): string {
-    $configured = $runtime['audio_cpp_voice'] ?? ($runtime['connector_config']['audio_cpp_voice'] ?? '');
-    if (is_scalar($configured) && trim(strval($configured)) !== '') {
-        return trim(strval($configured));
-    }
-
-    $candidate = strtolower(pathinfo(trim($voiceId), PATHINFO_FILENAME));
-    $presets = [
-        'alba', 'marius', 'javert', 'cosette', 'jean', 'anna', 'vera', 'fantine',
-        'charles', 'paul', 'eponine', 'azelma', 'george', 'mary', 'jane',
-        'michael', 'eve', 'bill_boerst', 'peter_yearsley', 'stuart_bell',
-        'caro_davy', 'juergen', 'estelle', 'lola', 'giovanni', 'rafael',
-    ];
-
-    return in_array($candidate, $presets, true) ? $candidate : 'alba';
+function stobePocketTtsAudioCppVoice(): string {
+    return 'alba';
 }
 
 function stobeResolveNpcVoiceIdByName(string $npcName): string {
@@ -601,8 +580,6 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         $endpoint = 'http://127.0.0.1:8020';
     }
     $endpoint = rtrim($endpoint, '/');
-    $apiFormat = $provider === 'pocket_tts' ? stobePocketTtsApiFormat($connectorConfig, $endpoint) : 'legacy';
-
     $language = trim(strval($connectorConfig['language'] ?? ''));
     if ($language === '') {
         $language = 'en';
@@ -663,9 +640,7 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         'fallback_male' => $fallbackVoices['male'],
         'fallback_female' => $fallbackVoices['female'],
         'settings' => $settings,
-        'api_format' => $apiFormat,
         'model_id' => trim(strval($connectorConfig['model_id'] ?? ($connectorConfig['model'] ?? ''))),
-        'audio_cpp_voice' => trim(strval($connectorConfig['audio_cpp_voice'] ?? 'alba')),
         'workspace' => trim(strval($connectorConfig['workspace'] ?? '')),
         'api_key' => stobeResolveConnectorApiKey($connectorConfig, $provider),
         'connector_config' => $connectorConfig,
@@ -1191,7 +1166,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     }
 
     $isAudioCppPocketTts = $provider === 'pocket_tts'
-        && stobePocketTtsApiFormat($runtime['connector_config'] ?? [], $endpoint) === 'audio_cpp';
+        && stobePocketTtsIsAudioCpp($endpoint);
 
     if (!$isAudioCppPocketTts) {
         stobePocketTtsApplySettings($provider, $endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());
@@ -1212,7 +1187,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         $payload = json_encode([
             'model' => $modelId,
             'input' => $speechText,
-            'voice' => stobePocketTtsAudioCppVoice($voiceId, $runtime),
+            'voice' => stobePocketTtsAudioCppVoice(),
             'language' => $language,
             'response_format' => 'wav',
         ], JSON_UNESCAPED_UNICODE);
@@ -1442,8 +1417,6 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         $endpoint = 'http://127.0.0.1:8020';
     }
     $endpoint = rtrim($endpoint, '/');
-    $apiFormat = $provider === 'pocket_tts' ? stobePocketTtsApiFormat($connectorConfig, $endpoint) : 'legacy';
-
     $language = trim(strval($connectorConfig['language'] ?? ''));
     if ($language === '') {
         $language = 'en';
@@ -1476,9 +1449,7 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         'fallback_female' => $fallbackVoices['female'],
         'voiceid_source' => $voiceOverride !== '' ? 'test_override' : 'connector_default',
         'settings' => $settings,
-        'api_format' => $apiFormat,
         'model_id' => trim(strval($connectorConfig['model_id'] ?? ($connectorConfig['model'] ?? ''))),
-        'audio_cpp_voice' => trim(strval($connectorConfig['audio_cpp_voice'] ?? 'alba')),
         'workspace' => trim(strval($connectorConfig['workspace'] ?? '')),
         'api_key' => stobeResolveConnectorApiKey($connectorConfig, $provider),
         'connector_config' => $connectorConfig,
