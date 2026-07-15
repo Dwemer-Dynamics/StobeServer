@@ -9,6 +9,7 @@ require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "chat_helper_functions.
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "data_functions.php");
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "logger.php");
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "utils_game_timestamp.php");
+require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "npc_profile_lock_controls.php");
 
 $GLOBALS["ENGINE_PATH"]=$enginePath;
 
@@ -195,6 +196,7 @@ if (!function_exists('renderStobeNpcToolbar')) {
           <div class="npc-toolbar-main">
             <div class="npc-toolbar-actions">
               <button id="npc_create_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action">+ Create NPC</button>
+              <button id="npc_bulk_unlock_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action" title="Unlock every NPC profile except The Narrator">&#x1F513; Unlock All Profiles</button>
               <button id="npc_import_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action" title="Import NPC from JSON file">📥 Import NPC</button>
               <button id="rel_bulk_build_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action" title="Build JSONB relationships from recent NPC event history">🔗 Build Relationships</button>
               <button id="npc_bulk_switch_profile_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action npc-toolbar-btn-switch" title="Switch all NPCs from one profile to another">🔀 Mass Switch Profile</button>
@@ -225,6 +227,10 @@ if (!function_exists('renderStobeNpcToolbar')) {
           </div>
           <div class="npc-toolbar-letter-row">
             <?php renderStobeNpcLetterFilter($nameLetterFilter); ?>
+            <label class="npc-auto-lock-profile" title="When enabled, saving an NPC profile automatically locks it to prevent history updates from overwriting manual edits.">
+              <input id="npc_auto_lock_profile" type="checkbox" <?= stobeUiAutoLockProfileEnabled() ? 'checked' : '' ?>>
+              Auto Lock Profiles on Edit
+            </label>
             <div class="npc-toolbar-summary">
               <div class="npc-filter-dropdown">
                 <button type="button" id="npc_filter_btn<?= $suffix ?>" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action npc-toolbar-filter-btn" title="Filters" aria-label="Filters">▾ Filters</button>
@@ -1025,6 +1031,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
     exit;
 }
 
+// Save global auto-lock preference (AJAX)
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["set_auto_lock_profile"])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $enabled = stobeSetAutoLockProfileSetting($_POST['auto_lock_profile'] ?? '0');
+        echo json_encode(["ok" => true, "enabled" => $enabled]);
+    } catch (Throwable $e) {
+        echo json_encode(["ok" => false, "error" => $e->getMessage()]);
+    }
+    exit;
+}
+
 // Toggle favorite (AJAX)
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["toggle_favorite"])) {
     try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
@@ -1071,6 +1090,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["toggle_lock"])) {
         echo json_encode(["ok"=>true, "locked"=>$val]);
     } catch (Throwable $e) {
         echo json_encode(["ok"=>false, "error"=>$e->getMessage()]);
+    }
+    exit;
+}
+
+// Bulk unlock all NPC profiles except The Narrator (AJAX)
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["bulk_unlock_npcs"])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $unlocked = stobeBulkUnlockNpcProfiles(strval($_POST['confirm'] ?? ''));
+        echo json_encode(["ok" => true, "unlocked" => $unlocked]);
+    } catch (Throwable $e) {
+        echo json_encode(["ok" => false, "error" => $e->getMessage()]);
     }
     exit;
 }
@@ -3320,6 +3352,19 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     min-width:1192px;
     flex-wrap:nowrap;
 }
+.pagination.npc-toolbar .npc-auto-lock-profile {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    color:#e9efff;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+}
+.pagination.npc-toolbar .npc-auto-lock-profile input {
+    accent-color:#e6b76c;
+    cursor:pointer;
+}
 .pagination.npc-toolbar .npc-toolbar-tools {
     flex:0 0 320px;
     width:320px;
@@ -4634,6 +4679,58 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     trash.setAttribute('href', npcId ? ('npc_master.php?delete=' + encodeURIComponent(npcId)) : '#');
     trash.setAttribute('title', 'Delete');
   }
+  // Bulk unlock wiring
+  (function(){
+    function bindBulkUnlock(btn){
+      if (!btn || btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', function(){
+        const box = document.createElement('div');
+        box.style.position='fixed'; box.style.inset='0'; box.style.zIndex='10050'; box.style.display='flex'; box.style.alignItems='center'; box.style.justifyContent='center'; box.style.background='rgba(0,0,0,0.65)';
+        box.innerHTML = '<div style="background:#2a2a2a; border:1px solid #4a4a4a; border-radius:10px; padding:16px; max-width:520px; width:92%; color:#e9efff;">\
+          <div style="font-weight:700; color:#e6b76c; margin-bottom:8px;">Unlock All NPC Profiles</div>\
+          <div style="font-size:13px; color:#cfd9ea; margin-bottom:8px;">This unlocks every NPC profile except The Narrator.</div>\
+          <div style="font-size:12px; color:#ffd166; margin-bottom:12px;">If Auto Lock Profiles on Edit is enabled, a profile will lock again after it is edited and saved.</div>\
+          <label style="display:block; font-size:13px; margin:6px 0; color:#cfd9ea;">Type <b style="color:#ffd166">Unlock</b> to confirm:</label>\
+          <input id="bulk_unlock_confirm" type="text" style="width:100%; padding:8px; border-radius:6px; border:1px solid #4a4a4a; background:#2a2a2a; color:#e9efff;"/>\
+          <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">\
+            <button id="bulk_unlock_cancel" class="btn-cancel">Cancel</button>\
+            <button id="bulk_unlock_ok" class="btn-rel-build" disabled>Unlock All Profiles</button>\
+          </div></div>';
+        document.body.appendChild(box);
+        const confirmEl = box.querySelector('#bulk_unlock_confirm');
+        const okEl = box.querySelector('#bulk_unlock_ok');
+        const cancelEl = box.querySelector('#bulk_unlock_cancel');
+        function updateState(){ okEl.disabled = String(confirmEl.value || '').trim() !== 'Unlock'; }
+        confirmEl.addEventListener('input', updateState);
+        updateState();
+        confirmEl.focus();
+        cancelEl.addEventListener('click', function(){ document.body.removeChild(box); });
+        okEl.addEventListener('click', async function(){
+          okEl.disabled = true;
+          try {
+            const fd = new FormData();
+            fd.append('bulk_unlock_npcs', '1');
+            fd.append('confirm', String(confirmEl.value || ''));
+            const res = await fetch('npc_master.php', { method:'POST', body:fd });
+            let json = {};
+            try { json = await res.json(); } catch(_e) { json = { ok:false, error:'Invalid response' }; }
+            document.body.removeChild(box);
+            if (json && json.ok) {
+              try { const toast=document.getElementById('toast'); if (toast){ toast.querySelector('.message').textContent='Unlocked '+String(json.unlocked||0)+' NPC profiles'; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 2400); } } catch(_e){}
+              refreshList(1);
+            } else {
+              alert('Bulk unlock failed: '+(json && json.error ? json.error : 'Unknown'));
+            }
+          } catch(_e) {
+            okEl.disabled = false;
+          }
+        });
+      });
+    }
+    window.bindNpcBulkUnlock = bindBulkUnlock;
+    bindBulkUnlock(document.getElementById('npc_bulk_unlock_btn'));
+  })();
   // Bulk delete wiring
   (function(){
     function bindBulk(btn){
@@ -4793,6 +4890,32 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     window.bindNpcBulkSwitchProfile = bindBulkSwitch;
     bindBulkSwitch(document.getElementById('npc_bulk_switch_profile_btn'));
   })();
+  function bindAutoLockProfile(control){
+    if (!control || control.dataset.bound === '1') return;
+    control.dataset.bound = '1';
+    control.addEventListener('change', async function(){
+      const requested = !!control.checked;
+      control.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append('set_auto_lock_profile', '1');
+        fd.append('auto_lock_profile', requested ? '1' : '0');
+        const res = await fetch('npc_master.php', { method:'POST', body:fd });
+        let json = {};
+        try { json = await res.json(); } catch(_e) { json = { ok:false, error:'Invalid response' }; }
+        if (!json || !json.ok) {
+          control.checked = !requested;
+          alert('Failed to save Auto Lock Profiles on Edit: '+(json && json.error ? json.error : 'Unknown error'));
+        }
+      } catch(_e) {
+        control.checked = !requested;
+        alert('Failed to save Auto Lock Profiles on Edit.');
+      } finally {
+        control.disabled = false;
+      }
+    });
+  }
+  bindAutoLockProfile(document.getElementById('npc_auto_lock_profile'));
   function bindNpcToolbarPagination(root){
     const scope = root || document;
     scope.querySelectorAll('.pagination.npc-toolbar .npc-page-link[data-page]').forEach(btn=>{
@@ -4910,6 +5033,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       try { if (window.bindNpcToolbarImport) window.bindNpcToolbarImport(document.getElementById('npc_import_btn')); } catch(_){}
       // rebind bulk delete in refreshed DOM
       try { if (window.bindNpcBulkDelete) window.bindNpcBulkDelete(document.getElementById('npc_bulk_delete_btn')); } catch(_){}
+      // rebind bulk unlock in refreshed DOM
+      try { if (window.bindNpcBulkUnlock) window.bindNpcBulkUnlock(document.getElementById('npc_bulk_unlock_btn')); } catch(_){}
       // rebind mass switch in refreshed DOM
       try { if (window.bindNpcBulkSwitchProfile) window.bindNpcBulkSwitchProfile(document.getElementById('npc_bulk_switch_profile_btn')); } catch(_){}
       // rebind Build Relationships button in refreshed DOM
@@ -4929,6 +5054,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       }
       const newProfileSel = document.getElementById('npc_profile_filter');
       if (newProfileSel){ newProfileSel.addEventListener('change', function(){ refreshList(1); }); }
+      bindAutoLockProfile(document.getElementById('npc_auto_lock_profile'));
     }
   }
   // Simple debounce for input
