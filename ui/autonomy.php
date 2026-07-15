@@ -155,7 +155,7 @@ function autonomyH(mixed $value): string
 <?php require __DIR__ . '/tmpl/navbar.php'; ?>
 <main>
     <header class="masthead">
-        <div><div class="eyebrow">Phase 3 Supervised Planner</div><h1>Autonomy</h1></div>
+        <div><div class="eyebrow">Phase 4 Survival Autonomy</div><h1>Autonomy</h1></div>
         <div class="phase-note">One selected squad NPC can choose from the currently valid STOBE action catalog. Every proposal is validated against live identity, revision, preconditions, and deadlines before the plugin receives it.</div>
     </header>
     <div class="layout">
@@ -241,6 +241,7 @@ function autonomyH(mixed $value): string
         </section>
         <section class="panel pilot">
             <h2>Manual Pilot Queue</h2>
+            <p>Phase 4 pilot steps use the production live allowlist and remain pending until their threat, injury, or bed preconditions are observed.</p>
             <div class="pilot-grid">
                 <div>
                     <label for="location-select">Visited location</label>
@@ -254,6 +255,10 @@ function autonomyH(mixed $value): string
                     <div class="pilot-actions">
                         <button id="queue-idle" type="button">Queue IDLE</button>
                         <button id="queue-travel" class="primary" type="button">Queue Travel</button>
+                        <button id="queue-move-nearby" type="button">Move East 25m</button>
+                        <button id="queue-flee" type="button">Queue FLEE</button>
+                        <button id="queue-first-aid" type="button">First Aid Self</button>
+                        <button id="queue-rest" type="button">Queue REST</button>
                         <button id="cancel-pending" class="wide" type="button">Cancel Pending Steps</button>
                     </div>
                     <div id="pilot-message" class="message" role="status"></div>
@@ -395,6 +400,7 @@ function autonomyH(mixed $value): string
         const pilotReady = !busy && session.planner_mode === 'pilot' && online && !!session.enabled && Number(session.plugin_control_revision || -1) === Number(session.control_revision || 0) && !['PAUSED_USER','PAUSED_UNSAFE','ERROR','DISABLED'].includes(session.plugin_state);
         el('queue-idle').disabled = !pilotReady;
         el('queue-travel').disabled = !pilotReady || Number(el('location-select').value || 0) <= 0;
+        ['queue-move-nearby','queue-flee','queue-first-aid','queue-rest'].forEach(id => el(id).disabled = !pilotReady);
         el('cancel-pending').disabled = busy || !session.enabled;
     }
 
@@ -436,6 +442,7 @@ function autonomyH(mixed $value): string
         const message = el('pilot-message'); message.className = 'message'; message.textContent = 'Updating pilot queue...';
         const body = {action, control_revision: Number(session.control_revision || 0)};
         if (action === 'enqueue_travel') body.location_zone_id = Number(el('location-select').value || 0);
+        if (action === 'enqueue_move_nearby') { body.direction = 'E'; body.distance = 25; }
         try {
             const response = await fetch(pilotUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
             const data = await response.json();
@@ -452,6 +459,10 @@ function autonomyH(mixed $value): string
     ['start','pause','resume','stop','emergency'].forEach(id => el(id).addEventListener('click', () => control(id === 'emergency' ? 'emergency_stop' : id)));
     el('queue-idle').addEventListener('click', () => pilot('enqueue_idle'));
     el('queue-travel').addEventListener('click', () => pilot('enqueue_travel'));
+    el('queue-move-nearby').addEventListener('click', () => pilot('enqueue_move_nearby'));
+    el('queue-flee').addEventListener('click', () => pilot('enqueue_flee'));
+    el('queue-first-aid').addEventListener('click', () => pilot('enqueue_first_aid'));
+    el('queue-rest').addEventListener('click', () => pilot('enqueue_rest'));
     el('cancel-pending').addEventListener('click', () => pilot('cancel_pending'));
     el('location-select').addEventListener('change', () => {
         const pilotReady = !busy && session.planner_mode === 'pilot' && !!session.plugin_online && !!session.enabled &&

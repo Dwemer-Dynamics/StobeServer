@@ -2011,6 +2011,46 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('autonomy_phase4_survival_actions', 202607150201, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $actions = [
+                ['MOVE_NEARBY', 'MoveNearby', 'Move a short distance in a compass direction. Direction must be N, NE, E, SE, S, SW, W, or NW and distance is limited to 10-80 metres.'],
+                ['FLEE', 'Flee', 'Run at maximum speed away from currently observed hostile characters.'],
+                ['FIRST_AID', 'FirstAid', 'Apply first aid or robotic repair to yourself or an injured nearby player-faction character.'],
+                ['REST', 'Rest', 'Rest until recovered when no immediate threat or untreated wound is present.'],
+            ];
+            foreach ($actions as [$command, $name, $description]) {
+                $db->exec(
+                    "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                     VALUES ($1, $2, $3, TRUE, NOW())
+                     ON CONFLICT (command) DO UPDATE SET
+                         action_name = EXCLUDED.action_name,
+                         description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [$command, $name, $description]
+                );
+            }
+        });
+
+        $applyPatch('autonomy_phase4_rest_bed_contract', 202607150202, static function () use ($db): void {
+            $db->exec(
+                "UPDATE core_action
+                 SET description = 'Use an available nearby bed and rest until recovered when no immediate threat or untreated wound is present.',
+                     updated_at = NOW()
+                 WHERE UPPER(command) = 'REST'"
+            );
+        });
+
+        $applyPatch('autonomy_phase4_pilot_commands', 202607150203, static function () use ($db): void {
+            $db->exec('ALTER TABLE autonomy_pilot_step DROP CONSTRAINT IF EXISTS autonomy_pilot_step_command_check');
+            $db->exec(
+                "ALTER TABLE autonomy_pilot_step
+                 ADD CONSTRAINT autonomy_pilot_step_command_check
+                 CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
+                                    'FLEE', 'FIRST_AID', 'REST'))"
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

@@ -145,7 +145,10 @@ function stobeAutonomyEnsureSchema(): void
             id BIGSERIAL PRIMARY KEY,
             session_id SMALLINT NOT NULL DEFAULT 1,
             control_revision BIGINT NOT NULL,
-            command TEXT NOT NULL CHECK (command IN ('IDLE', 'TRAVEL_LOCATION')),
+            command TEXT NOT NULL CHECK (command IN (
+                'IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
+                'FIRST_AID', 'REST'
+            )),
             arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
             location_zone_id BIGINT,
             status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN (
@@ -523,7 +526,11 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
 {
     stobeAutonomyEnsureSchema();
     $action = strtolower(trim($action));
-    if (!in_array($action, ['enqueue_idle', 'enqueue_travel', 'cancel_pending'], true)) {
+    if (!in_array($action, [
+        'enqueue_idle', 'enqueue_travel', 'enqueue_move_nearby',
+        'enqueue_flee', 'enqueue_first_aid', 'enqueue_rest',
+        'cancel_pending',
+    ], true)) {
         return ['ok' => false, 'status' => 400, 'error' => 'invalid_pilot_action'];
     }
 
@@ -580,6 +587,27 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
                 'z' => $location['z'],
                 'arrival_radius' => 8.0,
             ];
+        } elseif ($action === 'enqueue_move_nearby') {
+            $command = 'MOVE_NEARBY';
+            $direction = strtoupper(trim(strval($payload['direction'] ?? 'E')));
+            if (!in_array($direction, ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], true) ||
+                !is_numeric($payload['distance'] ?? null)) {
+                $db->exec('ROLLBACK');
+                return ['ok' => false, 'status' => 422, 'error' => 'invalid_move_nearby'];
+            }
+            $arguments = [
+                'direction' => $direction,
+                'distance' => max(10.0, min(80.0, floatval($payload['distance']))),
+            ];
+        } elseif ($action === 'enqueue_flee') {
+            $command = 'FLEE';
+            $arguments = [];
+        } elseif ($action === 'enqueue_first_aid') {
+            $command = 'FIRST_AID';
+            $arguments = ['target' => strval($session['npc_name'] ?? '')];
+        } elseif ($action === 'enqueue_rest') {
+            $command = 'REST';
+            $arguments = [];
         }
 
         $step = $db->fetchOne(
@@ -629,6 +657,7 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
         return false;
     }
     return [
+        'runtime_serial' => max(0, intval($payload['runtime_serial'] ?? 0)),
         'snapshot_sequence' => $snapshotSequence,
         'snapshot_local_ts' => $snapshotLocalTs,
         'game_ts' => max(0, intval($payload['game_ts'] ?? 0)),
@@ -641,12 +670,33 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
             'has_player_orders' => stobeAutonomyBool($payload['status']['has_player_orders'] ?? false),
             'carrying' => stobeAutonomyBool($payload['status']['carrying'] ?? false),
             'carried_serial' => max(0, intval($payload['status']['carried_serial'] ?? 0)),
+            'in_bed' => stobeAutonomyBool($payload['status']['in_bed'] ?? false),
+            'fully_rested' => stobeAutonomyBool($payload['status']['fully_rested'] ?? true),
+            'probably_dying' => stobeAutonomyBool($payload['status']['probably_dying'] ?? false),
+            'rest_bed_available' => stobeAutonomyBool($payload['status']['rest_bed_available'] ?? false),
         ],
+        'health' => stobeAutonomyNormalizeHealth($payload['health'] ?? []),
         'order' => is_array($payload['order'] ?? null) ? array_intersect_key($payload['order'], array_flip(['count', 'task', 'subject_serial'])) : [],
         'movement' => is_array($payload['movement'] ?? null) ? array_intersect_key($payload['movement'], array_flip(['moving', 'path_failed'])) : [],
         'nearby_actors' => stobeAutonomyNormalizeNearbyActors($payload['nearby_actors'] ?? []),
         'context_hash' => $contextHash,
     ];
+}
+
+function stobeAutonomyDecisionProtocolPhase(string $command): int
+{
+    return in_array(strtoupper(trim($command)), ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true) ? 4 : 2;
+}
+
+function stobeAutonomyNormalizeHealth(mixed $value): array
+{
+    $health = is_array($value) ? $value : [];
+    $result = [];
+    foreach (['overall', 'blood', 'max_blood', 'bleed_rate', 'first_aid_need', 'robotic_aid_need'] as $field) {
+        $number = is_numeric($health[$field] ?? null) ? floatval($health[$field]) : 0.0;
+        $result[$field] = is_finite($number) ? max(-100000.0, min(100000.0, $number)) : 0.0;
+    }
+    return $result;
 }
 
 function stobeAutonomyNormalizeNearbyActors(mixed $value): array
@@ -672,6 +722,14 @@ function stobeAutonomyNormalizeNearbyActors(mixed $value): array
             'player_character' => stobeAutonomyBool($actor['player_character'] ?? false),
             'dead' => stobeAutonomyBool($actor['dead'] ?? false),
             'unconscious' => stobeAutonomyBool($actor['unconscious'] ?? false),
+            'hostile' => stobeAutonomyBool($actor['hostile'] ?? false),
+            'x' => is_numeric($actor['x'] ?? null) ? floatval($actor['x']) : 0.0,
+            'y' => is_numeric($actor['y'] ?? null) ? floatval($actor['y']) : 0.0,
+            'z' => is_numeric($actor['z'] ?? null) ? floatval($actor['z']) : 0.0,
+            'overall_health' => is_numeric($actor['overall_health'] ?? null) ? floatval($actor['overall_health']) : 0.0,
+            'bleed_rate' => is_numeric($actor['bleed_rate'] ?? null) ? floatval($actor['bleed_rate']) : 0.0,
+            'first_aid_need' => is_numeric($actor['first_aid_need'] ?? null) ? floatval($actor['first_aid_need']) : 0.0,
+            'robotic_aid_need' => is_numeric($actor['robotic_aid_need'] ?? null) ? floatval($actor['robotic_aid_need']) : 0.0,
         ];
     }
     return $result;
@@ -682,7 +740,7 @@ function stobeAutonomyPlannerNoDecision(array $session, string $reason): array
     return [
         'ok' => true,
         'status' => 200,
-        'phase' => 3,
+        'phase' => 4,
         'session' => $session,
         'decision' => null,
         'action' => null,
@@ -713,7 +771,7 @@ function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
     );
     if ($open) {
         $decision = stobeAutonomyNormalizeDecision($open);
-        return ['ok' => true, 'status' => 200, 'phase' => 3, 'session' => $session,
+        return ['ok' => true, 'status' => 200, 'phase' => 4, 'session' => $session,
             'decision' => $decision, 'action' => $decision];
     }
     if (intval($session['next_decision_local_ts']) > time()) {
@@ -827,13 +885,16 @@ function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
 
     $command = strval($proposal['decision']['command']);
     $arguments = $proposal['decision']['arguments'];
-    $duplicate = $db->fetchOne(
-        "SELECT decision_id FROM autonomy_decision
-         WHERE session_id = 1 AND control_revision = $1 AND command = $2
-           AND status = 'COMPLETED' AND arguments = $3::jsonb
-         ORDER BY terminal_at DESC LIMIT 1",
-        [$revision, $command, json_encode($arguments, JSON_UNESCAPED_SLASHES)]
-    );
+    $duplicate = false;
+    if (stobeAutonomyPlannerShouldSuppressCompletedDuplicate($command)) {
+        $duplicate = $db->fetchOne(
+            "SELECT decision_id FROM autonomy_decision
+             WHERE session_id = 1 AND control_revision = $1 AND command = $2
+               AND status = 'COMPLETED' AND arguments = $3::jsonb
+             ORDER BY terminal_at DESC LIMIT 1",
+            [$revision, $command, json_encode($arguments, JSON_UNESCAPED_SLASHES)]
+        );
+    }
     if ($duplicate) {
         $reason = 'Identical completed action suppressed: ' . $command;
         $db->exec(
@@ -889,7 +950,15 @@ function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
         }
         $decisionId = stobeAutonomyUuid4();
         $now = time();
-        $actionSeconds = $command === 'TRAVEL_LOCATION' ? 900 : ($command === 'IDLE' ? 20 : 120);
+        $actionSeconds = match ($command) {
+            'TRAVEL_LOCATION' => 900,
+            'REST' => 600,
+            'FIRST_AID' => 180,
+            'FLEE' => 90,
+            'MOVE_NEARBY' => 60,
+            'IDLE' => 20,
+            default => 120,
+        };
         $decisionRow = $db->fetchOne(
             "INSERT INTO autonomy_decision (
                 decision_id, session_id, control_revision, npc_id,
@@ -944,7 +1013,7 @@ function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
         ]);
         $db->exec('COMMIT');
         $decision = stobeAutonomyNormalizeDecision($decisionRow);
-        return ['ok' => true, 'status' => 200, 'phase' => 3,
+        return ['ok' => true, 'status' => 200, 'phase' => 4,
             'session' => stobeAutonomyGetSession(), 'decision' => $decision, 'action' => $decision];
     } catch (Throwable $exception) {
         $db->exec('ROLLBACK');
@@ -997,7 +1066,9 @@ function stobeAutonomyApplyTick(array $payload): array
         if ($open) {
             $db->exec('COMMIT');
             $decision = stobeAutonomyNormalizeDecision($open);
-            return ['ok' => true, 'status' => 200, 'phase' => 2, 'session' => $session,
+            return ['ok' => true, 'status' => 200,
+                'phase' => stobeAutonomyDecisionProtocolPhase(strval($decision['command'] ?? '')),
+                'session' => $session,
                 'decision' => $decision, 'action' => $decision];
         }
         if (intval($session['next_decision_local_ts']) > time()) {
@@ -1020,7 +1091,10 @@ function stobeAutonomyApplyTick(array $payload): array
 
         $command = strtoupper(trim(strval($step['command'] ?? '')));
         $arguments = stobeAutonomyDecodeJsonColumn($step['arguments'] ?? '{}');
-        if (!in_array($command, ['IDLE', 'TRAVEL_LOCATION'], true)) {
+        if (!in_array($command, [
+            'IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
+            'FIRST_AID', 'REST',
+        ], true)) {
             throw new RuntimeException('Pilot step contains an unsupported command.');
         }
         if ($command === 'TRAVEL_LOCATION') {
@@ -1030,11 +1104,46 @@ function stobeAutonomyApplyTick(array $payload): array
                 }
             }
         }
+        if (stobeAutonomyDecisionProtocolPhase($command) === 4) {
+            $npc = getNpcById($npcId);
+            if (!$npc) {
+                throw new RuntimeException('Pilot NPC no longer exists.');
+            }
+            $allowlist = stobeAutonomyPlannerBuildAllowlist($session, $snapshot, $npc);
+            try {
+                $proposal = stobeAutonomyPlannerNormalizeProposal([
+                    'goal' => ['summary' => 'Manual Phase 4 smoke test', 'status' => 'active'],
+                    'decision' => ['command' => $command] + $arguments,
+                    'reason' => 'Queued from the deterministic pilot UI.',
+                ], $allowlist);
+                $arguments = $proposal['decision']['arguments'];
+            } catch (InvalidArgumentException $exception) {
+                $db->exec('COMMIT');
+                return [
+                    'ok' => true,
+                    'status' => 200,
+                    'phase' => 4,
+                    'session' => $session,
+                    'decision' => null,
+                    'action' => null,
+                    'reason' => 'pilot_precondition_not_met',
+                    'detail' => $exception->getMessage(),
+                ];
+            }
+        }
 
         $decisionId = stobeAutonomyUuid4();
         $now = time();
         $dispatchDeadline = gmdate('Y-m-d H:i:s', $now + 10);
-        $actionDeadline = gmdate('Y-m-d H:i:s', $now + ($command === 'IDLE' ? 20 : 900));
+        $actionSeconds = match ($command) {
+            'IDLE' => 20,
+            'MOVE_NEARBY' => 60,
+            'FLEE' => 90,
+            'FIRST_AID' => 180,
+            'REST' => 600,
+            default => 900,
+        };
+        $actionDeadline = gmdate('Y-m-d H:i:s', $now + $actionSeconds);
         $runtimeSerial = max(0, intval($payload['runtime_serial'] ?? 0));
         $decisionRow = $db->fetchOne(
             "INSERT INTO autonomy_decision (
@@ -1088,7 +1197,8 @@ function stobeAutonomyApplyTick(array $payload): array
         ]);
         $db->exec('COMMIT');
         $decision = stobeAutonomyNormalizeDecision($decisionRow);
-        return ['ok' => true, 'status' => 200, 'phase' => 2,
+        return ['ok' => true, 'status' => 200,
+            'phase' => stobeAutonomyDecisionProtocolPhase($command),
             'session' => stobeAutonomyGetSession(), 'decision' => $decision, 'action' => $decision];
     } catch (Throwable $exception) {
         $db->exec('ROLLBACK');

@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Phase 3 supervised planner. The model proposes one catalog action; this
+ * Supervised autonomy planner. The model proposes one catalog action; this
  * layer validates and normalizes it before the decision ledger can issue it.
  */
 
@@ -43,6 +43,10 @@ function stobeAutonomyPlannerActionContracts(): array
         'DRINK' => ['item'],
         'FORCE_DRINK' => ['target', 'item'],
         'TRAVEL_LOCATION' => ['location_zone_id'],
+        'MOVE_NEARBY' => ['direction', 'distance'],
+        'FLEE' => [],
+        'FIRST_AID' => ['target'],
+        'REST' => [],
         'TALK' => ['message'],
     ];
 }
@@ -81,6 +85,11 @@ function stobeAutonomyPlannerBackoffSeconds(int $failureCount, int $minimumInter
     $base = max(20, min(300, $minimumIntervalSeconds));
     $exponent = max(0, min(4, $failureCount - 1));
     return min(300, $base * (2 ** $exponent));
+}
+
+function stobeAutonomyPlannerShouldSuppressCompletedDuplicate(string $command): bool
+{
+    return !in_array(strtoupper(trim($command)), ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true);
 }
 
 function stobeAutonomyPlannerConnectorRequiresApiKey(array $config): bool
@@ -149,6 +158,25 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
         static fn(array $actor): string => strval($actor['name'] ?? ''),
         $nearbyActors
     )));
+    $status = is_array($snapshot['status'] ?? null) ? $snapshot['status'] : [];
+    $health = is_array($snapshot['health'] ?? null) ? $snapshot['health'] : [];
+    $hostiles = array_values(array_filter($nearbyActors, static fn(array $actor): bool =>
+        stobeAutonomyBool($actor['hostile'] ?? false) && !stobeAutonomyBool($actor['dead'] ?? false) &&
+        floatval($actor['distance'] ?? 1000000) <= 70.0
+    ));
+    $patientActors = array_values(array_filter($nearbyActors, static fn(array $actor): bool =>
+        stobeAutonomyBool($actor['player_character'] ?? false) &&
+        !stobeAutonomyBool($actor['dead'] ?? false) &&
+        floatval($actor['distance'] ?? 1000000) <= 50.0 &&
+        max(floatval($actor['first_aid_need'] ?? 0), floatval($actor['robotic_aid_need'] ?? 0)) > 0.05
+    ));
+    $hasMedicalSupplies = preg_match(
+        '/\b(first aid|medical|robotics|repair kit|splint)\b/i',
+        strval($npc['inventory'] ?? '') . ' ' . strval($npc['equipment'] ?? '')
+    ) === 1;
+    $selfAidNeed = max(floatval($health['first_aid_need'] ?? 0), floatval($health['robotic_aid_need'] ?? 0));
+    $criticalThreat = count($hostiles) > 0 &&
+        (stobeAutonomyBool($status['probably_dying'] ?? false) || floatval($health['overall'] ?? 1.0) < 0.45);
     $allowlist = [];
     foreach ($rows as $row) {
         $command = strtoupper(trim(strval($row['command'] ?? '')));
@@ -159,11 +187,29 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
         if ($command === 'TRAVEL_LOCATION' && count($locations) === 0) {
             continue;
         }
+        if (in_array($command, ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true) &&
+            !stobeAutonomyBool($status['can_take_orders'] ?? false)) {
+            continue;
+        }
+        if ($command === 'FLEE' && count($hostiles) === 0) {
+            continue;
+        }
+        if ($command === 'FIRST_AID' &&
+            (!$hasMedicalSupplies || ($selfAidNeed <= 0.05 && count($patientActors) === 0))) {
+            continue;
+        }
+        if ($command === 'REST' &&
+            (stobeAutonomyBool($status['fully_rested'] ?? true) ||
+             !stobeAutonomyBool($status['rest_bed_available'] ?? false) ||
+             count($hostiles) > 0 || $selfAidNeed > 0.05)) {
+            continue;
+        }
         if ($command === 'KNOCKOUT') {
             $commandActors[] = strval($npc['name'] ?? '');
             $commandActors = array_values(array_unique(array_filter($commandActors)));
         }
-        if (in_array('target', stobeAutonomyPlannerRequiredArguments($command), true) && count($commandActors) === 0) {
+        if (in_array('target', stobeAutonomyPlannerRequiredArguments($command), true) &&
+            count($commandActors) === 0 && $command !== 'FIRST_AID') {
             continue;
         }
         if (in_array($command, ['FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY'], true)) {
@@ -183,7 +229,50 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
             'description' => trim(strval($row['description'] ?? '')),
             'arguments' => $contracts[$command],
             'required_arguments' => stobeAutonomyPlannerRequiredArguments($command),
+            'survival_priority' => 0,
         ];
+        if ($command === 'FLEE') {
+            $entry['survival_priority'] = $criticalThreat ? 100 : 40;
+            $entry['required_now'] = $criticalThreat;
+            $entry['threat_count'] = count($hostiles);
+        } elseif ($command === 'FIRST_AID') {
+            $urgentAid = count($hostiles) === 0 &&
+                (floatval($health['bleed_rate'] ?? 0) > 0.1 || stobeAutonomyBool($status['probably_dying'] ?? false));
+            $entry['survival_priority'] = $urgentAid ? 90 : 50;
+            $entry['required_now'] = $urgentAid;
+        } elseif ($command === 'REST') {
+            $entry['survival_priority'] = 30;
+        } elseif ($command === 'MOVE_NEARBY') {
+            $entry['directions'] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+            $entry['distance_range'] = [10, 80];
+            $entry['origin'] = $snapshot['position'] ?? [];
+        }
+        if ($command === 'FLEE') {
+            $origin = is_array($snapshot['position'] ?? null) ? $snapshot['position'] : [];
+            $awayX = 0.0;
+            $awayZ = 0.0;
+            foreach ($hostiles as $hostile) {
+                $dx = floatval($origin['x'] ?? 0) - floatval($hostile['x'] ?? 0);
+                $dz = floatval($origin['z'] ?? 0) - floatval($hostile['z'] ?? 0);
+                $length = max(0.001, sqrt($dx * $dx + $dz * $dz));
+                $weight = 1.0 / max(1.0, floatval($hostile['distance'] ?? $length));
+                $awayX += ($dx / $length) * $weight;
+                $awayZ += ($dz / $length) * $weight;
+            }
+            $awayLength = sqrt($awayX * $awayX + $awayZ * $awayZ);
+            if ($awayLength < 0.001) {
+                $awayX = 1.0;
+                $awayZ = 0.0;
+                $awayLength = 1.0;
+            }
+            $entry += [
+                'x' => floatval($origin['x'] ?? 0) + ($awayX / $awayLength) * 80.0,
+                'y' => floatval($origin['y'] ?? 0),
+                'z' => floatval($origin['z'] ?? 0) + ($awayZ / $awayLength) * 80.0,
+                'arrival_radius' => 6.0,
+                'safe_radius' => 70.0,
+            ];
+        }
         if (in_array('target', $contracts[$command], true)) {
             $validTargets = $commandActors;
             if (in_array($command, ['PICKUP_NPC', 'TAKE_ITEM', 'REMOVE_LIMB', 'CUT_HORNS', 'KILL', 'FORCE_DRINK'], true)) {
@@ -205,6 +294,30 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
                 }
             }
             $entry['valid_targets'] = array_values(array_slice(array_unique(array_filter($validTargets)), 0, 30));
+        }
+        if ($command === 'FIRST_AID') {
+            $patients = $patientActors;
+            if ($selfAidNeed > 0.05) {
+                array_unshift($patients, [
+                    'name' => strval($npc['name'] ?? ''),
+                    'runtime_serial' => intval($snapshot['runtime_serial'] ?? 0),
+                ]);
+            }
+            $entry['valid_targets'] = [];
+            $entry['target_runtime_serials'] = [];
+            foreach ($patients as $patient) {
+                $name = trim(strval($patient['name'] ?? ''));
+                $serial = max(0, intval($patient['runtime_serial'] ?? 0));
+                if ($name === '' || $serial <= 0) {
+                    continue;
+                }
+                $entry['valid_targets'][] = $name;
+                $entry['target_runtime_serials'][strtolower($name)] = $serial;
+            }
+            $entry['valid_targets'] = array_values(array_unique($entry['valid_targets']));
+            if (count($entry['valid_targets']) === 0) {
+                continue;
+            }
         }
         if ($command === 'TRAVEL_LOCATION') {
             $entry['visited_locations'] = array_map(static fn(array $location): array => [
@@ -330,6 +443,12 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
         'status' => $goalStatus,
         'updated_at' => time(),
     ];
+    $requiredNow = array_values(array_filter($allowlist, static fn(array $entry): bool =>
+        stobeAutonomyBool($entry['required_now'] ?? false)
+    ));
+    if (($response['decision'] ?? null) === null && count($requiredNow) > 0) {
+        throw new InvalidArgumentException('planner_survival_action_required');
+    }
     if (($response['decision'] ?? null) === null) {
         return ['goal' => $goal, 'decision' => null, 'reason' => stobeAutonomyPlannerCleanText($response['reason'] ?? '', 500)];
     }
@@ -344,6 +463,9 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
     }
     if ($command === '' || !isset($allowed[$command])) {
         throw new InvalidArgumentException('planner_command_not_allowed');
+    }
+    if (count($requiredNow) > 0 && !stobeAutonomyBool($allowed[$command]['required_now'] ?? false)) {
+        throw new InvalidArgumentException('planner_survival_action_required');
     }
     $contracts = stobeAutonomyPlannerActionContracts();
     $validDecisionFields = array_merge(['command'], $contracts[$command]);
@@ -366,6 +488,13 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
             $args[$field] = max(500, min(30000, intval($decision[$field] ?? 1500)));
         } elseif ($field === 'location_zone_id') {
             $args[$field] = intval($decision[$field] ?? 0);
+        } elseif ($field === 'distance') {
+            if (!is_numeric($decision[$field] ?? null)) {
+                throw new InvalidArgumentException('planner_distance_invalid');
+            }
+            $args[$field] = max(10.0, min(80.0, floatval($decision[$field] ?? 25.0)));
+        } elseif ($field === 'direction') {
+            $args[$field] = strtoupper(stobeAutonomyPlannerCleanText($decision[$field] ?? '', 3));
         } elseif ($field === 'enabled') {
             $args[$field] = stobeAutonomyBool($decision[$field] ?? false);
         } else {
@@ -397,6 +526,42 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
         }
         $args += $location;
         $args['arrival_radius'] = 8.0;
+    }
+    if ($command === 'MOVE_NEARBY') {
+        $vectors = [
+            'N' => [0.0, -1.0], 'NE' => [0.7071, -0.7071],
+            'E' => [1.0, 0.0], 'SE' => [0.7071, 0.7071],
+            'S' => [0.0, 1.0], 'SW' => [-0.7071, 0.7071],
+            'W' => [-1.0, 0.0], 'NW' => [-0.7071, -0.7071],
+        ];
+        if (!isset($vectors[$args['direction'] ?? ''])) {
+            throw new InvalidArgumentException('planner_direction_invalid');
+        }
+        $position = $allowed[$command]['origin'] ?? ($GLOBALS['stobe_autonomy_snapshot_position'] ?? []);
+        if (!is_array($position) || !isset($position['x'], $position['y'], $position['z'])) {
+            throw new InvalidArgumentException('planner_origin_missing');
+        }
+        $args['x'] = floatval($position['x']) + $vectors[$args['direction']][0] * $args['distance'];
+        $args['y'] = floatval($position['y']);
+        $args['z'] = floatval($position['z']) + $vectors[$args['direction']][1] * $args['distance'];
+        $args['arrival_radius'] = 4.0;
+    }
+    if ($command === 'FLEE') {
+        foreach (['x', 'y', 'z', 'arrival_radius', 'safe_radius'] as $field) {
+            if (!isset($allowed[$command][$field]) || !is_numeric($allowed[$command][$field])) {
+                throw new InvalidArgumentException('planner_flee_destination_missing');
+            }
+            $args[$field] = floatval($allowed[$command][$field]);
+        }
+    }
+    if ($command === 'FIRST_AID') {
+        $serials = is_array($allowed[$command]['target_runtime_serials'] ?? null)
+            ? $allowed[$command]['target_runtime_serials'] : [];
+        $serial = max(0, intval($serials[strtolower(strval($args['target'] ?? ''))] ?? 0));
+        if ($serial <= 0) {
+            throw new InvalidArgumentException('planner_target_serial_missing');
+        }
+        $args['target_runtime_serial'] = $serial;
     }
     $args['legacy_argument'] = stobeAutonomyPlannerLegacyArgument($command, $args);
     return [
@@ -437,7 +602,7 @@ function stobeAutonomyPlannerCall(array $context, array $npc, array $session = [
         throw new RuntimeException('planner_context_encoding_failed');
     }
     $messages = [
-        ['role' => 'system', 'content' => 'You control one Kenshi squad NPC. Choose at most one action from allowlist. Never invent a command, target, item, or location. Do not repeat a command with identical arguments when recent_autonomy shows it already completed; use decision:null unless current context clearly requires a distinct new action. Return only JSON: {"goal":{"summary":"...","status":"active|complete|blocked"},"decision":null|{"command":"...", plus fields listed for that command},"reason":"..."}. Include every required_arguments field and no unlisted fields. Use decision:null when waiting is best.'],
+        ['role' => 'system', 'content' => 'You control one Kenshi squad NPC. Choose at most one action from allowlist. Survival comes first: if any allowlist entry has required_now=true, choose one such entry. Otherwise prefer higher survival_priority when the NPC or squad needs immediate safety, treatment, or recovery. Never invent a command, target, item, or location. Do not repeat a command with identical arguments when recent_autonomy shows it already completed; use decision:null unless current context clearly requires a distinct new action. Return only JSON: {"goal":{"summary":"...","status":"active|complete|blocked"},"decision":null|{"command":"...", plus fields listed for that command},"reason":"..."}. Include every required_arguments field and no unlisted fields. Use decision:null when waiting is best.'],
         ['role' => 'user', 'content' => $promptJson],
     ];
     $started = microtime(true);

@@ -140,7 +140,7 @@ $GLOBALS['stobe_autonomy_planner_test_callback'] = static fn(): string => json_e
     'reason' => 'A nearby hostile threatens the squad.',
 ]);
 $issued = phase3DbTick(1, $npcId);
-phase3DbSame(3, intval($issued['phase'] ?? 0), 'Planner tick should report Phase 3.');
+phase3DbSame(4, intval($issued['phase'] ?? 0), 'Planner tick should report the current Phase 4 protocol.');
 phase3DbSame('ATTACK', $issued['decision']['command'] ?? '', 'Planner should issue an allowed catalog command.');
 phase3DbSame('UT_PHASE3_BANDIT', $issued['decision']['arguments']['legacy_argument'] ?? '', 'Issued action should carry a validated adapter argument.');
 $decisionId = strval($issued['decision']['decision_id'] ?? '');

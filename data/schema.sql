@@ -910,7 +910,8 @@ CREATE TABLE IF NOT EXISTS autonomy_pilot_step (
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     CONSTRAINT autonomy_pilot_step_command_check
-        CHECK (command IN ('IDLE', 'TRAVEL_LOCATION')),
+        CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
+                           'FIRST_AID', 'REST')),
     CONSTRAINT autonomy_pilot_step_status_check
         CHECK (status IN ('PENDING', 'CLAIMED', 'COMPLETED', 'CANCELLED'))
 );
@@ -2175,6 +2176,10 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('DRINK', 'Drink', 'Consume Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Applies drunk effects and can escalate to knockout.', TRUE),
 ('FORCE_DRINK', 'ForceDrink', 'Force a helpless target to drink Bloodrum, Cactus Rum, Grog, or Sake from your inventory/equipment. Use target as the victim and item/message as the drink name. Defaults to Cactus Rum.', TRUE),
 ('TRAVEL_LOCATION', 'TravelLocation', 'Travel to a previously visited location by name.', TRUE),
+('MOVE_NEARBY', 'MoveNearby', 'Move a short distance in a compass direction. Direction must be N, NE, E, SE, S, SW, W, or NW and distance is limited to 10-80 metres.', TRUE),
+('FLEE', 'Flee', 'Run at maximum speed away from currently observed hostile characters.', TRUE),
+('FIRST_AID', 'FirstAid', 'Apply first aid or robotic repair to yourself or an injured nearby player-faction character.', TRUE),
+('REST', 'Rest', 'Use an available nearby bed and rest until recovered when no immediate threat or untreated wound is present.', TRUE),
 ('TALK', 'Talk', 'Speak normally without issuing an in-world action.', TRUE)
 ON CONFLICT (command) DO UPDATE SET
     action_name = EXCLUDED.action_name,

@@ -52,9 +52,9 @@ phase3Assert(stobeAutonomyPlannerConnectorRequiresApiKey([
 
 $expectedCommands = [
     'ATTACK', 'CUT_HORNS', 'DRINK', 'DROP_ITEM', 'FACTION_RELATIONS',
-    'FOLLOW', 'FORCE_DRINK', 'GIVE_CATS', 'GIVE_ITEM', 'IDLE',
-    'JOIN_PARTY', 'KILL', 'KNOCKOUT', 'LEAVE', 'PICKUP_NPC',
-    'REMOVE_LIMB', 'ROLEPLAY_ACTION', 'SET_BLOCK', 'SET_HOLD',
+    'FIRST_AID', 'FLEE', 'FOLLOW', 'FORCE_DRINK', 'GIVE_CATS', 'GIVE_ITEM', 'IDLE',
+    'JOIN_PARTY', 'KILL', 'KNOCKOUT', 'LEAVE', 'MOVE_NEARBY', 'PICKUP_NPC',
+    'REMOVE_LIMB', 'REST', 'ROLEPLAY_ACTION', 'SET_BLOCK', 'SET_HOLD',
     'SET_JOBS', 'SET_MEDIC', 'SET_PASSIVE', 'SET_RANGED',
     'SET_RESOURCE', 'SET_SNEAK', 'SET_TAUNT', 'STOP_CARRYING',
     'STOP_FOLLOW', 'SUICIDE', 'TAKE_CATS', 'TAKE_ITEM', 'TALK',
@@ -75,6 +75,8 @@ $sampleFields = [
     'object' => 'Camp Bed',
     'duration_ms' => 1500,
     'location_zone_id' => 77,
+    'direction' => 'E',
+    'distance' => 25,
 ];
 foreach ($contracts as $catalogCommand => $fields) {
     $catalogEntry = ['command' => $catalogCommand];
@@ -83,6 +85,12 @@ foreach ($contracts as $catalogCommand => $fields) {
     }
     if ($catalogCommand === 'TRAVEL_LOCATION') {
         $catalogEntry['visited_locations'] = [['location_zone_id' => 77]];
+    } elseif ($catalogCommand === 'MOVE_NEARBY') {
+        $catalogEntry['origin'] = ['x' => 5, 'y' => 2, 'z' => 9];
+    } elseif ($catalogCommand === 'FLEE') {
+        $catalogEntry += ['x' => 80, 'y' => 2, 'z' => 0, 'arrival_radius' => 6, 'safe_radius' => 70];
+    } elseif ($catalogCommand === 'FIRST_AID') {
+        $catalogEntry['target_runtime_serials'] = ['dust bandit' => 884422];
     }
     $catalogDecision = ['command' => $catalogCommand];
     foreach ($fields as $field) {
