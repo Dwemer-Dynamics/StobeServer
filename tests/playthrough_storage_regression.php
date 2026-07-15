@@ -83,6 +83,26 @@ function ptStorageSchemaExists(string $schemaName): bool
     }
 }
 
+function ptStorageSchemaContainsValue(string $schemaName, string $tableName, string $columnName, string $value): bool
+{
+    $adminConn = stobePlaythroughConnectAdmin();
+    if (!$adminConn) {
+        ptStorageFail('playthrough admin connection should succeed for cloned row inspection');
+    }
+    try {
+        $query = sprintf(
+            'SELECT 1 FROM %s.%s WHERE %s = $1 LIMIT 1',
+            pg_escape_identifier($adminConn, $schemaName),
+            pg_escape_identifier($adminConn, $tableName),
+            pg_escape_identifier($adminConn, $columnName)
+        );
+        $result = @pg_query_params($adminConn, $query, [$value]);
+        return $result !== false && pg_fetch_assoc($result) !== false;
+    } finally {
+        @pg_close($adminConn);
+    }
+}
+
 $seed = strval(time()) . '_' . strval(random_int(1000, 9999));
 $prefix = 'UT_PLAYTHROUGH_STORAGE_' . $seed;
 $baseName = $prefix . '_Profile';
@@ -94,6 +114,7 @@ foreach ($trackedConfKeys as $trackedKey) {
 
 $createdProfileIds = [];
 $createdSchemas = [];
+$autonomyDecisionId = 'ut-playthrough-' . $seed;
 
 try {
     ptStorageCleanupProfiles($prefix);
@@ -110,6 +131,21 @@ try {
     ptStorageAssert($adminConn !== false, 'playthrough admin connection should succeed');
     @pg_close($adminConn);
 
+    stobeAutonomyEnsureSchema();
+    $db->exec(
+        "INSERT INTO autonomy_decision (
+            decision_id, control_revision, npc_id, npc_storage_id, command,
+            status, dispatch_deadline_at, action_deadline_at, terminal_at
+         ) VALUES ($1, 999, 999, 'hand_999', 'IDLE', 'COMPLETED', NOW(), NOW(), NOW())",
+        [$autonomyDecisionId]
+    );
+    $db->exec(
+        "INSERT INTO autonomy_pilot_step (
+            control_revision, command, status, decision_id
+         ) VALUES (999, 'IDLE', 'COMPLETED', $1)",
+        [$autonomyDecisionId]
+    );
+
     $first = stobePlaythroughCreateSchemaSnapshot($baseName, 'first snapshot', [
         'mark_active' => true,
         'player_name' => 'UT Player',
@@ -122,6 +158,14 @@ try {
     $createdSchemas[] = strval($first['schema_name'] ?? '');
 
     ptStorageAssert(ptStorageSchemaExists(strval($first['schema_name'] ?? '')), 'first snapshot schema should exist');
+    ptStorageAssert(
+        ptStorageSchemaContainsValue(strval($first['schema_name'] ?? ''), 'autonomy_decision', 'decision_id', $autonomyDecisionId),
+        'playthrough snapshot should clone autonomy decision rows'
+    );
+    ptStorageAssert(
+        ptStorageSchemaContainsValue(strval($first['schema_name'] ?? ''), 'autonomy_pilot_step', 'decision_id', $autonomyDecisionId),
+        'playthrough snapshot should clone autonomy pilot rows'
+    );
 
     $firstProfile = stobePlaythroughGetProfileById(intval($first['id'] ?? 0));
     ptStorageAssert(is_array($firstProfile), 'first snapshot profile should be queryable');
@@ -161,6 +205,8 @@ try {
 
     echo 'All playthrough storage regression tests passed.' . PHP_EOL;
 } finally {
+    $db->exec('DELETE FROM autonomy_pilot_step WHERE decision_id = $1', [$autonomyDecisionId]);
+    $db->exec('DELETE FROM autonomy_decision WHERE decision_id = $1', [$autonomyDecisionId]);
     ptStorageCleanupProfiles($prefix);
     foreach ($trackedConfKeys as $trackedKey) {
         ptStorageRestoreConf($trackedKey, $confBackup[$trackedKey]);

@@ -8,11 +8,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 }
 
 try {
-    $result = stobeAutonomyApplyTick(stobeAutonomyReadRequestPayload());
+    $payload = stobeAutonomyReadRequestPayload();
+    $result = stobeAutonomyApplyPilotControl(strval($payload['action'] ?? ''), $payload);
     $status = intval($result['status'] ?? 500);
     unset($result['status']);
     stobeAutonomySendJson($result, $status);
 } catch (Throwable $exception) {
-    stobeLogException($exception, 'Autonomy tick endpoint failed');
-    stobeAutonomySendJson(['ok' => false, 'error' => 'tick_failed'], 500);
+    stobeLogException($exception, 'Autonomy pilot endpoint failed');
+    stobeAutonomySendJson(['ok' => false, 'error' => 'pilot_failed'], 500);
 }

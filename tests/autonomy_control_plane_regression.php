@@ -55,6 +55,8 @@ function autonomyRunEndpoint(string $file, array $payload): array
 }
 
 $db = $GLOBALS['db'];
+$db->exec('DELETE FROM autonomy_pilot_step');
+$db->exec('DELETE FROM autonomy_decision');
 $db->exec('DELETE FROM autonomy_event');
 $db->exec("DELETE FROM core_npc WHERE name = 'UT_AUTONOMY_NPC'");
 $db->exec("UPDATE autonomy_session SET npc_id = NULL, npc_storage_id = '', npc_name = '', enabled = FALSE,
@@ -135,12 +137,17 @@ $tick = autonomyRunEndpoint('autonomy_tick.php', [
     'state' => 'OBSERVING',
     'observation' => 'Endpoint contract check',
     'event_key' => 'ut-endpoint-tick-1',
+    'snapshot_sequence' => 1,
+    'snapshot_local_ts' => time(),
+    'game_ts' => 123456,
+    'position' => ['x' => 10.0, 'y' => 20.0, 'z' => 30.0],
+    'context_hash' => 'ut-context',
 ]);
-autonomyAssert(array_key_exists('decision', $tick), 'Phase 1 tick should include a decision field.');
-autonomyAssert(array_key_exists('action', $tick), 'Phase 1 tick should include an action field.');
-autonomyAssertSame(null, $tick['decision'], 'Phase 1 tick must not return a decision.');
-autonomyAssertSame(null, $tick['action'], 'Phase 1 tick must not return an action.');
-autonomyAssertSame('phase_1_control_plane_only', $tick['reason'] ?? '', 'Tick should explain the Phase 1 boundary.');
+autonomyAssert(array_key_exists('decision', $tick), 'Phase 2 tick should include a decision field.');
+autonomyAssert(array_key_exists('action', $tick), 'Phase 2 tick should include an action field.');
+autonomyAssertSame(null, $tick['decision'], 'A tick with no pilot step must not return a decision.');
+autonomyAssertSame(null, $tick['action'], 'A tick with no pilot step must not return an action.');
+autonomyAssertSame('pilot_queue_empty', $tick['reason'] ?? '', 'Tick should explain why no decision was issued.');
 
 $emergency = stobeAutonomyApplyControl('emergency_stop', ['control_revision' => 4]);
 autonomyAssertSame(false, $emergency['session']['enabled'] ?? true, 'Emergency stop should disable autonomy.');

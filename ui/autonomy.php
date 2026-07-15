@@ -10,11 +10,17 @@ try {
     $initialSession = stobeAutonomyGetSession();
     $eligibleNpcs = stobeAutonomyListEligibleNpcs();
     $initialEvents = stobeAutonomyListEvents(50);
+    $initialLocations = stobeAutonomyListVisitedLocations();
+    $initialPilotSteps = stobeAutonomyListPilotSteps();
+    $initialDecisions = stobeAutonomyListDecisions();
 } catch (Throwable $exception) {
     stobeLogException($exception, 'Autonomy UI initialization failed');
     $initialSession = [];
     $eligibleNpcs = [];
     $initialEvents = [];
+    $initialLocations = [];
+    $initialPilotSteps = [];
+    $initialDecisions = [];
 }
 
 $scriptPath = $_SERVER['SCRIPT_NAME'] ?? '';
@@ -91,6 +97,22 @@ function autonomyH(mixed $value): string
         .detail dt { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; margin-top:10px; }
         .detail dd { margin:4px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
         .timeline { grid-column:1 / -1; }
+        .pilot { grid-column:1 / -1; }
+        .ledger { grid-column:1 / -1; }
+        .pilot-grid { display:grid; grid-template-columns:minmax(280px,.8fr) minmax(420px,1.2fr); gap:20px; }
+        .pilot-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:14px; }
+        .pilot-actions .wide { grid-column:1 / -1; }
+        .queue-list { display:grid; gap:8px; }
+        .queue-row { display:grid; grid-template-columns:80px 170px 1fr; gap:10px; padding:10px; background:rgba(12,16,14,.42); border:1px solid #394640; }
+        .queue-status { color:var(--signal); font-size:12px; }
+        .queue-command { color:var(--brass); font-weight:800; }
+        .queue-detail { color:var(--muted); overflow-wrap:anywhere; }
+        .decision-list { display:grid; gap:8px; }
+        .decision-row { display:grid; grid-template-columns:130px 170px 110px 1fr 180px; gap:10px; padding:10px; background:rgba(12,16,14,.42); border:1px solid #394640; }
+        .decision-id { color:var(--muted); font-family:Consolas, monospace; }
+        .decision-command { color:var(--brass); font-weight:800; }
+        .decision-status { color:var(--signal); }
+        .decision-detail, .decision-deadline { color:var(--muted); overflow-wrap:anywhere; }
         .events { display:grid; gap:8px; }
         .event { display:grid; grid-template-columns:170px 130px 1fr; gap:12px; align-items:start; padding:11px 0; border-top:1px solid #37423d; }
         .event:first-child { border-top:0; }
@@ -104,7 +126,11 @@ function autonomyH(mixed $value): string
             .phase-note { text-align:left; }
             .layout { grid-template-columns:1fr; }
             .timeline { grid-column:auto; }
+            .pilot { grid-column:auto; }
+            .ledger { grid-column:auto; }
+            .pilot-grid { grid-template-columns:1fr; }
             .status-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
+            .decision-row { grid-template-columns:110px 1fr; }
             .event { grid-template-columns:1fr; gap:4px; }
         }
     </style>
@@ -113,8 +139,8 @@ function autonomyH(mixed $value): string
 <?php require __DIR__ . '/tmpl/navbar.php'; ?>
 <main>
     <header class="masthead">
-        <div><div class="eyebrow">Phase 1 Control Plane</div><h1>Autonomy</h1></div>
-        <div class="phase-note">Select one player-faction NPC and control the plugin state. Phase 1 observes and validates only: it does not call an LLM or issue game actions.</div>
+        <div><div class="eyebrow">Phase 2 Deterministic Pilot</div><h1>Autonomy</h1></div>
+        <div class="phase-note">Queue a safe, deterministic IDLE or travel step for one player-faction NPC. Phase 2 executes one correlated action at a time and does not call an LLM.</div>
     </header>
     <div class="layout">
         <section class="panel">
@@ -152,12 +178,43 @@ function autonomyH(mixed $value): string
             </div>
             <dl class="detail">
                 <dt>Selected NPC</dt><dd id="selected-npc">None</dd>
+                <dt>Active decision</dt><dd id="active-decision">None</dd>
+                <dt>Current action</dt><dd id="current-action">None</dd>
+                <dt>Active elapsed</dt><dd id="active-elapsed">0 ms</dd>
                 <dt>Last observation</dt><dd id="observation">None</dd>
                 <dt>Last error</dt><dd id="last-error">None</dd>
             </dl>
         </section>
+        <section class="panel pilot">
+            <h2>Deterministic Pilot Queue</h2>
+            <div class="pilot-grid">
+                <div>
+                    <label for="location-select">Visited location</label>
+                    <select id="location-select">
+                        <option value="0">Select an exact visited location</option>
+                        <?php foreach ($initialLocations as $location): ?>
+                            <?php $label = trim(strval($location['city_name'] ?? '')) !== '' ? strval($location['city_name']) . ' | ' . strval($location['zone_name']) : strval($location['zone_name']); ?>
+                            <option value="<?= intval($location['id']) ?>"><?= autonomyH($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="pilot-actions">
+                        <button id="queue-idle" type="button">Queue IDLE</button>
+                        <button id="queue-travel" class="primary" type="button">Queue Travel</button>
+                        <button id="cancel-pending" class="wide" type="button">Cancel Pending Steps</button>
+                    </div>
+                    <div id="pilot-message" class="message" role="status"></div>
+                </div>
+                <div>
+                    <div id="pilot-steps" class="queue-list"><div class="empty">No pilot steps queued.</div></div>
+                </div>
+            </div>
+        </section>
+        <section class="panel ledger">
+            <h2>Decision Ledger</h2>
+            <div id="decisions" class="decision-list"><div class="empty">No decisions recorded.</div></div>
+        </section>
         <section class="panel timeline">
-            <h2>Control Timeline</h2>
+            <h2>Decision and Control Timeline</h2>
             <div id="events" class="events"><div class="empty">No autonomy events recorded.</div></div>
         </section>
     </div>
@@ -165,10 +222,12 @@ function autonomyH(mixed $value): string
 <script src="<?= autonomyH($webRoot) ?>/ui/lib/ui/bootstrap/bootstrap.bundle.min.js"></script>
 <script>
 (() => {
-    const initial = <?= json_encode(['session' => $initialSession, 'events' => $initialEvents], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
-    const stateUrl = <?= json_encode($webRoot . '/autonomy_state.php?include_events=1') ?>;
+    const initial = <?= json_encode(['session' => $initialSession, 'events' => $initialEvents, 'locations' => $initialLocations, 'pilot_steps' => $initialPilotSteps, 'decisions' => $initialDecisions], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+    const stateUrl = <?= json_encode($webRoot . '/autonomy_state.php?include_events=1&include_pilot=1&include_locations=1') ?>;
     const controlUrl = <?= json_encode($webRoot . '/autonomy_control.php') ?>;
+    const pilotUrl = <?= json_encode($webRoot . '/autonomy_pilot.php') ?>;
     let session = initial.session || {};
+    let latest = initial;
     let busy = false;
     const el = id => document.getElementById(id);
     const text = value => String(value == null || value === '' ? 'None' : value);
@@ -183,12 +242,47 @@ function autonomyH(mixed $value): string
             const row = document.createElement('div'); row.className = 'event';
             const type = document.createElement('div'); type.className = 'event-type'; type.textContent = text(item.event_type);
             const state = document.createElement('div'); state.className = 'event-state'; state.textContent = text(item.state);
-            const reason = document.createElement('div'); reason.className = 'event-reason'; reason.textContent = item.reason || item.outcome || item.created_at || '';
+            const reason = document.createElement('div'); reason.className = 'event-reason'; reason.textContent = [item.command, item.outcome, item.reason, item.decision_id ? `decision ${item.decision_id.slice(0,8)}` : ''].filter(Boolean).join(' | ') || item.created_at || '';
             row.append(type, state, reason); root.appendChild(row);
         });
     }
 
+    function renderPilot(steps) {
+        const root = el('pilot-steps'); root.textContent = '';
+        if (!Array.isArray(steps) || steps.length === 0) {
+            const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'No pilot steps queued.'; root.appendChild(empty); return;
+        }
+        steps.slice(0, 12).forEach(item => {
+            const row = document.createElement('div'); row.className = 'queue-row';
+            const status = document.createElement('div'); status.className = 'queue-status'; status.textContent = text(item.status);
+            const command = document.createElement('div'); command.className = 'queue-command'; command.textContent = text(item.command);
+            const detail = document.createElement('div'); detail.className = 'queue-detail';
+            detail.textContent = item.command === 'TRAVEL_LOCATION' ? (item.arguments?.city_name || item.arguments?.zone_name || 'Visited location') : `Step #${item.id}`;
+            row.append(status, command, detail); root.appendChild(row);
+        });
+    }
+
+    function renderDecisions(decisions) {
+        const root = el('decisions'); root.textContent = '';
+        if (!Array.isArray(decisions) || decisions.length === 0) {
+            const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = 'No decisions recorded.'; root.appendChild(empty); return;
+        }
+        decisions.slice(0, 20).forEach(item => {
+            const row = document.createElement('div'); row.className = 'decision-row';
+            const id = document.createElement('div'); id.className = 'decision-id'; id.textContent = text(item.decision_id).slice(0, 12);
+            const command = document.createElement('div'); command.className = 'decision-command'; command.textContent = text(item.command);
+            const status = document.createElement('div'); status.className = 'decision-status'; status.textContent = text(item.status);
+            const detail = document.createElement('div'); detail.className = 'decision-detail';
+            const args = item.arguments || {};
+            const destination = item.command === 'TRAVEL_LOCATION' ? (args.city_name || args.zone_name || `Location #${args.location_zone_id || '?'}`) : 'Remain idle';
+            detail.textContent = item.outcome_reason ? `${destination} | ${item.outcome_reason}` : destination;
+            const deadline = document.createElement('div'); deadline.className = 'decision-deadline'; deadline.textContent = item.terminal_at ? `Ended ${item.terminal_at}` : `Deadline ${item.action_deadline_at || 'None'}`;
+            row.append(id, command, status, detail, deadline); root.appendChild(row);
+        });
+    }
+
     function render(data) {
+        latest = {...latest, ...data};
         session = data.session || session;
         el('desired').textContent = text(session.desired_state);
         el('plugin').textContent = text(session.plugin_state);
@@ -196,6 +290,10 @@ function autonomyH(mixed $value): string
         el('plugin-revision').textContent = text(session.plugin_control_revision);
         el('runtime-serial').textContent = session.runtime_serial ? text(session.runtime_serial) : 'None';
         el('selected-npc').textContent = session.npc_name ? `${session.npc_name} (${session.npc_storage_id || 'no storage ID'})` : 'None';
+        el('active-decision').textContent = session.active_decision_id || 'None';
+        const action = session.current_action || {};
+        el('current-action').textContent = action.command ? `${action.command} | ${action.status || 'pending'} | ${action.decision_id || ''}` : 'None';
+        el('active-elapsed').textContent = `${Number(session.active_elapsed_ms || 0).toLocaleString()} ms`;
         el('observation').textContent = text(session.last_observation);
         el('last-error').textContent = text(session.last_error);
         const online = !!session.plugin_online;
@@ -204,6 +302,8 @@ function autonomyH(mixed $value): string
         if (!busy && session.npc_id && !el('npc-select').value) el('npc-select').value = String(session.npc_id);
         if (!busy && document.activeElement !== el('directive')) el('directive').value = session.long_term_directive || '';
         renderEvents(data.events || []);
+        renderPilot(data.pilot_steps || []);
+        renderDecisions(data.decisions || []);
         const selected = Number(session.npc_id || 0) > 0;
         el('start').disabled = busy || !selected || !!session.enabled;
         el('pause').disabled = busy || !session.enabled || session.desired_state === 'PAUSED_USER';
@@ -213,6 +313,10 @@ function autonomyH(mixed $value): string
         el('stop').disabled = busy || !session.enabled;
         el('emergency').disabled = busy || !session.enabled;
         el('save').disabled = busy;
+        const pilotReady = !busy && online && !!session.enabled && Number(session.plugin_control_revision || -1) === Number(session.control_revision || 0) && !['PAUSED_USER','PAUSED_UNSAFE','ERROR','DISABLED'].includes(session.plugin_state);
+        el('queue-idle').disabled = !pilotReady;
+        el('queue-travel').disabled = !pilotReady || Number(el('location-select').value || 0) <= 0;
+        el('cancel-pending').disabled = busy || !session.enabled;
     }
 
     async function refresh() {
@@ -224,7 +328,7 @@ function autonomyH(mixed $value): string
     }
 
     async function control(action) {
-        busy = true; render({session, events: []});
+        busy = true; render(latest);
         const message = el('message'); message.className = 'message'; message.textContent = 'Applying control change...';
         const body = {action, control_revision: Number(session.control_revision || 0)};
         if (action === 'select') {
@@ -243,8 +347,34 @@ function autonomyH(mixed $value): string
         }
     }
 
+    async function pilot(action) {
+        busy = true; render(latest);
+        const message = el('pilot-message'); message.className = 'message'; message.textContent = 'Updating pilot queue...';
+        const body = {action, control_revision: Number(session.control_revision || 0)};
+        if (action === 'enqueue_travel') body.location_zone_id = Number(el('location-select').value || 0);
+        try {
+            const response = await fetch(pilotUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+            const data = await response.json();
+            if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+            message.textContent = action === 'cancel_pending' ? 'Pending steps cancelled.' : 'Pilot step queued.';
+        } catch (error) {
+            message.className = 'message error'; message.textContent = `Unable to update pilot queue: ${error.message}`;
+        } finally {
+            busy = false; await refresh();
+        }
+    }
+
     el('save').addEventListener('click', () => control('select'));
     ['start','pause','resume','stop','emergency'].forEach(id => el(id).addEventListener('click', () => control(id === 'emergency' ? 'emergency_stop' : id)));
+    el('queue-idle').addEventListener('click', () => pilot('enqueue_idle'));
+    el('queue-travel').addEventListener('click', () => pilot('enqueue_travel'));
+    el('cancel-pending').addEventListener('click', () => pilot('cancel_pending'));
+    el('location-select').addEventListener('change', () => {
+        const pilotReady = !busy && !!session.plugin_online && !!session.enabled &&
+            Number(session.plugin_control_revision || -1) === Number(session.control_revision || 0) &&
+            !['PAUSED_USER','PAUSED_UNSAFE','ERROR','DISABLED'].includes(session.plugin_state);
+        el('queue-travel').disabled = !pilotReady || Number(el('location-select').value || 0) <= 0;
+    });
     render(initial);
     setInterval(refresh, 1500);
 })();

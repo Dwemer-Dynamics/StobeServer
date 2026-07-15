@@ -842,6 +842,10 @@ CREATE TABLE IF NOT EXISTS autonomy_session (
     long_term_directive TEXT NOT NULL DEFAULT '',
     current_goal JSONB NOT NULL DEFAULT '{}'::jsonb,
     current_action JSONB NOT NULL DEFAULT '{}'::jsonb,
+    active_decision_id TEXT,
+    last_decision_local_ts BIGINT NOT NULL DEFAULT 0,
+    next_decision_local_ts BIGINT NOT NULL DEFAULT 0,
+    active_elapsed_ms BIGINT NOT NULL DEFAULT 0,
     last_observation TEXT NOT NULL DEFAULT '',
     last_error TEXT NOT NULL DEFAULT '',
     last_plugin_seen_at TIMESTAMP,
@@ -850,6 +854,60 @@ CREATE TABLE IF NOT EXISTS autonomy_session (
 );
 
 INSERT INTO autonomy_session (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS autonomy_decision (
+    decision_id TEXT PRIMARY KEY,
+    session_id SMALLINT NOT NULL DEFAULT 1,
+    control_revision BIGINT NOT NULL,
+    npc_id INT NOT NULL,
+    npc_storage_id TEXT NOT NULL,
+    runtime_serial BIGINT NOT NULL DEFAULT 0,
+    command TEXT NOT NULL,
+    arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
+    context_hash TEXT NOT NULL DEFAULT '',
+    context_game_ts BIGINT NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ISSUED',
+    issued_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    dispatch_deadline_at TIMESTAMP NOT NULL,
+    action_deadline_at TIMESTAMP NOT NULL,
+    terminal_at TIMESTAMP,
+    outcome_reason TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT autonomy_decision_command_check
+        CHECK (command IN ('IDLE', 'TRAVEL_LOCATION')),
+    CONSTRAINT autonomy_decision_status_check
+        CHECK (status IN ('ISSUED', 'DISPATCHED', 'COMPLETED', 'FAILED',
+                          'INTERRUPTED', 'TIMED_OUT', 'CANCELLED'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_decision_one_open
+    ON autonomy_decision (session_id)
+    WHERE status IN ('ISSUED', 'DISPATCHED');
+CREATE INDEX IF NOT EXISTS idx_autonomy_decision_revision
+    ON autonomy_decision (control_revision DESC, issued_at DESC);
+
+CREATE TABLE IF NOT EXISTS autonomy_pilot_step (
+    id BIGSERIAL PRIMARY KEY,
+    session_id SMALLINT NOT NULL DEFAULT 1,
+    control_revision BIGINT NOT NULL,
+    command TEXT NOT NULL,
+    arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
+    location_zone_id BIGINT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    decision_id TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT autonomy_pilot_step_command_check
+        CHECK (command IN ('IDLE', 'TRAVEL_LOCATION')),
+    CONSTRAINT autonomy_pilot_step_status_check
+        CHECK (status IN ('PENDING', 'CLAIMED', 'COMPLETED', 'CANCELLED'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_pilot_step_pending
+    ON autonomy_pilot_step (session_id, control_revision, id)
+    WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_autonomy_pilot_step_decision
+    ON autonomy_pilot_step (decision_id);
 
 CREATE TABLE IF NOT EXISTS autonomy_event (
     id BIGSERIAL PRIMARY KEY,

@@ -1980,6 +1980,10 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             stobeAutonomyEnsureSchema();
         });
 
+        $applyPatch('autonomy_phase2_decision_ledger', 202607140102, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }
