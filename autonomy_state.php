@@ -4,7 +4,7 @@ require_once __DIR__ . '/lib/bootstrap.php';
 require_once __DIR__ . '/debug/db_updates.php';
 
 try {
-    $response = ['ok' => true, 'phase' => 2, 'session' => stobeAutonomyGetSession()];
+    $response = ['ok' => true, 'phase' => 3, 'session' => stobeAutonomyGetSession()];
     if (stobeAutonomyBool($_GET['include_npcs'] ?? false)) {
         $response['eligible_npcs'] = stobeAutonomyListEligibleNpcs();
     }

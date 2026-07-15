@@ -1988,6 +1988,29 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             stobeAutonomyEnsureSchema();
         });
 
+        $applyPatch('autonomy_phase3_supervised_planner', 202607150101, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
+        $applyPatch('autonomy_phase3_planner_controls', 202607150102, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $db->exec(
+                "UPDATE autonomy_session
+                 SET policy = jsonb_set(
+                     jsonb_set(policy, '{minimum_interval_seconds}', '30'::jsonb, TRUE),
+                     '{max_decisions_per_hour}',
+                     COALESCE(policy->'max_decisions_per_hour', '30'::jsonb),
+                     TRUE
+                 )
+                 WHERE NOT (policy ? 'minimum_interval_seconds')
+                    OR CASE
+                        WHEN COALESCE(policy->>'minimum_interval_seconds', '') ~ '^[0-9]+$'
+                            THEN (policy->>'minimum_interval_seconds')::INT
+                        ELSE 12
+                    END = 12"
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

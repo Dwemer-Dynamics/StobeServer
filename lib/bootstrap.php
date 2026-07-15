@@ -22,7 +22,8 @@ if (!function_exists('stobeBootstrapIsRunningTestScript')) {
     function stobeBootstrapIsRunningTestScript(): bool
     {
         $script = str_replace('\\', '/', strval($_SERVER['SCRIPT_FILENAME'] ?? ''));
-        return strpos($script, '/tests/') !== false;
+        return str_starts_with(ltrim($script, '/'), 'tests/')
+            || strpos($script, '/tests/') !== false;
     }
 }
 
@@ -84,6 +85,7 @@ require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'diary_helper_functions
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'middleterm_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'dynamic_profile_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'narrator_helper_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_planner_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_schema.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_storage.php');

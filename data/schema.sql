@@ -842,6 +842,19 @@ CREATE TABLE IF NOT EXISTS autonomy_session (
     long_term_directive TEXT NOT NULL DEFAULT '',
     current_goal JSONB NOT NULL DEFAULT '{}'::jsonb,
     current_action JSONB NOT NULL DEFAULT '{}'::jsonb,
+    planner_mode TEXT NOT NULL DEFAULT 'llm',
+    planner_connector_id INT,
+    planner_status TEXT NOT NULL DEFAULT 'idle',
+    planner_failure_count INT NOT NULL DEFAULT 0,
+    planner_backoff_seconds INT NOT NULL DEFAULT 0,
+    last_prompt_hash TEXT NOT NULL DEFAULT '',
+    last_response_hash TEXT NOT NULL DEFAULT '',
+    last_request_latency_ms INT NOT NULL DEFAULT 0,
+    planner_prompt_tokens BIGINT NOT NULL DEFAULT 0,
+    planner_completion_tokens BIGINT NOT NULL DEFAULT 0,
+    planner_decision_count BIGINT NOT NULL DEFAULT 0,
+    last_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb,
+    last_planner_context_hash TEXT NOT NULL DEFAULT '',
     active_decision_id TEXT,
     last_decision_local_ts BIGINT NOT NULL DEFAULT 0,
     next_decision_local_ts BIGINT NOT NULL DEFAULT 0,
@@ -874,8 +887,6 @@ CREATE TABLE IF NOT EXISTS autonomy_decision (
     terminal_at TIMESTAMP,
     outcome_reason TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    CONSTRAINT autonomy_decision_command_check
-        CHECK (command IN ('IDLE', 'TRAVEL_LOCATION')),
     CONSTRAINT autonomy_decision_status_check
         CHECK (status IN ('ISSUED', 'DISPATCHED', 'COMPLETED', 'FAILED',
                           'INTERRUPTED', 'TIMED_OUT', 'CANCELLED'))

@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Autonomy control plane and deterministic Phase 2 decision ledger.
+ * Autonomy control plane and correlated decision ledger.
  */
 
 function stobeAutonomyStates(): array
@@ -54,6 +54,19 @@ function stobeAutonomyEnsureSchema(): void
             long_term_directive TEXT NOT NULL DEFAULT '',
             current_goal JSONB NOT NULL DEFAULT '{}'::jsonb,
             current_action JSONB NOT NULL DEFAULT '{}'::jsonb,
+            planner_mode TEXT NOT NULL DEFAULT 'llm',
+            planner_connector_id INT,
+            planner_status TEXT NOT NULL DEFAULT 'idle',
+            planner_failure_count INT NOT NULL DEFAULT 0,
+            planner_backoff_seconds INT NOT NULL DEFAULT 0,
+            last_prompt_hash TEXT NOT NULL DEFAULT '',
+            last_response_hash TEXT NOT NULL DEFAULT '',
+            last_request_latency_ms INT NOT NULL DEFAULT 0,
+            planner_prompt_tokens BIGINT NOT NULL DEFAULT 0,
+            planner_completion_tokens BIGINT NOT NULL DEFAULT 0,
+            planner_decision_count BIGINT NOT NULL DEFAULT 0,
+            last_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb,
+            last_planner_context_hash TEXT NOT NULL DEFAULT '',
             last_observation TEXT NOT NULL DEFAULT '',
             last_error TEXT NOT NULL DEFAULT '',
             last_plugin_seen_at TIMESTAMP,
@@ -87,6 +100,19 @@ function stobeAutonomyEnsureSchema(): void
         "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS next_decision_local_ts BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS active_elapsed_ms BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_plugin_seen_local_ts BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_mode TEXT NOT NULL DEFAULT 'llm'",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_connector_id INT",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_status TEXT NOT NULL DEFAULT 'idle'",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_failure_count INT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_backoff_seconds INT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_prompt_hash TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_response_hash TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_request_latency_ms INT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_prompt_tokens BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_completion_tokens BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS planner_decision_count BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_planner_context_hash TEXT NOT NULL DEFAULT ''",
         "CREATE TABLE IF NOT EXISTS autonomy_decision (
             decision_id TEXT PRIMARY KEY,
             session_id SMALLINT NOT NULL DEFAULT 1,
@@ -94,7 +120,7 @@ function stobeAutonomyEnsureSchema(): void
             npc_id INT NOT NULL,
             npc_storage_id TEXT NOT NULL,
             runtime_serial BIGINT NOT NULL DEFAULT 0,
-            command TEXT NOT NULL CHECK (command IN ('IDLE', 'TRAVEL_LOCATION')),
+            command TEXT NOT NULL,
             arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
             context_hash TEXT NOT NULL DEFAULT '',
             context_game_ts BIGINT NOT NULL DEFAULT 0,
@@ -112,6 +138,7 @@ function stobeAutonomyEnsureSchema(): void
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_decision_one_open
             ON autonomy_decision (session_id)
             WHERE status IN ('ISSUED', 'DISPATCHED')",
+        "ALTER TABLE autonomy_decision DROP CONSTRAINT IF EXISTS autonomy_decision_command_check",
         "CREATE INDEX IF NOT EXISTS idx_autonomy_decision_revision
             ON autonomy_decision (control_revision DESC, issued_at DESC)",
         "CREATE TABLE IF NOT EXISTS autonomy_pilot_step (
@@ -176,6 +203,19 @@ function stobeAutonomyNormalizeSession(array $row): array
         'long_term_directive' => strval($row['long_term_directive'] ?? ''),
         'current_goal' => stobeAutonomyDecodeJsonColumn($row['current_goal'] ?? '{}'),
         'current_action' => stobeAutonomyDecodeJsonColumn($row['current_action'] ?? '{}'),
+        'planner_mode' => strtolower(trim(strval($row['planner_mode'] ?? 'llm'))) === 'pilot' ? 'pilot' : 'llm',
+        'planner_connector_id' => max(0, intval($row['planner_connector_id'] ?? 0)),
+        'planner_status' => trim(strval($row['planner_status'] ?? 'idle')),
+        'planner_failure_count' => max(0, intval($row['planner_failure_count'] ?? 0)),
+        'planner_backoff_seconds' => max(0, intval($row['planner_backoff_seconds'] ?? 0)),
+        'last_prompt_hash' => trim(strval($row['last_prompt_hash'] ?? '')),
+        'last_response_hash' => trim(strval($row['last_response_hash'] ?? '')),
+        'last_request_latency_ms' => intval($row['last_request_latency_ms'] ?? 0),
+        'planner_prompt_tokens' => intval($row['planner_prompt_tokens'] ?? 0),
+        'planner_completion_tokens' => intval($row['planner_completion_tokens'] ?? 0),
+        'planner_decision_count' => intval($row['planner_decision_count'] ?? 0),
+        'last_allowlist' => stobeAutonomyDecodeJsonColumn($row['last_allowlist'] ?? '[]'),
+        'last_planner_context_hash' => trim(strval($row['last_planner_context_hash'] ?? '')),
         'active_decision_id' => trim(strval($row['active_decision_id'] ?? '')),
         'last_decision_local_ts' => intval($row['last_decision_local_ts'] ?? 0),
         'next_decision_local_ts' => intval($row['next_decision_local_ts'] ?? 0),
@@ -553,6 +593,7 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
         if (!$step) {
             throw new RuntimeException('Failed to enqueue autonomy pilot step: ' . $db->GetLastError());
         }
+        $db->exec("UPDATE autonomy_session SET planner_mode = 'pilot', planner_status = 'pilot', updated_at = NOW() WHERE id = 1");
         stobeAutonomyRecordEvent([
             'control_revision' => $revision,
             'event_key' => 'pilot:' . $revision . ':' . intval($step['id']),
@@ -592,8 +633,323 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
         'snapshot_local_ts' => $snapshotLocalTs,
         'game_ts' => max(0, intval($payload['game_ts'] ?? 0)),
         'position' => ['x' => $x, 'y' => $y, 'z' => $z],
+        'status' => [
+            'player_character' => stobeAutonomyBool($payload['status']['player_character'] ?? false),
+            'dead' => stobeAutonomyBool($payload['status']['dead'] ?? false),
+            'unconscious' => stobeAutonomyBool($payload['status']['unconscious'] ?? false),
+            'can_take_orders' => stobeAutonomyBool($payload['status']['can_take_orders'] ?? false),
+            'has_player_orders' => stobeAutonomyBool($payload['status']['has_player_orders'] ?? false),
+            'carrying' => stobeAutonomyBool($payload['status']['carrying'] ?? false),
+            'carried_serial' => max(0, intval($payload['status']['carried_serial'] ?? 0)),
+        ],
+        'order' => is_array($payload['order'] ?? null) ? array_intersect_key($payload['order'], array_flip(['count', 'task', 'subject_serial'])) : [],
+        'movement' => is_array($payload['movement'] ?? null) ? array_intersect_key($payload['movement'], array_flip(['moving', 'path_failed'])) : [],
+        'nearby_actors' => stobeAutonomyNormalizeNearbyActors($payload['nearby_actors'] ?? []),
         'context_hash' => $contextHash,
     ];
+}
+
+function stobeAutonomyNormalizeNearbyActors(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+    $result = [];
+    foreach (array_slice($value, 0, 40) as $actor) {
+        if (!is_array($actor)) {
+            continue;
+        }
+        $name = trim(strval($actor['name'] ?? ''));
+        $serial = max(0, intval($actor['runtime_serial'] ?? 0));
+        $distance = is_numeric($actor['distance'] ?? null) ? floatval($actor['distance']) : -1.0;
+        if ($name === '' || mb_strlen($name) > 120 || $serial <= 0 || !is_finite($distance) || $distance < 0 || $distance > 250.0) {
+            continue;
+        }
+        $result[] = [
+            'name' => $name,
+            'runtime_serial' => $serial,
+            'distance' => $distance,
+            'player_character' => stobeAutonomyBool($actor['player_character'] ?? false),
+            'dead' => stobeAutonomyBool($actor['dead'] ?? false),
+            'unconscious' => stobeAutonomyBool($actor['unconscious'] ?? false),
+        ];
+    }
+    return $result;
+}
+
+function stobeAutonomyPlannerNoDecision(array $session, string $reason): array
+{
+    return [
+        'ok' => true,
+        'status' => 200,
+        'phase' => 3,
+        'session' => $session,
+        'decision' => null,
+        'action' => null,
+        'reason' => $reason,
+    ];
+}
+
+function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
+{
+    $db = $GLOBALS['db'];
+    $session = stobeAutonomyGetSession();
+    $revision = intval($payload['control_revision'] ?? -1);
+    $npcId = intval($payload['npc_id'] ?? 0);
+    $storageId = trim(strval($payload['npc_storage_id'] ?? ''));
+    if ($revision !== intval($session['control_revision'])) {
+        return ['ok' => false, 'status' => 409, 'error' => 'stale_control_revision', 'session' => $session];
+    }
+    if ($npcId !== intval($session['npc_id']) || $storageId !== $session['npc_storage_id']) {
+        return ['ok' => false, 'status' => 409, 'error' => 'npc_identity_mismatch', 'session' => $session];
+    }
+    if (!$session['enabled'] || !in_array($session['plugin_state'], ['OBSERVING', 'COOLDOWN', 'DECIDING'], true)) {
+        return stobeAutonomyPlannerNoDecision($session, 'controller_not_observing');
+    }
+    $open = $db->fetchOne(
+        "SELECT * FROM autonomy_decision
+         WHERE session_id = 1 AND status IN ('ISSUED', 'DISPATCHED')
+         ORDER BY issued_at DESC LIMIT 1"
+    );
+    if ($open) {
+        $decision = stobeAutonomyNormalizeDecision($open);
+        return ['ok' => true, 'status' => 200, 'phase' => 3, 'session' => $session,
+            'decision' => $decision, 'action' => $decision];
+    }
+    if (intval($session['next_decision_local_ts']) > time()) {
+        return stobeAutonomyPlannerNoDecision($session, 'decision_cooldown');
+    }
+
+    $policy = stobeAutonomyPlannerPolicy($session);
+    $hourly = $db->fetchOne(
+        "SELECT COUNT(*) AS total FROM autonomy_event
+         WHERE event_type IN ('planner_response', 'decision_issued')
+           AND prompt_hash <> '' AND created_at >= NOW() - INTERVAL '1 hour'"
+    );
+    if (intval($hourly['total'] ?? 0) >= intval($policy['max_decisions_per_hour'])) {
+        $db->exec(
+            "UPDATE autonomy_session SET planner_status = 'rate_limited',
+                    next_decision_local_ts = $1, updated_at = NOW() WHERE id = 1",
+            [time() + 60]
+        );
+        return stobeAutonomyPlannerNoDecision(stobeAutonomyGetSession(), 'planner_hourly_limit');
+    }
+
+    $npc = getNpcById($npcId);
+    if (!$npc) {
+        return ['ok' => false, 'status' => 409, 'error' => 'selected_npc_invalid', 'session' => $session];
+    }
+    $allowlist = stobeAutonomyPlannerBuildAllowlist($session, $snapshot, $npc);
+    $db->exec(
+        "UPDATE autonomy_session SET last_allowlist = $1::jsonb,
+                last_planner_context_hash = $2, planner_status = 'deciding', updated_at = NOW()
+         WHERE id = 1 AND control_revision = $3",
+        [json_encode($allowlist, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            $snapshot['context_hash'], $revision]
+    );
+    if (count($allowlist) === 0) {
+        $db->exec(
+            "UPDATE autonomy_session SET planner_status = 'no_available_actions',
+                    next_decision_local_ts = $1, updated_at = NOW() WHERE id = 1",
+            [time() + intval($policy['minimum_interval_seconds'])]
+        );
+        return stobeAutonomyPlannerNoDecision(stobeAutonomyGetSession(), 'no_available_actions');
+    }
+    $context = stobeAutonomyPlannerContext($session, $snapshot, $allowlist);
+    $auditContext = stobeAutonomyPlannerAuditContext($session, $snapshot, $allowlist);
+    $GLOBALS['stobe_autonomy_npc_name'] = strval($npc['name'] ?? '');
+    try {
+        $planner = stobeAutonomyPlannerCall($context, $npc, $session);
+        $proposal = stobeAutonomyPlannerNormalizeProposal($planner['decoded'], $allowlist);
+    } catch (Throwable $exception) {
+        $reason = mb_substr(trim($exception->getMessage()), 0, 500);
+        $failureCount = max(1, intval($session['planner_failure_count'] ?? 0) + 1);
+        $backoffSeconds = stobeAutonomyPlannerBackoffSeconds(
+            $failureCount,
+            intval($policy['minimum_interval_seconds'])
+        );
+        $db->exec(
+            "UPDATE autonomy_session SET planner_status = 'error', last_error = $1,
+                    planner_failure_count = $2, planner_backoff_seconds = $3,
+                    next_decision_local_ts = $4, updated_at = NOW() WHERE id = 1
+                    AND control_revision = $5",
+            [$reason, $failureCount, $backoffSeconds, time() + $backoffSeconds, $revision]
+        );
+        stobeAutonomyRecordEvent([
+            'control_revision' => $revision,
+            'event_key' => 'planner-error:' . $revision . ':' . intval($snapshot['snapshot_sequence']),
+            'game_ts' => intval($snapshot['game_ts']),
+            'event_type' => 'planner_error',
+            'state' => 'OBSERVING',
+            'outcome' => 'no_action',
+            'reason' => $reason,
+            'context_snapshot' => $auditContext + [
+                'failure_count' => $failureCount,
+                'backoff_seconds' => $backoffSeconds,
+            ],
+        ]);
+        return stobeAutonomyPlannerNoDecision(stobeAutonomyGetSession(), $reason);
+    }
+
+    $nextDecisionTs = time() + intval($policy['minimum_interval_seconds']);
+    if ($proposal['decision'] === null) {
+        $db->exec(
+            "UPDATE autonomy_session SET current_goal = $1::jsonb,
+                    planner_status = 'waiting', last_prompt_hash = $2,
+                    last_response_hash = $3, last_request_latency_ms = $4,
+                    planner_prompt_tokens = planner_prompt_tokens + $5,
+                    planner_completion_tokens = planner_completion_tokens + $6,
+                    planner_decision_count = planner_decision_count + 1,
+                    planner_failure_count = 0, planner_backoff_seconds = 0,
+                    last_decision_local_ts = EXTRACT(EPOCH FROM NOW())::BIGINT,
+                    next_decision_local_ts = $7, last_error = '', updated_at = NOW()
+             WHERE id = 1 AND control_revision = $8",
+            [json_encode($proposal['goal'], JSON_UNESCAPED_SLASHES), $planner['prompt_hash'],
+                $planner['response_hash'], $planner['latency_ms'], $planner['prompt_tokens'],
+                $planner['completion_tokens'], $nextDecisionTs, $revision]
+        );
+        stobeAutonomyRecordEvent([
+            'control_revision' => $revision,
+            'event_key' => 'planner:' . $revision . ':' . intval($snapshot['snapshot_sequence']),
+            'game_ts' => intval($snapshot['game_ts']),
+            'event_type' => 'planner_response',
+            'state' => 'OBSERVING',
+            'goal' => $proposal['goal'],
+            'outcome' => 'wait',
+            'reason' => $proposal['reason'],
+            'context_snapshot' => $auditContext,
+            'prompt_hash' => $planner['prompt_hash'],
+            'response_hash' => $planner['response_hash'],
+            'request_latency_ms' => $planner['latency_ms'],
+        ]);
+        return stobeAutonomyPlannerNoDecision(stobeAutonomyGetSession(), 'planner_wait');
+    }
+
+    $command = strval($proposal['decision']['command']);
+    $arguments = $proposal['decision']['arguments'];
+    $duplicate = $db->fetchOne(
+        "SELECT decision_id FROM autonomy_decision
+         WHERE session_id = 1 AND control_revision = $1 AND command = $2
+           AND status = 'COMPLETED' AND arguments = $3::jsonb
+         ORDER BY terminal_at DESC LIMIT 1",
+        [$revision, $command, json_encode($arguments, JSON_UNESCAPED_SLASHES)]
+    );
+    if ($duplicate) {
+        $reason = 'Identical completed action suppressed: ' . $command;
+        $db->exec(
+            "UPDATE autonomy_session SET current_goal = $1::jsonb,
+                    planner_status = 'duplicate_suppressed', last_prompt_hash = $2,
+                    last_response_hash = $3, last_request_latency_ms = $4,
+                    planner_prompt_tokens = planner_prompt_tokens + $5,
+                    planner_completion_tokens = planner_completion_tokens + $6,
+                    planner_decision_count = planner_decision_count + 1,
+                    planner_failure_count = 0, planner_backoff_seconds = 0,
+                    last_decision_local_ts = EXTRACT(EPOCH FROM NOW())::BIGINT,
+                    next_decision_local_ts = $7, last_error = '', updated_at = NOW()
+             WHERE id = 1 AND control_revision = $8",
+            [json_encode($proposal['goal'], JSON_UNESCAPED_SLASHES), $planner['prompt_hash'],
+                $planner['response_hash'], $planner['latency_ms'], $planner['prompt_tokens'],
+                $planner['completion_tokens'], $nextDecisionTs, $revision]
+        );
+        stobeAutonomyRecordEvent([
+            'control_revision' => $revision,
+            'event_key' => 'planner-duplicate:' . $revision . ':' . intval($snapshot['snapshot_sequence']),
+            'game_ts' => intval($snapshot['game_ts']),
+            'event_type' => 'planner_response',
+            'state' => 'OBSERVING',
+            'goal' => $proposal['goal'],
+            'command' => $command,
+            'arguments' => $arguments,
+            'outcome' => 'duplicate_suppressed',
+            'reason' => $reason,
+            'context_snapshot' => $auditContext + [
+                'duplicate_decision_id' => strval($duplicate['decision_id'] ?? ''),
+            ],
+            'prompt_hash' => $planner['prompt_hash'],
+            'response_hash' => $planner['response_hash'],
+            'request_latency_ms' => $planner['latency_ms'],
+        ]);
+        return stobeAutonomyPlannerNoDecision(stobeAutonomyGetSession(), 'duplicate_action_suppressed');
+    }
+    $db->exec('BEGIN');
+    try {
+        $locked = stobeAutonomyGetSession(true);
+        if (intval($locked['control_revision']) !== $revision || !$locked['enabled'] ||
+            intval($locked['npc_id']) !== $npcId || $locked['npc_storage_id'] !== $storageId) {
+            $db->exec('ROLLBACK');
+            return ['ok' => false, 'status' => 409, 'error' => 'planner_context_became_stale', 'session' => $locked];
+        }
+        $open = $db->fetchOne(
+            "SELECT decision_id FROM autonomy_decision
+             WHERE session_id = 1 AND status IN ('ISSUED', 'DISPATCHED') LIMIT 1 FOR UPDATE"
+        );
+        if ($open) {
+            $db->exec('ROLLBACK');
+            return stobeAutonomyPlannerNoDecision(stobeAutonomyGetSession(), 'decision_already_open');
+        }
+        $decisionId = stobeAutonomyUuid4();
+        $now = time();
+        $actionSeconds = $command === 'TRAVEL_LOCATION' ? 900 : ($command === 'IDLE' ? 20 : 120);
+        $decisionRow = $db->fetchOne(
+            "INSERT INTO autonomy_decision (
+                decision_id, session_id, control_revision, npc_id,
+                npc_storage_id, runtime_serial, command, arguments,
+                context_hash, context_game_ts, status,
+                dispatch_deadline_at, action_deadline_at
+             ) VALUES ($1, 1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9,
+                       'ISSUED', $10::timestamp, $11::timestamp) RETURNING *",
+            [$decisionId, $revision, $npcId, $storageId, max(0, intval($payload['runtime_serial'] ?? 0)),
+                $command, json_encode($arguments, JSON_UNESCAPED_SLASHES),
+                $snapshot['context_hash'], $snapshot['game_ts'],
+                gmdate('Y-m-d H:i:s', $now + 10), gmdate('Y-m-d H:i:s', $now + $actionSeconds)]
+        );
+        if (!$decisionRow) {
+            throw new RuntimeException('planner_decision_insert_failed: ' . $db->GetLastError());
+        }
+        $currentAction = ['decision_id' => $decisionId, 'command' => $command,
+            'arguments' => $arguments, 'status' => 'ISSUED', 'reason' => $proposal['reason']];
+        $db->exec(
+            "UPDATE autonomy_session SET active_decision_id = $1,
+                    current_goal = $2::jsonb, current_action = $3::jsonb,
+                    planner_status = 'action_issued', last_prompt_hash = $4,
+                    last_response_hash = $5, last_request_latency_ms = $6,
+                    planner_prompt_tokens = planner_prompt_tokens + $7,
+                    planner_completion_tokens = planner_completion_tokens + $8,
+                    planner_decision_count = planner_decision_count + 1,
+                    planner_failure_count = 0, planner_backoff_seconds = 0,
+                    last_decision_local_ts = EXTRACT(EPOCH FROM NOW())::BIGINT,
+                    next_decision_local_ts = $9, active_elapsed_ms = 0,
+                    last_error = '', updated_at = NOW() WHERE id = 1",
+            [$decisionId, json_encode($proposal['goal'], JSON_UNESCAPED_SLASHES),
+                json_encode($currentAction, JSON_UNESCAPED_SLASHES), $planner['prompt_hash'],
+                $planner['response_hash'], $planner['latency_ms'], $planner['prompt_tokens'],
+                $planner['completion_tokens'], $nextDecisionTs]
+        );
+        stobeAutonomyRecordEvent([
+            'control_revision' => $revision,
+            'decision_id' => $decisionId,
+            'event_key' => 'decision:' . $decisionId . ':issued',
+            'game_ts' => intval($snapshot['game_ts']),
+            'event_type' => 'decision_issued',
+            'state' => 'ACTION_QUEUED',
+            'goal' => $proposal['goal'],
+            'command' => $command,
+            'arguments' => $arguments,
+            'outcome' => 'issued',
+            'reason' => $proposal['reason'],
+            'context_snapshot' => $auditContext,
+            'prompt_hash' => $planner['prompt_hash'],
+            'response_hash' => $planner['response_hash'],
+            'request_latency_ms' => $planner['latency_ms'],
+        ]);
+        $db->exec('COMMIT');
+        $decision = stobeAutonomyNormalizeDecision($decisionRow);
+        return ['ok' => true, 'status' => 200, 'phase' => 3,
+            'session' => stobeAutonomyGetSession(), 'decision' => $decision, 'action' => $decision];
+    } catch (Throwable $exception) {
+        $db->exec('ROLLBACK');
+        throw $exception;
+    }
 }
 
 function stobeAutonomyApplyTick(array $payload): array
@@ -606,6 +962,10 @@ function stobeAutonomyApplyTick(array $payload): array
     $snapshot = stobeAutonomyTickSnapshot($payload);
     if (!$snapshot) {
         return ['ok' => false, 'status' => 422, 'error' => 'invalid_or_stale_snapshot'];
+    }
+    $modeSession = stobeAutonomyGetSession();
+    if (strval($modeSession['planner_mode'] ?? 'llm') === 'llm') {
+        return stobeAutonomyApplyPlannerTick($payload, $snapshot);
     }
 
     $db = $GLOBALS['db'];
@@ -815,6 +1175,17 @@ function stobeAutonomyApplyActionObservation(array $payload): array
             }
         }
         $error = in_array($outcome, ['FAILED', 'TIMED_OUT'], true) ? $reason : '';
+        $terminalNextDecisionTs = intval($session['next_decision_local_ts'] ?? 0);
+        if ($terminal) {
+            if (strval($session['planner_mode'] ?? 'llm') === 'llm') {
+                $policy = stobeAutonomyPlannerPolicy($session);
+                $minimumNextDecisionTs = intval($session['last_decision_local_ts'] ?? 0)
+                    + intval($policy['minimum_interval_seconds']);
+                $terminalNextDecisionTs = max(time(), $terminalNextDecisionTs, $minimumNextDecisionTs);
+            } else {
+                $terminalNextDecisionTs = time() + 2;
+            }
+        }
         $currentAction = $terminal ? [] : [
             'decision_id' => $decisionId,
             'command' => strval($decisionRow['command'] ?? ''),
@@ -837,7 +1208,7 @@ function stobeAutonomyApplyActionObservation(array $payload): array
                 $pluginState, $revision, $runtimeSerial,
                 json_encode($currentAction, JSON_UNESCAPED_SLASHES),
                 $terminal, $decisionId, $activeElapsedMs,
-                $terminal ? time() + 2 : intval($session['next_decision_local_ts']),
+                $terminalNextDecisionTs,
                 $reason === '' ? strtolower($outcome) : $reason, $error,
             ]
         );
@@ -900,6 +1271,16 @@ function stobeAutonomyApplyControl(string $action, array $payload): array
             ? trim(strval($payload['long_term_directive']))
             : strval($session['long_term_directive']);
         $policy = is_array($payload['policy'] ?? null) ? $payload['policy'] : $session['policy'];
+        $plannerMode = strtolower(trim(strval($payload['planner_mode'] ?? ($session['planner_mode'] ?? 'llm')))) === 'pilot'
+            ? 'pilot'
+            : 'llm';
+        $plannerConnectorId = array_key_exists('planner_connector_id', $payload)
+            ? max(0, intval($payload['planner_connector_id']))
+            : max(0, intval($session['planner_connector_id'] ?? 0));
+        if ($plannerConnectorId > 0 && !getLlmConnectorById($plannerConnectorId)) {
+            $db->exec('ROLLBACK');
+            return ['ok' => false, 'status' => 422, 'error' => 'planner_connector_invalid'];
+        }
 
         if ($action === 'select') {
             $npc = stobeAutonomyGetNpc(intval($payload['npc_id'] ?? 0), true);
@@ -953,15 +1334,19 @@ function stobeAutonomyApplyControl(string $action, array $payload): array
             "UPDATE autonomy_session
              SET npc_id = NULLIF($1, 0), npc_storage_id = $2, npc_name = $3,
                  enabled = $4, desired_state = $5, control_revision = $6,
-                 stop_mode = $7, policy = $8::jsonb,
-                 long_term_directive = $9, active_decision_id = NULL,
+                  stop_mode = $7, policy = $8::jsonb,
+                  long_term_directive = $9, planner_mode = $10,
+                  planner_connector_id = NULLIF($11, 0),
+                  planner_status = 'idle', planner_failure_count = 0,
+                  planner_backoff_seconds = 0, active_decision_id = NULL,
                  current_action = '{}'::jsonb, active_elapsed_ms = 0,
                  next_decision_local_ts = 0,
                  last_error = '', updated_at = NOW()
              WHERE id = 1 RETURNING *",
             [
                 $npcId, $npcStorageId, $npcName, $enabled, $desiredState, $revision,
-                $stopMode, json_encode($policy, JSON_UNESCAPED_SLASHES), $directive,
+                $stopMode, json_encode($policy, JSON_UNESCAPED_SLASHES), $directive, $plannerMode,
+                $plannerConnectorId,
             ]
         );
         if (!$updated) {

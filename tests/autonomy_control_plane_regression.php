@@ -86,6 +86,7 @@ autonomyAssert(count(array_filter($eligible, static fn(array $row): bool => intv
 $selected = stobeAutonomyApplyControl('select', [
     'control_revision' => 0,
     'npc_id' => $npcId,
+    'planner_mode' => 'pilot',
     'long_term_directive' => 'Find useful work without waiting for orders.',
 ]);
 autonomyAssertSame(true, $selected['ok'] ?? false, 'Select should succeed.');
