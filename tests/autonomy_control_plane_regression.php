@@ -120,6 +120,10 @@ autonomyAssertSame(1, intval($eventCount['total'] ?? 0), 'Repeated event key sho
 
 $paused = stobeAutonomyApplyControl('pause', ['control_revision' => 2]);
 autonomyAssertSame('PAUSED_USER', $paused['session']['desired_state'] ?? '', 'Pause should request PAUSED_USER.');
+$staleReport = stobeAutonomyApplyPluginReport($report);
+autonomyAssertSame(409, intval($staleReport['status'] ?? 0), 'A plugin report for the prior revision should conflict.');
+$afterStaleReport = stobeAutonomyGetSession();
+autonomyAssertSame(2, intval($afterStaleReport['plugin_control_revision'] ?? 0), 'A stale report must not overwrite the acknowledged plugin revision.');
 $resumed = stobeAutonomyApplyControl('resume', ['control_revision' => 3]);
 autonomyAssertSame('ARMING', $resumed['session']['desired_state'] ?? '', 'Resume should request a fresh ARMING validation.');
 

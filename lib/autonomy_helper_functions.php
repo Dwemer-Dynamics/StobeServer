@@ -417,11 +417,26 @@ function stobeAutonomyApplyPluginReport(array $payload): array
          SET plugin_state = $1, plugin_control_revision = $2,
              runtime_serial = $3, last_observation = $4, last_error = $5,
              last_plugin_seen_at = NOW(), updated_at = NOW()
-         WHERE id = 1 RETURNING *",
-        [$state, $revision, $runtimeSerial, $observation, $error]
+         WHERE id = 1
+           AND control_revision = $6
+           AND COALESCE(npc_id, 0) = $7
+           AND npc_storage_id = $8
+         RETURNING *",
+        [
+            $state, $revision, $runtimeSerial, $observation, $error,
+            $revision, $reportedNpcId, $reportedStorageId,
+        ]
     );
     if (!$updated) {
-        throw new RuntimeException('Autonomy plugin report update failed.');
+        $current = stobeAutonomyGetSession();
+        if (intval($current['control_revision']) !== $revision) {
+            return ['ok' => false, 'status' => 409, 'error' => 'stale_control_revision', 'session' => $current];
+        }
+        if (intval($current['npc_id']) !== $reportedNpcId ||
+            strval($current['npc_storage_id']) !== $reportedStorageId) {
+            return ['ok' => false, 'status' => 409, 'error' => 'npc_identity_mismatch', 'session' => $current];
+        }
+        throw new RuntimeException('Autonomy plugin report update failed: ' . $GLOBALS['db']->GetLastError());
     }
 
     $eventKey = trim(strval($payload['event_key'] ?? ''));
