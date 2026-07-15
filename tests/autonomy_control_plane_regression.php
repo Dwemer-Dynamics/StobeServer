@@ -62,7 +62,8 @@ $db->exec("DELETE FROM core_npc WHERE name = 'UT_AUTONOMY_NPC'");
 $db->exec("UPDATE autonomy_session SET npc_id = NULL, npc_storage_id = '', npc_name = '', enabled = FALSE,
     desired_state = 'DISABLED', plugin_state = 'DISABLED', control_revision = 0,
     plugin_control_revision = 0, runtime_serial = 0, stop_mode = 'normal',
-    long_term_directive = '', last_observation = '', last_error = '', last_plugin_seen_at = NULL WHERE id = 1");
+    long_term_directive = '', last_observation = '', last_error = '',
+    last_plugin_seen_at = NULL, last_plugin_seen_local_ts = 0 WHERE id = 1");
 
 $profile = $db->fetchOne('SELECT id FROM core_profiles WHERE is_player_faction_profile = TRUE LIMIT 1');
 if (!$profile) {

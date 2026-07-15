@@ -849,6 +849,7 @@ CREATE TABLE IF NOT EXISTS autonomy_session (
     last_observation TEXT NOT NULL DEFAULT '',
     last_error TEXT NOT NULL DEFAULT '',
     last_plugin_seen_at TIMESTAMP,
+    last_plugin_seen_local_ts BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

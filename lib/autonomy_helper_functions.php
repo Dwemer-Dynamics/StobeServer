@@ -57,6 +57,7 @@ function stobeAutonomyEnsureSchema(): void
             last_observation TEXT NOT NULL DEFAULT '',
             last_error TEXT NOT NULL DEFAULT '',
             last_plugin_seen_at TIMESTAMP,
+            last_plugin_seen_local_ts BIGINT NOT NULL DEFAULT 0,
             created_at TIMESTAMP NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )",
@@ -85,6 +86,7 @@ function stobeAutonomyEnsureSchema(): void
         "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_decision_local_ts BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS next_decision_local_ts BIGINT NOT NULL DEFAULT 0",
         "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS active_elapsed_ms BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE autonomy_session ADD COLUMN IF NOT EXISTS last_plugin_seen_local_ts BIGINT NOT NULL DEFAULT 0",
         "CREATE TABLE IF NOT EXISTS autonomy_decision (
             decision_id TEXT PRIMARY KEY,
             session_id SMALLINT NOT NULL DEFAULT 1,
@@ -156,11 +158,8 @@ function stobeAutonomyDecodeJsonColumn(mixed $value): array
 function stobeAutonomyNormalizeSession(array $row): array
 {
     $lastPluginRaw = trim(strval($row['last_plugin_seen_at'] ?? ''));
-    $lastPluginTs = 0;
-    if ($lastPluginRaw !== '') {
-        $parsed = strtotime($lastPluginRaw . ' UTC');
-        $lastPluginTs = $parsed === false ? 0 : intval($parsed);
-    }
+    $lastPluginTs = max(0, intval($row['last_plugin_seen_local_ts'] ?? 0));
+    $lastPluginAge = time() - $lastPluginTs;
     return [
         'id' => intval($row['id'] ?? 1),
         'npc_id' => intval($row['npc_id'] ?? 0),
@@ -185,7 +184,7 @@ function stobeAutonomyNormalizeSession(array $row): array
         'last_error' => strval($row['last_error'] ?? ''),
         'last_plugin_seen_at' => $lastPluginRaw,
         'last_plugin_seen_ts' => $lastPluginTs,
-        'plugin_online' => $lastPluginTs > 0 && (time() - $lastPluginTs) <= 8,
+        'plugin_online' => $lastPluginTs > 0 && $lastPluginAge >= -2 && $lastPluginAge <= 8,
         'updated_at' => strval($row['updated_at'] ?? ''),
     ];
 }
@@ -830,7 +829,9 @@ function stobeAutonomyApplyActionObservation(array $payload): array
                     active_elapsed_ms = $7,
                     next_decision_local_ts = CASE WHEN $5 THEN $8 ELSE next_decision_local_ts END,
                     last_observation = $9, last_error = $10,
-                    last_plugin_seen_at = NOW(), updated_at = NOW()
+                    last_plugin_seen_at = NOW(),
+                    last_plugin_seen_local_ts = EXTRACT(EPOCH FROM clock_timestamp())::BIGINT,
+                    updated_at = NOW()
              WHERE id = 1",
             [
                 $pluginState, $revision, $runtimeSerial,
@@ -1011,7 +1012,9 @@ function stobeAutonomyApplyPluginReport(array $payload): array
         "UPDATE autonomy_session
          SET plugin_state = $1, plugin_control_revision = $2,
              runtime_serial = $3, last_observation = $4, last_error = $5,
-             last_plugin_seen_at = NOW(), updated_at = NOW()
+             last_plugin_seen_at = NOW(),
+             last_plugin_seen_local_ts = EXTRACT(EPOCH FROM clock_timestamp())::BIGINT,
+             updated_at = NOW()
          WHERE id = 1
            AND control_revision = $6
            AND COALESCE(npc_id, 0) = $7

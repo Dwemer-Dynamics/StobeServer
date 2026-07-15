@@ -1984,6 +1984,10 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             stobeAutonomyEnsureSchema();
         });
 
+        $applyPatch('autonomy_phase2_heartbeat_epoch', 202607140103, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

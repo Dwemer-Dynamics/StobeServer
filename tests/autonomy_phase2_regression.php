@@ -55,7 +55,8 @@ $db->exec("UPDATE autonomy_session SET npc_id = NULL, npc_storage_id = '', npc_n
     stop_mode = 'normal', current_goal = '{}'::jsonb, current_action = '{}'::jsonb,
     active_decision_id = NULL, last_decision_local_ts = 0,
     next_decision_local_ts = 0, active_elapsed_ms = 0,
-    last_observation = '', last_error = '', last_plugin_seen_at = NULL WHERE id = 1");
+    last_observation = '', last_error = '', last_plugin_seen_at = NULL,
+    last_plugin_seen_local_ts = 0 WHERE id = 1");
 
 $profile = $db->fetchOne('SELECT id FROM core_profiles WHERE is_player_faction_profile = TRUE LIMIT 1');
 if (!$profile) {
@@ -97,6 +98,25 @@ $ready = stobeAutonomyApplyPluginReport([
     'event_key' => 'ut-phase2-ready',
 ]);
 phase2Same(true, $ready['ok'] ?? false, 'Plugin ready report should succeed.');
+phase2Same(true, $ready['session']['plugin_online'] ?? false, 'Fresh epoch heartbeat should mark the plugin online.');
+
+$db->exec(
+    "UPDATE autonomy_session SET last_plugin_seen_at = NOW() + INTERVAL '2 hours',
+        last_plugin_seen_local_ts = $1 WHERE id = 1",
+    [time() - 60]
+);
+$timezoneSafeSession = stobeAutonomyGetSession();
+phase2Same(false, $timezoneSafeSession['plugin_online'] ?? true, 'Wall-clock timezone skew must not keep a stale plugin online.');
+$ready = stobeAutonomyApplyPluginReport([
+    'control_revision' => 2,
+    'npc_id' => $npcId,
+    'npc_storage_id' => 'hand_992211',
+    'runtime_serial' => 992211,
+    'state' => 'OBSERVING',
+    'observation' => 'phase_2_ready_after_timezone_probe',
+    'event_key' => 'ut-phase2-ready-after-timezone-probe',
+]);
+phase2Same(true, $ready['session']['plugin_online'] ?? false, 'A new epoch heartbeat should restore online state.');
 
 $rawCoordinates = stobeAutonomyApplyPilotControl('enqueue_travel', [
     'control_revision' => 2,
