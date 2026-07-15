@@ -84,6 +84,7 @@ require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'diary_helper_functions
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'middleterm_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'dynamic_profile_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'narrator_helper_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_schema.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_storage.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_snapshot.php');

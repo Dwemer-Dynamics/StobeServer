@@ -1976,6 +1976,10 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_delivery_state ON eventlog (delivery_state)");
         });
 
+        $applyPatch('autonomy_control_plane', 202607140101, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

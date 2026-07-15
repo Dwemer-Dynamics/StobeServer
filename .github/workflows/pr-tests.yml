@@ -72,6 +72,7 @@ jobs:
           set -euo pipefail
 
           all_tests=(
+            "tests/autonomy_control_plane_regression.php"
             "tests/bio_unique_regression.php"
             "tests/chat_flow_regression.php"
             "tests/chat_json_endpoint_regression.php"

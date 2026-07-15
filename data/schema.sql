@@ -824,6 +824,63 @@ CREATE INDEX IF NOT EXISTS idx_audit_request_npc_name ON audit_request (npc_name
 CREATE INDEX IF NOT EXISTS idx_audit_request_status ON audit_request (status);
 
 -- ----------------------------------------------------------
+-- AUTONOMY CONTROL PLANE - one controller session per playthrough
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS autonomy_session (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    npc_id INT,
+    npc_storage_id TEXT NOT NULL DEFAULT '',
+    npc_name TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    desired_state TEXT NOT NULL DEFAULT 'DISABLED',
+    plugin_state TEXT NOT NULL DEFAULT 'DISABLED',
+    control_revision BIGINT NOT NULL DEFAULT 0,
+    plugin_control_revision BIGINT NOT NULL DEFAULT 0,
+    runtime_serial BIGINT NOT NULL DEFAULT 0,
+    stop_mode TEXT NOT NULL DEFAULT 'normal',
+    policy JSONB NOT NULL DEFAULT '{"preset":"full_autonomy","actions":"all"}'::jsonb,
+    long_term_directive TEXT NOT NULL DEFAULT '',
+    current_goal JSONB NOT NULL DEFAULT '{}'::jsonb,
+    current_action JSONB NOT NULL DEFAULT '{}'::jsonb,
+    last_observation TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT '',
+    last_plugin_seen_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO autonomy_session (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS autonomy_event (
+    id BIGSERIAL PRIMARY KEY,
+    session_id SMALLINT NOT NULL DEFAULT 1,
+    control_revision BIGINT NOT NULL DEFAULT 0,
+    decision_id TEXT,
+    event_key TEXT,
+    local_ts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    event_type TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT '',
+    goal JSONB NOT NULL DEFAULT '{}'::jsonb,
+    command TEXT NOT NULL DEFAULT '',
+    arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
+    outcome TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    context_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    prompt_hash TEXT NOT NULL DEFAULT '',
+    response_hash TEXT NOT NULL DEFAULT '',
+    request_latency_ms INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_event_key
+    ON autonomy_event (event_key) WHERE event_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_autonomy_event_session_created
+    ON autonomy_event (session_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_autonomy_event_revision
+    ON autonomy_event (control_revision DESC, id DESC);
+
+-- ----------------------------------------------------------
 -- LOG â€” Herika-style persisted prompt/response request log
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS log (

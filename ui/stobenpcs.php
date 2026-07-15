@@ -1620,6 +1620,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                     <?php endif; ?>
                     <?php if ($isPlayerFactionNpc): ?>
                     <span class="npc-player-faction-badge" title="Aligned with the player faction">Player Faction</span>
+                    <a class="btn npc-autonomy-link" href="autonomy.php?npc_id=<?= intval($row['id']) ?>" title="Select this NPC for autonomy">AUTO</a>
                     <?php endif; ?>
                     <?php if ($tagsDisp !== ''): ?>
                     <span class="npc-tags-top" title="<?= htmlspecialchars($tagsDisp) ?>"><?= htmlspecialchars($tagsDisp) ?></span>
@@ -2974,6 +2975,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .npc-actions .btn-danger:hover { background:#6a2a2a; }
 .npc-title-actions a { text-decoration:none; border:none; }
 .npc-title-actions a:hover { text-decoration:none; }
+.npc-title-actions .npc-autonomy-link { border:1px solid #5c9f90; color:#81c9b8; font-size:10px; font-weight:800; letter-spacing:.08em; padding:4px 6px; }
+.npc-title-actions .npc-autonomy-link:hover { color:#d8fff6; border-color:#81c9b8; }
 .btn-toggle { background:transparent; border:none; padding:6px; color:#e9efff; font-size:22px; line-height:1; text-decoration:none; transition: color .15s ease, text-shadow .15s ease; }
 /* Navbar-like glow only for lock icon on cards */
 .btn-toggle[data-lock-id]:hover,
@@ -3645,6 +3648,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 <?php endif; ?>
                 <?php if ($isPlayerFactionNpc): ?>
                 <span class="npc-player-faction-badge" title="Aligned with the player faction">Player Faction</span>
+                <a class="btn npc-autonomy-link" href="autonomy.php?npc_id=<?= intval($row['id']) ?>" title="Select this NPC for autonomy">AUTO</a>
                 <?php endif; ?>
                 <?php if ($tagsDisp !== ''): ?>
                 <span class="npc-tags-label">Tags:</span>
@@ -3995,6 +3999,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       return;
     }
     let badge = actions.querySelector('.npc-player-faction-badge');
+    let autonomyLink = actions.querySelector('.npc-autonomy-link');
     if (isPlayerFaction) {
       if (!badge) {
         badge = document.createElement('span');
@@ -4003,8 +4008,21 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         badge.textContent = 'Player Faction';
         actions.prepend(badge);
       }
-    } else if (badge) {
-      badge.remove();
+      if (!autonomyLink) {
+        autonomyLink = document.createElement('a');
+        autonomyLink.className = 'btn npc-autonomy-link';
+        autonomyLink.href = 'autonomy.php?npc_id=' + encodeURIComponent(card.getAttribute('data-id') || '');
+        autonomyLink.title = 'Select this NPC for autonomy';
+        autonomyLink.textContent = 'AUTO';
+        badge.insertAdjacentElement('afterend', autonomyLink);
+      }
+    } else {
+      if (badge) {
+        badge.remove();
+      }
+      if (autonomyLink) {
+        autonomyLink.remove();
+      }
     }
   }
   function stobeExtractCurrentActionState(payload){

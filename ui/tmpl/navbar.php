@@ -10,6 +10,7 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
 
 $menuItems = [
     ['label' => 'Home', 'href' => $webRoot . '/ui/home.php', 'page' => 'home.php'],
+    ['label' => 'Autonomy', 'href' => $webRoot . '/ui/autonomy.php', 'page' => 'autonomy.php'],
     ['label' => 'Events & Memories', 'href' => $webRoot . '/ui/events.php', 'page' => 'events.php'],
     ['label' => 'Configuration', 'href' => $webRoot . '/ui/config_hub.php', 'page' => 'config_hub.php'],
     ['label' => 'Immersion', 'href' => $webRoot . '/ui/immersion_hub.php', 'page' => 'immersion_hub.php'],
