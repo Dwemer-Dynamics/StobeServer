@@ -28,6 +28,36 @@ $audioCpp = stobeVoiceProviderTarget([
     'base_url' => 'http://127.0.0.1:8086',
 ]);
 expectSame(false, $audioCpp['can_manage'], 'protects audio.cpp local samples');
+
+$cartesia = stobeVoiceProviderTarget([
+    'id' => 8,
+    'name' => 'Cartesia',
+    'connector_type' => 'cartesia',
+    'base_url' => '',
+    'api_badge_key' => 'test-key',
+    'config' => json_encode(['language' => 'EN']),
+]);
+expectSame('cartesia', $cartesia['provider'], 'normalizes Cartesia');
+expectSame(true, $cartesia['cloud'], 'marks Cartesia as cloud');
+expectSame(true, $cartesia['can_manage'], 'enables configured Cartesia management');
+
+$inworldMissingWorkspace = stobeVoiceProviderTarget([
+    'id' => 9,
+    'name' => 'Inworld',
+    'connector_type' => 'inworld',
+    'api_badge_key' => 'test-key',
+    'config' => json_encode(['language' => 'EN_US']),
+]);
+expectSame(false, $inworldMissingWorkspace['can_manage'], 'requires Inworld workspace');
+
+$inworld = stobeVoiceProviderTarget([
+    'id' => 9,
+    'name' => 'Inworld',
+    'connector_type' => 'inworld',
+    'api_badge_key' => 'test-key',
+    'config' => json_encode(['language' => 'EN_US', 'workspace' => 'workspace-1']),
+]);
+expectSame(true, $inworld['can_manage'], 'enables configured Inworld management');
 expectSame('not found', stobeVoiceProviderResponseMessage('{"detail":"not found"}', 404), 'extracts API detail');
 expectSame(
     'protected_voice: Only custom uploaded voices can be deleted.',

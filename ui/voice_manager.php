@@ -177,7 +177,13 @@ $message = "";
 $messageType = "ok";
 $providerConnectors = [];
 $providerConnectorMap = [];
-foreach ($db->fetchAll("SELECT id, name, connector_type, base_url, config FROM core_tts_connector ORDER BY is_default DESC, id ASC") as $connectorRow) {
+foreach ($db->fetchAll(
+    "SELECT c.id, c.name, c.connector_type, c.base_url, c.config,
+            COALESCE(b.api_key, '') AS api_badge_key
+     FROM core_tts_connector c
+     LEFT JOIN core_api_badge b ON b.id = c.api_badge_id
+     ORDER BY c.is_default DESC, c.id ASC"
+) as $connectorRow) {
     $target = stobeVoiceProviderTarget($connectorRow);
     if ($target["provider"] === "") {
         continue;
@@ -194,7 +200,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $target = $providerConnectorMap[$connectorId] ?? null;
 
         if (!is_array($target)) {
-            $message = "Select a configured local TTS connector.";
+            $message = "Select a configured TTS connector.";
             $messageType = "err";
         } elseif ($voiceid === "") {
             $message = "Enter a valid voice ID.";
@@ -762,9 +768,9 @@ if (!$editRow) {
 
         <div id="provider-voices" class="content-section full-width-section">
             <h2>Connector Voice Copies</h2>
-            <p class="small-muted">Upload or replace the selected local sample on a connector, or remove only its provider-side copy. Removing a provider copy never deletes the WAV under <code>data/voices</code>.</p>
+            <p class="small-muted">Upload or rebuild the selected local sample on a connector, or remove only its provider-side copy. Cartesia and Inworld use clone-first replacement: the new clone is validated before its ID becomes active. Removing a provider copy never deletes the WAV under <code>data/voices</code>.</p>
             <?php if (count($providerConnectors) === 0): ?>
-                <p>No PocketTTS, XTTS, Chatterbox, or OmniVoice connector is configured.</p>
+                <p>No manageable TTS connector is configured.</p>
             <?php else: ?>
                 <form action="" method="post" class="provider-form">
                     <div>
@@ -772,7 +778,7 @@ if (!$editRow) {
                         <select id="provider_connector_id" name="connector_id" required>
                             <?php foreach ($providerConnectors as $connector): ?>
                                 <option value="<?= h($connector["id"]) ?>">
-                                    <?= h(($connector["name"] !== "" ? $connector["name"] : strtoupper($connector["provider"])) . " — " . $connector["provider"] . ($connector["can_manage"] ? "" : " (local audio.cpp sample)")) ?>
+                                    <?= h(($connector["name"] !== "" ? $connector["name"] : strtoupper($connector["provider"])) . " — " . $connector["provider"] . ($connector["can_manage"] ? "" : " (management unavailable)")) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -787,11 +793,11 @@ if (!$editRow) {
                         </datalist>
                     </div>
                     <div class="action-row">
-                        <button type="submit" name="provider_voice_action" value="sync" class="action-button edit">Upload / Replace</button>
+                        <button type="submit" name="provider_voice_action" value="sync" class="action-button edit">Upload / Rebuild</button>
                         <button type="submit" name="provider_voice_action" value="delete" class="action-button btn-danger" onclick="return confirm('Remove this voice from the selected connector? The local WAV will be kept.');">Remove Provider Copy</button>
                     </div>
                 </form>
-                <p class="hint">OmniVoice uses the language configured on the selected connector. audio.cpp PocketTTS reads the local file directly, so it has no separate provider copy.</p>
+                <p class="hint">OmniVoice uses the connector language. Cartesia and Inworld require a configured API badge; Inworld also requires a workspace. Cloud deletion is allowed only for clones marked as created by this Stobe installation.</p>
             <?php endif; ?>
         </div>
 
