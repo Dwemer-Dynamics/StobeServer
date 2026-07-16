@@ -21,6 +21,7 @@ function stobeAutonomyPlannerActionContracts(): array
         'GIVE_CATS' => ['target', 'amount'],
         'TAKE_CATS' => ['target', 'amount'],
         'TAKE_ITEM' => ['target', 'item', 'amount'],
+        'EQUIP_ITEM' => ['item'],
         'GIVE_ITEM' => ['target', 'item', 'amount'],
         'DROP_ITEM' => ['item'],
         'ROLEPLAY_ACTION' => ['message'],
@@ -54,7 +55,7 @@ function stobeAutonomyPlannerActionContracts(): array
 function stobeAutonomyPlannerRequiredArguments(string $command): array
 {
     return match ($command) {
-        'TAKE_ITEM' => ['item'],
+        'TAKE_ITEM' => ['target', 'item'],
         'GIVE_ITEM' => ['target', 'item'],
         'FORCE_DRINK' => ['target'],
         'USE_OBJECT' => [],
@@ -187,7 +188,11 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
         if ($command === 'TRAVEL_LOCATION' && count($locations) === 0) {
             continue;
         }
-        if (in_array($command, ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true) &&
+        if (in_array($command, [
+            'MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST', 'ATTACK',
+            'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT', 'KILL',
+            'REMOVE_LIMB', 'CUT_HORNS',
+        ], true) &&
             !stobeAutonomyBool($status['can_take_orders'] ?? false)) {
             continue;
         }
@@ -220,7 +225,7 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
         if ($command === 'STOP_CARRYING' && !stobeAutonomyBool($snapshot['status']['carrying'] ?? false)) {
             continue;
         }
-        if (in_array($command, ['GIVE_ITEM', 'DROP_ITEM', 'USE_DRUGS', 'DRINK', 'FORCE_DRINK'], true) &&
+        if (in_array($command, ['EQUIP_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'USE_DRUGS', 'DRINK', 'FORCE_DRINK'], true) &&
             trim(strval($npc['inventory'] ?? '')) === '' && trim(strval($npc['equipment'] ?? '')) === '') {
             continue;
         }
@@ -281,8 +286,19 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
                     array_filter($nearbyActors, static fn(array $actor): bool =>
                         stobeAutonomyBool($actor['dead'] ?? false) || stobeAutonomyBool($actor['unconscious'] ?? false))
                 ));
-                if (count($validTargets) === 0 && $command !== 'TAKE_ITEM') {
+                if (count($validTargets) === 0) {
                     continue;
+                }
+            } elseif ($command === 'KNOCKOUT') {
+                $validTargets = array_values(array_map(
+                    static fn(array $actor): string => strval($actor['name'] ?? ''),
+                    array_filter($nearbyActors, static fn(array $actor): bool =>
+                        !stobeAutonomyBool($actor['dead'] ?? false) &&
+                        stobeAutonomyBool($actor['unconscious'] ?? false))
+                ));
+                $selfName = trim(strval($npc['name'] ?? ''));
+                if ($selfName !== '') {
+                    $validTargets[] = $selfName;
                 }
             } elseif ($command === 'ATTACK') {
                 $validTargets = array_values(array_map(
@@ -294,6 +310,47 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
                 }
             }
             $entry['valid_targets'] = array_values(array_slice(array_unique(array_filter($validTargets)), 0, 30));
+        }
+        if (in_array($command, [
+            'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL',
+            'REMOVE_LIMB', 'CUT_HORNS',
+        ], true)) {
+            $serialCandidates = [];
+            foreach ($nearbyActors as $actor) {
+                $name = trim(strval($actor['name'] ?? ''));
+                $serial = max(0, intval($actor['runtime_serial'] ?? 0));
+                if ($name === '' || $serial <= 0) {
+                    continue;
+                }
+                $key = strtolower($name);
+                $serialCandidates[$key] ??= [];
+                $serialCandidates[$key][$serial] = true;
+            }
+            if ($command === 'KNOCKOUT') {
+                $selfName = trim(strval($npc['name'] ?? ''));
+                $selfSerial = max(0, intval($snapshot['runtime_serial'] ?? 0));
+                if ($selfName !== '' && $selfSerial > 0) {
+                    $serialCandidates[strtolower($selfName)] = [$selfSerial => true];
+                    $entry['valid_targets'][] = $selfName;
+                }
+            }
+            $entry['valid_targets'] = array_values(array_unique(array_filter(
+                $entry['valid_targets'] ?? [],
+                static function (string $name) use ($serialCandidates): bool {
+                    $serials = array_keys($serialCandidates[strtolower($name)] ?? []);
+                    return count($serials) === 1;
+                }
+            )));
+            $entry['target_runtime_serials'] = [];
+            foreach ($entry['valid_targets'] as $name) {
+                $serials = array_keys($serialCandidates[strtolower($name)] ?? []);
+                if (count($serials) === 1) {
+                    $entry['target_runtime_serials'][strtolower($name)] = intval($serials[0]);
+                }
+            }
+            if (count($entry['valid_targets']) === 0) {
+                continue;
+            }
         }
         if ($command === 'FIRST_AID') {
             $patients = $patientActors;
@@ -512,6 +569,23 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
     if (isset($args['item']) && preg_match('/[,;]/', strval($args['item'])) === 1) {
         throw new InvalidArgumentException('planner_item_must_be_single');
     }
+    if ($command === 'TAKE_ITEM') {
+        $args['amount'] = max(1, min(20, intval($args['amount'] ?? 1)));
+        if (in_array(strtolower(trim(strval($args['item'] ?? ''))), [
+            'equipment', 'equip', 'all', 'everything', 'inventory', 'items', 'loot',
+        ], true)) {
+            throw new InvalidArgumentException('planner_loot_item_must_be_specific');
+        }
+    }
+    if ($command === 'EQUIP_ITEM') {
+        $args['amount'] = 1;
+    }
+    if ($command === 'REMOVE_LIMB' &&
+        !in_array(strtoupper(strval($args['limb'] ?? '')), [
+            'LEFT_ARM', 'RIGHT_ARM', 'LEFT_LEG', 'RIGHT_LEG',
+        ], true)) {
+        throw new InvalidArgumentException('planner_limb_invalid');
+    }
     if (trim(strval($args['target'] ?? '')) !== '' && isset($allowed[$command]['valid_targets'])) {
         $validTargets = array_map('strtolower', $allowed[$command]['valid_targets']);
         if (!in_array(strtolower($args['target']), $validTargets, true) &&
@@ -554,7 +628,10 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
             $args[$field] = floatval($allowed[$command][$field]);
         }
     }
-    if ($command === 'FIRST_AID') {
+    if ($command === 'FIRST_AID' || in_array($command, [
+        'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL',
+        'REMOVE_LIMB', 'CUT_HORNS',
+    ], true)) {
         $serials = is_array($allowed[$command]['target_runtime_serials'] ?? null)
             ? $allowed[$command]['target_runtime_serials'] : [];
         $serial = max(0, intval($serials[strtolower(strval($args['target'] ?? ''))] ?? 0));
