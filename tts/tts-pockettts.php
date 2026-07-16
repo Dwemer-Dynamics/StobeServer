@@ -890,7 +890,7 @@ function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $sampleP
     }
 
     $cfile = new CURLFile($uploadSourcePath, 'audio/wav', $uploadName);
-    $postFields = ['wavFile' => $cfile];
+    $postFields = ['wavFile' => $cfile, 'force' => 'true'];
     if ($voiceToken !== '') {
         $postFields['speaker_name'] = $voiceToken;
         $postFields['speaker_id'] = $voiceToken;
@@ -916,8 +916,7 @@ function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $sampleP
         @unlink($tempConvertedPath);
     }
 
-    $alreadyExists = is_string($response) && stripos($response, 'already exists') !== false;
-    if (($status >= 200 && $status < 300) || ($status === 400 && $alreadyExists)) {
+    if ($status >= 200 && $status < 300) {
         return true;
     }
 

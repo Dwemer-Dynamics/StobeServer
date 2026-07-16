@@ -62,7 +62,7 @@ $tabs = [
     ['id' => 'world_knowledge', 'label' => "\u{1F4D6} World Knowledge", 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'bio', 'label' => "\u{1FAAA} NPC Biographies", 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'desc', 'label' => "\u{1F4DC} Descriptions", 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'voice', 'label' => "\u{1F399}\u{FE0F} Voice Manager", 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'voice', 'label' => "\u{1F399}\u{FE0F} TTS Studio / Voices", 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'actions', 'label' => "\u{2694}\u{FE0F} Action Editor", 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'prompts', 'label' => "\u{1F4DD} Prompts Manager", 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
 ];

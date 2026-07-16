@@ -1,6 +1,7 @@
 <?php
 $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "bootstrap.php");
+require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "tts_voice_management.php");
 if (!isset($GLOBALS["db"]) || !($GLOBALS["db"] instanceof sql)) {
     $GLOBALS["db"] = new sql();
 }
@@ -174,9 +175,67 @@ $webRoot = rtrim($webRoot, "/");
 $voicesDir = dirname(__DIR__) . DIRECTORY_SEPARATOR . "data" . DIRECTORY_SEPARATOR . "voices";
 $message = "";
 $messageType = "ok";
+$providerConnectors = [];
+$providerConnectorMap = [];
+foreach ($db->fetchAll("SELECT id, name, connector_type, base_url, config FROM core_tts_connector ORDER BY is_default DESC, id ASC") as $connectorRow) {
+    $target = stobeVoiceProviderTarget($connectorRow);
+    if ($target["provider"] === "") {
+        continue;
+    }
+    $providerConnectors[] = $target;
+    $providerConnectorMap[intval($target["id"])] = $target;
+}
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    if (isset($_POST["save_voice"])) {
+    if (isset($_POST["provider_voice_action"])) {
+        $connectorId = intval($_POST["connector_id"] ?? 0);
+        $voiceid = stobeVoiceProviderNormalizeId(strval($_POST["voiceid"] ?? ""));
+        $providerAction = strtolower(stobe_voice_trim($_POST["provider_voice_action"] ?? ""));
+        $target = $providerConnectorMap[$connectorId] ?? null;
+
+        if (!is_array($target)) {
+            $message = "Select a configured local TTS connector.";
+            $messageType = "err";
+        } elseif ($voiceid === "") {
+            $message = "Enter a valid voice ID.";
+            $messageType = "err";
+        } elseif ($providerAction === "delete") {
+            $result = stobeVoiceProviderDelete($target, $voiceid);
+            if ($result["success"]) {
+                $syncKey = "tts_sync_v2_" . $target["provider"] . "_" . md5(strtolower($voiceid));
+                $db->exec("DELETE FROM conf_opts WHERE id = $1", [$syncKey]);
+                header("Location: " . stobe_voice_build_url(["ok" => "provider_deleted", "provider_voice" => $voiceid], $isEmbed, "provider-voices"));
+                exit;
+            }
+            $message = "Could not remove provider voice: " . $result["message"];
+            $messageType = "err";
+        } elseif ($providerAction === "sync") {
+            $sampleRow = $db->fetchOne(
+                "SELECT sample_file FROM combined_core_voiceid WHERE LOWER(voiceid) = LOWER($1) LIMIT 1",
+                [$voiceid]
+            );
+            $sampleFile = stobe_voice_normalize_sample_file($sampleRow["sample_file"] ?? "");
+            $samplePath = $sampleFile !== "" ? $voicesDir . DIRECTORY_SEPARATOR . $sampleFile : "";
+            $result = stobeVoiceProviderUpload($target, $voiceid, $samplePath);
+            if ($result["success"]) {
+                $fileHash = is_file($samplePath) ? strval(md5_file($samplePath)) : "";
+                if ($fileHash !== "") {
+                    $syncKey = "tts_sync_v2_" . $target["provider"] . "_" . md5(strtolower($voiceid));
+                    $db->exec(
+                        "INSERT INTO conf_opts (id, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                        [$syncKey, $fileHash]
+                    );
+                }
+                header("Location: " . stobe_voice_build_url(["ok" => "provider_synced", "provider_voice" => $voiceid], $isEmbed, "provider-voices"));
+                exit;
+            }
+            $message = "Could not upload provider voice: " . $result["message"];
+            $messageType = "err";
+        } else {
+            $message = "Unknown provider voice action.";
+            $messageType = "err";
+        }
+    } elseif (isset($_POST["save_voice"])) {
         $originalVoiceId = stobe_voice_normalize_voiceid($_POST["original_voiceid"] ?? "");
         $voiceid = stobe_voice_normalize_voiceid($_POST["voiceid"] ?? "");
         if ($originalVoiceId !== "") {
@@ -267,6 +326,10 @@ if (isset($_GET["ok"])) {
         $message = "Custom voice override deleted.";
     } elseif ($ok === "reset") {
         $message = "All custom voice overrides cleared.";
+    } elseif ($ok === "provider_deleted") {
+        $message = "Provider copy removed. The local voice sample remains available for re-upload.";
+    } elseif ($ok === "provider_synced") {
+        $message = "Voice sample uploaded to the provider. Existing provider artifacts were replaced.";
     }
 }
 
@@ -316,6 +379,7 @@ $rows = $db->fetchAll(
 );
 
 $editVoiceId = stobe_voice_normalize_voiceid($_GET["edit"] ?? "");
+$providerVoiceId = stobeVoiceProviderNormalizeId(strval($_GET["provider_voice"] ?? $editVoiceId));
 $editRow = false;
 if ($editVoiceId !== "") {
     $editRow = $db->fetchOne(
@@ -343,7 +407,7 @@ if (!$editRow) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Manager</title>
+    <title>TTS Studio &amp; Voice Manager</title>
     <link rel="icon" type="image/x-icon" href="/StobeServer/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="css/main.css">
@@ -561,6 +625,14 @@ if (!$editRow) {
             max-width: 100%;
             height: 34px;
         }
+        .provider-form {
+            display: grid;
+            grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+            gap: 14px;
+            align-items: end;
+        }
+        .provider-form .action-row { margin-bottom: 10px; }
+        .provider-form label { margin-top: 0; }
         .small-muted {
             color: #9fb1c9;
             font-size: 12px;
@@ -596,6 +668,7 @@ if (!$editRow) {
                 grid-template-columns: 1fr;
                 gap: 20px;
             }
+            .provider-form { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -608,8 +681,8 @@ if (!$editRow) {
     <div id="toast" class="toast-notification"><span class="message"></span></div>
 
     <div class="page-header">
-        <h1 class="api-title">Voice Manager</h1>
-        <p class="page-subtitle">Manage voice samples and matching metadata for NPC voice assignment</p>
+        <h1 class="api-title">TTS Studio &amp; Voice Manager</h1>
+        <p class="page-subtitle">Manage local voice samples, NPC matching metadata, and uploaded connector copies</p>
     </div>
 
     <div class="content-grid">
@@ -687,6 +760,41 @@ if (!$editRow) {
             <p class="small-muted">Tip: use <code>sample_file</code> values that exist under <code>data/voices</code> for local sample preview and consistency.</p>
         </div>
 
+        <div id="provider-voices" class="content-section full-width-section">
+            <h2>Connector Voice Copies</h2>
+            <p class="small-muted">Upload or replace the selected local sample on a connector, or remove only its provider-side copy. Removing a provider copy never deletes the WAV under <code>data/voices</code>.</p>
+            <?php if (count($providerConnectors) === 0): ?>
+                <p>No PocketTTS, XTTS, Chatterbox, or OmniVoice connector is configured.</p>
+            <?php else: ?>
+                <form action="" method="post" class="provider-form">
+                    <div>
+                        <label for="provider_connector_id">Connector</label>
+                        <select id="provider_connector_id" name="connector_id" required>
+                            <?php foreach ($providerConnectors as $connector): ?>
+                                <option value="<?= h($connector["id"]) ?>">
+                                    <?= h(($connector["name"] !== "" ? $connector["name"] : strtoupper($connector["provider"])) . " — " . $connector["provider"] . ($connector["can_manage"] ? "" : " (local audio.cpp sample)")) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="provider_voiceid">Voice ID</label>
+                        <input type="text" id="provider_voiceid" name="voiceid" list="provider_voice_ids" value="<?= h($providerVoiceId) ?>" placeholder="example: hive_worker_1" required>
+                        <datalist id="provider_voice_ids">
+                            <?php foreach ($rows as $voiceRow): ?>
+                                <option value="<?= h($voiceRow["voiceid"] ?? "") ?>"></option>
+                            <?php endforeach; ?>
+                        </datalist>
+                    </div>
+                    <div class="action-row">
+                        <button type="submit" name="provider_voice_action" value="sync" class="action-button edit">Upload / Replace</button>
+                        <button type="submit" name="provider_voice_action" value="delete" class="action-button btn-danger" onclick="return confirm('Remove this voice from the selected connector? The local WAV will be kept.');">Remove Provider Copy</button>
+                    </div>
+                </form>
+                <p class="hint">OmniVoice uses the language configured on the selected connector. audio.cpp PocketTTS reads the local file directly, so it has no separate provider copy.</p>
+            <?php endif; ?>
+        </div>
+
         <div class="content-section full-width-section">
             <div id="entries"></div>
 
@@ -757,6 +865,7 @@ if (!$editRow) {
                             </td>
                             <td>
                                 <a class="action-button edit" href="<?= h(stobe_voice_build_url(["edit" => $voiceid], $isEmbed, "edit-form")) ?>">Edit</a>
+                                <a class="action-button" href="<?= h(stobe_voice_build_url(["provider_voice" => $voiceid], $isEmbed, "provider-voices")) ?>">Manage Provider</a>
                                 <?php if ($isCustom): ?>
                                     <form action="" method="post" style="display:inline;">
                                         <input type="hidden" name="voiceid" value="<?= h($voiceid) ?>">
