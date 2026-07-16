@@ -14,9 +14,9 @@ function ttsSpecs(): array {
         'pocket_tts' => ['label' => 'Pocket TTS', 'local' => true],
         'xtts' => ['label' => 'XTTS', 'local' => true],
         'chatterbox' => ['label' => 'Chatterbox', 'local' => true],
-        'omnivoice' => ['label' => 'OmniVoice', 'local' => true],
         'cartesia' => ['label' => 'Cartesia', 'local' => false],
         'inworld' => ['label' => 'Inworld', 'local' => false],
+        'omnivoice' => ['label' => 'OmniVoice', 'local' => true],
     ];
 }
 function ttsDefaultUrl(string $service): string { return $service === 'omnivoice' ? 'http://127.0.0.1:8021' : (in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''); }
