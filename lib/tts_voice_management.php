@@ -124,11 +124,42 @@ function stobeVoiceProviderUpload(array $target, string $voiceId, string $sample
         return ['success' => false, 'message' => 'This connector uses the local WAV directly; replacing the local sample is sufficient.'];
     }
     if ($voiceId === '' || !is_file($samplePath) || !is_readable($samplePath)) {
-        return ['success' => false, 'message' => 'A valid voice ID and readable local WAV are required.'];
+        return ['success' => false, 'message' => 'A valid voice ID and readable local audio sample are required.'];
+    }
+
+    $uploadPath = $samplePath;
+    $tempConvertedPath = '';
+    $header = @file_get_contents($samplePath, false, null, 0, 12);
+    $isRiffWav = is_string($header)
+        && strlen($header) >= 12
+        && substr($header, 0, 4) === 'RIFF'
+        && substr($header, 8, 4) === 'WAVE';
+    if (!$isRiffWav) {
+        $ffmpegPath = trim(strval(@shell_exec('command -v ffmpeg 2>/dev/null')));
+        if ($ffmpegPath === '') {
+            return ['success' => false, 'message' => 'ffmpeg is required to convert this sample to WAV.'];
+        }
+        $tempBase = tempnam(sys_get_temp_dir(), 'stobe_voice_provider_');
+        if (!is_string($tempBase) || $tempBase === '') {
+            return ['success' => false, 'message' => 'Could not allocate a temporary WAV file.'];
+        }
+        @unlink($tempBase);
+        $tempConvertedPath = $tempBase . '.wav';
+        $command = escapeshellarg($ffmpegPath)
+            . ' -y -i ' . escapeshellarg($samplePath)
+            . ' -ac 1 -ar 22050 -f wav ' . escapeshellarg($tempConvertedPath)
+            . ' >/dev/null 2>&1';
+        $exitCode = 1;
+        @exec($command, $unused, $exitCode);
+        if ($exitCode !== 0 || !is_file($tempConvertedPath) || intval(@filesize($tempConvertedPath)) <= 44) {
+            @unlink($tempConvertedPath);
+            return ['success' => false, 'message' => 'Failed to convert the local sample to WAV.'];
+        }
+        $uploadPath = $tempConvertedPath;
     }
 
     $postFields = [
-        'wavFile' => new CURLFile($samplePath, 'audio/wav', $voiceId . '.wav'),
+        'wavFile' => new CURLFile($uploadPath, 'audio/wav', $voiceId . '.wav'),
         'force' => 'true',
         'speaker_name' => $voiceId,
         'speaker_id' => $voiceId,
@@ -150,6 +181,9 @@ function stobeVoiceProviderUpload(array $target, string $voiceId, string $sample
     $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
     $error = curl_error($ch);
     curl_close($ch);
+    if ($tempConvertedPath !== '' && is_file($tempConvertedPath)) {
+        @unlink($tempConvertedPath);
+    }
     if ($response === false) {
         return ['success' => false, 'message' => 'Upload request failed: ' . $error];
     }
