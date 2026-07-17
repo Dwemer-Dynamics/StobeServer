@@ -87,7 +87,7 @@ if (!isset($tabMap[$activeTab])) {
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/navbar.css">
-    <link rel="stylesheet" href="css/hub-navigation.css">
+    <link rel="stylesheet" href="css/hub-navigation.css?v=<?= filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'hub-navigation.css') ?>">
     <style>
         body {
             padding-top: 80px;
@@ -207,7 +207,7 @@ if (!isset($tabMap[$activeTab])) {
         }
     </style>
 </head>
-<body>
+<body class="hub-page">
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
 
 <main class="container-fluid">
