@@ -56,6 +56,27 @@ StobeServer is DB-config driven:
 - PostgreSQL with pgvector
 - DwemerDistro/WSL runtime (recommended deployment target)
 
+## Database Setup
+
+Create or update a local WSL database with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\create-stobe-db-wsl.ps1
+```
+
+StobeServer requires a UTF-8 PostgreSQL database because NPC profiles, event
+history, prompts, memories, and structured JSON can contain Unicode. Older
+builds could inherit `SQL_ASCII` from the PostgreSQL template. Migrate an
+affected WSL installation without discarding its data by running:
+
+```bash
+sudo bash /var/www/html/StobeServer/tools/migrate-stobe-db-utf8-wsl.sh
+```
+
+The migration creates a safety dump and a disconnected rollback database,
+restores all Stobe application schemas into UTF-8, and verifies every table row
+count and sequence position before replacing the active database.
+
 ## PR Submissions
 
 Building AI systems is complex, and changes can unintentionally affect other connected systems. Before opening a pull request, follow the repository PR template and make sure the change has been discussed with either `RANGROO` or `tyler.maister` in Discord. When adding new features, prefer making them optional or toggleable where practical.

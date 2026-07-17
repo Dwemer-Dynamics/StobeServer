@@ -1,8 +1,18 @@
 -- ============================================================
 -- StobeServer Database Schema
 -- Database: stobe
--- Run on PostgreSQL as: createdb stobe && psql -d stobe -f schema.sql
+-- Run on PostgreSQL as: createdb --template=template0 --encoding=UTF8 --locale=C --owner=dwemer stobe && psql -d stobe -f schema.sql
 -- ============================================================
+
+SET client_encoding = 'UTF8';
+
+DO $$
+BEGIN
+    IF current_setting('server_encoding') <> 'UTF8' THEN
+        RAISE EXCEPTION 'StobeServer requires a UTF8 PostgreSQL database; current encoding is %',
+            current_setting('server_encoding');
+    END IF;
+END $$;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 

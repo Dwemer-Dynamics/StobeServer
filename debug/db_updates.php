@@ -24,6 +24,13 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
             stobeLogWarn('DB updates skipped: database handle is missing');
             return;
         }
+        if (function_exists('stobeDatabaseEncodingIsSupported') && !stobeDatabaseEncodingIsSupported($db)) {
+            $message = function_exists('stobeDatabaseEncodingError')
+                ? stobeDatabaseEncodingError($db)
+                : 'Stobe database updates require UTF8.';
+            stobeLogError('DB updates skipped: unsupported database encoding', ['error' => $message]);
+            return;
+        }
 
         $versionSqlPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'database_versioning.sql';
         if (is_file($versionSqlPath)) {
