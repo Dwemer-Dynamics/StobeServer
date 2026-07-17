@@ -6,6 +6,7 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+$isEmbed = isset($_GET['embed']) && (string)$_GET['embed'] === '1';
 
 function h(mixed $value): string
 {
@@ -449,6 +450,8 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
         body {
             padding-top: 80px;
         }
+        body.embed-page { padding-top: 0; }
+        body.embed-page main { padding-top: 10px; }
 
         main {
             padding-top: 20px;
@@ -684,8 +687,10 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
         }
     </style>
 </head>
-<body>
+<body class="<?= $isEmbed ? 'embed-page' : '' ?>">
+<?php if (!$isEmbed): ?>
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
+<?php endif; ?>
 
 <div id="contentModal" class="modal">
     <div class="modal-content">
@@ -702,11 +707,13 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
 
 <main class="container-fluid">
     <div class="tab-container">
+        <?php if (!$isEmbed): ?>
         <div class="tab-buttons">
             <a class="tab-button" href="events.php">&#x1F4DD; Events</a>
             <a class="tab-button active" href="ai-response.php">&#x1F916; AI Responses</a>
             <a class="tab-button" href="memories.php">&#x1F9E0; Memories</a>
         </div>
+        <?php endif; ?>
 
         <div id="responselog-tab" class="tab-content">
             <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 12px 15px; border-radius: 5px; margin: 15px 0; font-size: 0.9em;">
