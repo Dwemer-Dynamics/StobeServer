@@ -147,7 +147,8 @@ function stobeAutonomyEnsureSchema(): void
             control_revision BIGINT NOT NULL,
             command TEXT NOT NULL CHECK (command IN (
                 'IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
-                'FIRST_AID', 'REST'
+                'FIRST_AID', 'REST', 'ATTACK', 'TAKE_ITEM', 'EQUIP_ITEM',
+                'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS'
             )),
             arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
             location_zone_id BIGINT,
@@ -529,6 +530,9 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
     if (!in_array($action, [
         'enqueue_idle', 'enqueue_travel', 'enqueue_move_nearby',
         'enqueue_flee', 'enqueue_first_aid', 'enqueue_rest',
+        'enqueue_attack', 'enqueue_take_item', 'enqueue_equip_item',
+        'enqueue_knockout', 'enqueue_kill', 'enqueue_remove_limb',
+        'enqueue_cut_horns',
         'cancel_pending',
     ], true)) {
         return ['ok' => false, 'status' => 400, 'error' => 'invalid_pilot_action'];
@@ -608,6 +612,52 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
         } elseif ($action === 'enqueue_rest') {
             $command = 'REST';
             $arguments = [];
+        } elseif ($action === 'enqueue_attack') {
+            $command = 'ATTACK';
+            $arguments = ['target' => trim(strval($payload['target'] ?? ''))];
+        } elseif ($action === 'enqueue_take_item') {
+            $command = 'TAKE_ITEM';
+            $arguments = [
+                'target' => trim(strval($payload['target'] ?? '')),
+                'item' => trim(strval($payload['item'] ?? '')),
+                'amount' => max(1, min(20, intval($payload['amount'] ?? 1))),
+            ];
+        } elseif ($action === 'enqueue_equip_item') {
+            $command = 'EQUIP_ITEM';
+            $arguments = ['item' => trim(strval($payload['item'] ?? ''))];
+        } elseif ($action === 'enqueue_knockout') {
+            $command = 'KNOCKOUT';
+            $arguments = ['target' => trim(strval($payload['target'] ?? ''))];
+        } elseif ($action === 'enqueue_kill') {
+            $command = 'KILL';
+            $arguments = ['target' => trim(strval($payload['target'] ?? ''))];
+        } elseif ($action === 'enqueue_remove_limb') {
+            $command = 'REMOVE_LIMB';
+            $arguments = [
+                'target' => trim(strval($payload['target'] ?? '')),
+                'limb' => strtoupper(trim(strval($payload['limb'] ?? ''))),
+            ];
+        } elseif ($action === 'enqueue_cut_horns') {
+            $command = 'CUT_HORNS';
+            $arguments = ['target' => trim(strval($payload['target'] ?? ''))];
+        }
+
+        if (in_array($command, [
+            'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+        ], true) && trim(strval($arguments['target'] ?? '')) === '') {
+            $db->exec('ROLLBACK');
+            return ['ok' => false, 'status' => 422, 'error' => 'pilot_target_required'];
+        }
+        if (in_array($command, ['TAKE_ITEM', 'EQUIP_ITEM'], true) &&
+            trim(strval($arguments['item'] ?? '')) === '') {
+            $db->exec('ROLLBACK');
+            return ['ok' => false, 'status' => 422, 'error' => 'pilot_item_required'];
+        }
+        if ($command === 'REMOVE_LIMB' && !in_array(strval($arguments['limb'] ?? ''), [
+            'LEFT_ARM', 'RIGHT_ARM', 'LEFT_LEG', 'RIGHT_LEG',
+        ], true)) {
+            $db->exec('ROLLBACK');
+            return ['ok' => false, 'status' => 422, 'error' => 'pilot_limb_invalid'];
         }
 
         $step = $db->fetchOne(
@@ -685,7 +735,14 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
 
 function stobeAutonomyDecisionProtocolPhase(string $command): int
 {
-    return in_array(strtoupper(trim($command)), ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true) ? 4 : 2;
+    $command = strtoupper(trim($command));
+    if (in_array($command, [
+        'ATTACK', 'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT',
+        'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+    ], true)) {
+        return 5;
+    }
+    return in_array($command, ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true) ? 4 : 2;
 }
 
 function stobeAutonomyNormalizeHealth(mixed $value): array
@@ -740,7 +797,7 @@ function stobeAutonomyPlannerNoDecision(array $session, string $reason): array
     return [
         'ok' => true,
         'status' => 200,
-        'phase' => 4,
+        'phase' => 5,
         'session' => $session,
         'decision' => null,
         'action' => null,
@@ -771,7 +828,9 @@ function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
     );
     if ($open) {
         $decision = stobeAutonomyNormalizeDecision($open);
-        return ['ok' => true, 'status' => 200, 'phase' => 4, 'session' => $session,
+        return ['ok' => true, 'status' => 200,
+            'phase' => stobeAutonomyDecisionProtocolPhase(strval($decision['command'] ?? '')),
+            'session' => $session,
             'decision' => $decision, 'action' => $decision];
     }
     if (intval($session['next_decision_local_ts']) > time()) {
@@ -1013,7 +1072,8 @@ function stobeAutonomyApplyPlannerTick(array $payload, array $snapshot): array
         ]);
         $db->exec('COMMIT');
         $decision = stobeAutonomyNormalizeDecision($decisionRow);
-        return ['ok' => true, 'status' => 200, 'phase' => 4,
+        return ['ok' => true, 'status' => 200,
+            'phase' => stobeAutonomyDecisionProtocolPhase($command),
             'session' => stobeAutonomyGetSession(), 'decision' => $decision, 'action' => $decision];
     } catch (Throwable $exception) {
         $db->exec('ROLLBACK');
@@ -1093,7 +1153,8 @@ function stobeAutonomyApplyTick(array $payload): array
         $arguments = stobeAutonomyDecodeJsonColumn($step['arguments'] ?? '{}');
         if (!in_array($command, [
             'IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
-            'FIRST_AID', 'REST',
+            'FIRST_AID', 'REST', 'ATTACK', 'TAKE_ITEM', 'EQUIP_ITEM',
+            'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
         ], true)) {
             throw new RuntimeException('Pilot step contains an unsupported command.');
         }
@@ -1104,7 +1165,7 @@ function stobeAutonomyApplyTick(array $payload): array
                 }
             }
         }
-        if (stobeAutonomyDecisionProtocolPhase($command) === 4) {
+        if (stobeAutonomyDecisionProtocolPhase($command) >= 4) {
             $npc = getNpcById($npcId);
             if (!$npc) {
                 throw new RuntimeException('Pilot NPC no longer exists.');
@@ -1112,7 +1173,7 @@ function stobeAutonomyApplyTick(array $payload): array
             $allowlist = stobeAutonomyPlannerBuildAllowlist($session, $snapshot, $npc);
             try {
                 $proposal = stobeAutonomyPlannerNormalizeProposal([
-                    'goal' => ['summary' => 'Manual Phase 4 smoke test', 'status' => 'active'],
+                    'goal' => ['summary' => 'Manual autonomy smoke test', 'status' => 'active'],
                     'decision' => ['command' => $command] + $arguments,
                     'reason' => 'Queued from the deterministic pilot UI.',
                 ], $allowlist);
@@ -1122,7 +1183,7 @@ function stobeAutonomyApplyTick(array $payload): array
                 return [
                     'ok' => true,
                     'status' => 200,
-                    'phase' => 4,
+                    'phase' => stobeAutonomyDecisionProtocolPhase($command),
                     'session' => $session,
                     'decision' => null,
                     'action' => null,
@@ -1141,6 +1202,9 @@ function stobeAutonomyApplyTick(array $payload): array
             'FLEE' => 90,
             'FIRST_AID' => 180,
             'REST' => 600,
+            'ATTACK' => 180,
+            'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT', 'KILL',
+            'REMOVE_LIMB', 'CUT_HORNS' => 30,
             default => 900,
         };
         $actionDeadline = gmdate('Y-m-d H:i:s', $now + $actionSeconds);

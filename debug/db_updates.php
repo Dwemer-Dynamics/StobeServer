@@ -24,6 +24,13 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
             stobeLogWarn('DB updates skipped: database handle is missing');
             return;
         }
+        if (function_exists('stobeDatabaseEncodingIsSupported') && !stobeDatabaseEncodingIsSupported($db)) {
+            $message = function_exists('stobeDatabaseEncodingError')
+                ? stobeDatabaseEncodingError($db)
+                : 'Stobe database updates require UTF8.';
+            stobeLogError('DB updates skipped: unsupported database encoding', ['error' => $message]);
+            return;
+        }
 
         $versionSqlPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'database_versioning.sql';
         if (is_file($versionSqlPath)) {
@@ -2048,6 +2055,34 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  ADD CONSTRAINT autonomy_pilot_step_command_check
                  CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
                                     'FLEE', 'FIRST_AID', 'REST'))"
+            );
+        });
+
+        $applyPatch('autonomy_phase5_equipment_loot_combat', 202607160301, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $actions = [
+                ['EQUIP_ITEM', 'EquipItem', 'Equip one specific item currently carried by the autonomous NPC. The item must be named explicitly and accepted by a Kenshi equipment slot.'],
+                ['TAKE_ITEM', 'TakeItem', 'Take a named item from a nearby helpless actor. Target and item are required, amount is limited, and broad equipment or all-inventory looting is not allowed for autonomy.'],
+            ];
+            foreach ($actions as [$command, $name, $description]) {
+                $db->exec(
+                    "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                     VALUES ($1, $2, $3, TRUE, NOW())
+                     ON CONFLICT (command) DO UPDATE SET
+                         action_name = EXCLUDED.action_name,
+                         description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [$command, $name, $description]
+                );
+            }
+            $db->exec('ALTER TABLE autonomy_pilot_step DROP CONSTRAINT IF EXISTS autonomy_pilot_step_command_check');
+            $db->exec(
+                "ALTER TABLE autonomy_pilot_step
+                 ADD CONSTRAINT autonomy_pilot_step_command_check
+                 CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
+                                    'FLEE', 'FIRST_AID', 'REST', 'ATTACK',
+                                    'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT',
+                                    'KILL', 'REMOVE_LIMB', 'CUT_HORNS'))"
             );
         });
 

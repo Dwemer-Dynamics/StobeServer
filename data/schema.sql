@@ -1,8 +1,18 @@
 -- ============================================================
 -- StobeServer Database Schema
 -- Database: stobe
--- Run on PostgreSQL as: createdb stobe && psql -d stobe -f schema.sql
+-- Run on PostgreSQL as: createdb --template=template0 --encoding=UTF8 --locale=C --owner=dwemer stobe && psql -d stobe -f schema.sql
 -- ============================================================
+
+SET client_encoding = 'UTF8';
+
+DO $$
+BEGIN
+    IF current_setting('server_encoding') <> 'UTF8' THEN
+        RAISE EXCEPTION 'StobeServer requires a UTF8 PostgreSQL database; current encoding is %',
+            current_setting('server_encoding');
+    END IF;
+END $$;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -911,7 +921,9 @@ CREATE TABLE IF NOT EXISTS autonomy_pilot_step (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     CONSTRAINT autonomy_pilot_step_command_check
         CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
-                           'FIRST_AID', 'REST')),
+                           'FIRST_AID', 'REST', 'ATTACK', 'TAKE_ITEM',
+                           'EQUIP_ITEM', 'KNOCKOUT', 'KILL', 'REMOVE_LIMB',
+                           'CUT_HORNS')),
     CONSTRAINT autonomy_pilot_step_status_check
         CHECK (status IN ('PENDING', 'CLAIMED', 'COMPLETED', 'CANCELLED'))
 );
@@ -2153,7 +2165,8 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('PICKUP_NPC', 'PickupNpc', 'Pick up a nearby helpless target and carry them. Use target as the actor name. Only valid when you are not already carrying someone.', TRUE),
 ('GIVE_CATS', 'GiveCats', 'Give cats to the target. Put the recipient in target and the numeric amount in amount.', TRUE),
 ('TAKE_CATS', 'TakeCats', 'Take cats from the target. Put the victim in target and the numeric amount in amount.', TRUE),
-('TAKE_ITEM', 'TakeItem', 'Take one or more items. Use target to take from a nearby helpless actor (dead, knocked out, unconscious, imprisoned, or carried), or omit target to take from the player. Put the item name in item and an optional stack count in amount. Equipment/all loot queries are still supported in item.', TRUE),
+('TAKE_ITEM', 'TakeItem', 'Take a named item from a nearby helpless actor. Target and item are required, amount is limited, and broad equipment or all-inventory looting is not allowed for autonomy.', TRUE),
+('EQUIP_ITEM', 'EquipItem', 'Equip one specific item currently carried by the autonomous NPC. The item must be named explicitly and accepted by a Kenshi equipment slot.', TRUE),
 ('GIVE_ITEM', 'GiveItem', 'Give a specific item to the target. Put the recipient in target, the exact item name in item, and an optional stack count in amount.', TRUE),
 ('DROP_ITEM', 'DropItem', 'Drop a specific item.', TRUE),
 ('ROLEPLAY_ACTION', 'RoleplayAction', 'Describe a roleplay action along with your dialogue.', TRUE),

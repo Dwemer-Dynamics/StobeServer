@@ -110,6 +110,7 @@ function autonomyH(mixed $value): string
         .planner { grid-column:1 / -1; }
         .ledger { grid-column:1 / -1; }
         .pilot-grid { display:grid; grid-template-columns:minmax(280px,.8fr) minmax(420px,1.2fr); gap:20px; }
+        .pilot-fields { display:grid; grid-template-columns:2fr 2fr .8fr 1.2fr; gap:9px; }
         .policy-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
         .panel .phase-note { text-align:left; margin-top:12px; }
         a { color:var(--signal); }
@@ -144,6 +145,7 @@ function autonomyH(mixed $value): string
             .pilot { grid-column:auto; }
             .ledger { grid-column:auto; }
             .pilot-grid { grid-template-columns:1fr; }
+            .pilot-fields { grid-template-columns:1fr 1fr; }
             .policy-grid { grid-template-columns:1fr; }
             .status-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
             .decision-row { grid-template-columns:110px 1fr; }
@@ -155,7 +157,7 @@ function autonomyH(mixed $value): string
 <?php require __DIR__ . '/tmpl/navbar.php'; ?>
 <main>
     <header class="masthead">
-        <div><div class="eyebrow">Phase 4 Survival Autonomy</div><h1>Autonomy</h1></div>
+        <div><div class="eyebrow">Phase 5 Equipment, Loot, and Combat</div><h1>Autonomy</h1></div>
         <div class="phase-note">One selected squad NPC can choose from the currently valid STOBE action catalog. Every proposal is validated against live identity, revision, preconditions, and deadlines before the plugin receives it.</div>
     </header>
     <div class="layout">
@@ -241,7 +243,7 @@ function autonomyH(mixed $value): string
         </section>
         <section class="panel pilot">
             <h2>Manual Pilot Queue</h2>
-            <p>Phase 4 pilot steps use the production live allowlist and remain pending until their threat, injury, or bed preconditions are observed.</p>
+            <p>Pilot steps use the same live allowlist as the LLM planner. Phase 5 actions require exact observed target names and specific item names; broad inventory looting is rejected.</p>
             <div class="pilot-grid">
                 <div>
                     <label for="location-select">Visited location</label>
@@ -259,6 +261,21 @@ function autonomyH(mixed $value): string
                         <button id="queue-flee" type="button">Queue FLEE</button>
                         <button id="queue-first-aid" type="button">First Aid Self</button>
                         <button id="queue-rest" type="button">Queue REST</button>
+                    </div>
+                    <div class="pilot-fields">
+                        <div><label for="pilot-target">Exact target</label><input id="pilot-target" type="text" maxlength="160" placeholder="Dust Bandit"></div>
+                        <div><label for="pilot-item">Specific item</label><input id="pilot-item" type="text" maxlength="160" placeholder="Standard First Aid Kit"></div>
+                        <div><label for="pilot-amount">Amount</label><input id="pilot-amount" type="number" min="1" max="20" value="1"></div>
+                        <div><label for="pilot-limb">Limb</label><select id="pilot-limb"><option value="LEFT_ARM">Left arm</option><option value="RIGHT_ARM">Right arm</option><option value="LEFT_LEG">Left leg</option><option value="RIGHT_LEG">Right leg</option></select></div>
+                    </div>
+                    <div class="pilot-actions">
+                        <button id="queue-attack" type="button">Attack Target</button>
+                        <button id="queue-take-item" type="button">Take Item</button>
+                        <button id="queue-equip-item" type="button">Equip Item</button>
+                        <button id="queue-knockout" type="button">Knockout Target</button>
+                        <button id="queue-kill" class="danger" type="button">Kill Target</button>
+                        <button id="queue-remove-limb" class="danger" type="button">Remove Limb</button>
+                        <button id="queue-cut-horns" type="button">Cut Horns</button>
                         <button id="cancel-pending" class="wide" type="button">Cancel Pending Steps</button>
                     </div>
                     <div id="pilot-message" class="message" role="status"></div>
@@ -294,6 +311,23 @@ function autonomyH(mixed $value): string
         const connector = (initial.connectors || []).find(item => Number(item.id) === Number(id));
         return connector ? connector.name : 'NPC response';
     };
+    const pilotReady = () => !busy && session.planner_mode === 'pilot' && !!session.plugin_online &&
+        !!session.enabled && Number(session.plugin_control_revision || -1) === Number(session.control_revision || 0) &&
+        !['PAUSED_USER','PAUSED_UNSAFE','ERROR','DISABLED'].includes(session.plugin_state);
+
+    function updatePilotControls() {
+        const ready = pilotReady();
+        const targetReady = el('pilot-target').value.trim() !== '';
+        const itemReady = el('pilot-item').value.trim() !== '';
+        el('queue-idle').disabled = !ready;
+        el('queue-travel').disabled = !ready || Number(el('location-select').value || 0) <= 0;
+        ['queue-move-nearby','queue-flee','queue-first-aid','queue-rest'].forEach(id => el(id).disabled = !ready);
+        ['queue-attack','queue-knockout','queue-kill','queue-cut-horns'].forEach(id => el(id).disabled = !ready || !targetReady);
+        el('queue-take-item').disabled = !ready || !targetReady || !itemReady;
+        el('queue-equip-item').disabled = !ready || !itemReady;
+        el('queue-remove-limb').disabled = !ready || !targetReady;
+        el('cancel-pending').disabled = busy || !session.enabled;
+    }
 
     function renderEvents(events) {
         const root = el('events');
@@ -397,11 +431,7 @@ function autonomyH(mixed $value): string
         el('stop').disabled = busy || !session.enabled;
         el('emergency').disabled = busy || !session.enabled;
         el('save').disabled = busy;
-        const pilotReady = !busy && session.planner_mode === 'pilot' && online && !!session.enabled && Number(session.plugin_control_revision || -1) === Number(session.control_revision || 0) && !['PAUSED_USER','PAUSED_UNSAFE','ERROR','DISABLED'].includes(session.plugin_state);
-        el('queue-idle').disabled = !pilotReady;
-        el('queue-travel').disabled = !pilotReady || Number(el('location-select').value || 0) <= 0;
-        ['queue-move-nearby','queue-flee','queue-first-aid','queue-rest'].forEach(id => el(id).disabled = !pilotReady);
-        el('cancel-pending').disabled = busy || !session.enabled;
+        updatePilotControls();
     }
 
     async function refresh() {
@@ -443,6 +473,12 @@ function autonomyH(mixed $value): string
         const body = {action, control_revision: Number(session.control_revision || 0)};
         if (action === 'enqueue_travel') body.location_zone_id = Number(el('location-select').value || 0);
         if (action === 'enqueue_move_nearby') { body.direction = 'E'; body.distance = 25; }
+        if (['enqueue_attack','enqueue_take_item','enqueue_knockout','enqueue_kill','enqueue_remove_limb','enqueue_cut_horns'].includes(action)) {
+            body.target = el('pilot-target').value.trim();
+        }
+        if (['enqueue_take_item','enqueue_equip_item'].includes(action)) body.item = el('pilot-item').value.trim();
+        if (action === 'enqueue_take_item') body.amount = Math.max(1, Math.min(20, Number(el('pilot-amount').value || 1)));
+        if (action === 'enqueue_remove_limb') body.limb = el('pilot-limb').value;
         try {
             const response = await fetch(pilotUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
             const data = await response.json();
@@ -463,13 +499,15 @@ function autonomyH(mixed $value): string
     el('queue-flee').addEventListener('click', () => pilot('enqueue_flee'));
     el('queue-first-aid').addEventListener('click', () => pilot('enqueue_first_aid'));
     el('queue-rest').addEventListener('click', () => pilot('enqueue_rest'));
+    el('queue-attack').addEventListener('click', () => pilot('enqueue_attack'));
+    el('queue-take-item').addEventListener('click', () => pilot('enqueue_take_item'));
+    el('queue-equip-item').addEventListener('click', () => pilot('enqueue_equip_item'));
+    el('queue-knockout').addEventListener('click', () => pilot('enqueue_knockout'));
+    el('queue-kill').addEventListener('click', () => pilot('enqueue_kill'));
+    el('queue-remove-limb').addEventListener('click', () => pilot('enqueue_remove_limb'));
+    el('queue-cut-horns').addEventListener('click', () => pilot('enqueue_cut_horns'));
     el('cancel-pending').addEventListener('click', () => pilot('cancel_pending'));
-    el('location-select').addEventListener('change', () => {
-        const pilotReady = !busy && session.planner_mode === 'pilot' && !!session.plugin_online && !!session.enabled &&
-            Number(session.plugin_control_revision || -1) === Number(session.control_revision || 0) &&
-            !['PAUSED_USER','PAUSED_UNSAFE','ERROR','DISABLED'].includes(session.plugin_state);
-        el('queue-travel').disabled = !pilotReady || Number(el('location-select').value || 0) <= 0;
-    });
+    ['location-select','pilot-target','pilot-item','pilot-amount','pilot-limb'].forEach(id => el(id).addEventListener('input', updatePilotControls));
     render(initial);
     setInterval(refresh, 1500);
 })();

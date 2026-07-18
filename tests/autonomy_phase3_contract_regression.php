@@ -51,8 +51,9 @@ phase3Assert(stobeAutonomyPlannerConnectorRequiresApiKey([
 ]), 'Remote OpenRouter connectors should require credentials.');
 
 $expectedCommands = [
-    'ATTACK', 'CUT_HORNS', 'DRINK', 'DROP_ITEM', 'FACTION_RELATIONS',
-    'FIRST_AID', 'FLEE', 'FOLLOW', 'FORCE_DRINK', 'GIVE_CATS', 'GIVE_ITEM', 'IDLE',
+    'ATTACK', 'CUT_HORNS', 'DRINK', 'DROP_ITEM', 'EQUIP_ITEM',
+    'FACTION_RELATIONS', 'FIRST_AID', 'FLEE', 'FOLLOW', 'FORCE_DRINK',
+    'GIVE_CATS', 'GIVE_ITEM', 'IDLE',
     'JOIN_PARTY', 'KILL', 'KNOCKOUT', 'LEAVE', 'MOVE_NEARBY', 'PICKUP_NPC',
     'REMOVE_LIMB', 'REST', 'ROLEPLAY_ACTION', 'SET_BLOCK', 'SET_HOLD',
     'SET_JOBS', 'SET_MEDIC', 'SET_PASSIVE', 'SET_RANGED',
@@ -89,7 +90,9 @@ foreach ($contracts as $catalogCommand => $fields) {
         $catalogEntry['origin'] = ['x' => 5, 'y' => 2, 'z' => 9];
     } elseif ($catalogCommand === 'FLEE') {
         $catalogEntry += ['x' => 80, 'y' => 2, 'z' => 0, 'arrival_radius' => 6, 'safe_radius' => 70];
-    } elseif ($catalogCommand === 'FIRST_AID') {
+    } elseif ($catalogCommand === 'FIRST_AID' || in_array($catalogCommand, [
+        'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+    ], true)) {
         $catalogEntry['target_runtime_serials'] = ['dust bandit' => 884422];
     }
     $catalogDecision = ['command' => $catalogCommand];
@@ -112,7 +115,7 @@ foreach ($contracts as $catalogCommand => $fields) {
 }
 
 $allowlist = [
-    ['command' => 'ATTACK', 'valid_targets' => ['Dust Bandit']],
+    ['command' => 'ATTACK', 'valid_targets' => ['Dust Bandit'], 'target_runtime_serials' => ['dust bandit' => 884422]],
     ['command' => 'TRAVEL_LOCATION', 'visited_locations' => [['location_zone_id' => 77]]],
     ['command' => 'IDLE'],
     ['command' => 'SET_JOBS'],
@@ -125,6 +128,7 @@ $attack = stobeAutonomyPlannerNormalizeProposal([
 ], $allowlist);
 phase3Assert($attack['decision']['command'] === 'ATTACK', 'Allowed command should survive normalization.');
 phase3Assert($attack['decision']['arguments']['legacy_argument'] === 'Dust Bandit', 'Target should become the adapter argument.');
+phase3Assert($attack['decision']['arguments']['target_runtime_serial'] === 884422, 'Typed target actions must bind the observed runtime serial.');
 
 try {
     stobeAutonomyPlannerNormalizeProposal([
