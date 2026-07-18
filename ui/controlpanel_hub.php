@@ -54,7 +54,7 @@ $tabs = [
     ['id' => 'relationship_logs', 'group' => 'diagnostics', 'icon' => '&#x1F517;', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'cost_breakdown', 'group' => 'monitoring', 'icon' => '&#x1F4CA;', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'response_queue', 'group' => 'monitoring', 'icon' => '&#x1F4AC;', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'audio_image_cache', 'group' => 'data-tools', 'icon' => '&#x1F3BC;', 'label' => 'Audio & Image Cache', 'page' => '', 'url' => ($webRoot !== '' ? $webRoot : '') . '/soundcache/', 'status' => 'wired', 'embed' => false],
+    ['id' => 'audio_image_cache', 'group' => 'data-tools', 'icon' => '&#x1F3BC;', 'label' => 'Audio & Image Cache', 'page' => 'cache_browser.php', 'url' => '', 'status' => 'wired', 'embed' => true],
     ['id' => 'playthrough_manager', 'group' => 'data-tools', 'icon' => '&#x1F3AE;', 'label' => 'Playthrough Manager', 'page' => 'playthrough_manager.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'database_manager', 'group' => 'data-tools', 'icon' => '&#x1F5C4;&#xFE0F;', 'label' => 'Database Manager', 'page' => '', 'url' => $distroDatabaseManagerUrl, 'status' => 'wired', 'embed' => false],
 ];
@@ -238,13 +238,12 @@ if (!isset($tabMap[$activeTab])) {
                 $isActive = ($activeTab === $tab['id']);
                 $targetSrc = ($tab['status'] === 'wired') ? buildTabTargetSrc($tab, $webRoot) : '';
                 $hasPage = ($targetSrc !== '');
-                $isLightEmbed = ($tab['id'] === 'audio_image_cache');
             ?>
             <div id="tab-<?= h($tab['id']) ?>" class="tab-content <?= $isActive ? 'active' : '' ?>">
                 <?php if ($hasPage): ?>
-                    <div class="embed-wrap<?= $isLightEmbed ? ' embed-wrap-light' : '' ?>">
+                    <div class="embed-wrap">
                         <iframe
-                            class="embed<?= $isLightEmbed ? ' embed-light' : '' ?>"
+                            class="embed"
                             loading="<?= $isActive ? 'eager' : 'lazy' ?>"
                             src="<?= $isActive ? h($targetSrc) : 'about:blank' ?>"
                             data-src="<?= h($targetSrc) ?>"
