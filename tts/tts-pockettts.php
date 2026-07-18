@@ -890,7 +890,7 @@ function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $sampleP
     }
 
     $cfile = new CURLFile($uploadSourcePath, 'audio/wav', $uploadName);
-    $postFields = ['wavFile' => $cfile];
+    $postFields = ['wavFile' => $cfile, 'force' => 'true'];
     if ($voiceToken !== '') {
         $postFields['speaker_name'] = $voiceToken;
         $postFields['speaker_id'] = $voiceToken;
@@ -916,8 +916,7 @@ function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $sampleP
         @unlink($tempConvertedPath);
     }
 
-    $alreadyExists = is_string($response) && stripos($response, 'already exists') !== false;
-    if (($status >= 200 && $status < 300) || ($status === 400 && $alreadyExists)) {
+    if ($status >= 200 && $status < 300) {
         return true;
     }
 
@@ -1056,11 +1055,33 @@ function stobeLooksLikeInworldVoiceId(string $voiceId): bool {
     if ($v === '') {
         return false;
     }
-    return str_contains($v, '__design-voice-') || str_starts_with($v, 'voices/');
+    return str_contains($v, '__') || str_starts_with($v, 'voices/');
 }
 
 function stobeLooksLikeCartesiaVoiceId(string $voiceId): bool {
     return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', trim($voiceId)) === 1;
+}
+
+function stobeCloudVoiceCacheKey(string $provider, string $voiceToken, int $connectorId = 0): string {
+    $provider = strtolower(trim($provider));
+    $voiceToken = strtolower(trim($voiceToken));
+    return $connectorId > 0
+        ? $provider . '_voice_scope_' . $connectorId . '__' . $voiceToken
+        : $provider . '_voice_id_' . $voiceToken;
+}
+
+function stobeGetScopedCloudVoiceId(string $provider, string $voiceToken, array $runtime): string {
+    $connectorId = intval($runtime['connector_id'] ?? 0);
+    $scopedKey = stobeCloudVoiceCacheKey($provider, $voiceToken, $connectorId);
+    $cached = stobeConfOptGet($scopedKey);
+    if ($cached !== '' || $connectorId <= 0) {
+        return $cached;
+    }
+    $legacy = stobeConfOptGet(stobeCloudVoiceCacheKey($provider, $voiceToken, 0));
+    if ($legacy !== '') {
+        stobeConfOptSet($scopedKey, $legacy);
+    }
+    return $legacy;
 }
 
 function stobeGetOrCreateInworldVoiceId(string $voiceId, array $runtime): string {
@@ -1076,8 +1097,8 @@ function stobeGetOrCreateInworldVoiceId(string $voiceId, array $runtime): string
     if ($voiceToken === '') {
         return '';
     }
-    $cacheKey = 'inworld_voice_id_' . strtolower($voiceToken);
-    $cached = stobeConfOptGet($cacheKey);
+    $cacheKey = stobeCloudVoiceCacheKey('inworld', $voiceToken, intval($runtime['connector_id'] ?? 0));
+    $cached = stobeGetScopedCloudVoiceId('inworld', $voiceToken, $runtime);
     if ($cached !== '') {
         return $cached;
     }
@@ -1159,8 +1180,8 @@ function stobeGetOrCreateCartesiaVoiceId(string $voiceId, array $runtime): strin
     if ($voiceToken === '') {
         return $voiceId;
     }
-    $cacheKey = 'cartesia_voice_id_' . strtolower($voiceToken);
-    $cached = stobeConfOptGet($cacheKey);
+    $cacheKey = stobeCloudVoiceCacheKey('cartesia', $voiceToken, intval($runtime['connector_id'] ?? 0));
+    $cached = stobeGetScopedCloudVoiceId('cartesia', $voiceToken, $runtime);
     if ($cached !== '') {
         return $cached;
     }

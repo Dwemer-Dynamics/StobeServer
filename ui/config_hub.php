@@ -58,7 +58,7 @@ $tabs = [
     ['id' => 'bio', 'group' => 'characters', 'icon' => '&#x1FAAA;', 'label' => 'NPC Biographies', 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'llm', 'group' => 'ai-voice', 'icon' => '&#x1F9E0;', 'label' => 'LLM', 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'tts', 'group' => 'ai-voice', 'icon' => '&#x1F4E2;', 'label' => 'TTS', 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'voice', 'group' => 'ai-voice', 'icon' => '&#x1F399;&#xFE0F;', 'label' => 'Voice Manager', 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'voice', 'group' => 'ai-voice', 'icon' => '&#x1F399;&#xFE0F;', 'label' => 'TTS Studio / Voices', 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'keys', 'group' => 'ai-voice', 'icon' => '&#x1F511;', 'label' => 'API Keys', 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'settings', 'group' => 'world-behavior', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'world_knowledge', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World Knowledge', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
