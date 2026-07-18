@@ -219,7 +219,7 @@ body :focus-visible {
 
 /* Buttons */
 .stobe-btn,
-body button:not(:where(.stobe-btn, .navbar-toggler, .navbar-brand, .btn-close, .accordion-button)),
+body button:not(:where(.stobe-btn, .navbar-toggler, .navbar-brand, .btn-close, .accordion-button, .item-open-btn)),
 body input[type="button"],
 body input[type="submit"],
 body input[type="reset"],
@@ -258,7 +258,7 @@ body .btn-import {
 }
 
 .stobe-btn:hover:not(:disabled),
-body button:not(:where(.stobe-btn, .navbar-toggler, .navbar-brand, .btn-close, .accordion-button)):hover:not(:disabled),
+body button:not(:where(.stobe-btn, .navbar-toggler, .navbar-brand, .btn-close, .accordion-button, .item-open-btn)):hover:not(:disabled),
 body input[type="button"]:hover:not(:disabled),
 body input[type="submit"]:hover:not(:disabled),
 body input[type="reset"]:hover:not(:disabled),
@@ -296,9 +296,7 @@ body .btn-snqe-generate {
 .stobe-btn-success,
 body .btn-save,
 body .btn-save-green,
-body .save-button,
-body button[type="submit"]:not(.btn-danger):not(.delete-button),
-body input[type="submit"]:not(.btn-danger) {
+body .save-button {
     border-color: #4c996b !important;
     background: #2f714b !important;
     color: #fff !important;

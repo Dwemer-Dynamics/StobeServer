@@ -71,7 +71,7 @@ body.hub-page .config-navigation {
     text-transform: uppercase;
 }
 
-.tab-buttons {
+.config-navigation .tab-buttons {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     align-content: flex-start;
@@ -82,7 +82,7 @@ body.hub-page .config-navigation {
     word-spacing: 5px;
 }
 
-.tab-button {
+.config-navigation .tab-button {
     width: 100%;
     min-width: 0;
     height: 38px;
@@ -108,13 +108,13 @@ body.hub-page .config-navigation {
     transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 
-.tab-button span:last-child {
+.config-navigation .tab-button span:last-child {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.tab-icon {
+.config-navigation .tab-icon {
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
@@ -124,7 +124,7 @@ body.hub-page .config-navigation {
     line-height: 1;
 }
 
-.tab-button:hover {
+.config-navigation .tab-button:hover {
     border-color: rgba(230, 183, 108, 0.45);
     background: #38332f;
     color: rgb(230, 183, 108);
@@ -132,7 +132,7 @@ body.hub-page .config-navigation {
     box-shadow: none;
 }
 
-.tab-button.active {
+.config-navigation .tab-button.active {
     border-color: rgba(230, 183, 108, 0.75);
     background: #3a2d23;
     color: rgb(230, 183, 108);
@@ -140,13 +140,13 @@ body.hub-page .config-navigation {
     box-shadow: inset 0 -2px rgba(230, 183, 108, 0.65);
 }
 
-.tab-button:focus,
-.tab-button:visited {
+.config-navigation .tab-button:focus,
+.config-navigation .tab-button:visited {
     text-decoration: none;
 }
 
 @media (max-width: 1500px) {
-    .tab-buttons {
+    .config-navigation .tab-buttons {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
@@ -157,17 +157,17 @@ body.hub-page .config-navigation {
         grid-template-columns: 1fr;
     }
 
-    .tab-buttons {
+    .config-navigation .tab-buttons {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 }
 
 @media (max-width: 620px) {
-    .tab-buttons {
+    .config-navigation .tab-buttons {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .tab-button {
+    .config-navigation .tab-button {
         font-size: 0.88em;
     }
 }
