@@ -11,6 +11,8 @@ if ($useLegacy) {
     return;
 }
 
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
+
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
     {
@@ -2099,6 +2101,11 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  LEFT JOIN rename_global_custom c ON LOWER(g.name) = LOWER(c.name)
                  WHERE c.name IS NULL"
             );
+        });
+
+        $applyPatch('rename_name_pool_expansion', 202607190102, static function () use ($db): void {
+            $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'rename_names_seed.csv';
+            stobeRenameNameImportBaseSeed($db, $seedPath);
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

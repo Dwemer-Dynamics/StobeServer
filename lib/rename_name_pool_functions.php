@@ -187,3 +187,39 @@ function stobeRenameNameImport(sql $db, array $rows): array
     }
     return ['inserted' => $inserted, 'updated' => $updated, 'failed' => $failed];
 }
+
+function stobeRenameNameImportBaseSeed(sql $db, string $path): int
+{
+    $parsed = stobeRenameNameParseCsv($path);
+    if (!boolval($parsed['ok'] ?? false) || count($parsed['errors'] ?? []) > 0) {
+        throw new RuntimeException('Rename name seed CSV is invalid.');
+    }
+
+    $insertedCount = 0;
+    foreach ($parsed['rows'] ?? [] as $row) {
+        $name = trim(strval($row['name'] ?? ''));
+        $gender = strtolower(trim(strval($row['gender'] ?? '')));
+        if (!preg_match('/^[A-Z][a-z]{2,9}$/D', $name) || !in_array($gender, ['male', 'female', 'neutral'], true)) {
+            throw new RuntimeException('Rename name seed contains an invalid row.');
+        }
+
+        $existing = $db->fetchOne(
+            'SELECT id FROM rename_global WHERE LOWER(name) = LOWER($1) LIMIT 1',
+            [$name]
+        );
+        if (is_array($existing)) {
+            continue;
+        }
+
+        $inserted = $db->exec(
+            "INSERT INTO rename_global (name, gender, faction, race, is_enabled)
+             VALUES ($1, $2, '', '', TRUE)",
+            [$name, $gender]
+        );
+        if ($inserted === false) {
+            throw new RuntimeException('Could not insert rename seed row ' . $name . ': ' . $db->GetLastError());
+        }
+        $insertedCount++;
+    }
+    return $insertedCount;
+}
