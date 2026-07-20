@@ -1927,7 +1927,6 @@ INSERT INTO database_versioning (tablename, version) VALUES
 ('schema', 1)
 ON CONFLICT (tablename) DO NOTHING;
 
--- BEGIN GENERATED RENAME NAME SEED
 INSERT INTO rename_global (name, gender, faction, race)
 SELECT
     v.name,
@@ -3009,7 +3008,6 @@ FROM (VALUES
 ('Zhal', 'neutral', '', '', 'kenshi_default')
 ) AS v(name, gender, _legacy_faction, _legacy_race, _legacy_tag)
 ON CONFLICT (name) DO NOTHING;
--- END GENERATED RENAME NAME SEED
 
 UPDATE rename_global
 SET faction = '',

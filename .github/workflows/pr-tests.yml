@@ -92,7 +92,6 @@ jobs:
             "tests/rechat_flow_regression.php"
             "tests/rechat_selection_regression.php"
             "tests/relationship_system_regression.php"
-            "tests/rename_name_generation_regression.php"
             "tests/rename_snapshot_regression.php"
             "tests/rename_name_pool_regression.php"
             "tests/startup_runtime_regression.php"

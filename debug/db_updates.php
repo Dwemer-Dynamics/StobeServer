@@ -1,7 +1,5 @@
 <?php
 
-require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_generation_functions.php';
-
 /**
  * StobeServer DB updates (release consolidator).
  * Set STOBE_DB_UPDATES_LEGACY=1 to run the archived pre-release migrator.
@@ -12,6 +10,8 @@ if ($useLegacy) {
     require_once(__DIR__ . DIRECTORY_SEPARATOR . 'db_updates_legacy.php');
     return;
 }
+
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -2105,7 +2105,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
 
         $applyPatch('rename_name_pool_expansion', 202607190102, static function () use ($db): void {
             $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'rename_names_seed.csv';
-            stobeGeneratedNameImportSeed($db, $seedPath);
+            stobeRenameNameImportBaseSeed($db, $seedPath);
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');
