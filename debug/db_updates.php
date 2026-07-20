@@ -1,5 +1,7 @@
 <?php
 
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_generation_functions.php';
+
 /**
  * StobeServer DB updates (release consolidator).
  * Set STOBE_DB_UPDATES_LEGACY=1 to run the archived pre-release migrator.
@@ -2099,6 +2101,11 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  LEFT JOIN rename_global_custom c ON LOWER(g.name) = LOWER(c.name)
                  WHERE c.name IS NULL"
             );
+        });
+
+        $applyPatch('rename_name_pool_expansion', 202607190102, static function () use ($db): void {
+            $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'rename_names_seed.csv';
+            stobeGeneratedNameImportSeed($db, $seedPath);
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

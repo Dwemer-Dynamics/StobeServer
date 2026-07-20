@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../lib/bootstrap.php';
 require_once __DIR__ . '/../lib/rename_name_pool_functions.php';
+require_once __DIR__ . '/../lib/rename_name_generation_functions.php';
 
 $db = $GLOBALS['db'];
 
@@ -50,6 +51,24 @@ renamePoolAssert(!boolval($full['rows'][0]['is_enabled'] ?? true), 'full CSV sho
 $seed = strval(time()) . '_' . strval(random_int(1000, 9999));
 $db->exec('BEGIN');
 try {
+    $canonicalSeed = stobeGeneratedNameReadCsv(__DIR__ . '/../data/rename_names_seed.csv');
+    $upgradeNames = array_slice($canonicalSeed, 72, 2);
+    renamePoolAssert(count($upgradeNames) === 2, 'canonical seed should contain generated upgrade rows');
+    foreach ($upgradeNames as $upgradeRow) {
+        $db->exec('DELETE FROM rename_global WHERE LOWER(name) = LOWER($1)', [strval($upgradeRow['name'] ?? '')]);
+    }
+    $db->exec("UPDATE rename_global SET is_enabled = FALSE WHERE name = 'Arin'");
+    $upgradeInserted = stobeGeneratedNameImportSeed($db, __DIR__ . '/../data/rename_names_seed.csv');
+    renamePoolAssert($upgradeInserted === 2, 'seed importer should restore only missing generated rows');
+    renamePoolAssert(
+        !stobeRenameNameBool($db->fetchOne("SELECT is_enabled FROM rename_global WHERE name = 'Arin'")['is_enabled'] ?? true),
+        'seed importer should preserve an existing disabled row'
+    );
+    renamePoolAssert(
+        stobeGeneratedNameImportSeed($db, __DIR__ . '/../data/rename_names_seed.csv') === 0,
+        'seed importer should be idempotent'
+    );
+
     $enabledName = 'UT_NAME_ENABLED_' . $seed;
     $disabledName = 'UT_NAME_DISABLED_' . $seed;
     $overrideName = 'UT_NAME_OVERRIDE_' . $seed;
