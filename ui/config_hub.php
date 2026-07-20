@@ -61,6 +61,7 @@ $tabs = [
     ['id' => 'voice', 'group' => 'ai-voice', 'icon' => '&#x1F399;&#xFE0F;', 'label' => 'TTS Studio / Voices', 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'keys', 'group' => 'ai-voice', 'icon' => '&#x1F511;', 'label' => 'API Keys', 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'settings', 'group' => 'world-behavior', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'rename_names', 'group' => 'world-behavior', 'icon' => '&#x1F3F7;&#xFE0F;', 'label' => 'Rename Names', 'page' => 'rename_names.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'world_knowledge', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World Knowledge', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'desc', 'group' => 'world-behavior', 'icon' => '&#x1F4DC;', 'label' => 'Descriptions', 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'actions', 'group' => 'world-behavior', 'icon' => '&#x2694;&#xFE0F;', 'label' => 'Action Editor', 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],

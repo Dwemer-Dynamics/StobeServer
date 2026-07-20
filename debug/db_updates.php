@@ -2086,6 +2086,21 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('rename_name_pool_manager', 202607190101, static function () use ($db): void {
+            $db->exec('ALTER TABLE rename_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE');
+            $db->exec('ALTER TABLE rename_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE');
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_rename_global AS
+                 SELECT c.id, c.name, c.gender, c.faction, c.race, c.created_at, c.updated_at, c.is_enabled
+                 FROM rename_global_custom c
+                 UNION ALL
+                 SELECT g.id, g.name, g.gender, g.faction, g.race, g.created_at, g.updated_at, g.is_enabled
+                 FROM rename_global g
+                 LEFT JOIN rename_global_custom c ON LOWER(g.name) = LOWER(c.name)
+                 WHERE c.name IS NULL"
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

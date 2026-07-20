@@ -93,6 +93,7 @@ jobs:
             "tests/rechat_selection_regression.php"
             "tests/relationship_system_regression.php"
             "tests/rename_snapshot_regression.php"
+            "tests/rename_name_pool_regression.php"
             "tests/startup_runtime_regression.php"
             "tests/structured_dialogue_contract_regression.php"
           )

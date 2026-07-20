@@ -372,6 +372,7 @@ CREATE TABLE IF NOT EXISTS rename_global (
     gender VARCHAR(16) DEFAULT '',
     faction VARCHAR(128) DEFAULT '',
     race VARCHAR(64) DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -382,9 +383,13 @@ CREATE TABLE IF NOT EXISTS rename_global_custom (
     gender VARCHAR(16) DEFAULT '',
     faction VARCHAR(128) DEFAULT '',
     race VARCHAR(64) DEFAULT '',
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE rename_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE rename_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_rename_global_name_lower ON rename_global (LOWER(name));
 CREATE INDEX IF NOT EXISTS idx_rename_global_gender ON rename_global (LOWER(gender));
@@ -403,7 +408,8 @@ SELECT
     c.faction,
     c.race,
     c.created_at,
-    c.updated_at
+    c.updated_at,
+    c.is_enabled
 FROM rename_global_custom c
 UNION ALL
 SELECT
@@ -413,7 +419,8 @@ SELECT
     g.faction,
     g.race,
     g.created_at,
-    g.updated_at
+    g.updated_at,
+    g.is_enabled
 FROM rename_global g
 LEFT JOIN rename_global_custom c ON LOWER(g.name) = LOWER(c.name)
 WHERE c.name IS NULL;

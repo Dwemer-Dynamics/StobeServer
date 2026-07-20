@@ -5515,6 +5515,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
         $rows = $db->fetchAll(
             "SELECT name, gender, race, faction
              FROM {$viewSource}
+             WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY name ASC"
         );
     } else {
@@ -5530,6 +5531,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
             $tableRows = $db->fetchAll(
                 "SELECT name, gender, race, faction
                  FROM {$tableName}
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY name ASC"
             );
             foreach ($tableRows as $row) {
@@ -5548,6 +5550,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
             $tableRows = $db->fetchAll(
                 "SELECT name, gender, race, faction
                  FROM {$tableName}
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY name ASC"
             );
             foreach ($tableRows as $row) {
@@ -5622,6 +5625,39 @@ function isNpcNameTaken(string $name): bool {
     return $row !== false;
 }
 
+function normalizeGeneratedLoreNameBase(string $name): string {
+    $base = baseNameWithoutBracketSuffix(trim($name));
+    $base = preg_replace('/\s+[0-9]+$/', '', $base) ?? $base;
+    return strtolower(trim($base));
+}
+
+function loadNpcLoreNameReservations(): array {
+    $db = $GLOBALS["db"];
+    $rows = $db->fetchAll("SELECT name FROM core_npc WHERE COALESCE(name, '') <> ''");
+    $exact = [];
+    $bases = [];
+    foreach ($rows as $row) {
+        $name = baseNameWithoutBracketSuffix(trim(strval($row['name'] ?? '')));
+        if ($name === '') {
+            continue;
+        }
+        $exact[strtolower($name)] = true;
+        $base = normalizeGeneratedLoreNameBase($name);
+        if ($base !== '') {
+            $bases[$base] = true;
+        }
+    }
+    return ['exact' => $exact, 'bases' => $bases];
+}
+
+function buildIdentityRenameNameSeed(string $currentName, string $storageId = '', string $serial = ''): string {
+    $identityKey = trim($storageId);
+    if ($identityKey === '') {
+        $identityKey = trim($serial);
+    }
+    return strtolower(trim($currentName)) . '|' . strtolower($identityKey);
+}
+
 function generateUniqueLoreName(string $gender = '', string $seedName = '', string $race = '', string $faction = ''): string {
     $pool = loadGlobalNamePool($gender, $race, $faction);
     if (count($pool) === 0 && ($gender !== '' || $race !== '' || $faction !== '')) {
@@ -5634,17 +5670,21 @@ function generateUniqueLoreName(string $gender = '', string $seedName = '', stri
     $seed = $seedName !== '' ? $seedName : (string)microtime(true);
     $unsignedHash = intval(sprintf('%u', crc32(strtolower($seed))));
     $startIndex = $unsignedHash % count($pool);
+    $reservations = loadNpcLoreNameReservations();
+    $reservedBases = is_array($reservations['bases'] ?? null) ? $reservations['bases'] : [];
+    $reservedExact = is_array($reservations['exact'] ?? null) ? $reservations['exact'] : [];
 
     for ($offset = 0; $offset < count($pool); $offset++) {
         $candidate = $pool[($startIndex + $offset) % count($pool)];
-        if (!isNpcNameTaken($candidate)) {
+        $candidateBase = normalizeGeneratedLoreNameBase($candidate);
+        if ($candidateBase !== '' && !isset($reservedBases[$candidateBase])) {
             return $candidate;
         }
     }
 
     $base = $pool[$startIndex];
     $suffix = 2;
-    while (isNpcNameTaken($base . ' ' . $suffix)) {
+    while (isset($reservedExact[strtolower($base . ' ' . $suffix)])) {
         $suffix++;
     }
     return $base . ' ' . $suffix;
@@ -5914,7 +5954,8 @@ function batchIdentityRenameDecisions(array $identities): array {
         }
 
         $firstSeenOriginal = ensureOriginalName($currentName, $currentName);
-        $generated = generateUniqueLoreName($gender, $currentName, $race, $faction);
+        $nameSeed = buildIdentityRenameNameSeed($currentName, $storageId, $serial);
+        $generated = generateUniqueLoreName($gender, $nameSeed, $race, $faction);
         $generatedBase = baseNameWithoutBracketSuffix($generated);
         if ($generatedBase === '') {
             $generatedBase = 'Wanderer';
