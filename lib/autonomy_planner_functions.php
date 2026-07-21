@@ -48,6 +48,10 @@ function stobeAutonomyPlannerActionContracts(): array
         'FLEE' => [],
         'FIRST_AID' => ['target'],
         'REST' => [],
+        'BUY_ITEM' => ['target', 'item', 'amount', 'max_total_price'],
+        'SELL_ITEM' => ['target', 'item', 'amount', 'min_total_price'],
+        'WORK_RESOURCE' => ['resource'],
+        'PROSPECT' => ['resource'],
         'TALK' => ['message'],
     ];
 }
@@ -55,7 +59,8 @@ function stobeAutonomyPlannerActionContracts(): array
 function stobeAutonomyPlannerRequiredArguments(string $command): array
 {
     return match ($command) {
-        'TAKE_ITEM' => ['target', 'item'],
+        'TAKE_ITEM', 'BUY_ITEM', 'SELL_ITEM' => ['target', 'item'],
+        'WORK_RESOURCE', 'PROSPECT' => ['resource'],
         'GIVE_ITEM' => ['target', 'item'],
         'FORCE_DRINK' => ['target'],
         'USE_OBJECT' => [],
@@ -77,6 +82,8 @@ function stobeAutonomyPlannerPolicy(array $session): array
         'mode' => strtolower(trim(strval($session['planner_mode'] ?? ($policy['planner_mode'] ?? 'llm')))) === 'pilot' ? 'pilot' : 'llm',
         'minimum_interval_seconds' => max(3, min(300, intval($policy['minimum_interval_seconds'] ?? 30))),
         'max_decisions_per_hour' => max(1, min(240, intval($policy['max_decisions_per_hour'] ?? 30))),
+        'max_purchase_cats' => max(1, min(10000000, intval($policy['max_purchase_cats'] ?? 5000))),
+        'minimum_sale_cats' => max(0, min(10000000, intval($policy['minimum_sale_cats'] ?? 1))),
         'disabled_actions' => $disabled,
     ];
 }
@@ -90,7 +97,10 @@ function stobeAutonomyPlannerBackoffSeconds(int $failureCount, int $minimumInter
 
 function stobeAutonomyPlannerShouldSuppressCompletedDuplicate(string $command): bool
 {
-    return !in_array(strtoupper(trim($command)), ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true);
+    return !in_array(strtoupper(trim($command)), [
+        'MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST',
+        'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE', 'PROSPECT',
+    ], true);
 }
 
 function stobeAutonomyPlannerConnectorRequiresApiKey(array $config): bool
@@ -155,6 +165,9 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
     );
     $locations = stobeAutonomyListVisitedLocations(120);
     $nearbyActors = is_array($snapshot['nearby_actors'] ?? null) ? $snapshot['nearby_actors'] : [];
+    $nearbyResources = is_array($snapshot['nearby_resources'] ?? null) ? $snapshot['nearby_resources'] : [];
+    $inventoryItems = is_array($snapshot['inventory_items'] ?? null) ? $snapshot['inventory_items'] : [];
+    $economy = is_array($snapshot['economy'] ?? null) ? $snapshot['economy'] : [];
     $actors = array_values(array_unique(array_map(
         static fn(array $actor): string => strval($actor['name'] ?? ''),
         $nearbyActors
@@ -192,6 +205,7 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
             'MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST', 'ATTACK',
             'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT', 'KILL',
             'REMOVE_LIMB', 'CUT_HORNS',
+            'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE', 'PROSPECT',
         ], true) &&
             !stobeAutonomyBool($status['can_take_orders'] ?? false)) {
             continue;
@@ -207,6 +221,9 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
             (stobeAutonomyBool($status['fully_rested'] ?? true) ||
              !stobeAutonomyBool($status['rest_bed_available'] ?? false) ||
              count($hostiles) > 0 || $selfAidNeed > 0.05)) {
+            continue;
+        }
+        if ($command === 'BUY_ITEM' && intval($economy['cats'] ?? 0) <= 0) {
             continue;
         }
         if ($command === 'KNOCKOUT') {
@@ -383,6 +400,110 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
                 'city_name' => strval($location['city_name']),
             ], $locations);
         }
+        if (in_array($command, ['BUY_ITEM', 'SELL_ITEM'], true)) {
+            $traderCandidates = [];
+            foreach ($nearbyActors as $actor) {
+                if (!stobeAutonomyBool($actor['trader'] ?? false) ||
+                    stobeAutonomyBool($actor['dead'] ?? false) ||
+                    stobeAutonomyBool($actor['unconscious'] ?? false) ||
+                    floatval($actor['distance'] ?? 1000000) > 15.0) {
+                    continue;
+                }
+                $name = trim(strval($actor['name'] ?? ''));
+                $serial = max(0, intval($actor['runtime_serial'] ?? 0));
+                if ($name === '' || $serial <= 0) {
+                    continue;
+                }
+                $traderCandidates[strtolower($name)] ??= [];
+                $traderCandidates[strtolower($name)][] = $actor;
+            }
+            $entry['valid_targets'] = [];
+            $entry['target_runtime_serials'] = [];
+            $entry['valid_items_by_target'] = [];
+            foreach ($traderCandidates as $key => $matches) {
+                if (count($matches) !== 1) {
+                    continue;
+                }
+                $actor = $matches[0];
+                $name = strval($actor['name']);
+                $items = $command === 'BUY_ITEM'
+                    ? (is_array($actor['trader_items'] ?? null) ? $actor['trader_items'] : [])
+                    : $inventoryItems;
+                $validItems = [];
+                foreach ($items as $item) {
+                    if (!is_array($item) || intval($item['count'] ?? 0) !== 1) {
+                        continue;
+                    }
+                    $itemName = trim(strval($item['name'] ?? ''));
+                    $price = intval($item[$command === 'BUY_ITEM' ? 'buy_value_each' : 'sell_value_each'] ?? 0);
+                    if ($itemName === '' || $price <= 0) {
+                        continue;
+                    }
+                    if ($command === 'BUY_ITEM' &&
+                        ($price > intval($policy['max_purchase_cats']) ||
+                         $price > intval($economy['cats'] ?? 0))) {
+                        continue;
+                    }
+                    if ($command === 'SELL_ITEM' &&
+                        $price < intval($policy['minimum_sale_cats'])) {
+                        continue;
+                    }
+                    $validItems[strtolower($itemName)] = [
+                        'name' => $itemName,
+                        'price' => $price,
+                    ];
+                }
+                if (count($validItems) === 0) {
+                    continue;
+                }
+                $entry['valid_targets'][] = $name;
+                $entry['target_runtime_serials'][$key] = intval($actor['runtime_serial']);
+                $entry['valid_items_by_target'][$key] = $validItems;
+            }
+            if (count($entry['valid_targets']) === 0) {
+                continue;
+            }
+            $entry['amount_range'] = [1, 1];
+            if ($command === 'BUY_ITEM') {
+                $entry['max_purchase_cats'] = intval($policy['max_purchase_cats']);
+                $entry['available_cats'] = intval($economy['cats'] ?? 0);
+            } else {
+                $entry['minimum_sale_cats'] = intval($policy['minimum_sale_cats']);
+            }
+        }
+        if (in_array($command, ['WORK_RESOURCE', 'PROSPECT'], true)) {
+            $resourceNames = [];
+            foreach ($nearbyResources as $resource) {
+                if (!is_array($resource) || !stobeAutonomyBool($resource['usable'] ?? false) ||
+                    floatval($resource['distance'] ?? 1000000) > 250.0) {
+                    continue;
+                }
+                $name = trim(strval($resource['name'] ?? ''));
+                $serial = max(0, intval($resource['runtime_serial'] ?? 0));
+                if ($name === '' || $serial <= 0) {
+                    continue;
+                }
+                $resourceNames[strtolower($name)] ??= [];
+                $resourceNames[strtolower($name)][$serial] = true;
+            }
+            $entry['valid_resources'] = [];
+            $entry['resource_runtime_serials'] = [];
+            foreach ($resourceNames as $key => $serials) {
+                if (count($serials) !== 1) {
+                    continue;
+                }
+                foreach ($nearbyResources as $resource) {
+                    if (strtolower(trim(strval($resource['name'] ?? ''))) === $key) {
+                        $entry['valid_resources'][] = strval($resource['name']);
+                        break;
+                    }
+                }
+                $entry['resource_runtime_serials'][$key] = intval(array_key_first($serials));
+            }
+            if (count($entry['valid_resources']) === 0) {
+                continue;
+            }
+        }
         $allowlist[] = $entry;
     }
     return $allowlist;
@@ -428,6 +549,8 @@ function stobeAutonomyPlannerContext(array $session, array $snapshot, array $all
             'reason' => mb_substr(strval($event['reason'] ?? ''), 0, 300),
             'game_ts' => intval($event['game_ts'] ?? 0),
         ], stobeAutonomyListEvents(12)),
+        'town_economy' => function_exists('stobeAutonomyEconomySummary')
+            ? stobeAutonomyEconomySummary() : [],
         'allowlist' => $allowlist,
     ];
 }
@@ -541,6 +664,8 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
         if ($field === 'amount') {
             $defaultAmount = in_array($command, ['TAKE_ITEM', 'GIVE_ITEM'], true) ? 1 : 0;
             $args[$field] = intval($decision[$field] ?? $defaultAmount);
+        } elseif (in_array($field, ['max_total_price', 'min_total_price'], true)) {
+            $args[$field] = max(0, min(10000000, intval($decision[$field] ?? 0)));
         } elseif ($field === 'duration_ms') {
             $args[$field] = max(500, min(30000, intval($decision[$field] ?? 1500)));
         } elseif ($field === 'location_zone_id') {
@@ -579,6 +704,35 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
     }
     if ($command === 'EQUIP_ITEM') {
         $args['amount'] = 1;
+    }
+    if (in_array($command, ['BUY_ITEM', 'SELL_ITEM'], true)) {
+        $args['amount'] = 1;
+        $targetKey = strtolower(strval($args['target'] ?? ''));
+        $itemKey = strtolower(strval($args['item'] ?? ''));
+        $items = is_array($allowed[$command]['valid_items_by_target'][$targetKey] ?? null)
+            ? $allowed[$command]['valid_items_by_target'][$targetKey] : [];
+        $observed = $items[$itemKey] ?? null;
+        if (!is_array($observed)) {
+            throw new InvalidArgumentException('planner_trade_item_not_observed');
+        }
+        $observedPrice = max(0, intval($observed['price'] ?? 0));
+        if ($command === 'BUY_ITEM') {
+            $policyCap = max(1, intval($allowed[$command]['max_purchase_cats'] ?? 1));
+            if ($args['max_total_price'] <= 0) {
+                throw new InvalidArgumentException('planner_buy_limit_required');
+            }
+            $args['max_total_price'] = min($args['max_total_price'], $policyCap);
+            if ($observedPrice > $args['max_total_price']) {
+                throw new InvalidArgumentException('planner_buy_price_limit_exceeded');
+            }
+        } else {
+            $policyFloor = max(0, intval($allowed[$command]['minimum_sale_cats'] ?? 0));
+            $args['min_total_price'] = max($args['min_total_price'], $policyFloor);
+            if ($observedPrice < $args['min_total_price']) {
+                throw new InvalidArgumentException('planner_sell_price_below_minimum');
+            }
+        }
+        $args['observed_price'] = $observedPrice;
     }
     if ($command === 'REMOVE_LIMB' &&
         !in_array(strtoupper(strval($args['limb'] ?? '')), [
@@ -630,7 +784,7 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
     }
     if ($command === 'FIRST_AID' || in_array($command, [
         'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL',
-        'REMOVE_LIMB', 'CUT_HORNS',
+        'REMOVE_LIMB', 'CUT_HORNS', 'BUY_ITEM', 'SELL_ITEM',
     ], true)) {
         $serials = is_array($allowed[$command]['target_runtime_serials'] ?? null)
             ? $allowed[$command]['target_runtime_serials'] : [];
@@ -639,6 +793,15 @@ function stobeAutonomyPlannerNormalizeProposal(array $response, array $allowlist
             throw new InvalidArgumentException('planner_target_serial_missing');
         }
         $args['target_runtime_serial'] = $serial;
+    }
+    if (in_array($command, ['WORK_RESOURCE', 'PROSPECT'], true)) {
+        $serials = is_array($allowed[$command]['resource_runtime_serials'] ?? null)
+            ? $allowed[$command]['resource_runtime_serials'] : [];
+        $serial = max(0, intval($serials[strtolower(strval($args['resource'] ?? ''))] ?? 0));
+        if ($serial <= 0) {
+            throw new InvalidArgumentException('planner_resource_not_observed');
+        }
+        $args['resource_runtime_serial'] = $serial;
     }
     $args['legacy_argument'] = stobeAutonomyPlannerLegacyArgument($command, $args);
     return [
@@ -655,7 +818,8 @@ function stobeAutonomyPlannerLegacyArgument(string $command, array $args): strin
     $amount = intval($args['amount'] ?? 1);
     return match ($command) {
         'GIVE_CATS', 'TAKE_CATS', 'FACTION_RELATIONS' => $target . '@' . $amount,
-        'GIVE_ITEM', 'TAKE_ITEM' => ($target !== '' ? $target . '@' : '') . $item . '@' . max(1, $amount),
+        'GIVE_ITEM', 'TAKE_ITEM', 'BUY_ITEM', 'SELL_ITEM' =>
+            ($target !== '' ? $target . '@' : '') . $item . '@' . max(1, $amount),
         'DROP_ITEM' => $item,
         'REMOVE_LIMB' => $target . '@' . strval($args['limb'] ?? ''),
         'FORCE_DRINK' => $target . '@' . ($item !== '' ? $item : 'Cactus Rum'),
@@ -667,6 +831,7 @@ function stobeAutonomyPlannerLegacyArgument(string $command, array $args): strin
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC' => ($args['enabled'] ?? false) ? 'ON' : 'OFF',
         'ROLEPLAY_ACTION', 'TALK' => strval($args['message'] ?? ''),
         'USE_OBJECT' => strval($args['object'] ?? ''),
+        'WORK_RESOURCE', 'PROSPECT' => strval($args['resource'] ?? ''),
         'USE_DRUGS', 'DRINK' => $item,
         default => $target !== '' ? $target : $item,
     };

@@ -2088,6 +2088,39 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('autonomy_phase6_economy_work', 202607160401, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $actions = [
+                ['BUY_ITEM', 'BuyItem', 'Buy one exact observed item from a nearby trader using a real Kenshi transaction. The purchase must remain within the configured cats limit.'],
+                ['SELL_ITEM', 'SellItem', 'Sell one exact carried item to a nearby trader using a real Kenshi transaction. The sale must meet the configured minimum price.'],
+                ['WORK_RESOURCE', 'WorkResource', 'Operate one exact observed nearby mine or natural resource for a bounded work cycle.'],
+                ['PROSPECT', 'Prospect', 'Perform a bounded prospecting scan at one exact observed nearby resource.'],
+            ];
+            foreach ($actions as [$command, $name, $description]) {
+                $db->exec(
+                    "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                     VALUES ($1, $2, $3, TRUE, NOW())
+                     ON CONFLICT (command) DO UPDATE SET
+                         action_name = EXCLUDED.action_name,
+                         description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [$command, $name, $description]
+                );
+            }
+            $db->exec('ALTER TABLE autonomy_decision DROP CONSTRAINT IF EXISTS autonomy_decision_command_check');
+            $db->exec('ALTER TABLE autonomy_pilot_step DROP CONSTRAINT IF EXISTS autonomy_pilot_step_command_check');
+            $db->exec(
+                "ALTER TABLE autonomy_pilot_step
+                 ADD CONSTRAINT autonomy_pilot_step_command_check
+                 CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
+                                    'FLEE', 'FIRST_AID', 'REST', 'ATTACK',
+                                    'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT',
+                                    'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+                                    'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE',
+                                    'PROSPECT'))"
+            );
+        });
+
         $applyPatch('rename_name_pool_manager', 202607190101, static function () use ($db): void {
             $db->exec('ALTER TABLE rename_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE');
             $db->exec('ALTER TABLE rename_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE');

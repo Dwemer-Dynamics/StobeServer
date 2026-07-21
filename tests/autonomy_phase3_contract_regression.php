@@ -51,15 +51,16 @@ phase3Assert(stobeAutonomyPlannerConnectorRequiresApiKey([
 ]), 'Remote OpenRouter connectors should require credentials.');
 
 $expectedCommands = [
-    'ATTACK', 'CUT_HORNS', 'DRINK', 'DROP_ITEM', 'EQUIP_ITEM',
+    'ATTACK', 'BUY_ITEM', 'CUT_HORNS', 'DRINK', 'DROP_ITEM', 'EQUIP_ITEM',
     'FACTION_RELATIONS', 'FIRST_AID', 'FLEE', 'FOLLOW', 'FORCE_DRINK',
     'GIVE_CATS', 'GIVE_ITEM', 'IDLE',
     'JOIN_PARTY', 'KILL', 'KNOCKOUT', 'LEAVE', 'MOVE_NEARBY', 'PICKUP_NPC',
-    'REMOVE_LIMB', 'REST', 'ROLEPLAY_ACTION', 'SET_BLOCK', 'SET_HOLD',
+    'PROSPECT', 'REMOVE_LIMB', 'REST', 'ROLEPLAY_ACTION', 'SELL_ITEM',
+    'SET_BLOCK', 'SET_HOLD',
     'SET_JOBS', 'SET_MEDIC', 'SET_PASSIVE', 'SET_RANGED',
     'SET_RESOURCE', 'SET_SNEAK', 'SET_TAUNT', 'STOP_CARRYING',
     'STOP_FOLLOW', 'SUICIDE', 'TAKE_CATS', 'TAKE_ITEM', 'TALK',
-    'TRAVEL_LOCATION', 'USE_DRUGS', 'USE_OBJECT',
+    'TRAVEL_LOCATION', 'USE_DRUGS', 'USE_OBJECT', 'WORK_RESOURCE',
 ];
 $contracts = stobeAutonomyPlannerActionContracts();
 $contractCommands = array_keys($contracts);
@@ -78,6 +79,9 @@ $sampleFields = [
     'location_zone_id' => 77,
     'direction' => 'E',
     'distance' => 25,
+    'max_total_price' => 5000,
+    'min_total_price' => 1,
+    'resource' => 'Iron Resource',
 ];
 foreach ($contracts as $catalogCommand => $fields) {
     $catalogEntry = ['command' => $catalogCommand];
@@ -92,8 +96,22 @@ foreach ($contracts as $catalogCommand => $fields) {
         $catalogEntry += ['x' => 80, 'y' => 2, 'z' => 0, 'arrival_radius' => 6, 'safe_radius' => 70];
     } elseif ($catalogCommand === 'FIRST_AID' || in_array($catalogCommand, [
         'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+        'BUY_ITEM', 'SELL_ITEM',
     ], true)) {
         $catalogEntry['target_runtime_serials'] = ['dust bandit' => 884422];
+    }
+    if (in_array($catalogCommand, ['BUY_ITEM', 'SELL_ITEM'], true)) {
+        $catalogEntry['valid_items_by_target'] = [
+            'dust bandit' => [
+                'cactus rum' => ['name' => 'Cactus Rum', 'price' => 100],
+            ],
+        ];
+        $catalogEntry[$catalogCommand === 'BUY_ITEM' ? 'max_purchase_cats' : 'minimum_sale_cats'] =
+            $catalogCommand === 'BUY_ITEM' ? 5000 : 1;
+    }
+    if (in_array($catalogCommand, ['WORK_RESOURCE', 'PROSPECT'], true)) {
+        $catalogEntry['valid_resources'] = ['Iron Resource'];
+        $catalogEntry['resource_runtime_serials'] = ['iron resource' => 9911];
     }
     $catalogDecision = ['command' => $catalogCommand];
     foreach ($fields as $field) {

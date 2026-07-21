@@ -4,9 +4,16 @@ error_reporting(E_ALL);
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once $path . 'lib/bootstrap.php';
+require_once $path . 'debug/db_updates.php';
+require_once $path . 'lib/autonomy_release_gate.php';
+
+if (!stobeAutonomyReleaseEnabled()) {
+    stobeAutonomyDisableForRelease();
+    http_response_code(404);
+    exit('Not Found');
+}
 
 try {
-    require_once $path . 'debug/db_updates.php';
     $initialSession = stobeAutonomyGetSession();
     $eligibleNpcs = stobeAutonomyListEligibleNpcs();
     $initialEvents = stobeAutonomyListEvents(50);
@@ -157,7 +164,7 @@ function autonomyH(mixed $value): string
 <?php require __DIR__ . '/tmpl/navbar.php'; ?>
 <main>
     <header class="masthead">
-        <div><div class="eyebrow">Phase 5 Equipment, Loot, and Combat</div><h1>Autonomy</h1></div>
+        <div><div class="eyebrow">Phase 6 Economy and Work</div><h1>Autonomy</h1></div>
         <div class="phase-note">One selected squad NPC can choose from the currently valid STOBE action catalog. Every proposal is validated against live identity, revision, preconditions, and deadlines before the plugin receives it.</div>
     </header>
     <div class="layout">
@@ -189,6 +196,8 @@ function autonomyH(mixed $value): string
             <div class="policy-grid">
                 <div><label for="minimum-interval">Minimum seconds between decisions</label><input id="minimum-interval" type="number" min="3" max="300" value="<?= intval(($initialSession['policy']['minimum_interval_seconds'] ?? 30)) ?>"></div>
                 <div><label for="hourly-limit">Maximum planner calls per hour</label><input id="hourly-limit" type="number" min="1" max="240" value="<?= intval(($initialSession['policy']['max_decisions_per_hour'] ?? 30)) ?>"></div>
+                <div><label for="purchase-limit">Maximum cats per purchase</label><input id="purchase-limit" type="number" min="1" max="10000000" value="<?= intval(($initialSession['policy']['max_purchase_cats'] ?? 5000)) ?>"></div>
+                <div><label for="sale-minimum">Minimum cats per sale</label><input id="sale-minimum" type="number" min="0" max="10000000" value="<?= intval(($initialSession['policy']['minimum_sale_cats'] ?? 1)) ?>"></div>
             </div>
             <div class="policy"><span>Policy preset</span><strong>Full Autonomy</strong></div>
             <div class="phase-note">All registered actions are enabled by default. Use the <a href="action_editor.php">Action Editor</a> to disable a command globally.</div>
@@ -243,7 +252,7 @@ function autonomyH(mixed $value): string
         </section>
         <section class="panel pilot">
             <h2>Manual Pilot Queue</h2>
-            <p>Pilot steps use the same live allowlist as the LLM planner. Phase 5 actions require exact observed target names and specific item names; broad inventory looting is rejected.</p>
+            <p>Pilot steps use the same live allowlist as the LLM planner. Trade actions require an exact observed trader and single-item stack. Work and prospecting require an exact observed resource name.</p>
             <div class="pilot-grid">
                 <div>
                     <label for="location-select">Visited location</label>
@@ -263,10 +272,12 @@ function autonomyH(mixed $value): string
                         <button id="queue-rest" type="button">Queue REST</button>
                     </div>
                     <div class="pilot-fields">
-                        <div><label for="pilot-target">Exact target</label><input id="pilot-target" type="text" maxlength="160" placeholder="Dust Bandit"></div>
+                        <div><label for="pilot-target">Exact target or trader</label><input id="pilot-target" type="text" maxlength="160" placeholder="Dust Bandit or Shopkeeper"></div>
                         <div><label for="pilot-item">Specific item</label><input id="pilot-item" type="text" maxlength="160" placeholder="Standard First Aid Kit"></div>
                         <div><label for="pilot-amount">Amount</label><input id="pilot-amount" type="number" min="1" max="20" value="1"></div>
                         <div><label for="pilot-limb">Limb</label><select id="pilot-limb"><option value="LEFT_ARM">Left arm</option><option value="RIGHT_ARM">Right arm</option><option value="LEFT_LEG">Left leg</option><option value="RIGHT_LEG">Right leg</option></select></div>
+                        <div><label for="pilot-price">Trade price limit</label><input id="pilot-price" type="number" min="0" max="10000000" value="5000"></div>
+                        <div><label for="pilot-resource">Exact resource</label><input id="pilot-resource" type="text" maxlength="160" placeholder="Iron Resource"></div>
                     </div>
                     <div class="pilot-actions">
                         <button id="queue-attack" type="button">Attack Target</button>
@@ -276,6 +287,10 @@ function autonomyH(mixed $value): string
                         <button id="queue-kill" class="danger" type="button">Kill Target</button>
                         <button id="queue-remove-limb" class="danger" type="button">Remove Limb</button>
                         <button id="queue-cut-horns" type="button">Cut Horns</button>
+                        <button id="queue-buy-item" class="primary" type="button">Buy Item</button>
+                        <button id="queue-sell-item" type="button">Sell Item</button>
+                        <button id="queue-work-resource" type="button">Work Resource</button>
+                        <button id="queue-prospect" type="button">Prospect</button>
                         <button id="cancel-pending" class="wide" type="button">Cancel Pending Steps</button>
                     </div>
                     <div id="pilot-message" class="message" role="status"></div>
@@ -319,6 +334,7 @@ function autonomyH(mixed $value): string
         const ready = pilotReady();
         const targetReady = el('pilot-target').value.trim() !== '';
         const itemReady = el('pilot-item').value.trim() !== '';
+        const resourceReady = el('pilot-resource').value.trim() !== '';
         el('queue-idle').disabled = !ready;
         el('queue-travel').disabled = !ready || Number(el('location-select').value || 0) <= 0;
         ['queue-move-nearby','queue-flee','queue-first-aid','queue-rest'].forEach(id => el(id).disabled = !ready);
@@ -326,6 +342,8 @@ function autonomyH(mixed $value): string
         el('queue-take-item').disabled = !ready || !targetReady || !itemReady;
         el('queue-equip-item').disabled = !ready || !itemReady;
         el('queue-remove-limb').disabled = !ready || !targetReady;
+        ['queue-buy-item','queue-sell-item'].forEach(id => el(id).disabled = !ready || !targetReady || !itemReady);
+        ['queue-work-resource','queue-prospect'].forEach(id => el(id).disabled = !ready || !resourceReady);
         el('cancel-pending').disabled = busy || !session.enabled;
     }
 
@@ -419,6 +437,8 @@ function autonomyH(mixed $value): string
         if (!busy && document.activeElement !== el('planner-connector')) el('planner-connector').value = String(session.planner_connector_id || 0);
         if (!busy && document.activeElement !== el('minimum-interval')) el('minimum-interval').value = Number(session.policy?.minimum_interval_seconds || 30);
         if (!busy && document.activeElement !== el('hourly-limit')) el('hourly-limit').value = Number(session.policy?.max_decisions_per_hour || 30);
+        if (!busy && document.activeElement !== el('purchase-limit')) el('purchase-limit').value = Number(session.policy?.max_purchase_cats || 5000);
+        if (!busy && document.activeElement !== el('sale-minimum')) el('sale-minimum').value = Number(session.policy?.minimum_sale_cats || 1);
         renderEvents(data.events || []);
         renderPilot(data.pilot_steps || []);
         renderDecisions(data.decisions || []);
@@ -454,6 +474,8 @@ function autonomyH(mixed $value): string
             body.policy = {...(session.policy || {}), planner_mode: body.planner_mode,
                 minimum_interval_seconds: Math.max(3, Math.min(300, Number(el('minimum-interval').value || 30))),
                 max_decisions_per_hour: Math.max(1, Math.min(240, Number(el('hourly-limit').value || 30)))};
+            body.policy.max_purchase_cats = Math.max(1, Math.min(10000000, Number(el('purchase-limit').value || 5000)));
+            body.policy.minimum_sale_cats = Math.max(0, Math.min(10000000, Number(el('sale-minimum').value || 1)));
         }
         try {
             const response = await fetch(controlUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
@@ -473,11 +495,14 @@ function autonomyH(mixed $value): string
         const body = {action, control_revision: Number(session.control_revision || 0)};
         if (action === 'enqueue_travel') body.location_zone_id = Number(el('location-select').value || 0);
         if (action === 'enqueue_move_nearby') { body.direction = 'E'; body.distance = 25; }
-        if (['enqueue_attack','enqueue_take_item','enqueue_knockout','enqueue_kill','enqueue_remove_limb','enqueue_cut_horns'].includes(action)) {
+        if (['enqueue_attack','enqueue_take_item','enqueue_knockout','enqueue_kill','enqueue_remove_limb','enqueue_cut_horns','enqueue_buy_item','enqueue_sell_item'].includes(action)) {
             body.target = el('pilot-target').value.trim();
         }
-        if (['enqueue_take_item','enqueue_equip_item'].includes(action)) body.item = el('pilot-item').value.trim();
+        if (['enqueue_take_item','enqueue_equip_item','enqueue_buy_item','enqueue_sell_item'].includes(action)) body.item = el('pilot-item').value.trim();
         if (action === 'enqueue_take_item') body.amount = Math.max(1, Math.min(20, Number(el('pilot-amount').value || 1)));
+        if (action === 'enqueue_buy_item') body.max_total_price = Math.max(1, Math.min(10000000, Number(el('pilot-price').value || 5000)));
+        if (action === 'enqueue_sell_item') body.min_total_price = Math.max(0, Math.min(10000000, Number(el('pilot-price').value || 1)));
+        if (['enqueue_work_resource','enqueue_prospect'].includes(action)) body.resource = el('pilot-resource').value.trim();
         if (action === 'enqueue_remove_limb') body.limb = el('pilot-limb').value;
         try {
             const response = await fetch(pilotUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
@@ -506,8 +531,12 @@ function autonomyH(mixed $value): string
     el('queue-kill').addEventListener('click', () => pilot('enqueue_kill'));
     el('queue-remove-limb').addEventListener('click', () => pilot('enqueue_remove_limb'));
     el('queue-cut-horns').addEventListener('click', () => pilot('enqueue_cut_horns'));
+    el('queue-buy-item').addEventListener('click', () => pilot('enqueue_buy_item'));
+    el('queue-sell-item').addEventListener('click', () => pilot('enqueue_sell_item'));
+    el('queue-work-resource').addEventListener('click', () => pilot('enqueue_work_resource'));
+    el('queue-prospect').addEventListener('click', () => pilot('enqueue_prospect'));
     el('cancel-pending').addEventListener('click', () => pilot('cancel_pending'));
-    ['location-select','pilot-target','pilot-item','pilot-amount','pilot-limb'].forEach(id => el(id).addEventListener('input', updatePilotControls));
+    ['location-select','pilot-target','pilot-item','pilot-amount','pilot-limb','pilot-price','pilot-resource'].forEach(id => el(id).addEventListener('input', updatePilotControls));
     render(initial);
     setInterval(refresh, 1500);
 })();

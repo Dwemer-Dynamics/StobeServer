@@ -62,8 +62,6 @@ function chatJsonStartServer(int $port)
         PHP_BINARY,
         '-S',
         '127.0.0.1:' . $port,
-        '-t',
-        $root,
     ];
     $descriptorSpec = [
         0 => ['pipe', 'r'],
@@ -87,8 +85,15 @@ function chatJsonStartServer(int $port)
         usleep(100000);
     }
 
+    $diagnostic = trim(
+        strval(stream_get_contents($pipes[1])) . "\n" .
+        strval(stream_get_contents($pipes[2]))
+    );
     proc_terminate($process);
-    chatJsonFail('PHP built-in server did not become ready');
+    chatJsonFail(
+        'PHP built-in server did not become ready' .
+        ($diagnostic !== '' ? ': ' . $diagnostic : '')
+    );
 }
 
 function chatJsonStopServer($process, array $pipes): void

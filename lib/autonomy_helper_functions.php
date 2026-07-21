@@ -138,7 +138,6 @@ function stobeAutonomyEnsureSchema(): void
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_decision_one_open
             ON autonomy_decision (session_id)
             WHERE status IN ('ISSUED', 'DISPATCHED')",
-        "ALTER TABLE autonomy_decision DROP CONSTRAINT IF EXISTS autonomy_decision_command_check",
         "CREATE INDEX IF NOT EXISTS idx_autonomy_decision_revision
             ON autonomy_decision (control_revision DESC, issued_at DESC)",
         "CREATE TABLE IF NOT EXISTS autonomy_pilot_step (
@@ -148,7 +147,8 @@ function stobeAutonomyEnsureSchema(): void
             command TEXT NOT NULL CHECK (command IN (
                 'IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
                 'FIRST_AID', 'REST', 'ATTACK', 'TAKE_ITEM', 'EQUIP_ITEM',
-                'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS'
+                'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+                'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE', 'PROSPECT'
             )),
             arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
             location_zone_id BIGINT,
@@ -164,6 +164,30 @@ function stobeAutonomyEnsureSchema(): void
             WHERE status = 'PENDING'",
         "CREATE INDEX IF NOT EXISTS idx_autonomy_pilot_step_decision
             ON autonomy_pilot_step (decision_id)",
+        "CREATE TABLE IF NOT EXISTS autonomy_economy_snapshot (
+            id BIGSERIAL PRIMARY KEY,
+            game_ts BIGINT NOT NULL DEFAULT 0,
+            local_ts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+            x DOUBLE PRECISION NOT NULL DEFAULT 0,
+            y DOUBLE PRECISION NOT NULL DEFAULT 0,
+            z DOUBLE PRECISION NOT NULL DEFAULT 0,
+            location_zone_id BIGINT,
+            location_name TEXT NOT NULL DEFAULT '',
+            trader_runtime_serial BIGINT NOT NULL,
+            trader_name TEXT NOT NULL,
+            trader_cats INT NOT NULL DEFAULT 0,
+            inventory_hash TEXT NOT NULL,
+            inventory JSONB NOT NULL DEFAULT '[]'::jsonb,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_economy_snapshot_unique
+            ON autonomy_economy_snapshot (
+                trader_runtime_serial, game_ts, inventory_hash
+            )",
+        "CREATE INDEX IF NOT EXISTS idx_autonomy_economy_snapshot_trader
+            ON autonomy_economy_snapshot (trader_runtime_serial, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_autonomy_economy_snapshot_location
+            ON autonomy_economy_snapshot (location_zone_id, created_at DESC)",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_event_key ON autonomy_event (event_key) WHERE event_key IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_autonomy_event_session_created ON autonomy_event (session_id, created_at DESC, id DESC)",
         "CREATE INDEX IF NOT EXISTS idx_autonomy_event_revision ON autonomy_event (control_revision DESC, id DESC)",
@@ -533,6 +557,8 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
         'enqueue_attack', 'enqueue_take_item', 'enqueue_equip_item',
         'enqueue_knockout', 'enqueue_kill', 'enqueue_remove_limb',
         'enqueue_cut_horns',
+        'enqueue_buy_item', 'enqueue_sell_item', 'enqueue_work_resource',
+        'enqueue_prospect',
         'cancel_pending',
     ], true)) {
         return ['ok' => false, 'status' => 400, 'error' => 'invalid_pilot_action'];
@@ -640,18 +666,46 @@ function stobeAutonomyApplyPilotControl(string $action, array $payload): array
         } elseif ($action === 'enqueue_cut_horns') {
             $command = 'CUT_HORNS';
             $arguments = ['target' => trim(strval($payload['target'] ?? ''))];
+        } elseif ($action === 'enqueue_buy_item') {
+            $command = 'BUY_ITEM';
+            $arguments = [
+                'target' => trim(strval($payload['target'] ?? '')),
+                'item' => trim(strval($payload['item'] ?? '')),
+                'amount' => 1,
+                'max_total_price' => max(1, min(10000000, intval($payload['max_total_price'] ?? 5000))),
+            ];
+        } elseif ($action === 'enqueue_sell_item') {
+            $command = 'SELL_ITEM';
+            $arguments = [
+                'target' => trim(strval($payload['target'] ?? '')),
+                'item' => trim(strval($payload['item'] ?? '')),
+                'amount' => 1,
+                'min_total_price' => max(0, min(10000000, intval($payload['min_total_price'] ?? 1))),
+            ];
+        } elseif ($action === 'enqueue_work_resource') {
+            $command = 'WORK_RESOURCE';
+            $arguments = ['resource' => trim(strval($payload['resource'] ?? ''))];
+        } elseif ($action === 'enqueue_prospect') {
+            $command = 'PROSPECT';
+            $arguments = ['resource' => trim(strval($payload['resource'] ?? ''))];
         }
 
         if (in_array($command, [
             'ATTACK', 'TAKE_ITEM', 'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+            'BUY_ITEM', 'SELL_ITEM',
         ], true) && trim(strval($arguments['target'] ?? '')) === '') {
             $db->exec('ROLLBACK');
             return ['ok' => false, 'status' => 422, 'error' => 'pilot_target_required'];
         }
-        if (in_array($command, ['TAKE_ITEM', 'EQUIP_ITEM'], true) &&
+        if (in_array($command, ['TAKE_ITEM', 'EQUIP_ITEM', 'BUY_ITEM', 'SELL_ITEM'], true) &&
             trim(strval($arguments['item'] ?? '')) === '') {
             $db->exec('ROLLBACK');
             return ['ok' => false, 'status' => 422, 'error' => 'pilot_item_required'];
+        }
+        if (in_array($command, ['WORK_RESOURCE', 'PROSPECT'], true) &&
+            trim(strval($arguments['resource'] ?? '')) === '') {
+            $db->exec('ROLLBACK');
+            return ['ok' => false, 'status' => 422, 'error' => 'pilot_resource_required'];
         }
         if ($command === 'REMOVE_LIMB' && !in_array(strval($arguments['limb'] ?? ''), [
             'LEFT_ARM', 'RIGHT_ARM', 'LEFT_LEG', 'RIGHT_LEG',
@@ -724,11 +778,15 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
             'fully_rested' => stobeAutonomyBool($payload['status']['fully_rested'] ?? true),
             'probably_dying' => stobeAutonomyBool($payload['status']['probably_dying'] ?? false),
             'rest_bed_available' => stobeAutonomyBool($payload['status']['rest_bed_available'] ?? false),
+            'in_combat' => stobeAutonomyBool($payload['status']['in_combat'] ?? false),
         ],
+        'economy' => stobeAutonomyNormalizeEconomy($payload['economy'] ?? []),
         'health' => stobeAutonomyNormalizeHealth($payload['health'] ?? []),
         'order' => is_array($payload['order'] ?? null) ? array_intersect_key($payload['order'], array_flip(['count', 'task', 'subject_serial'])) : [],
         'movement' => is_array($payload['movement'] ?? null) ? array_intersect_key($payload['movement'], array_flip(['moving', 'path_failed'])) : [],
         'nearby_actors' => stobeAutonomyNormalizeNearbyActors($payload['nearby_actors'] ?? []),
+        'inventory_items' => stobeAutonomyNormalizeInventoryItems($payload['inventory_items'] ?? []),
+        'nearby_resources' => stobeAutonomyNormalizeNearbyResources($payload['nearby_resources'] ?? []),
         'context_hash' => $contextHash,
     ];
 }
@@ -737,12 +795,82 @@ function stobeAutonomyDecisionProtocolPhase(string $command): int
 {
     $command = strtoupper(trim($command));
     if (in_array($command, [
+        'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE', 'PROSPECT',
+    ], true)) {
+        return 6;
+    }
+    if (in_array($command, [
         'ATTACK', 'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT',
         'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
     ], true)) {
         return 5;
     }
     return in_array($command, ['MOVE_NEARBY', 'FLEE', 'FIRST_AID', 'REST'], true) ? 4 : 2;
+}
+
+function stobeAutonomyNormalizeEconomy(mixed $value): array
+{
+    $economy = is_array($value) ? $value : [];
+    return [
+        'cats' => max(0, min(1000000000, intval($economy['cats'] ?? 0))),
+        'inventory_item_count' => max(0, min(100000, intval($economy['inventory_item_count'] ?? 0))),
+    ];
+}
+
+function stobeAutonomyNormalizeInventoryItems(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+    $result = [];
+    foreach (array_slice($value, 0, 120) as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $name = trim(strval($item['name'] ?? ''));
+        if ($name === '' || mb_strlen($name) > 160) {
+            continue;
+        }
+        $result[] = [
+            'name' => $name,
+            'count' => max(0, min(10000, intval($item['count'] ?? 0))),
+            'buy_value_each' => max(0, min(10000000, intval($item['buy_value_each'] ?? 0))),
+            'sell_value_each' => max(0, min(10000000, intval($item['sell_value_each'] ?? 0))),
+        ];
+    }
+    return $result;
+}
+
+function stobeAutonomyNormalizeNearbyResources(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+    $result = [];
+    foreach (array_slice($value, 0, 40) as $resource) {
+        if (!is_array($resource)) {
+            continue;
+        }
+        $name = trim(strval($resource['name'] ?? ''));
+        $serial = max(0, intval($resource['runtime_serial'] ?? 0));
+        $distance = is_numeric($resource['distance'] ?? null) ? floatval($resource['distance']) : -1.0;
+        if ($name === '' || mb_strlen($name) > 160 || $serial <= 0 ||
+            !is_finite($distance) || $distance < 0 || $distance > 250.0) {
+            continue;
+        }
+        $result[] = [
+            'name' => $name,
+            'runtime_serial' => $serial,
+            'distance' => $distance,
+            'natural' => stobeAutonomyBool($resource['natural'] ?? false),
+            'usable' => stobeAutonomyBool($resource['usable'] ?? false),
+            'task' => intval($resource['task'] ?? 0),
+            'x' => is_numeric($resource['x'] ?? null) ? floatval($resource['x']) : 0.0,
+            'y' => is_numeric($resource['y'] ?? null) ? floatval($resource['y']) : 0.0,
+            'z' => is_numeric($resource['z'] ?? null) ? floatval($resource['z']) : 0.0,
+        ];
+    }
+    return $result;
 }
 
 function stobeAutonomyNormalizeHealth(mixed $value): array
@@ -777,6 +905,8 @@ function stobeAutonomyNormalizeNearbyActors(mixed $value): array
             'runtime_serial' => $serial,
             'distance' => $distance,
             'player_character' => stobeAutonomyBool($actor['player_character'] ?? false),
+            'trader' => stobeAutonomyBool($actor['trader'] ?? false),
+            'cats' => max(0, min(1000000000, intval($actor['cats'] ?? 0))),
             'dead' => stobeAutonomyBool($actor['dead'] ?? false),
             'unconscious' => stobeAutonomyBool($actor['unconscious'] ?? false),
             'hostile' => stobeAutonomyBool($actor['hostile'] ?? false),
@@ -787,9 +917,145 @@ function stobeAutonomyNormalizeNearbyActors(mixed $value): array
             'bleed_rate' => is_numeric($actor['bleed_rate'] ?? null) ? floatval($actor['bleed_rate']) : 0.0,
             'first_aid_need' => is_numeric($actor['first_aid_need'] ?? null) ? floatval($actor['first_aid_need']) : 0.0,
             'robotic_aid_need' => is_numeric($actor['robotic_aid_need'] ?? null) ? floatval($actor['robotic_aid_need']) : 0.0,
+            'trader_items' => stobeAutonomyNormalizeInventoryItems($actor['trader_items'] ?? []),
         ];
     }
     return $result;
+}
+
+function stobeAutonomyPersistEconomySnapshot(array $snapshot): void
+{
+    $position = is_array($snapshot['position'] ?? null) ? $snapshot['position'] : [];
+    $locations = stobeAutonomyListVisitedLocations(200);
+    $nearest = false;
+    $nearestDistance = PHP_FLOAT_MAX;
+    foreach ($locations as $location) {
+        if (!isset($location['x'], $location['y'], $location['z'])) {
+            continue;
+        }
+        $dx = floatval($position['x'] ?? 0) - floatval($location['x']);
+        $dy = floatval($position['y'] ?? 0) - floatval($location['y']);
+        $dz = floatval($position['z'] ?? 0) - floatval($location['z']);
+        $distance = sqrt($dx * $dx + $dy * $dy + $dz * $dz);
+        if ($distance < $nearestDistance) {
+            $nearestDistance = $distance;
+            $nearest = $location;
+        }
+    }
+    $locationId = $nearest && $nearestDistance <= 750.0 ? intval($nearest['id'] ?? 0) : 0;
+    $locationName = '';
+    if ($locationId > 0) {
+        $locationName = trim(strval($nearest['city_name'] ?? '')) !== ''
+            ? strval($nearest['city_name']) : strval($nearest['zone_name'] ?? '');
+    }
+    foreach (($snapshot['nearby_actors'] ?? []) as $actor) {
+        if (!is_array($actor) || !stobeAutonomyBool($actor['trader'] ?? false)) {
+            continue;
+        }
+        $items = stobeAutonomyNormalizeInventoryItems($actor['trader_items'] ?? []);
+        if (count($items) === 0) {
+            continue;
+        }
+        $serial = max(0, intval($actor['runtime_serial'] ?? 0));
+        $name = trim(strval($actor['name'] ?? ''));
+        if ($serial <= 0 || $name === '') {
+            continue;
+        }
+        $inventoryJson = json_encode($items, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $inventoryHash = hash('sha256', strval($inventoryJson));
+        $recent = $GLOBALS['db']->fetchOne(
+            "SELECT inventory_hash, local_ts FROM autonomy_economy_snapshot
+             WHERE trader_runtime_serial = $1 ORDER BY created_at DESC LIMIT 1",
+            [$serial]
+        );
+        if ($recent && strval($recent['inventory_hash'] ?? '') === $inventoryHash &&
+            time() - intval($recent['local_ts'] ?? 0) < 300) {
+            continue;
+        }
+        $GLOBALS['db']->exec(
+            "INSERT INTO autonomy_economy_snapshot (
+                game_ts, local_ts, x, y, z, location_zone_id, location_name,
+                trader_runtime_serial, trader_name, trader_cats,
+                inventory_hash, inventory
+             ) VALUES ($1, $2, $3, $4, $5, NULLIF($6, 0), $7, $8, $9, $10, $11, $12::jsonb)
+             ON CONFLICT DO NOTHING",
+            [
+                intval($snapshot['game_ts'] ?? 0), time(),
+                floatval($position['x'] ?? 0), floatval($position['y'] ?? 0),
+                floatval($position['z'] ?? 0), $locationId, $locationName,
+                $serial, $name, intval($actor['cats'] ?? 0),
+                $inventoryHash, $inventoryJson,
+            ]
+        );
+    }
+}
+
+function stobeAutonomyEconomySummary(int $limit = 12): array
+{
+    $rows = $GLOBALS['db']->fetchAll(
+        "SELECT trader_runtime_serial, trader_name, trader_cats, location_name,
+                game_ts, local_ts, inventory
+         FROM autonomy_economy_snapshot
+         ORDER BY created_at DESC LIMIT 120"
+    );
+    $byTrader = [];
+    foreach ($rows as $row) {
+        $serial = intval($row['trader_runtime_serial'] ?? 0);
+        if ($serial <= 0 || count($byTrader[$serial] ?? []) >= 2) {
+            continue;
+        }
+        $row['inventory'] = stobeAutonomyDecodeJsonColumn($row['inventory'] ?? '[]');
+        $byTrader[$serial][] = $row;
+    }
+    $markets = [];
+    foreach ($byTrader as $history) {
+        $latest = $history[0];
+        $previous = $history[1] ?? null;
+        $previousItems = [];
+        $previousItemNames = [];
+        foreach (($previous['inventory'] ?? []) as $item) {
+            $name = strval($item['name'] ?? '');
+            $key = strtolower($name);
+            $previousItems[$key] = intval($item['count'] ?? 0);
+            $previousItemNames[$key] = $name;
+        }
+        $shortages = [];
+        $surpluses = [];
+        $latestItems = [];
+        foreach (($latest['inventory'] ?? []) as $item) {
+            $name = strval($item['name'] ?? '');
+            $key = strtolower($name);
+            $count = intval($item['count'] ?? 0);
+            $latestItems[$key] = true;
+            $old = $previousItems[$key] ?? $count;
+            if ($count < $old) {
+                $shortages[] = ['item' => $name, 'count' => $count, 'change' => $count - $old];
+            } elseif ($count > $old) {
+                $surpluses[] = ['item' => $name, 'count' => $count, 'change' => $count - $old];
+            }
+        }
+        foreach ($previousItems as $key => $old) {
+            if ($old > 0 && !isset($latestItems[$key])) {
+                $shortages[] = [
+                    'item' => strval($previousItemNames[$key] ?? $key),
+                    'count' => 0,
+                    'change' => -$old,
+                ];
+            }
+        }
+        $markets[] = [
+            'trader' => strval($latest['trader_name'] ?? ''),
+            'location' => strval($latest['location_name'] ?? ''),
+            'cats' => intval($latest['trader_cats'] ?? 0),
+            'observed_game_ts' => intval($latest['game_ts'] ?? 0),
+            'shortages' => array_slice($shortages, 0, 8),
+            'surpluses' => array_slice($surpluses, 0, 8),
+        ];
+        if (count($markets) >= max(1, min(30, $limit))) {
+            break;
+        }
+    }
+    return $markets;
 }
 
 function stobeAutonomyPlannerNoDecision(array $session, string $reason): array
@@ -1092,6 +1358,7 @@ function stobeAutonomyApplyTick(array $payload): array
     if (!$snapshot) {
         return ['ok' => false, 'status' => 422, 'error' => 'invalid_or_stale_snapshot'];
     }
+    stobeAutonomyPersistEconomySnapshot($snapshot);
     $modeSession = stobeAutonomyGetSession();
     if (strval($modeSession['planner_mode'] ?? 'llm') === 'llm') {
         return stobeAutonomyApplyPlannerTick($payload, $snapshot);
@@ -1155,6 +1422,7 @@ function stobeAutonomyApplyTick(array $payload): array
             'IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
             'FIRST_AID', 'REST', 'ATTACK', 'TAKE_ITEM', 'EQUIP_ITEM',
             'KNOCKOUT', 'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+            'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE', 'PROSPECT',
         ], true)) {
             throw new RuntimeException('Pilot step contains an unsupported command.');
         }
@@ -1204,7 +1472,9 @@ function stobeAutonomyApplyTick(array $payload): array
             'REST' => 600,
             'ATTACK' => 180,
             'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT', 'KILL',
-            'REMOVE_LIMB', 'CUT_HORNS' => 30,
+            'REMOVE_LIMB', 'CUT_HORNS', 'BUY_ITEM', 'SELL_ITEM' => 30,
+            'WORK_RESOURCE' => 90,
+            'PROSPECT' => 45,
             default => 900,
         };
         $actionDeadline = gmdate('Y-m-d H:i:s', $now + $actionSeconds);

@@ -2,9 +2,16 @@
 
 require_once __DIR__ . '/lib/bootstrap.php';
 require_once __DIR__ . '/debug/db_updates.php';
+require_once __DIR__ . '/lib/autonomy_release_gate.php';
 
 try {
-    $response = ['ok' => true, 'phase' => 4, 'session' => stobeAutonomyGetSession()];
+    stobeAutonomyDisableForRelease();
+    $response = [
+        'ok' => true,
+        'available' => stobeAutonomyReleaseEnabled(),
+        'phase' => 4,
+        'session' => stobeAutonomyGetSession(),
+    ];
     if (stobeAutonomyBool($_GET['include_npcs'] ?? false)) {
         $response['eligible_npcs'] = stobeAutonomyListEligibleNpcs();
     }

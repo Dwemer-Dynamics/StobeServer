@@ -1,7 +1,7 @@
 <?php
 /**
  * StobeServer Roleplay Hub.
- * Groups event, memory, diary, and autonomy tools without duplicating their data logic.
+ * Groups event, memory, and diary tools without duplicating their data logic.
  */
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
@@ -27,13 +27,11 @@ $tabs = [
     ['id' => 'adventure', 'group' => 'activity-logs', 'icon' => '&#x1F4C6;', 'label' => 'Adventure Log', 'src' => $uiRoot . '/adventurelog.php?embed=1'],
     ['id' => 'memory', 'group' => 'memories-records', 'icon' => '&#x1F9E0;', 'label' => 'Memories', 'src' => $uiRoot . '/memories.php?embed=1'],
     ['id' => 'diaries', 'group' => 'memories-records', 'icon' => '&#x1F4D4;', 'label' => 'Stobe Diaries', 'src' => $uiRoot . '/diarylog.php?embed=1'],
-    ['id' => 'autonomy', 'group' => 'world-autonomy', 'icon' => '&#x1F5FA;&#xFE0F;', 'label' => 'Autonomy', 'src' => $uiRoot . '/autonomy.php?embed=1'],
 ];
 
 $tabGroups = [
     'activity-logs' => 'Activity & Logs',
     'memories-records' => 'Memories & Records',
-    'world-autonomy' => 'World & Autonomy',
 ];
 
 $aliases = [

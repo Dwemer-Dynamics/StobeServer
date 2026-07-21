@@ -930,7 +930,8 @@ CREATE TABLE IF NOT EXISTS autonomy_pilot_step (
         CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY', 'FLEE',
                            'FIRST_AID', 'REST', 'ATTACK', 'TAKE_ITEM',
                            'EQUIP_ITEM', 'KNOCKOUT', 'KILL', 'REMOVE_LIMB',
-                           'CUT_HORNS')),
+                           'CUT_HORNS', 'BUY_ITEM', 'SELL_ITEM',
+                           'WORK_RESOURCE', 'PROSPECT')),
     CONSTRAINT autonomy_pilot_step_status_check
         CHECK (status IN ('PENDING', 'CLAIMED', 'COMPLETED', 'CANCELLED'))
 );
@@ -940,6 +941,30 @@ CREATE INDEX IF NOT EXISTS idx_autonomy_pilot_step_pending
     WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_autonomy_pilot_step_decision
     ON autonomy_pilot_step (decision_id);
+
+CREATE TABLE IF NOT EXISTS autonomy_economy_snapshot (
+    id BIGSERIAL PRIMARY KEY,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    local_ts BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+    x DOUBLE PRECISION NOT NULL DEFAULT 0,
+    y DOUBLE PRECISION NOT NULL DEFAULT 0,
+    z DOUBLE PRECISION NOT NULL DEFAULT 0,
+    location_zone_id BIGINT,
+    location_name TEXT NOT NULL DEFAULT '',
+    trader_runtime_serial BIGINT NOT NULL,
+    trader_name TEXT NOT NULL,
+    trader_cats INT NOT NULL DEFAULT 0,
+    inventory_hash TEXT NOT NULL,
+    inventory JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_economy_snapshot_unique
+    ON autonomy_economy_snapshot (trader_runtime_serial, game_ts, inventory_hash);
+CREATE INDEX IF NOT EXISTS idx_autonomy_economy_snapshot_trader
+    ON autonomy_economy_snapshot (trader_runtime_serial, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_autonomy_economy_snapshot_location
+    ON autonomy_economy_snapshot (location_zone_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS autonomy_event (
     id BIGSERIAL PRIMARY KEY,
@@ -3174,6 +3199,10 @@ INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('TAKE_CATS', 'TakeCats', 'Take cats from the target. Put the victim in target and the numeric amount in amount.', TRUE),
 ('TAKE_ITEM', 'TakeItem', 'Take a named item from a nearby helpless actor. Target and item are required, amount is limited, and broad equipment or all-inventory looting is not allowed for autonomy.', TRUE),
 ('EQUIP_ITEM', 'EquipItem', 'Equip one specific item currently carried by the autonomous NPC. The item must be named explicitly and accepted by a Kenshi equipment slot.', TRUE),
+('BUY_ITEM', 'BuyItem', 'Buy one exact observed item from a nearby trader using a real Kenshi transaction. The purchase must remain within the configured cats limit.', TRUE),
+('SELL_ITEM', 'SellItem', 'Sell one exact carried item to a nearby trader using a real Kenshi transaction. The sale must meet the configured minimum price.', TRUE),
+('WORK_RESOURCE', 'WorkResource', 'Operate one exact observed nearby mine or natural resource for a bounded work cycle.', TRUE),
+('PROSPECT', 'Prospect', 'Perform a bounded prospecting scan at one exact observed nearby resource.', TRUE),
 ('GIVE_ITEM', 'GiveItem', 'Give a specific item to the target. Put the recipient in target, the exact item name in item, and an optional stack count in amount.', TRUE),
 ('DROP_ITEM', 'DropItem', 'Drop a specific item.', TRUE),
 ('ROLEPLAY_ACTION', 'RoleplayAction', 'Describe a roleplay action along with your dialogue.', TRUE),

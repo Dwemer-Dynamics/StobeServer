@@ -17,7 +17,7 @@ $configurationPages = [
     'config_hub.php', 'stobenpcs.php', 'npc_master.php', 'profiles.php',
     'narrator_management.php', 'llm_connectors.php', 'tts_connectors.php',
     'api_badges.php', 'api_key.php', 'settings.php', 'description.php',
-    'npc_bios.php', 'action_editor.php', 'prompts_manager.php', 'autonomy.php',
+    'npc_bios.php', 'action_editor.php', 'prompts_manager.php',
     'voice_manager.php', 'world_knowledge.php', 'quickstart.php',
 ];
 $controlPanelPages = [

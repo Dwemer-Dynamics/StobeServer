@@ -2,6 +2,9 @@
 
 require_once __DIR__ . '/lib/bootstrap.php';
 require_once __DIR__ . '/debug/db_updates.php';
+require_once __DIR__ . '/lib/autonomy_release_gate.php';
+
+stobeAutonomyRejectForRelease();
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     stobeAutonomySendJson(['ok' => false, 'error' => 'method_not_allowed'], 405);
@@ -17,4 +20,3 @@ try {
     stobeLogException($exception, 'Autonomy control endpoint failed');
     stobeAutonomySendJson(['ok' => false, 'error' => 'control_failed'], 500);
 }
-
