@@ -198,10 +198,120 @@ function stobePocketTtsIsAudioCpp(string $endpoint): bool {
     return preg_match('/\:8086(?:\/|$)/', $endpoint) === 1 || strpos($endpoint, '/v1/audio/speech') !== false;
 }
 
+function stobeIsRiffWavFile(string $path): bool {
+    if ($path === '' || !is_file($path) || !is_readable($path)) {
+        return false;
+    }
+
+    $header = @file_get_contents($path, false, null, 0, 12);
+    return is_string($header) && strlen($header) >= 12
+        && substr($header, 0, 4) === 'RIFF'
+        && substr($header, 8, 4) === 'WAVE';
+}
+
+function stobePrepareAudioCppVoiceSample(string $samplePath, string $voiceId): string {
+    if (stobeIsRiffWavFile($samplePath)) {
+        return $samplePath;
+    }
+    if ($samplePath === '' || !is_file($samplePath) || !is_readable($samplePath)) {
+        return '';
+    }
+
+    $ffmpegPath = trim(strval(@shell_exec('command -v ffmpeg 2>/dev/null')));
+    if ($ffmpegPath === '') {
+        stobeLogWarn('Pocket TTS audio.cpp voice conversion requires ffmpeg', [
+            'sample' => basename($samplePath),
+            'voiceid' => trim($voiceId),
+        ]);
+        return '';
+    }
+
+    $enginePath = $GLOBALS['ENGINE_PATH'] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
+    $cacheDir = rtrim($enginePath, DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR . 'soundcache'
+        . DIRECTORY_SEPARATOR . 'pockettts_voice_refs';
+    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0775, true) && !is_dir($cacheDir)) {
+        stobeLogWarn('Pocket TTS audio.cpp voice cache could not be created', [
+            'path' => $cacheDir,
+        ]);
+        return '';
+    }
+
+    $voiceToken = stobeSanitizeVoiceToken(pathinfo($voiceId, PATHINFO_FILENAME));
+    if ($voiceToken === '') {
+        $voiceToken = stobeSanitizeVoiceToken(pathinfo($samplePath, PATHINFO_FILENAME));
+    }
+    if ($voiceToken === '') {
+        $voiceToken = 'voice';
+    }
+    $sourceHash = @hash_file('sha256', $samplePath);
+    if (!is_string($sourceHash) || $sourceHash === '') {
+        $sourceHash = md5($samplePath . '|' . strval(@filemtime($samplePath)) . '|' . strval(@filesize($samplePath)));
+    }
+    $targetPath = $cacheDir . DIRECTORY_SEPARATOR . $voiceToken . '-' . substr($sourceHash, 0, 16) . '.wav';
+    if (stobeIsRiffWavFile($targetPath)) {
+        return $targetPath;
+    }
+
+    $tempPath = @tempnam($cacheDir, '.stobe_voice_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return '';
+    }
+    $cmd = escapeshellarg($ffmpegPath)
+        . ' -nostdin -hide_banner -loglevel error -y -i ' . escapeshellarg($samplePath)
+        . ' -ac 1 -ar 22050 -c:a pcm_s16le -f wav ' . escapeshellarg($tempPath)
+        . ' 2>&1';
+    $output = [];
+    $exitCode = 1;
+    @exec($cmd, $output, $exitCode);
+    if ($exitCode !== 0 || !stobeIsRiffWavFile($tempPath) || intval(@filesize($tempPath)) <= 44) {
+        @unlink($tempPath);
+        stobeLogWarn('Pocket TTS audio.cpp voice conversion failed', [
+            'sample' => basename($samplePath),
+            'voiceid' => trim($voiceId),
+            'error' => trim(implode("\n", array_slice($output, -3))),
+        ]);
+        return '';
+    }
+
+    if (!@rename($tempPath, $targetPath)) {
+        if (stobeIsRiffWavFile($targetPath)) {
+            @unlink($tempPath);
+            return $targetPath;
+        }
+        @unlink($tempPath);
+        return '';
+    }
+    @chmod($targetPath, 0644);
+    stobeLogInfo('Pocket TTS audio.cpp voice sample cached as WAV', [
+        'sample' => basename($samplePath),
+        'voiceid' => trim($voiceId),
+        'cached_sample' => basename($targetPath),
+    ]);
+    return $targetPath;
+}
+
 function stobePocketTtsAudioCppVoicePayload(string $voiceId): array {
     $samplePath = stobeFindVoiceSamplePath($voiceId);
-    if ($samplePath !== '' && is_file($samplePath) && is_readable($samplePath)) {
-        return ['voice_ref' => $samplePath];
+    $voiceToken = stobeSanitizeVoiceToken(pathinfo($voiceId, PATHINFO_FILENAME));
+    if ($voiceToken === '' && $samplePath !== '') {
+        $voiceToken = stobeSanitizeVoiceToken(pathinfo($samplePath, PATHINFO_FILENAME));
+    }
+
+    $wavCandidates = [$samplePath];
+    if ($voiceToken !== '') {
+        $wavCandidates[] = '/home/dwemer/pocket-tts/speakers/' . $voiceToken . '.wav';
+        $wavCandidates[] = '/home/dwemer/audio.cpp/speakers/' . $voiceToken . '.wav';
+    }
+    foreach (array_unique($wavCandidates) as $candidate) {
+        if (stobeIsRiffWavFile($candidate)) {
+            return ['voice_ref' => $candidate];
+        }
+    }
+
+    $preparedSample = stobePrepareAudioCppVoiceSample($samplePath, $voiceId);
+    if ($preparedSample !== '') {
+        return ['voice_ref' => $preparedSample];
     }
 
     return ['voice' => 'alba'];
@@ -834,10 +944,7 @@ function stobeFindVoiceSamplePath(string $voiceId): string {
 function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $samplePath, string $voiceId = ''): bool {
     $uploadSourcePath = $samplePath;
     $tempConvertedPath = '';
-    $header = @file_get_contents($samplePath, false, null, 0, 12);
-    $isRiffWav = is_string($header) && strlen($header) >= 12
-        && substr($header, 0, 4) === 'RIFF'
-        && substr($header, 8, 4) === 'WAVE';
+    $isRiffWav = stobeIsRiffWavFile($samplePath);
 
     if (!$isRiffWav) {
         $ffmpegPath = trim(strval(@shell_exec('command -v ffmpeg 2>/dev/null')));
