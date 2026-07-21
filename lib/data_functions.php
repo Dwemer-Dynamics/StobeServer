@@ -1933,7 +1933,7 @@ function stobeExtractZoneSnapshotContext(array $snapshot): array {
     $z = $pickCoordinate($environment, $snapshot, 'z');
 
     $metadata = [];
-    foreach (['indoors', 'outdoors', 'in_town', 'weather'] as $field) {
+    foreach (['indoors', 'outdoors', 'in_town', 'weather', 'weather_name', 'weather_strength', 'weather_affect_strength', 'wind_speed', 'wind_direction', 'wetness', 'active_environmental_effects'] as $field) {
         if (array_key_exists($field, $environment)) {
             $metadata[$field] = $environment[$field];
         }

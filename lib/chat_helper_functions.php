@@ -2621,22 +2621,6 @@ function stobeResolveWorldWeatherLabel(array $environment, array $metadata = [])
         return null;
     };
 
-    $weatherCode = $parseWeatherCode($environment['weather'] ?? ($metadata['weather'] ?? null));
-    if ($weatherCode !== null) {
-        $weatherLabelMap = [
-            0 => 'Clear',
-            1 => 'Duststorm',
-            2 => 'Acid Rain',
-            3 => 'Burning',
-            4 => 'Gas',
-            5 => 'Rain',
-        ];
-        if (array_key_exists($weatherCode, $weatherLabelMap)) {
-            return $weatherLabelMap[$weatherCode];
-        }
-        return 'Weather ' . strval($weatherCode);
-    }
-
     foreach (['weather_name', 'weather_state', 'weather_type', 'weather'] as $key) {
         if (!array_key_exists($key, $environment)) {
             continue;
@@ -2654,6 +2638,22 @@ function stobeResolveWorldWeatherLabel(array $environment, array $metadata = [])
         }
         $normalized = preg_replace('/\s+/u', ' ', $candidate) ?? $candidate;
         return truncatePromptValue(ucwords(strtolower($normalized)), 120);
+    }
+
+    $weatherCode = $parseWeatherCode($environment['weather'] ?? ($metadata['weather'] ?? null));
+    if ($weatherCode !== null) {
+        $weatherLabelMap = [
+            0 => 'Clear',
+            1 => 'Duststorm',
+            2 => 'Acid Rain',
+            3 => 'Burning',
+            4 => 'Gas',
+            5 => 'Rain',
+        ];
+        if (array_key_exists($weatherCode, $weatherLabelMap)) {
+            return $weatherLabelMap[$weatherCode];
+        }
+        return 'Weather ' . strval($weatherCode);
     }
 
     $indoorsFlag = stobeParseFlexibleBool($environment['indoors'] ?? ($metadata['indoors'] ?? null));
@@ -2797,7 +2797,7 @@ function stobeBuildWorldPromptContextFromNpcData(array $npcData): array {
     }
 
     $weatherEnvironment = $environment;
-    foreach (['weather', 'weather_name', 'weather_state', 'weather_type', 'indoors', 'outdoors'] as $weatherKey) {
+    foreach (['weather', 'weather_name', 'weather_state', 'weather_type', 'weather_strength', 'weather_affect_strength', 'wind_speed', 'wind_direction', 'wetness', 'active_environmental_effects', 'indoors', 'outdoors'] as $weatherKey) {
         if (!array_key_exists($weatherKey, $weatherEnvironment) && array_key_exists($weatherKey, $extendedData)) {
             $weatherEnvironment[$weatherKey] = $extendedData[$weatherKey];
         }
