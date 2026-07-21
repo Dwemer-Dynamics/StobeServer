@@ -126,10 +126,20 @@ $payload = [
         'name' => 'Ally', 'runtime_serial' => 22, 'distance' => 4,
         'player_character' => true, 'first_aid_need' => 3.0,
     ]],
+    'nearby_work' => [[
+        'name' => 'Wheat Farm', 'kind' => 'farm',
+        'runtime_serial' => 33, 'distance' => 12,
+        'read_only' => false, 'usable' => true, 'needs_work' => true,
+        'input_empty' => false, 'output_full' => false,
+        'power_on' => true, 'task' => 141,
+    ]],
 ];
 $snapshot = stobeAutonomyTickSnapshot($payload);
 phase4Assert(is_array($snapshot) && intval($snapshot['runtime_serial']) === 884422, 'Snapshot normalization must retain the selected runtime serial.');
 phase4Assert(floatval($snapshot['nearby_actors'][0]['first_aid_need']) === 3.0, 'Snapshot normalization must retain patient telemetry.');
+phase4Assert(($snapshot['nearby_work'][0]['kind'] ?? '') === 'farm', 'Snapshot normalization must retain supported work facilities.');
+phase4Assert(($snapshot['nearby_work'][0]['needs_work'] ?? false) === true, 'Snapshot normalization must retain the native needs-work result.');
+phase4Assert(($snapshot['nearby_work'][0]['read_only'] ?? false) === true, 'Work facilities must remain explicitly read-only server-side.');
 
 $aiPayload = $payload;
 $aiPayload['ai'] = [

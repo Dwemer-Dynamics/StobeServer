@@ -798,6 +798,7 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
         'nearby_actors' => stobeAutonomyNormalizeNearbyActors($payload['nearby_actors'] ?? []),
         'inventory_items' => stobeAutonomyNormalizeInventoryItems($payload['inventory_items'] ?? []),
         'nearby_resources' => stobeAutonomyNormalizeNearbyResources($payload['nearby_resources'] ?? []),
+        'nearby_work' => stobeAutonomyNormalizeNearbyWork($payload['nearby_work'] ?? []),
         'context_hash' => $contextHash,
     ];
 }
@@ -879,6 +880,53 @@ function stobeAutonomyNormalizeNearbyResources(mixed $value): array
             'x' => is_numeric($resource['x'] ?? null) ? floatval($resource['x']) : 0.0,
             'y' => is_numeric($resource['y'] ?? null) ? floatval($resource['y']) : 0.0,
             'z' => is_numeric($resource['z'] ?? null) ? floatval($resource['z']) : 0.0,
+        ];
+    }
+    return $result;
+}
+
+function stobeAutonomyNormalizeNearbyWork(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+    $allowedKinds = ['farm', 'crafting', 'research', 'storage', 'power', 'turret'];
+    $result = [];
+    foreach (array_slice($value, 0, 64) as $work) {
+        if (!is_array($work)) {
+            continue;
+        }
+        $name = trim(strval($work['name'] ?? ''));
+        $kind = strtolower(trim(strval($work['kind'] ?? '')));
+        $serial = max(0, intval($work['runtime_serial'] ?? 0));
+        $distance = is_numeric($work['distance'] ?? null) ? floatval($work['distance']) : -1.0;
+        if ($name === '' || mb_strlen($name) > 160 || $serial <= 0 ||
+            !in_array($kind, $allowedKinds, true) || !is_finite($distance) ||
+            $distance < 0 || $distance > 250.0) {
+            continue;
+        }
+        $powerOutput = is_numeric($work['power_output'] ?? null)
+            ? floatval($work['power_output']) : 0.0;
+        $result[] = [
+            'name' => $name,
+            'kind' => $kind,
+            'runtime_serial' => $serial,
+            'distance' => $distance,
+            'read_only' => true,
+            'usable' => stobeAutonomyBool($work['usable'] ?? false),
+            'needs_work' => stobeAutonomyBool($work['needs_work'] ?? false),
+            'input_empty' => stobeAutonomyBool($work['input_empty'] ?? false),
+            'input_full' => stobeAutonomyBool($work['input_full'] ?? false),
+            'output_empty' => stobeAutonomyBool($work['output_empty'] ?? false),
+            'output_full' => stobeAutonomyBool($work['output_full'] ?? false),
+            'power_on' => stobeAutonomyBool($work['power_on'] ?? false),
+            'power_output' => is_finite($powerOutput) ? max(-100000.0, min(100000.0, $powerOutput)) : 0.0,
+            'work_queued' => stobeAutonomyBool($work['work_queued'] ?? false),
+            'slot_available' => stobeAutonomyBool($work['slot_available'] ?? false),
+            'task' => intval($work['task'] ?? 0),
+            'x' => is_numeric($work['x'] ?? null) ? floatval($work['x']) : 0.0,
+            'y' => is_numeric($work['y'] ?? null) ? floatval($work['y']) : 0.0,
+            'z' => is_numeric($work['z'] ?? null) ? floatval($work['z']) : 0.0,
         ];
     }
     return $result;
