@@ -3633,7 +3633,7 @@ INSERT INTO core_tts_connector (
 ) VALUES (
     'Pocket TTS Default',
     'pocket_tts',
-    'http://127.0.0.1:8020',
+    'http://127.0.0.1:8024',
     TRUE,
     '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'
 )
@@ -3645,7 +3645,7 @@ ON CONFLICT (name) DO UPDATE SET
 
 INSERT INTO core_tts_connector (name, connector_type, base_url, is_default, config) VALUES
 ('XTTS Default', 'xtts', 'http://127.0.0.1:8020', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
-('Chatterbox Default', 'chatterbox', 'http://127.0.0.1:8020', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
+('Chatterbox Default', 'chatterbox', 'http://127.0.0.1:8023', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
 ('OmniVoice Default', 'omnivoice', 'http://127.0.0.1:8021', FALSE, '{"language":"","fallback_male":"default_male","fallback_female":"default_female","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}'),
 ('Cartesia Default', 'cartesia', '', FALSE, '{"language":"en","fallback_male":"male1","fallback_female":"female1","model_id":"sonic-3"}'),
 ('Inworld Default', 'inworld', '', FALSE, '{"language":"EN_US","fallback_male":"male1","fallback_female":"female1","model_id":"inworld-tts-1","workspace":""}')

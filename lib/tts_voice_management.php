@@ -39,7 +39,12 @@ function stobeVoiceProviderTarget(array $connector): array
         $endpoint = trim(strval($config['endpoint'] ?? ''));
     }
     if ($endpoint === '' && !in_array($provider, ['cartesia', 'inworld'], true) && $provider !== '') {
-        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
+        $endpoint = match ($provider) {
+            'omnivoice' => 'http://127.0.0.1:8021',
+            'chatterbox' => 'http://127.0.0.1:8023',
+            'pocket_tts' => 'http://127.0.0.1:8024',
+            default => 'http://127.0.0.1:8020',
+        };
     }
     $apiKey = trim(strval($connector['api_badge_key'] ?? ($connector['api_key'] ?? ($config['api_key'] ?? ''))));
     $workspace = trim(strval($config['workspace'] ?? ''));
