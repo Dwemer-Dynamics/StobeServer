@@ -316,7 +316,7 @@ function stobePrettySettingLabel(string $id): string
 {
     $idUpper = strtoupper(trim($id));
     $customLabels = [
-        'AUTO_LOCK_PROFILE' => 'Auto Lock Profile',
+        'AUTO_LOCK_PROFILE' => 'Auto Lock Profiles on Edit',
         'RELATIONSHIP_SYSTEM' => 'Relationship System',
         'RELATION_SYSTEM_ENABLED' => 'Relationship System',
         'RELATIONSHIP_SYSTEM_ENABLED' => 'Relationship System',

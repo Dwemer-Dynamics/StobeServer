@@ -448,6 +448,7 @@ if (!$isEmbed) {
 </style>
 
 <?php if ($isEmbed): ?>
+<link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/stobe-theme.css?v=<?php echo filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'stobe-theme.css'); ?>">
 <style>
     main { padding-top: 20px; }
 </style>

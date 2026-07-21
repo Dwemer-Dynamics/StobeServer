@@ -143,6 +143,43 @@ function unique_profile_label(string $base, int $excludeId = 0): string {
         if ($i > 200) { return trim($base) . ' ' . time(); }
     }
 }
+function normalize_imported_profile_label(string $rawLabel, string $fileName = ''): string {
+    $label = trim($rawLabel);
+    $label = preg_replace('/(?:\s*\(Imported\))+$/i', '', $label);
+    $label = is_string($label) ? trim($label) : '';
+
+    if ($label === '' && trim($fileName) !== '') {
+        $baseName = basename(str_replace('\\', '/', $fileName));
+        $baseName = preg_replace('/\.json$/i', '', $baseName);
+        $baseName = preg_replace('/[_-]+/', ' ', is_string($baseName) ? $baseName : '');
+        $label = is_string($baseName) ? trim($baseName) : '';
+    }
+
+    return $label !== '' ? $label : 'Imported Profile';
+}
+function unique_imported_profile_label(string $label): string {
+    $label = trim($label) !== '' ? trim($label) : 'Imported Profile';
+    $db = $GLOBALS['db'];
+    $row = $db->fetchOne("SELECT id FROM core_profiles WHERE LOWER(label)=LOWER($1) LIMIT 1", [$label]);
+    if (intval($row['id'] ?? 0) <= 0) {
+        return $label;
+    }
+
+    $base = $label . ' (Imported)';
+    $candidate = $base;
+    $i = 2;
+    while (true) {
+        $row = $db->fetchOne("SELECT id FROM core_profiles WHERE LOWER(label)=LOWER($1) LIMIT 1", [$candidate]);
+        if (intval($row['id'] ?? 0) <= 0) {
+            return $candidate;
+        }
+        $candidate = $base . ' ' . $i;
+        $i++;
+        if ($i > 200) {
+            return $base . ' ' . time();
+        }
+    }
+}
 
 $db = $GLOBALS['db'];
 $isEmbed = is_embed();
@@ -254,8 +291,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     $rawJson = '';
+    $importFileName = '';
     if (isset($_FILES['import_file']) && is_array($_FILES['import_file'])) {
         $tmpPath = strval($_FILES['import_file']['tmp_name'] ?? '');
+        $importFileName = strval($_FILES['import_file']['name'] ?? '');
         $err = intval($_FILES['import_file']['error'] ?? UPLOAD_ERR_NO_FILE);
         if ($err === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
             $rawJson = strval(file_get_contents($tmpPath) ?: '');
@@ -281,17 +320,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     }
 
     $labelInput = trim(strval($_POST['import_label'] ?? ''));
-    $baseLabel = $labelInput !== '' ? $labelInput : trim(strval($profileData['label'] ?? ''));
-    if ($baseLabel === '') {
-        $baseLabel = 'Imported Profile';
-    }
+    $baseLabel = $labelInput !== ''
+        ? normalize_imported_profile_label($labelInput, $importFileName)
+        : normalize_imported_profile_label(strval($profileData['label'] ?? ''), $importFileName);
+
+    $makeDefaultNpc = coerceBoolean($_POST['make_default_npc'] ?? false);
+    $migrateOldDefaultNpcs = coerceBoolean($_POST['migrate_old_default_npcs'] ?? false);
+    $makePlayerFactionProfile = coerceBoolean($_POST['make_player_faction_profile'] ?? false);
+    $migratePlayerFactionNpcs = coerceBoolean($_POST['migrate_player_faction_npcs'] ?? false);
+
+    $previousDefaultRow = $db->fetchOne(
+        "SELECT id FROM core_profiles WHERE COALESCE(is_default_npc, FALSE) = TRUE ORDER BY id ASC LIMIT 1"
+    );
+    $previousDefaultProfileId = intval($previousDefaultRow['id'] ?? 0);
+    $previousPlayerFactionRow = $db->fetchOne(
+        "SELECT id FROM core_profiles WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE ORDER BY id ASC LIMIT 1"
+    );
+    $previousPlayerFactionProfileId = intval($previousPlayerFactionRow['id'] ?? 0);
 
     $metadataRaw = $profileData['metadata'] ?? [];
     $metadata = normalize_json_obj($metadataRaw, getDefaultCoreProfileMetadataJson());
     $newId = saveCoreProfile([
-        'label' => unique_profile_label($baseLabel),
-        'is_default_npc' => false,
-        'is_player_faction_profile' => false,
+        'label' => unique_imported_profile_label($baseLabel),
+        'is_default_npc' => $makeDefaultNpc,
+        'is_player_faction_profile' => $makePlayerFactionProfile,
         'prompt_head' => strval($profileData['prompt_head'] ?? ''),
         'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
         'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
@@ -310,7 +362,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
         exit;
     }
 
-    header('Location: ' . page_url(['edit' => $newId, 'notice' => 'profile_imported']));
+    $noticeParts = ['Profile imported'];
+    if ($migrateOldDefaultNpcs) {
+        $where = "profile_id IS NULL";
+        $params = [];
+        if ($previousDefaultProfileId > 0) {
+            $where .= " OR profile_id = $1";
+            $params[] = $previousDefaultProfileId;
+        }
+        $countRow = $db->fetchOne("SELECT COUNT(*) AS c FROM core_npc WHERE {$where}", $params);
+        $migratedDefaultCount = intval($countRow['c'] ?? 0);
+        $db->exec("UPDATE core_npc SET profile_id = " . intval($newId) . ", updated_at = NOW() WHERE {$where}", $params);
+        $noticeParts[] = 'moved ' . $migratedDefaultCount . ' default/unassigned NPCs';
+    }
+
+    if ($migratePlayerFactionNpcs && $previousPlayerFactionProfileId > 0) {
+        $countRow = $db->fetchOne(
+            "SELECT COUNT(*) AS c FROM core_npc WHERE profile_id = $1",
+            [$previousPlayerFactionProfileId]
+        );
+        $migratedPlayerFactionCount = intval($countRow['c'] ?? 0);
+        $db->exec(
+            "UPDATE core_npc SET profile_id = $1, updated_at = NOW() WHERE profile_id = $2",
+            [$newId, $previousPlayerFactionProfileId]
+        );
+        $noticeParts[] = 'moved ' . $migratedPlayerFactionCount . ' player-faction NPCs';
+    }
+
+    header('Location: ' . page_url(['edit' => $newId, 'notice' => implode('; ', $noticeParts)]));
     exit;
 }
 
@@ -547,6 +626,34 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
 .top-toggle-wrap .top-toggle-title { color: #e6b76c; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
 .profile-role-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
+.profile-editor-toolbar { position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; padding:10px 12px; border:1px solid #454545; border-radius:8px; background:rgba(31,31,31,.97); box-shadow:0 4px 14px rgba(0,0,0,.28); }
+.profile-editor-toolbar-label { color:#9fb1c9; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+.profile-editor-toolbar-name { margin-top:2px; color:#f3f5fa; font-size:16px; font-weight:700; }
+.profile-editor-toolbar .btn-row { margin:0; }
+.connector-groups-grid { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; align-items:stretch; }
+.connector-group-card { min-width:0; height:100%; padding:11px; border:1px solid #414141; border-radius:8px; background:#202020; box-sizing:border-box; }
+.connector-group-title { margin:0; color:#e6b76c; font-family:'MagicCards', serif; font-size:1.05em; line-height:1.25; letter-spacing:.4px; word-spacing:5px; }
+.connector-group-subtitle { min-height:30px; margin:4px 0 8px; color:#9fb1c9; font-size:11px; line-height:1.3; }
+.connector-group-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+.connector-option-card { min-width:0; padding:10px; border:1px solid #414141; border-radius:7px; background:#242424; }
+.connector-option-card label { color:#f0f5ff; }
+.profile-prompt-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:12px; }
+.profile-prompt-field { min-width:0; }
+.profile-prompt-field:first-child { grid-column:1 / -1; }
+.profile-prompt-field textarea { min-height:88px; }
+.meta-settings-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; align-items:stretch; }
+.meta-settings-grid > .provider-card { height:100%; margin:0; box-sizing:border-box; }
+.meta-settings-grid .setting-row { grid-template-columns:1fr; gap:7px; }
+@media (max-width: 980px) {
+    .connector-groups-grid,
+    .meta-settings-grid,
+    .profile-prompt-grid { grid-template-columns:1fr; }
+    .profile-prompt-field:first-child { grid-column:auto; }
+}
+@media (max-width: 620px) {
+    .profile-editor-toolbar { position:static; align-items:flex-start; flex-direction:column; }
+    .connector-group-fields { grid-template-columns:1fr; }
+}
 .modal-backdrop { display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,.65); z-index:10050; }
 .modal-backdrop.show { display:block; }
 .modal-container { width:min(920px, 95vw); margin:4vh auto; border:1px solid #3a3a3a; border-radius:10px; overflow:hidden; background:#2a2a2a; box-shadow:0 8px 28px rgba(0,0,0,.4); }
@@ -678,14 +785,20 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             <?php if (!$editItem): ?>
                 <div style="color:#9fb1c9;">No profile selected.</div>
             <?php else: ?>
-                <div class="btn-row" style="margin-top:0; margin-bottom:12px;">
-                    <button type="submit" form="profile_form" class="btn-save">Save Profile</button>
-                    <form method="post" action="profiles.php" onsubmit="return confirm('Delete this profile?');" style="margin:0;">
-                        <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
-                        <input type="hidden" name="id" value="<?= h($editItem['id'] ?? '') ?>">
-                        <input type="hidden" name="delete_profile" value="1">
-                        <button type="submit" class="btn-danger">Delete Profile</button>
-                    </form>
+                <div class="profile-editor-toolbar">
+                    <div>
+                        <div class="profile-editor-toolbar-label">Editing Profile</div>
+                        <div class="profile-editor-toolbar-name"><?= h($editItem['label'] ?? 'Profile') ?></div>
+                    </div>
+                    <div class="btn-row">
+                        <button type="submit" form="profile_form" class="btn-save">Save Profile</button>
+                        <form method="post" action="profiles.php" onsubmit="return confirm('Delete this profile?');" style="margin:0;">
+                            <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
+                            <input type="hidden" name="id" value="<?= h($editItem['id'] ?? '') ?>">
+                            <input type="hidden" name="delete_profile" value="1">
+                            <button type="submit" class="btn-danger">Delete Profile</button>
+                        </form>
+                    </div>
                 </div>
                 <form method="post" action="profiles.php" id="profile_form">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
@@ -737,15 +850,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                         </div>
 
                         <?php
-                            $llmFields = [
-                                'response_connector' => 'Response Connector',
-                                'diary_connector' => 'Diary Connector',
-                                'autochat_connector' => 'Autochat Connector',
-                                'middleterm_connector' => 'Memory Connector',
-                                'backgroundlife_connector' => 'Backgroundlife Connector',
-                                'dynamic_connector' => 'Dynamic Connector',
-                                'relationship_connector' => 'Relationship Connector',
-                            ];
                             $connectorIcons = [
                                 'response_connector' => '&#x1F3AD;',
                                 'diary_connector' => '&#x1F4D4;',
@@ -764,52 +868,83 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 'dynamic_connector' => 'LLM that updates dynamic profile fields from recent context.',
                                 'relationship_connector' => 'LLM used by relationship analysis and affinity updates.',
                             ];
-                            foreach ($llmFields as $field => $label):
+                            $connectorGroups = [
+                                [
+                                    'title' => 'Response Connectors',
+                                    'description' => 'Connectors that directly generate dialogue and player-facing responses.',
+                                    'rows' => [
+                                        ['field' => 'response_connector', 'label' => 'Response Connector', 'options' => 'llm'],
+                                        ['field' => 'autochat_connector', 'label' => 'Autochat Connector', 'options' => 'llm'],
+                                        ['field' => 'backgroundlife_connector', 'label' => 'Background Life Connector', 'options' => 'llm'],
+                                    ],
+                                ],
+                                [
+                                    'title' => 'Other Connectors',
+                                    'description' => 'Voice, memory, diary, profile, and relationship processing services.',
+                                    'rows' => [
+                                        ['field' => 'tts_connector_id', 'label' => 'TTS Connector', 'options' => 'tts'],
+                                        ['field' => 'diary_connector', 'label' => 'Diary Connector', 'options' => 'llm'],
+                                        ['field' => 'middleterm_connector', 'label' => 'Memory Connector', 'options' => 'llm'],
+                                        ['field' => 'dynamic_connector', 'label' => 'Dynamic Connector', 'options' => 'llm'],
+                                        ['field' => 'relationship_connector', 'label' => 'Relationship Connector', 'options' => 'llm'],
+                                    ],
+                                ],
+                            ];
                         ?>
-                            <div>
-                                <label for="<?= h($field) ?>"><span aria-hidden="true"><?= $connectorIcons[$field] ?? '' ?></span> <?= h($label) ?></label>
-                                <select id="<?= h($field) ?>" name="<?= h($field) ?>">
-                                    <option value="">-- None --</option>
-                                    <?php foreach ($llmRows as $row): ?>
-                                        <?php $selected = intval($editItem[$field] ?? 0) === intval($row['id'] ?? 0); ?>
-                                        <option value="<?= h($row['id'] ?? '') ?>" <?= $selected ? 'selected' : '' ?>><?= h($row['name'] ?? ('LLM #' . strval($row['id'] ?? ''))) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div class="connector-help-inline"><?= h($connectorDescriptions[$field] ?? '') ?></div>
-                            </div>
-                        <?php endforeach; ?>
-
-                        <div>
-                            <label for="tts_connector_id"><span aria-hidden="true">&#x1F50A;</span> TTS Connector</label>
-                            <select id="tts_connector_id" name="tts_connector_id">
-                                <option value="">-- None --</option>
-                                <?php foreach ($ttsRows as $row): ?>
-                                    <?php $selected = intval($editItem['tts_connector_id'] ?? 0) === intval($row['id'] ?? 0); ?>
-                                    <option value="<?= h($row['id'] ?? '') ?>" <?= $selected ? 'selected' : '' ?>><?= h($row['name'] ?? ('TTS #' . strval($row['id'] ?? ''))) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div class="connector-help-inline">TTS provider used for this profile's spoken output and voice playback.</div>
+                        <div class="connector-groups-grid">
+                            <?php foreach ($connectorGroups as $connectorGroup): ?>
+                                <section class="connector-group-card">
+                                    <h3 class="connector-group-title"><?= h($connectorGroup['title']) ?></h3>
+                                    <div class="connector-group-subtitle"><?= h($connectorGroup['description']) ?></div>
+                                    <div class="connector-group-fields">
+                                        <?php foreach ($connectorGroup['rows'] as $connectorRow): ?>
+                                            <?php
+                                                $field = $connectorRow['field'];
+                                                $isTts = ($connectorRow['options'] ?? 'llm') === 'tts';
+                                                $optionRows = $isTts ? $ttsRows : $llmRows;
+                                                $description = $isTts
+                                                    ? "TTS provider used for this profile's spoken output and voice playback."
+                                                    : ($connectorDescriptions[$field] ?? '');
+                                            ?>
+                                            <div class="connector-option-card">
+                                                <label for="<?= h($field) ?>"><span aria-hidden="true"><?= $isTts ? '&#x1F50A;' : ($connectorIcons[$field] ?? '') ?></span> <?= h($connectorRow['label']) ?></label>
+                                                <div class="connector-help-inline"><?= h($description) ?></div>
+                                                <select id="<?= h($field) ?>" name="<?= h($field) ?>">
+                                                    <option value="">-- None --</option>
+                                                    <?php foreach ($optionRows as $row): ?>
+                                                        <?php $selected = intval($editItem[$field] ?? 0) === intval($row['id'] ?? 0); ?>
+                                                        <option value="<?= h($row['id'] ?? '') ?>" <?= $selected ? 'selected' : '' ?>><?= h($row['name'] ?? (($isTts ? 'TTS #' : 'LLM #') . strval($row['id'] ?? ''))) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </section>
+                            <?php endforeach; ?>
                         </div>
                     </div>
 
-                    <div style="margin-top:12px;">
+                    <div class="profile-prompt-grid">
+                    <div class="profile-prompt-field">
                         <label for="prompt_head">Prompt Head</label>
                         <div class="setting-desc" style="margin-bottom:6px;">High-priority instructions injected before the profile prompt for this NPC profile.</div>
                         <textarea id="prompt_head" name="prompt_head"><?= h($editItem['prompt_head'] ?? '') ?></textarea>
                     </div>
-                    <div style="margin-top:10px;">
+                    <div class="profile-prompt-field">
                         <label for="profile_prompt">Profile Prompt</label>
                         <div class="setting-desc" style="margin-bottom:6px;">Main roleplay profile prompt used as the baseline behavior for this profile.</div>
                         <textarea id="profile_prompt" name="profile_prompt"><?= h($editItem['profile_prompt'] ?? '') ?></textarea>
                     </div>
-                    <div style="margin-top:10px;">
+                    <div class="profile-prompt-field">
                         <label for="meta_diary_prompt">Diary Prompt</label>
                         <div class="setting-desc" style="margin-bottom:6px;">Template used when generating diary entries for this profile.</div>
                         <textarea id="meta_diary_prompt" name="meta_vis[DIARY_PROMPT]" style="min-height:88px;"><?= h(strval($metaData['DIARY_PROMPT'] ?? ($metaDefaults['DIARY_PROMPT'] ?? ''))) ?></textarea>
                     </div>
+                    </div>
                     <div class="meta-box">
                         <h3>Metadata Settings</h3>
 
+                        <div class="meta-settings-grid">
                         <div class="provider-card" id="meta_cat_conversation">
                             <div class="provider-head">
                                 <div class="provider-title">
@@ -970,6 +1105,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                             </div>
                         </div>
+                        </div>
 
                         <details class="meta-advanced" id="meta_cat_advanced">
                             <summary>Advanced JSON Editor</summary>
@@ -1018,6 +1154,25 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                     <div>
                         <label for="import_label">Optional New Label Override</label>
                         <input id="import_label" name="import_label" type="text" placeholder="Leave blank to use file profile label">
+                    </div>
+                    <div style="padding:12px; background:#1f1f1f; border:1px solid #3a3a3a; border-radius:8px;">
+                        <div style="font-weight:700; color:#e6b76c; margin-bottom:8px;">Import Assignment Options</div>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="make_default_npc" value="1" style="margin-top:3px;">
+                            <span>Make Default Profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="migrate_old_default_npcs" value="1" style="margin-top:3px;">
+                            <span>Move current default NPCs to this profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="make_player_faction_profile" value="1" style="margin-top:3px;">
+                            <span>Make Player Faction Profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:0; cursor:pointer;">
+                            <input type="checkbox" name="migrate_player_faction_npcs" value="1" style="margin-top:3px;">
+                            <span>Move current player-faction NPCs to this profile</span>
+                        </label>
                     </div>
                     <div class="setting-desc" style="margin-top:2px;">
                         Imports profile prompt head/prompt, metadata, and connector assignments (when matching connector ids exist in Stobe).
@@ -1444,13 +1599,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
     if (profileTestCloseBtn) {
         profileTestCloseBtn.addEventListener('click', closeProfileTestModal);
     }
-    if (profileTestModal) {
-        profileTestModal.addEventListener('click', function (event) {
-            if (event.target === profileTestModal) {
-                closeProfileTestModal();
-            }
-        });
-    }
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && profileTestModal && profileTestModal.style.display === 'flex') {
             closeProfileTestModal();
@@ -1474,17 +1622,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             }
         });
     }
-    if (importModal) {
-        importModal.addEventListener('click', function (event) {
-            if (event.target === importModal) {
-                closeModal(importModal);
-                if (importForm) {
-                    importForm.reset();
-                }
-            }
-        });
-    }
-
     const rulesModal = document.getElementById('import_rules_modal');
     const rulesOpenBtn = document.getElementById('open_import_rules_btn');
     const rulesCloseBtn = document.getElementById('close_rules_modal');
@@ -1697,13 +1834,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             }
             if (action === 'delete') {
                 deleteRule(id);
-            }
-        });
-    }
-    if (rulesModal) {
-        rulesModal.addEventListener('click', function (event) {
-            if (event.target === rulesModal) {
-                closeModal(rulesModal);
             }
         });
     }

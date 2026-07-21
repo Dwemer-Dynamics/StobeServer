@@ -37,6 +37,13 @@ function stobePocketTtsNormalizeSettingValue(string $key, mixed $rawValue): mixe
     return floatval($rawValue);
 }
 
+function stobeTtsBool(mixed $value): bool {
+    if (is_bool($value)) {
+        return $value;
+    }
+    return in_array(strtolower(trim(strval($value))), ['1', 'true', 'yes', 'on'], true);
+}
+
 function stobeGetDefaultTtsConnector(): array|false {
     $db = $GLOBALS["db"];
     $connector = $db->fetchOne(
@@ -185,6 +192,129 @@ function stobeResolveConnectorFallbackVoices(array $connectorConfig): array {
         'female' => $fallbackFemale,
         'legacy_voiceid' => $legacyVoiceId,
     ];
+}
+
+function stobePocketTtsIsAudioCpp(string $endpoint): bool {
+    return preg_match('/\:8086(?:\/|$)/', $endpoint) === 1 || strpos($endpoint, '/v1/audio/speech') !== false;
+}
+
+function stobeIsRiffWavFile(string $path): bool {
+    if ($path === '' || !is_file($path) || !is_readable($path)) {
+        return false;
+    }
+
+    $header = @file_get_contents($path, false, null, 0, 12);
+    return is_string($header) && strlen($header) >= 12
+        && substr($header, 0, 4) === 'RIFF'
+        && substr($header, 8, 4) === 'WAVE';
+}
+
+function stobePrepareAudioCppVoiceSample(string $samplePath, string $voiceId): string {
+    if (stobeIsRiffWavFile($samplePath)) {
+        return $samplePath;
+    }
+    if ($samplePath === '' || !is_file($samplePath) || !is_readable($samplePath)) {
+        return '';
+    }
+
+    $ffmpegPath = trim(strval(@shell_exec('command -v ffmpeg 2>/dev/null')));
+    if ($ffmpegPath === '') {
+        stobeLogWarn('Pocket TTS audio.cpp voice conversion requires ffmpeg', [
+            'sample' => basename($samplePath),
+            'voiceid' => trim($voiceId),
+        ]);
+        return '';
+    }
+
+    $enginePath = $GLOBALS['ENGINE_PATH'] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
+    $cacheDir = rtrim($enginePath, DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR . 'soundcache'
+        . DIRECTORY_SEPARATOR . 'pockettts_voice_refs';
+    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0775, true) && !is_dir($cacheDir)) {
+        stobeLogWarn('Pocket TTS audio.cpp voice cache could not be created', [
+            'path' => $cacheDir,
+        ]);
+        return '';
+    }
+
+    $voiceToken = stobeSanitizeVoiceToken(pathinfo($voiceId, PATHINFO_FILENAME));
+    if ($voiceToken === '') {
+        $voiceToken = stobeSanitizeVoiceToken(pathinfo($samplePath, PATHINFO_FILENAME));
+    }
+    if ($voiceToken === '') {
+        $voiceToken = 'voice';
+    }
+    $sourceHash = @hash_file('sha256', $samplePath);
+    if (!is_string($sourceHash) || $sourceHash === '') {
+        $sourceHash = md5($samplePath . '|' . strval(@filemtime($samplePath)) . '|' . strval(@filesize($samplePath)));
+    }
+    $targetPath = $cacheDir . DIRECTORY_SEPARATOR . $voiceToken . '-' . substr($sourceHash, 0, 16) . '.wav';
+    if (stobeIsRiffWavFile($targetPath)) {
+        return $targetPath;
+    }
+
+    $tempPath = @tempnam($cacheDir, '.stobe_voice_');
+    if (!is_string($tempPath) || $tempPath === '') {
+        return '';
+    }
+    $cmd = escapeshellarg($ffmpegPath)
+        . ' -nostdin -hide_banner -loglevel error -y -i ' . escapeshellarg($samplePath)
+        . ' -ac 1 -ar 22050 -c:a pcm_s16le -f wav ' . escapeshellarg($tempPath)
+        . ' 2>&1';
+    $output = [];
+    $exitCode = 1;
+    @exec($cmd, $output, $exitCode);
+    if ($exitCode !== 0 || !stobeIsRiffWavFile($tempPath) || intval(@filesize($tempPath)) <= 44) {
+        @unlink($tempPath);
+        stobeLogWarn('Pocket TTS audio.cpp voice conversion failed', [
+            'sample' => basename($samplePath),
+            'voiceid' => trim($voiceId),
+            'error' => trim(implode("\n", array_slice($output, -3))),
+        ]);
+        return '';
+    }
+
+    if (!@rename($tempPath, $targetPath)) {
+        if (stobeIsRiffWavFile($targetPath)) {
+            @unlink($tempPath);
+            return $targetPath;
+        }
+        @unlink($tempPath);
+        return '';
+    }
+    @chmod($targetPath, 0644);
+    stobeLogInfo('Pocket TTS audio.cpp voice sample cached as WAV', [
+        'sample' => basename($samplePath),
+        'voiceid' => trim($voiceId),
+        'cached_sample' => basename($targetPath),
+    ]);
+    return $targetPath;
+}
+
+function stobePocketTtsAudioCppVoicePayload(string $voiceId): array {
+    $samplePath = stobeFindVoiceSamplePath($voiceId);
+    $voiceToken = stobeSanitizeVoiceToken(pathinfo($voiceId, PATHINFO_FILENAME));
+    if ($voiceToken === '' && $samplePath !== '') {
+        $voiceToken = stobeSanitizeVoiceToken(pathinfo($samplePath, PATHINFO_FILENAME));
+    }
+
+    $wavCandidates = [$samplePath];
+    if ($voiceToken !== '') {
+        $wavCandidates[] = '/home/dwemer/pocket-tts/speakers/' . $voiceToken . '.wav';
+        $wavCandidates[] = '/home/dwemer/audio.cpp/speakers/' . $voiceToken . '.wav';
+    }
+    foreach (array_unique($wavCandidates) as $candidate) {
+        if (stobeIsRiffWavFile($candidate)) {
+            return ['voice_ref' => $candidate];
+        }
+    }
+
+    $preparedSample = stobePrepareAudioCppVoiceSample($samplePath, $voiceId);
+    if ($preparedSample !== '') {
+        return ['voice_ref' => $preparedSample];
+    }
+
+    return ['voice' => 'alba'];
 }
 
 function stobeResolveNpcVoiceIdByName(string $npcName): string {
@@ -379,6 +509,64 @@ function stobePostJsonToLocalTtsEndpoint(string $endpoint, string $payload, arra
     ];
 }
 
+function stobeEnsureOmniVoiceVoiceSet(string $endpoint, string $language, array $voices): string {
+    if ($language === '') {
+        return 'ready';
+    }
+
+    $voiceList = [];
+    foreach ($voices as $voice) {
+        $voice = trim(strval($voice));
+        if ($voice !== '' && !in_array($voice, $voiceList, true)) {
+            $voiceList[] = $voice;
+        }
+    }
+
+    $payload = json_encode([
+        'language' => $language,
+        'scope' => 'voice_set',
+        'voices' => $voiceList,
+        'make_active' => true,
+        'start' => true,
+    ], JSON_UNESCAPED_UNICODE);
+    if (!is_string($payload) || $payload === '') {
+        return 'failed';
+    }
+
+    $result = stobePostJsonToLocalTtsEndpoint($endpoint, $payload, ['/ensure_language'], 'application/json');
+    $httpCode = intval($result['http_code'] ?? 0);
+    $body = '';
+    if (is_string($result['binary'] ?? false) && ($result['binary'] ?? '') !== '') {
+        $body = strval($result['binary']);
+    } else {
+        $body = strval($result['response'] ?? '');
+    }
+    $decoded = json_decode($body, true);
+    if ($httpCode < 200 || $httpCode >= 300 || !is_array($decoded) || !($decoded['ok'] ?? false)) {
+        stobeLogWarn('OmniVoice language readiness check failed', [
+            'endpoint' => $endpoint,
+            'language' => $language,
+            'http_code' => $httpCode,
+            'response' => substr($body, 0, 220),
+        ]);
+        return 'failed';
+    }
+
+    $status = strtolower(trim(strval($decoded['status'] ?? '')));
+    if ($status === 'ready') {
+        return 'ready';
+    }
+    if (in_array($status, ['building', 'queued', 'running'], true)) {
+        stobeLogWarn('OmniVoice voice library is preparing', [
+            'endpoint' => $endpoint,
+            'language' => $language,
+            'voices' => $voiceList,
+        ]);
+        return 'building';
+    }
+    return $status !== '' ? $status : 'not_ready';
+}
+
 function stobeEstimateWavDurationMs(string $binary): int {
     $length = strlen($binary);
     if ($length < 12) {
@@ -456,6 +644,7 @@ function stobeNormalizeTtsConnectorType(string $type): string {
         'pockettts', 'pocketts', 'pocket_tts' => 'pocket_tts',
         'xtts', 'xtts_fastapi' => 'xtts',
         'chatterbox' => 'chatterbox',
+        'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
         'cartesia' => 'cartesia',
         'inworld' => 'inworld',
         default => 'pocket_tts',
@@ -568,13 +757,12 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
     if ($endpoint === '') {
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
-    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox'], true)) {
-        $endpoint = 'http://127.0.0.1:8020';
+    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
+        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
     }
     $endpoint = rtrim($endpoint, '/');
-
     $language = trim(strval($connectorConfig['language'] ?? ''));
-    if ($language === '') {
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
 
@@ -756,10 +944,7 @@ function stobeFindVoiceSamplePath(string $voiceId): string {
 function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $samplePath, string $voiceId = ''): bool {
     $uploadSourcePath = $samplePath;
     $tempConvertedPath = '';
-    $header = @file_get_contents($samplePath, false, null, 0, 12);
-    $isRiffWav = is_string($header) && strlen($header) >= 12
-        && substr($header, 0, 4) === 'RIFF'
-        && substr($header, 8, 4) === 'WAVE';
+    $isRiffWav = stobeIsRiffWavFile($samplePath);
 
     if (!$isRiffWav) {
         $ffmpegPath = trim(strval(@shell_exec('command -v ffmpeg 2>/dev/null')));
@@ -812,7 +997,7 @@ function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $sampleP
     }
 
     $cfile = new CURLFile($uploadSourcePath, 'audio/wav', $uploadName);
-    $postFields = ['wavFile' => $cfile];
+    $postFields = ['wavFile' => $cfile, 'force' => 'true'];
     if ($voiceToken !== '') {
         $postFields['speaker_name'] = $voiceToken;
         $postFields['speaker_id'] = $voiceToken;
@@ -838,8 +1023,7 @@ function stobeUploadVoiceSampleToLocalEndpoint(string $endpoint, string $sampleP
         @unlink($tempConvertedPath);
     }
 
-    $alreadyExists = is_string($response) && stripos($response, 'already exists') !== false;
-    if (($status >= 200 && $status < 300) || ($status === 400 && $alreadyExists)) {
+    if ($status >= 200 && $status < 300) {
         return true;
     }
 
@@ -978,11 +1162,33 @@ function stobeLooksLikeInworldVoiceId(string $voiceId): bool {
     if ($v === '') {
         return false;
     }
-    return str_contains($v, '__design-voice-') || str_starts_with($v, 'voices/');
+    return str_contains($v, '__') || str_starts_with($v, 'voices/');
 }
 
 function stobeLooksLikeCartesiaVoiceId(string $voiceId): bool {
     return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', trim($voiceId)) === 1;
+}
+
+function stobeCloudVoiceCacheKey(string $provider, string $voiceToken, int $connectorId = 0): string {
+    $provider = strtolower(trim($provider));
+    $voiceToken = strtolower(trim($voiceToken));
+    return $connectorId > 0
+        ? $provider . '_voice_scope_' . $connectorId . '__' . $voiceToken
+        : $provider . '_voice_id_' . $voiceToken;
+}
+
+function stobeGetScopedCloudVoiceId(string $provider, string $voiceToken, array $runtime): string {
+    $connectorId = intval($runtime['connector_id'] ?? 0);
+    $scopedKey = stobeCloudVoiceCacheKey($provider, $voiceToken, $connectorId);
+    $cached = stobeConfOptGet($scopedKey);
+    if ($cached !== '' || $connectorId <= 0) {
+        return $cached;
+    }
+    $legacy = stobeConfOptGet(stobeCloudVoiceCacheKey($provider, $voiceToken, 0));
+    if ($legacy !== '') {
+        stobeConfOptSet($scopedKey, $legacy);
+    }
+    return $legacy;
 }
 
 function stobeGetOrCreateInworldVoiceId(string $voiceId, array $runtime): string {
@@ -998,8 +1204,8 @@ function stobeGetOrCreateInworldVoiceId(string $voiceId, array $runtime): string
     if ($voiceToken === '') {
         return '';
     }
-    $cacheKey = 'inworld_voice_id_' . strtolower($voiceToken);
-    $cached = stobeConfOptGet($cacheKey);
+    $cacheKey = stobeCloudVoiceCacheKey('inworld', $voiceToken, intval($runtime['connector_id'] ?? 0));
+    $cached = stobeGetScopedCloudVoiceId('inworld', $voiceToken, $runtime);
     if ($cached !== '') {
         return $cached;
     }
@@ -1081,8 +1287,8 @@ function stobeGetOrCreateCartesiaVoiceId(string $voiceId, array $runtime): strin
     if ($voiceToken === '') {
         return $voiceId;
     }
-    $cacheKey = 'cartesia_voice_id_' . strtolower($voiceToken);
-    $cached = stobeConfOptGet($cacheKey);
+    $cacheKey = stobeCloudVoiceCacheKey('cartesia', $voiceToken, intval($runtime['connector_id'] ?? 0));
+    $cached = stobeGetScopedCloudVoiceId('cartesia', $voiceToken, $runtime);
     if ($cached !== '') {
         return $cached;
     }
@@ -1153,13 +1359,42 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     if ($voiceId === '') {
         $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
-    $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
-    if ($language === '') {
+    $language = strtolower(trim(strval($runtime['language'] ?? '')));
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
 
-    stobePocketTtsApplySettings($provider, $endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());
-    stobeMaybeSyncVoiceToLocalProvider($provider, $endpoint, $voiceId);
+    $isAudioCppPocketTts = $provider === 'pocket_tts'
+        && stobePocketTtsIsAudioCpp($endpoint);
+
+    if ($provider === 'omnivoice' && $language !== '') {
+        $fallbackVoiceId = trim(strval($runtime['fallback_voiceid'] ?? ''));
+        if ($fallbackVoiceId === '') {
+            $fallbackVoiceId = stobeIsFemaleGender($runtime['gender'] ?? '') ?
+                trim(strval($runtime['fallback_female'] ?? 'female1')) :
+                trim(strval($runtime['fallback_male'] ?? 'male1'));
+        }
+        $ensureStatus = stobeEnsureOmniVoiceVoiceSet($endpoint, $language, [$voiceId, $fallbackVoiceId]);
+        if ($ensureStatus !== 'ready') {
+            return false;
+        }
+        $languagePayload = json_encode(['language' => $language], JSON_UNESCAPED_UNICODE);
+        if (is_string($languagePayload) && $languagePayload !== '') {
+            $switchResult = stobePostJsonToLocalTtsEndpoint($endpoint, $languagePayload, ['/active_language'], 'application/json');
+            $switchCode = intval($switchResult['http_code'] ?? 0);
+            if ($switchCode < 200 || $switchCode >= 300) {
+                stobeLogWarn('OmniVoice active language switch failed', [
+                    'endpoint' => $endpoint,
+                    'language' => $language,
+                    'http_code' => $switchCode,
+                ]);
+                return false;
+            }
+        }
+    } elseif (!$isAudioCppPocketTts) {
+        stobePocketTtsApplySettings($provider, $endpoint, $runtime['settings'] ?? stobePocketTtsDefaultSettings());
+        stobeMaybeSyncVoiceToLocalProvider($provider, $endpoint, $voiceId);
+    }
     stobeLogInfo('Local TTS request prepared', [
         'provider' => $provider,
         'endpoint' => $endpoint,
@@ -1167,18 +1402,37 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
         'language' => $language,
     ]);
 
-    $payload = json_encode([
-        'text' => $speechText,
-        'speaker_wav' => $voiceId,
-        'language' => $language,
-    ], JSON_UNESCAPED_UNICODE);
+    if ($isAudioCppPocketTts) {
+        $modelId = trim(strval($runtime['model_id'] ?? ''));
+        if ($modelId === '') {
+            $modelId = 'pocket-tts';
+        }
+        $payloadData = [
+            'model' => $modelId,
+            'input' => $speechText,
+            'language' => $language,
+            'response_format' => 'wav',
+        ];
+        $payload = json_encode(array_merge($payloadData, stobePocketTtsAudioCppVoicePayload($voiceId)), JSON_UNESCAPED_UNICODE);
+    } else {
+        $payloadData = [
+            'text' => $speechText,
+            'speaker_wav' => $voiceId,
+        ];
+        if ($language !== '') {
+            $payloadData['language'] = $language;
+        }
+        $payload = json_encode($payloadData, JSON_UNESCAPED_UNICODE);
+    }
     if (!is_string($payload) || $payload === '') {
         return false;
     }
 
-    $pathCandidates = in_array($provider, ['xtts', 'chatterbox'], true)
-        ? ['/tts_to_audio/', '/tts_to_audio']
-        : ['/tts_to_audio', '/tts_to_audio/'];
+    $pathCandidates = $isAudioCppPocketTts
+        ? ['/v1/audio/speech']
+        : (in_array($provider, ['xtts', 'chatterbox', 'omnivoice'], true)
+            ? ['/tts_to_audio/', '/tts_to_audio']
+            : ['/tts_to_audio', '/tts_to_audio/']);
     $requestResult = stobePostJsonToLocalTtsEndpoint($endpoint, $payload, $pathCandidates);
     $binary = $requestResult['binary'] ?? false;
     $httpCode = intval($requestResult['http_code'] ?? 0);
@@ -1186,7 +1440,7 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     $responseBody = strval($requestResult['response'] ?? '');
 
     if (!is_string($binary) || $binary === '' || $httpCode < 200 || $httpCode >= 300) {
-        if ($provider === 'xtts') {
+        if (in_array($provider, ['xtts', 'omnivoice'], true)) {
             $responseDetail = '';
             if ($responseBody !== '') {
                 $decodedError = json_decode($responseBody, true);
@@ -1210,14 +1464,18 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
                         trim(strval($runtime['fallback_male'] ?? 'male1'));
                 }
                 if (strcasecmp($fallbackVoiceId, $voiceId) !== 0) {
-                    $fallbackPayload = json_encode([
+                    $fallbackPayloadData = [
                         'text' => $speechText,
                         'speaker_wav' => $fallbackVoiceId,
-                        'language' => $language,
-                    ], JSON_UNESCAPED_UNICODE);
+                    ];
+                    if ($language !== '') {
+                        $fallbackPayloadData['language'] = $language;
+                    }
+                    $fallbackPayload = json_encode($fallbackPayloadData, JSON_UNESCAPED_UNICODE);
 
                     if (is_string($fallbackPayload) && $fallbackPayload !== '') {
-                        stobeLogWarn('XTTS speaker missing, retrying fallback voice', [
+                        stobeLogWarn('Local TTS speaker missing, retrying fallback voice', [
+                            'provider' => $provider,
                             'requested_voiceid' => $voiceId,
                             'fallback_voiceid' => $fallbackVoiceId,
                             'endpoint' => $endpoint,
@@ -1280,8 +1538,8 @@ function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcD
     if ($voiceId === '') {
         $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
-    $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
-    if ($language === '') {
+    $language = strtolower(trim(strval($runtime['language'] ?? '')));
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
     $modelId = trim(strval($runtime['model_id'] ?? ''));
@@ -1322,6 +1580,8 @@ function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcD
         $binary = stobeSynthesizeViaXtts($speechText, $runtime);
     } elseif ($provider === 'chatterbox') {
         $binary = stobeSynthesizeViaChatterbox($speechText, $runtime);
+    } elseif ($provider === 'omnivoice') {
+        $binary = stobeSynthesizeViaOmniVoice($speechText, $runtime);
     } elseif ($provider === 'cartesia') {
         $binary = stobeSynthesizeViaCartesia($speechText, $runtime);
         $voiceId = trim(strval($runtime['voiceid'] ?? $voiceId));
@@ -1385,13 +1645,12 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
     if ($endpoint === '') {
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
-    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox'], true)) {
-        $endpoint = 'http://127.0.0.1:8020';
+    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
+        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
     }
     $endpoint = rtrim($endpoint, '/');
-
     $language = trim(strval($connectorConfig['language'] ?? ''));
-    if ($language === '') {
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
 
@@ -1445,8 +1704,8 @@ function stobeSynthesizeTtsFromConnector(array $connector, string $text, string 
     if ($voiceId === '') {
         $voiceId = trim(strval($runtime['fallback_voiceid'] ?? 'male1'));
     }
-    $language = strtolower(trim(strval($runtime['language'] ?? 'en')));
-    if ($language === '') {
+    $language = strtolower(trim(strval($runtime['language'] ?? '')));
+    if ($language === '' && $provider !== 'omnivoice') {
         $language = 'en';
     }
     $modelId = trim(strval($runtime['model_id'] ?? ''));
@@ -1478,6 +1737,8 @@ function stobeSynthesizeTtsFromConnector(array $connector, string $text, string 
         $binary = stobeSynthesizeViaXtts($speechText, $runtime);
     } elseif ($provider === 'chatterbox') {
         $binary = stobeSynthesizeViaChatterbox($speechText, $runtime);
+    } elseif ($provider === 'omnivoice') {
+        $binary = stobeSynthesizeViaOmniVoice($speechText, $runtime);
     } elseif ($provider === 'cartesia') {
         $binary = stobeSynthesizeViaCartesia($speechText, $runtime);
         $voiceId = trim(strval($runtime['voiceid'] ?? $voiceId));

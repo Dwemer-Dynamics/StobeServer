@@ -72,6 +72,16 @@ jobs:
           set -euo pipefail
 
           all_tests=(
+            "tests/autonomy_control_plane_regression.php"
+            "tests/autonomy_phase2_regression.php"
+            "tests/autonomy_phase3_contract_regression.php"
+            "tests/autonomy_phase3_regression.php"
+            "tests/autonomy_phase4_regression.php"
+            "tests/autonomy_phase4_db_regression.php"
+            "tests/autonomy_phase5_regression.php"
+            "tests/autonomy_phase5_db_regression.php"
+            "tests/autonomy_phase6_regression.php"
+            "tests/autonomy_phase6_db_regression.php"
             "tests/bio_unique_regression.php"
             "tests/chat_flow_regression.php"
             "tests/chat_json_endpoint_regression.php"
@@ -82,14 +92,17 @@ jobs:
             "tests/import_rules_regression.php"
             "tests/main_ingress_http_regression.php"
             "tests/npc_history_snapshot_regression.php"
+            "tests/npc_profile_lock_controls_regression.php"
             "tests/playthrough_rollback_regression.php"
             "tests/playthrough_storage_regression.php"
             "tests/rechat_flow_regression.php"
             "tests/rechat_selection_regression.php"
             "tests/relationship_system_regression.php"
             "tests/rename_snapshot_regression.php"
+            "tests/rename_name_pool_regression.php"
             "tests/startup_runtime_regression.php"
             "tests/structured_dialogue_contract_regression.php"
+            "tests/tts_pockettts_audiocpp_regression.php"
           )
           tests=("${all_tests[@]}")
 

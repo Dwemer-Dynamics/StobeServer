@@ -188,7 +188,7 @@ $stats = [
     'limbs_lost_total' => safeCount($db, "SELECT COUNT(*) AS total FROM eventlog WHERE LOWER(type) = 'limb_loss'"),
     'diaries_total' => safeCount($db, "SELECT COUNT(*) AS total FROM diarylog"),
     'npcs_total' => safeCount($db, "SELECT COUNT(*) AS total FROM core_npc"),
-    'zones_total' => safeCount($db, "SELECT COUNT(*) AS total FROM location_zones"),
+    'zones_total' => safeCount($db, "SELECT COUNT(*) AS total FROM location_zones WHERE metadata->>'knowledge_only' IS DISTINCT FROM 'true'"),
 ];
 
 $latestDiaryRows = safeRows(
@@ -225,11 +225,11 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.9.1';
+    $serverVersionDisplay = '0.9.3';
 }
 $serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
 if ($serverReleaseDate === '') {
-    $serverReleaseDate = '2026-06-11';
+    $serverReleaseDate = '2026-07-20';
 }
 
 $pluginVersionDisplay = 'N/A';
@@ -357,6 +357,7 @@ $locationsRows = safeRows(
         last_game_ts,
         last_seen_ts
      FROM location_zones
+     WHERE metadata->>'knowledge_only' IS DISTINCT FROM 'true'
      ORDER BY first_game_ts DESC, last_seen_ts DESC, zone_name ASC
      LIMIT 500"
 );

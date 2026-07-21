@@ -1933,7 +1933,7 @@ function stobeExtractZoneSnapshotContext(array $snapshot): array {
     $z = $pickCoordinate($environment, $snapshot, 'z');
 
     $metadata = [];
-    foreach (['indoors', 'outdoors', 'in_town', 'weather'] as $field) {
+    foreach (['indoors', 'outdoors', 'in_town', 'weather', 'weather_name', 'weather_strength', 'weather_affect_strength', 'wind_speed', 'wind_direction', 'wetness', 'active_environmental_effects'] as $field) {
         if (array_key_exists($field, $environment)) {
             $metadata[$field] = $environment[$field];
         }
@@ -1971,6 +1971,8 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     if ($observerName !== '') {
         $metadata['observer'] = $observerName;
     }
+    $metadata['visited'] = true;
+    $metadata['knowledge_only'] = false;
     $metadataJson = normalizeJsonString($metadata);
 
     $db = $GLOBALS["db"];
@@ -2037,6 +2039,113 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     }
 
     return true;
+}
+
+function stobeStoreTownKnowledgeSnapshot(array $towns, int $gamets): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return ['stored' => 0, 'removed' => 0, 'rejected' => count($towns)];
+    }
+
+    $safeGamets = max(0, $gamets);
+    $nowTs = time();
+    $stored = 0;
+    $rejected = 0;
+    $knownNames = [];
+
+    foreach (array_slice($towns, 0, 512) as $town) {
+        if (!is_array($town) || !coerceBoolean($town['discovered'] ?? false)) {
+            $rejected++;
+            continue;
+        }
+
+        $name = stobeNormalizeZoneLocationToken(strval($town['name'] ?? ''));
+        if ($name === '') {
+            $rejected++;
+            continue;
+        }
+
+        $coordinate = static function (mixed $value): ?float {
+            if (!is_numeric($value)) {
+                return null;
+            }
+            $number = floatval($value);
+            return is_finite($number) ? $number : null;
+        };
+        $x = $coordinate($town['x'] ?? null);
+        $y = $coordinate($town['y'] ?? null);
+        $z = $coordinate($town['z'] ?? null);
+        $explored = coerceBoolean($town['explored'] ?? false);
+        $metadata = [
+            'knowledge_source' => 'town_list',
+            'discovered' => true,
+            'explored' => $explored,
+            'knowledge_only' => !$explored,
+            'town_type' => intval($town['town_type'] ?? 0),
+        ];
+
+        try {
+            $db->exec(
+                "INSERT INTO location_zones (
+                    zone_name, city_name, x, y, z,
+                    first_game_ts, last_game_ts, first_seen_ts, last_seen_ts,
+                    metadata, updated_at
+                ) VALUES ($1, $1, $2, $3, $4, 0, $5, $6, $6, $7::jsonb, NOW())
+                ON CONFLICT (zone_name) DO UPDATE SET
+                    city_name = CASE
+                        WHEN NULLIF(location_zones.city_name, '') IS NULL THEN EXCLUDED.city_name
+                        ELSE location_zones.city_name
+                    END,
+                    x = COALESCE(location_zones.x, EXCLUDED.x),
+                    y = COALESCE(location_zones.y, EXCLUDED.y),
+                    z = COALESCE(location_zones.z, EXCLUDED.z),
+                    last_game_ts = GREATEST(location_zones.last_game_ts, EXCLUDED.last_game_ts),
+                    last_seen_ts = EXCLUDED.last_seen_ts,
+                    metadata = location_zones.metadata || EXCLUDED.metadata ||
+                        CASE
+                            WHEN COALESCE(location_zones.first_game_ts, 0) > 0
+                              OR location_zones.metadata->>'visited' = 'true'
+                            THEN '{\"knowledge_only\":false,\"visited\":true}'::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                    updated_at = NOW()",
+                [$name, $x, $y, $z, $safeGamets, $nowTs, normalizeJsonString($metadata)]
+            );
+            $knownNames[strtolower($name)] = true;
+            $stored++;
+        } catch (Throwable $exception) {
+            $rejected++;
+            stobeLogException($exception, 'Failed to store discovered town knowledge', [
+                'town' => $name,
+                'gamets' => $safeGamets,
+            ]);
+        }
+    }
+
+    $removed = 0;
+    try {
+        $existing = $db->fetchAll(
+            "SELECT id, zone_name
+             FROM location_zones
+             WHERE metadata->>'knowledge_source' = 'town_list'
+               AND metadata->>'knowledge_only' = 'true'"
+        );
+        foreach ($existing as $row) {
+            $existingName = strtolower(stobeNormalizeZoneLocationToken(strval($row['zone_name'] ?? '')));
+            if ($existingName !== '' && isset($knownNames[$existingName])) {
+                continue;
+            }
+            $id = intval($row['id'] ?? 0);
+            if ($id > 0) {
+                $db->exec('DELETE FROM location_zones WHERE id = $1', [$id]);
+                $removed++;
+            }
+        }
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to prune stale town knowledge');
+    }
+
+    return ['stored' => $stored, 'removed' => $removed, 'rejected' => $rejected];
 }
 
 function stobeEnsureEventlogGeoColumn(): bool {
@@ -5191,6 +5300,7 @@ function loadBioUniqueTraitSelections(string $name): array {
                 "SELECT name, type, description
                  FROM combined_bio_unique
                  WHERE LOWER(name) = $1
+                   AND COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY id ASC",
                 [$lookupKeys[0]]
             );
@@ -5199,6 +5309,7 @@ function loadBioUniqueTraitSelections(string $name): array {
                 "SELECT name, type, description
                  FROM combined_bio_unique
                  WHERE LOWER(name) IN ($1, $2)
+                   AND COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY
                     CASE
                         WHEN LOWER(name) = $1 THEN 0
@@ -5280,6 +5391,7 @@ function loadBioRandomCandidates(
         $rows = $db->fetchAll(
             "SELECT type, description, race, gender, faction, name
              FROM combined_bio_random
+             WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY id ASC"
         );
     } catch (Throwable $exception) {
@@ -5512,6 +5624,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
         $rows = $db->fetchAll(
             "SELECT name, gender, race, faction
              FROM {$viewSource}
+             WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY name ASC"
         );
     } else {
@@ -5527,6 +5640,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
             $tableRows = $db->fetchAll(
                 "SELECT name, gender, race, faction
                  FROM {$tableName}
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY name ASC"
             );
             foreach ($tableRows as $row) {
@@ -5545,6 +5659,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
             $tableRows = $db->fetchAll(
                 "SELECT name, gender, race, faction
                  FROM {$tableName}
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY name ASC"
             );
             foreach ($tableRows as $row) {
@@ -5619,6 +5734,39 @@ function isNpcNameTaken(string $name): bool {
     return $row !== false;
 }
 
+function normalizeGeneratedLoreNameBase(string $name): string {
+    $base = baseNameWithoutBracketSuffix(trim($name));
+    $base = preg_replace('/\s+[0-9]+$/', '', $base) ?? $base;
+    return strtolower(trim($base));
+}
+
+function loadNpcLoreNameReservations(): array {
+    $db = $GLOBALS["db"];
+    $rows = $db->fetchAll("SELECT name FROM core_npc WHERE COALESCE(name, '') <> ''");
+    $exact = [];
+    $bases = [];
+    foreach ($rows as $row) {
+        $name = baseNameWithoutBracketSuffix(trim(strval($row['name'] ?? '')));
+        if ($name === '') {
+            continue;
+        }
+        $exact[strtolower($name)] = true;
+        $base = normalizeGeneratedLoreNameBase($name);
+        if ($base !== '') {
+            $bases[$base] = true;
+        }
+    }
+    return ['exact' => $exact, 'bases' => $bases];
+}
+
+function buildIdentityRenameNameSeed(string $currentName, string $storageId = '', string $serial = ''): string {
+    $identityKey = trim($storageId);
+    if ($identityKey === '') {
+        $identityKey = trim($serial);
+    }
+    return strtolower(trim($currentName)) . '|' . strtolower($identityKey);
+}
+
 function generateUniqueLoreName(string $gender = '', string $seedName = '', string $race = '', string $faction = ''): string {
     $pool = loadGlobalNamePool($gender, $race, $faction);
     if (count($pool) === 0 && ($gender !== '' || $race !== '' || $faction !== '')) {
@@ -5631,17 +5779,21 @@ function generateUniqueLoreName(string $gender = '', string $seedName = '', stri
     $seed = $seedName !== '' ? $seedName : (string)microtime(true);
     $unsignedHash = intval(sprintf('%u', crc32(strtolower($seed))));
     $startIndex = $unsignedHash % count($pool);
+    $reservations = loadNpcLoreNameReservations();
+    $reservedBases = is_array($reservations['bases'] ?? null) ? $reservations['bases'] : [];
+    $reservedExact = is_array($reservations['exact'] ?? null) ? $reservations['exact'] : [];
 
     for ($offset = 0; $offset < count($pool); $offset++) {
         $candidate = $pool[($startIndex + $offset) % count($pool)];
-        if (!isNpcNameTaken($candidate)) {
+        $candidateBase = normalizeGeneratedLoreNameBase($candidate);
+        if ($candidateBase !== '' && !isset($reservedBases[$candidateBase])) {
             return $candidate;
         }
     }
 
     $base = $pool[$startIndex];
     $suffix = 2;
-    while (isNpcNameTaken($base . ' ' . $suffix)) {
+    while (isset($reservedExact[strtolower($base . ' ' . $suffix)])) {
         $suffix++;
     }
     return $base . ' ' . $suffix;
@@ -5759,6 +5911,7 @@ function loadServerRenameEligibilityTokens(): array {
             $rows = $db->fetchAll(
                 "SELECT token
                  FROM combined_rename_token_global
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY token ASC"
             );
             foreach ($rows as $row) {
@@ -5910,7 +6063,8 @@ function batchIdentityRenameDecisions(array $identities): array {
         }
 
         $firstSeenOriginal = ensureOriginalName($currentName, $currentName);
-        $generated = generateUniqueLoreName($gender, $currentName, $race, $faction);
+        $nameSeed = buildIdentityRenameNameSeed($currentName, $storageId, $serial);
+        $generated = generateUniqueLoreName($gender, $nameSeed, $race, $faction);
         $generatedBase = baseNameWithoutBracketSuffix($generated);
         if ($generatedBase === '') {
             $generatedBase = 'Wanderer';
@@ -11842,6 +11996,7 @@ function stobeNormalizeTtsConnectorTypeForStorage(string $rawType): string {
         'pockettts', 'pocketts', 'pocket_tts' => 'pocket_tts',
         'xtts', 'xtts_fastapi' => 'xtts',
         'chatterbox' => 'chatterbox',
+        'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
         'cartesia' => 'cartesia',
         'inworld' => 'inworld',
         default => 'pocket_tts',
