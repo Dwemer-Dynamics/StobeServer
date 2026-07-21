@@ -131,7 +131,7 @@ autonomyAssertSame(2, intval($afterStaleReport['plugin_control_revision'] ?? 0),
 $resumed = stobeAutonomyApplyControl('resume', ['control_revision' => 3]);
 autonomyAssertSame('ARMING', $resumed['session']['desired_state'] ?? '', 'Resume should request a fresh ARMING validation.');
 
-$tick = autonomyRunEndpoint('autonomy_tick.php', [
+    $tick = stobeAutonomyApplyTick([
     'control_revision' => 4,
     'npc_id' => $npcId,
     'npc_storage_id' => 'hand_884422',
