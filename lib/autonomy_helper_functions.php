@@ -404,6 +404,7 @@ function stobeAutonomyListVisitedLocations(int $limit = 500): array
         "SELECT id, zone_name, city_name, x, y, z, last_game_ts, last_seen_ts
          FROM location_zones
          WHERE x IS NOT NULL AND y IS NOT NULL AND z IS NOT NULL
+           AND metadata->>'knowledge_only' IS DISTINCT FROM 'true'
          ORDER BY last_seen_ts DESC, id DESC LIMIT " . $safeLimit
     );
     $result = [];
@@ -423,7 +424,10 @@ function stobeAutonomyGetVisitedLocation(int $locationId): array|false
     }
     $row = $GLOBALS['db']->fetchOne(
         "SELECT id, zone_name, city_name, x, y, z, last_game_ts, last_seen_ts
-         FROM location_zones WHERE id = $1 LIMIT 1",
+         FROM location_zones
+         WHERE id = $1
+           AND metadata->>'knowledge_only' IS DISTINCT FROM 'true'
+         LIMIT 1",
         [$locationId]
     );
     return $row ? stobeAutonomyNormalizeLocation($row) : false;

@@ -1971,6 +1971,8 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     if ($observerName !== '') {
         $metadata['observer'] = $observerName;
     }
+    $metadata['visited'] = true;
+    $metadata['knowledge_only'] = false;
     $metadataJson = normalizeJsonString($metadata);
 
     $db = $GLOBALS["db"];
@@ -2037,6 +2039,113 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     }
 
     return true;
+}
+
+function stobeStoreTownKnowledgeSnapshot(array $towns, int $gamets): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return ['stored' => 0, 'removed' => 0, 'rejected' => count($towns)];
+    }
+
+    $safeGamets = max(0, $gamets);
+    $nowTs = time();
+    $stored = 0;
+    $rejected = 0;
+    $knownNames = [];
+
+    foreach (array_slice($towns, 0, 512) as $town) {
+        if (!is_array($town) || !coerceBoolean($town['discovered'] ?? false)) {
+            $rejected++;
+            continue;
+        }
+
+        $name = stobeNormalizeZoneLocationToken(strval($town['name'] ?? ''));
+        if ($name === '') {
+            $rejected++;
+            continue;
+        }
+
+        $coordinate = static function (mixed $value): ?float {
+            if (!is_numeric($value)) {
+                return null;
+            }
+            $number = floatval($value);
+            return is_finite($number) ? $number : null;
+        };
+        $x = $coordinate($town['x'] ?? null);
+        $y = $coordinate($town['y'] ?? null);
+        $z = $coordinate($town['z'] ?? null);
+        $explored = coerceBoolean($town['explored'] ?? false);
+        $metadata = [
+            'knowledge_source' => 'town_list',
+            'discovered' => true,
+            'explored' => $explored,
+            'knowledge_only' => !$explored,
+            'town_type' => intval($town['town_type'] ?? 0),
+        ];
+
+        try {
+            $db->exec(
+                "INSERT INTO location_zones (
+                    zone_name, city_name, x, y, z,
+                    first_game_ts, last_game_ts, first_seen_ts, last_seen_ts,
+                    metadata, updated_at
+                ) VALUES ($1, $1, $2, $3, $4, 0, $5, $6, $6, $7::jsonb, NOW())
+                ON CONFLICT (zone_name) DO UPDATE SET
+                    city_name = CASE
+                        WHEN NULLIF(location_zones.city_name, '') IS NULL THEN EXCLUDED.city_name
+                        ELSE location_zones.city_name
+                    END,
+                    x = COALESCE(location_zones.x, EXCLUDED.x),
+                    y = COALESCE(location_zones.y, EXCLUDED.y),
+                    z = COALESCE(location_zones.z, EXCLUDED.z),
+                    last_game_ts = GREATEST(location_zones.last_game_ts, EXCLUDED.last_game_ts),
+                    last_seen_ts = EXCLUDED.last_seen_ts,
+                    metadata = location_zones.metadata || EXCLUDED.metadata ||
+                        CASE
+                            WHEN COALESCE(location_zones.first_game_ts, 0) > 0
+                              OR location_zones.metadata->>'visited' = 'true'
+                            THEN '{\"knowledge_only\":false,\"visited\":true}'::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                    updated_at = NOW()",
+                [$name, $x, $y, $z, $safeGamets, $nowTs, normalizeJsonString($metadata)]
+            );
+            $knownNames[strtolower($name)] = true;
+            $stored++;
+        } catch (Throwable $exception) {
+            $rejected++;
+            stobeLogException($exception, 'Failed to store discovered town knowledge', [
+                'town' => $name,
+                'gamets' => $safeGamets,
+            ]);
+        }
+    }
+
+    $removed = 0;
+    try {
+        $existing = $db->fetchAll(
+            "SELECT id, zone_name
+             FROM location_zones
+             WHERE metadata->>'knowledge_source' = 'town_list'
+               AND metadata->>'knowledge_only' = 'true'"
+        );
+        foreach ($existing as $row) {
+            $existingName = strtolower(stobeNormalizeZoneLocationToken(strval($row['zone_name'] ?? '')));
+            if ($existingName !== '' && isset($knownNames[$existingName])) {
+                continue;
+            }
+            $id = intval($row['id'] ?? 0);
+            if ($id > 0) {
+                $db->exec('DELETE FROM location_zones WHERE id = $1', [$id]);
+                $removed++;
+            }
+        }
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to prune stale town knowledge');
+    }
+
+    return ['stored' => $stored, 'removed' => $removed, 'rejected' => $rejected];
 }
 
 function stobeEnsureEventlogGeoColumn(): bool {

@@ -1479,8 +1479,9 @@ function stobeResolveTravelLocationFromVisitedZones(string $requestedLocation): 
             $match = $db->fetchOne(
                 "SELECT zone_name, city_name, x, y, z
                  FROM location_zones
-                 WHERE LOWER(zone_name) = LOWER($1)
-                    OR LOWER(city_name) = LOWER($1)
+                 WHERE (LOWER(zone_name) = LOWER($1)
+                    OR LOWER(city_name) = LOWER($1))
+                   AND metadata->>'knowledge_only' IS DISTINCT FROM 'true'
                  ORDER BY
                     CASE
                         WHEN LOWER(zone_name) = LOWER($1) THEN 0
@@ -1506,8 +1507,9 @@ function stobeResolveTravelLocationFromVisitedZones(string $requestedLocation): 
             $match = $db->fetchOne(
                 "SELECT zone_name, city_name, x, y, z
                  FROM location_zones
-                 WHERE LOWER(zone_name) LIKE $1
-                    OR LOWER(city_name) LIKE $1
+                 WHERE (LOWER(zone_name) LIKE $1
+                    OR LOWER(city_name) LIKE $1)
+                   AND metadata->>'knowledge_only' IS DISTINCT FROM 'true'
                  ORDER BY
                     CASE
                         WHEN LOWER(zone_name) LIKE $1 THEN 0
