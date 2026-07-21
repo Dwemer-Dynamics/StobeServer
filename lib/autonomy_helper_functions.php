@@ -843,8 +843,30 @@ function stobeAutonomyNormalizeInventoryItems(mixed $value): array
         if ($name === '' || mb_strlen($name) > 160) {
             continue;
         }
+        $kind = strtolower(trim(strval($item['kind'] ?? 'item')));
+        if (!in_array($kind, ['item', 'map', 'blueprint', 'robotic_limb', 'severed_limb'], true)) {
+            $kind = 'item';
+        }
+        $detail = mb_substr(trim(strval($item['detail'] ?? '')), 0, 160);
+        $revealsTowns = [];
+        foreach (array_slice(is_array($item['reveals_towns'] ?? null) ? $item['reveals_towns'] : [], 0, 32) as $town) {
+            $town = mb_substr(trim(strval($town)), 0, 160);
+            if ($town !== '') {
+                $key = mb_strtolower($town);
+                $revealsTowns[$key] ??= $town;
+            }
+        }
+        if ($kind !== 'map') {
+            $revealsTowns = [];
+        }
+        if (!in_array($kind, ['blueprint', 'robotic_limb'], true)) {
+            $detail = '';
+        }
         $result[] = [
             'name' => $name,
+            'kind' => $kind,
+            'detail' => $detail,
+            'reveals_towns' => array_values($revealsTowns),
             'count' => max(0, min(10000, intval($item['count'] ?? 0))),
             'buy_value_each' => max(0, min(10000000, intval($item['buy_value_each'] ?? 0))),
             'sell_value_each' => max(0, min(10000000, intval($item['sell_value_each'] ?? 0))),
