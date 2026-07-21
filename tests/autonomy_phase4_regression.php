@@ -131,4 +131,17 @@ $snapshot = stobeAutonomyTickSnapshot($payload);
 phase4Assert(is_array($snapshot) && intval($snapshot['runtime_serial']) === 884422, 'Snapshot normalization must retain the selected runtime serial.');
 phase4Assert(floatval($snapshot['nearby_actors'][0]['first_aid_need']) === 3.0, 'Snapshot normalization must retain patient telemetry.');
 
+$aiPayload = $payload;
+$aiPayload['ai'] = [
+    'current_goal' => 'FIRST_AID_ORDER',
+    'task_expired' => false,
+    'goal_expired' => false,
+    'path_failure_count' => 2,
+    'intends_to_attack_target' => true,
+];
+$aiSnapshot = stobeAutonomyTickSnapshot($aiPayload);
+phase4Assert(strval($aiSnapshot['ai']['current_goal'] ?? '') === 'FIRST_AID_ORDER', 'Snapshot normalization must retain the native current goal.');
+phase4Assert(intval($aiSnapshot['ai']['path_failure_count'] ?? 0) === 2, 'Snapshot normalization must retain native path failures.');
+phase4Assert(boolval($aiSnapshot['ai']['intends_to_attack_target'] ?? false), 'Snapshot normalization must retain native attack intent.');
+
 echo "PASS: autonomy Phase 4 survival regression\n";

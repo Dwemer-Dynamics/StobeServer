@@ -788,6 +788,13 @@ function stobeAutonomyTickSnapshot(array $payload): array|false
         'health' => stobeAutonomyNormalizeHealth($payload['health'] ?? []),
         'order' => is_array($payload['order'] ?? null) ? array_intersect_key($payload['order'], array_flip(['count', 'task', 'subject_serial'])) : [],
         'movement' => is_array($payload['movement'] ?? null) ? array_intersect_key($payload['movement'], array_flip(['moving', 'path_failed'])) : [],
+        'ai' => [
+            'current_goal' => substr(trim(strval($payload['ai']['current_goal'] ?? '')), 0, 500),
+            'task_expired' => stobeAutonomyBool($payload['ai']['task_expired'] ?? false),
+            'goal_expired' => stobeAutonomyBool($payload['ai']['goal_expired'] ?? false),
+            'path_failure_count' => max(0, min(1000, intval($payload['ai']['path_failure_count'] ?? 0))),
+            'intends_to_attack_target' => stobeAutonomyBool($payload['ai']['intends_to_attack_target'] ?? false),
+        ],
         'nearby_actors' => stobeAutonomyNormalizeNearbyActors($payload['nearby_actors'] ?? []),
         'inventory_items' => stobeAutonomyNormalizeInventoryItems($payload['inventory_items'] ?? []),
         'nearby_resources' => stobeAutonomyNormalizeNearbyResources($payload['nearby_resources'] ?? []),
