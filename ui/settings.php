@@ -57,6 +57,11 @@ try {
                 'value' => 'true',
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
             ],
+            [
+                'id' => 'TXTAI_URL',
+                'value' => 'http://127.0.0.1:8082',
+                'description' => 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
+            ],
         ];
 
         foreach ($requiredSettings as $requiredSetting) {
@@ -185,6 +190,9 @@ function stobeSettingLooksBoolean(string $value): bool
 function stobeSettingType(string $id, string $value): string
 {
     $idUpper = strtoupper($id);
+    if ($idUpper === 'TXTAI_URL') {
+        return 'url';
+    }
     if ($idUpper === 'RECHAT_MODE') {
         return 'select';
     }
@@ -250,7 +258,7 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'CORE_CONNECTOR_') || strpos($idUpper, 'API_KEY') !== false) {
         return 'LLM & API';
     }
-    if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_')) {
+    if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_') || $idUpper === 'TXTAI_URL') {
         return 'Memory';
     }
     if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_') || $idUpper === 'ALWAYS_INSERT_RACE') {
@@ -334,6 +342,7 @@ function stobePrettySettingLabel(string $id): string
         'ACTIONS_ALLOWLIST' => 'Actions Allowlist',
         'HTTP_TIMEOUT' => 'HTTP Timeout',
         'CONTEXT_HISTORY' => 'Context History',
+        'TXTAI_URL' => 'MiniMe / TXT2VEC URL',
     ];
     if (isset($customLabels[$idUpper])) {
         return $customLabels[$idUpper];
@@ -659,6 +668,7 @@ uksort($grouped, function ($a, $b) {
             min-width: 0;
         }
         .provider-body input[type="text"],
+        .provider-body input[type="url"],
         .provider-body input[type="password"],
         .provider-body input[type="number"],
         .provider-body select,
@@ -868,6 +878,8 @@ uksort($grouped, function ($a, $b) {
                                         <input type="number" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>" step="0.01">
                                     <?php elseif ($type === 'password'): ?>
                                         <input type="password" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>" autocomplete="off">
+                                    <?php elseif ($type === 'url'): ?>
+                                        <input type="url" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>">
                                     <?php else: ?>
                                         <input type="text" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>">
                                     <?php endif; ?>

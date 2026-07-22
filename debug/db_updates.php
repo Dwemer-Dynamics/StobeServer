@@ -2141,6 +2141,16 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             stobeRenameNameImportBaseSeed($db, $seedPath);
         });
 
+        $applyPatch('minime_remote_service_url', 202607220101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('TXTAI_URL', 'http://127.0.0.1:8082',
+                         'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
+                         NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }
