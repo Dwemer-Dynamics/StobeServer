@@ -11922,7 +11922,7 @@ function getDefaultPocketTtsConnectorConfig(): array {
 function ensurePocketTtsPlaceholderConnectorId(): int {
     $db = $GLOBALS["db"];
     $connectorName = 'Pocket TTS Default';
-    $defaultEndpoint = 'http://127.0.0.1:8020';
+    $defaultEndpoint = 'http://127.0.0.1:8024';
     $defaultConfig = normalizeJsonString(getDefaultPocketTtsConnectorConfig());
     $existing = $db->fetchOne(
         "SELECT id

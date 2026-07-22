@@ -18,7 +18,7 @@ function ttsSpecs(): array {
         'inworld' => ['label' => 'Inworld', 'local' => false],
     ];
 }
-function ttsDefaultUrl(string $service): string { return in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''; }
+function ttsDefaultUrl(string $service): string { return match ($service) { 'chatterbox' => 'http://127.0.0.1:8023', 'pocket_tts' => 'http://127.0.0.1:8024', 'xtts' => 'http://127.0.0.1:8020', default => '' }; }
 function ttsDefaultConfig(string $service): array {
     return [
         'provider' => $service,
@@ -240,7 +240,7 @@ h1.api-title {
 <div id="row_url">
 <label for="url">URL</label>
 <input id="url" type="text" name="url" value="<?= h($editItem['url']) ?>">
-<div class="help">Base endpoint for this TTS provider. Local providers usually use `http://127.0.0.1:8020`.</div>
+<div class="help">Base endpoint for this TTS provider. DwemerDistro uses XTTS `8020`, Chatterbox `8023`, Python PocketTTS `8024`, and PocketTTS audio.cpp `8086`.</div>
 </div>
 
 <label>Provider</label>
