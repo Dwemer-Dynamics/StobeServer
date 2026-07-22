@@ -23,6 +23,13 @@ $omni = stobeVoiceProviderTarget([
 ]);
 expectSame('http://localhost:8021/voices/npc.voice-1?language=en', stobeVoiceProviderDeleteUrl($omni, 'npc.voice-1'), 'builds OmniVoice delete URL');
 
+$chatterboxDefault = stobeVoiceProviderTarget(['connector_type' => 'chatterbox']);
+expectSame('http://127.0.0.1:8023', $chatterboxDefault['endpoint'], 'uses dedicated Chatterbox port');
+$pocketDefault = stobeVoiceProviderTarget(['connector_type' => 'pocket_tts']);
+expectSame('http://127.0.0.1:8024', $pocketDefault['endpoint'], 'uses dedicated Python PocketTTS port');
+$xttsDefault = stobeVoiceProviderTarget(['connector_type' => 'xtts']);
+expectSame('http://127.0.0.1:8020', $xttsDefault['endpoint'], 'keeps XTTS on port 8020');
+
 $audioCpp = stobeVoiceProviderTarget([
     'connector_type' => 'pocket_tts',
     'base_url' => 'http://127.0.0.1:8086',
