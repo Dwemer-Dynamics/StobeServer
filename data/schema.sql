@@ -3639,7 +3639,6 @@ INSERT INTO core_tts_connector (
 )
 ON CONFLICT (name) DO UPDATE SET
     connector_type = EXCLUDED.connector_type,
-    base_url = EXCLUDED.base_url,
     is_default = EXCLUDED.is_default,
     config = EXCLUDED.config;
 
