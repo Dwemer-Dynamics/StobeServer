@@ -2251,15 +2251,16 @@ function stobeWorldKnowledgeMinimeServiceAvailable(): bool
         return boolval($available);
     }
 
-    $socket = @fsockopen('127.0.0.1', 8082, $errno, $errstr, 0.1);
+    $serviceSocket = stobeMiniMeServiceSocket();
+    $socket = @fsockopen($serviceSocket['socket_host'], $serviceSocket['port'], $errno, $errstr, 0.1);
     if ($socket) {
         fclose($socket);
         $available = true;
     } else {
         $available = false;
         stobeLogWarn('World knowledge Minime service unavailable; using heuristic fallback', [
-            'host' => '127.0.0.1',
-            'port' => 8082,
+            'host' => $serviceSocket['host'],
+            'port' => $serviceSocket['port'],
         ]);
     }
 
@@ -2283,7 +2284,7 @@ function stobeWorldKnowledgeMinimeTopicRequest(string $text): ?string
         $timeout = 20;
     }
 
-    $url = 'http://127.0.0.1:8082/topic?text=' . urlencode($payload);
+    $url = stobeMiniMeServiceEndpoint('topic', ['text' => $payload]);
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',

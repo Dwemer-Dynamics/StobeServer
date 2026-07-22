@@ -3431,6 +3431,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
+('TXTAI_URL',            'http://127.0.0.1:8082', 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.'),
 ('INDIVIDUAL_MEMORY_SUMMARY_THRESHOLD', '2', 'How many global memory summaries involving an NPC are required before creating one NPC-scoped summary'),
 ('MEMORY_AUTO_CREATE_SUMMARY_INTERVAL', '6', 'Memory summary packing interval. Is measured in ingame hours.'),
 ('AUTO_CREATE_SUMMARY_MIN_EVENTS', '5', 'Minimum memory events required to create one packed summary block.'),
