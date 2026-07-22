@@ -373,7 +373,13 @@ function stobeQuickstartLocalTtsDefaultUrl(string $provider): string
     if ($provider === 'omnivoice') {
         return 'http://127.0.0.1:8021';
     }
-    if (in_array($provider, ['pocket_tts', 'xtts', 'chatterbox'], true)) {
+    if ($provider === 'chatterbox') {
+        return 'http://127.0.0.1:8023';
+    }
+    if ($provider === 'pocket_tts') {
+        return 'http://127.0.0.1:8024';
+    }
+    if ($provider === 'xtts') {
         return 'http://127.0.0.1:8020';
     }
     return '';

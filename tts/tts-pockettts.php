@@ -758,7 +758,12 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
     if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
-        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
+        $endpoint = match ($provider) {
+            'omnivoice' => 'http://127.0.0.1:8021',
+            'chatterbox' => 'http://127.0.0.1:8023',
+            'pocket_tts' => 'http://127.0.0.1:8024',
+            default => 'http://127.0.0.1:8020',
+        };
     }
     $endpoint = rtrim($endpoint, '/');
     $language = trim(strval($connectorConfig['language'] ?? ''));
@@ -1646,7 +1651,12 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
     if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
-        $endpoint = $provider === 'omnivoice' ? 'http://127.0.0.1:8021' : 'http://127.0.0.1:8020';
+        $endpoint = match ($provider) {
+            'omnivoice' => 'http://127.0.0.1:8021',
+            'chatterbox' => 'http://127.0.0.1:8023',
+            'pocket_tts' => 'http://127.0.0.1:8024',
+            default => 'http://127.0.0.1:8020',
+        };
     }
     $endpoint = rtrim($endpoint, '/');
     $language = trim(strval($connectorConfig['language'] ?? ''));

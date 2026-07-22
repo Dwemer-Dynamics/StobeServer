@@ -19,7 +19,7 @@ function ttsSpecs(): array {
         'omnivoice' => ['label' => 'OmniVoice', 'local' => true],
     ];
 }
-function ttsDefaultUrl(string $service): string { return $service === 'omnivoice' ? 'http://127.0.0.1:8021' : (in_array($service, ['pocket_tts','xtts','chatterbox'], true) ? 'http://127.0.0.1:8020' : ''); }
+function ttsDefaultUrl(string $service): string { return match ($service) { 'omnivoice' => 'http://127.0.0.1:8021', 'chatterbox' => 'http://127.0.0.1:8023', 'pocket_tts' => 'http://127.0.0.1:8024', 'xtts' => 'http://127.0.0.1:8020', default => '' }; }
 function ttsOmniVoiceLanguageLabel(string $languageId): string {
     static $fallbackLabels = ['cs'=>'Czech','en'=>'English','es'=>'Spanish','ro'=>'Romanian','ru'=>'Russian','sk'=>'Slovak'];
     $languageId = strtolower(trim($languageId));
@@ -348,7 +348,7 @@ h1.api-title {
 <div id="row_url">
 <label for="url">URL</label>
 <input id="url" type="text" name="url" value="<?= h($editItem['url']) ?>">
-<div class="help">Base endpoint for this TTS provider. Local Pocket TTS, XTTS, and Chatterbox usually use `http://127.0.0.1:8020`; OmniVoice uses `http://127.0.0.1:8021`.</div>
+<div class="help">Base endpoint for this TTS provider. DwemerDistro uses XTTS `8020`, OmniVoice `8021`, Chatterbox `8023`, Python PocketTTS `8024`, and PocketTTS audio.cpp `8086`.</div>
 </div>
 
 <label>Provider</label>
