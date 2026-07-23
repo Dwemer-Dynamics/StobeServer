@@ -12,6 +12,7 @@ if ($useLegacy) {
 }
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -247,15 +248,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     $id = intval($rowId['id'] ?? 0);
                 }
                 if ($id > 0) {
-                    $db->exec(
-                        "UPDATE world_knowledge
-                         SET native_vector =
-                             setweight(to_tsvector('simple', COALESCE(topic, '')), 'A')
-                             || setweight(to_tsvector('simple', COALESCE(topic_desc, '')), 'B')
-                             || setweight(to_tsvector('simple', COALESCE(topic_desc_basic, '')), 'C')
-                         WHERE id = $1",
-                        [$id]
-                    );
+                    stobeWorldKnowledgeUpdateNativeVector($db, $id);
                 }
             }
             fclose($h);
@@ -1251,6 +1244,12 @@ PROMPT;
         $applyPatch('world_knowledge_seed', 202603130209, static function () use ($importWorldKnowledgeCsv): void {
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
             $importWorldKnowledgeCsv($seed);
+        });
+
+        $applyPatch('world_knowledge_aliases', 202607220002, static function () use ($db): void {
+            $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
+            $stats = stobeWorldKnowledgeApplyAliasSeed($db, $seed);
+            stobeLogInfo('World knowledge aliases merged and indexed', $stats);
         });
 
         $applyPatch('world_state', 202603150001, static function () use ($db): void {
