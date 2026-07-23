@@ -103,6 +103,7 @@ jobs:
             "tests/startup_runtime_regression.php"
             "tests/structured_dialogue_contract_regression.php"
             "tests/tts_pockettts_audiocpp_regression.php"
+            "tests/world_knowledge_aliases_regression.php"
           )
           tests=("${all_tests[@]}")
 
