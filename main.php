@@ -157,6 +157,10 @@ $timestamp = $gameRequest[1] ?? time();
 $gamets = $gameRequest[2] ?? 0;
 $eventData = $gameRequest[3] ?? '';
 
+if (PHP_SAPI !== 'cli' && strtolower(strval($eventType)) !== 'request') {
+    stobePlayer2HealthMarkGameActivity();
+}
+
 if (function_exists('stobeHandlePotentialGametsRollback')) {
     stobeHandlePotentialGametsRollback(intval($gamets), strval($eventType));
 }

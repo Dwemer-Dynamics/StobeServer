@@ -40,6 +40,10 @@ $tickPayload = '[background_processor_tick]';
 setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', strval($tickTimestamp), true);
 setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_GAMETS', strval($tickGamets), true);
 
+if (function_exists('stobePlayer2HealthTick')) {
+    stobePlayer2HealthTick($tickTimestamp);
+}
+
 if ($tickGamets <= 0) {
     stobeLogDebug('Background manager skipped: no gamets yet');
     exit(0);
