@@ -61,6 +61,9 @@ if (!isset($GLOBALS['db']) || !($GLOBALS['db'] instanceof sql)) {
     $GLOBALS['db'] = new sql();
 }
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'database_encoding.php');
+if (empty($GLOBALS['STOBE_DATABASE_UPGRADE_IN_PROGRESS'])) {
+    stobeRequireDatabaseReady($GLOBALS['db']);
+}
 
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'core' . DIRECTORY_SEPARATOR . 'narrator.class.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'settings.php');

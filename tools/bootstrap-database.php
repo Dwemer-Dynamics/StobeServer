@@ -3,14 +3,7 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
-require_once $root . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'bootstrap.php';
-
-if (!stobeDatabaseEncodingIsSupported()) {
-    fwrite(STDERR, stobeDatabaseEncodingError() . "\n");
-    exit(1);
-}
-
-require_once $root . DIRECTORY_SEPARATOR . 'debug' . DIRECTORY_SEPARATOR . 'db_updates.php';
+require_once $root . DIRECTORY_SEPARATOR . 'debug' . DIRECTORY_SEPARATOR . 'run_db_updates.php';
 
 $db = $GLOBALS['db'] ?? null;
 if (!($db instanceof sql)) {

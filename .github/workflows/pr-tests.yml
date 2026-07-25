@@ -87,6 +87,7 @@ jobs:
             "tests/chat_json_endpoint_regression.php"
             "tests/chat_processor_regression.php"
             "tests/conversation_context_regression.php"
+            "tests/database_upgrade_regression.php"
             "tests/diary_gamets_conversion.php"
             "tests/ingress_people_regression.php"
             "tests/import_rules_regression.php"
@@ -133,3 +134,15 @@ jobs:
             php "${test_file}"
             echo "::endgroup::"
           done
+
+      - name: Test automatic SQL_ASCII database upgrade
+        env:
+          STOBE_RUN_SQL_ASCII_INTEGRATION: "1"
+          STOBE_DB_USER: dwemer
+          STOBE_DB_PASSWORD: dwemer
+          STOBE_DB_ADMIN_USER: dwemer
+          STOBE_DB_ADMIN_PASSWORD: dwemer
+          STOBE_DB_ADMIN_HOST: localhost
+          STOBE_BACKUP_DIR: ${{ runner.temp }}/stobe-ascii-upgrade-test
+        shell: bash
+        run: bash tests/sql_ascii_database_upgrade_integration.sh
