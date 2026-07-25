@@ -72,6 +72,7 @@ if (function_exists('stobeRegisterErrorHandlers')) {
     stobeRegisterErrorHandlers();
 }
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'background_processor.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'player2_health.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'utils_game_timestamp.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-pockettts.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-xtts.php');
