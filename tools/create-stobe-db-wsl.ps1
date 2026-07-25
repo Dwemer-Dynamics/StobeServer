@@ -17,8 +17,10 @@ if ($Owner -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
 $serverRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $schemaWin = Resolve-Path (Join-Path $serverRoot "data\schema.sql")
 $bootstrapWin = Resolve-Path (Join-Path $serverRoot "tools\bootstrap-database.php")
+$migrationWin = Resolve-Path (Join-Path $serverRoot "tools\migrate-stobe-db-utf8-wsl.sh")
 $schemaLinux = (& wsl.exe -- wslpath -a $schemaWin.Path).Trim()
 $bootstrapLinux = (& wsl.exe -- wslpath -a $bootstrapWin.Path).Trim()
+$migrationLinux = (& wsl.exe -- wslpath -a $migrationWin.Path).Trim()
 
 Write-Host "Ensuring WSL PostgreSQL database '$Database' exists with owner '$Owner'."
 
@@ -41,9 +43,24 @@ if ($databaseExists -ne "1") {
     $databaseEncodingOutput = & wsl.exe -- sudo -n -u postgres psql -d $Database -Atqc "SHOW server_encoding;"
     $databaseEncoding = ($databaseEncodingOutput | Out-String).Trim()
     if ($databaseEncoding -ne 'UTF8') {
-        throw "Database '$Database' uses $databaseEncoding. Run tools/migrate-stobe-db-utf8-wsl.sh inside WSL before continuing."
+        if ($databaseEncoding -ne 'SQL_ASCII') {
+            throw "Database '$Database' uses unsupported encoding $databaseEncoding."
+        }
+        Write-Host "Migrating legacy SQL_ASCII database '$Database' to UTF8."
+        & wsl.exe -u root -- env `
+            "STOBE_DB_NAME=$Database" `
+            "STOBE_DB_USER=$Owner" `
+            bash $migrationLinux
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to migrate database '$Database' to UTF8."
+        }
+        $databaseEncodingOutput = & wsl.exe -- sudo -n -u postgres psql -d $Database -Atqc "SHOW server_encoding;"
+        $databaseEncoding = ($databaseEncodingOutput | Out-String).Trim()
+        if ($databaseEncoding -ne 'UTF8') {
+            throw "Database '$Database' migration completed but encoding is $databaseEncoding."
+        }
     }
-    Write-Host "Database '$Database' already exists with UTF8 encoding."
+    Write-Host "Database '$Database' exists with UTF8 encoding."
 }
 
 & wsl.exe -- sudo -n -u postgres psql -d $Database -v ON_ERROR_STOP=1 `
