@@ -72,8 +72,8 @@ try {
     };
     startupAssert(!stobeDatabaseEncodingIsSupported($unsupportedEncodingDb), 'SQL_ASCII database should be rejected');
     startupAssert(
-        str_contains(stobeDatabaseEncodingError($unsupportedEncodingDb), 'migrate-stobe-db-utf8-wsl.sh'),
-        'unsupported encoding error should identify the migration command'
+        str_contains(stobeDatabaseEncodingError($unsupportedEncodingDb), 'run_db_updates.php'),
+        'unsupported encoding error should identify the automatic update command'
     );
     startupAssert(function_exists('convert_gamets2skyrim_long_date2'), 'bootstrap should register compatibility date helper');
     startupAssert(function_exists('gamets2str_format_gregorian_date'), 'bootstrap should register gregorian date formatter');
@@ -91,6 +91,15 @@ try {
     startupAssert(boolval($healthPayload['database'] ?? false), 'health endpoint should report database connectivity');
     startupAssert(strval($healthPayload['database_encoding'] ?? '') === 'UTF8', 'health endpoint should report UTF8');
     startupAssert(boolval($healthPayload['database_encoding_supported'] ?? false), 'health endpoint should accept UTF8');
+    startupAssert(boolval($healthPayload['database_schema_ready'] ?? false), 'health endpoint should report schema readiness');
+    startupAssert(
+        boolval($healthPayload['database_upgrade_required'] ?? true) === false,
+        'health endpoint should not request an upgrade for the ready test database'
+    );
+    startupAssert(
+        str_contains(strval($healthPayload['database_repair_command'] ?? ''), 'run_db_updates.php'),
+        'health endpoint should expose the automatic repair command'
+    );
     startupAssert(intval($healthPayload['timestamp'] ?? 0) > 0, 'health endpoint should emit a positive timestamp');
 
     foreach ($trackedKeys as $trackedKey) {

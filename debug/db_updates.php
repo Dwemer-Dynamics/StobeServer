@@ -12,6 +12,7 @@ if ($useLegacy) {
 }
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -247,15 +248,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     $id = intval($rowId['id'] ?? 0);
                 }
                 if ($id > 0) {
-                    $db->exec(
-                        "UPDATE world_knowledge
-                         SET native_vector =
-                             setweight(to_tsvector('simple', COALESCE(topic, '')), 'A')
-                             || setweight(to_tsvector('simple', COALESCE(topic_desc, '')), 'B')
-                             || setweight(to_tsvector('simple', COALESCE(topic_desc_basic, '')), 'C')
-                         WHERE id = $1",
-                        [$id]
-                    );
+                    stobeWorldKnowledgeUpdateNativeVector($db, $id);
                 }
             }
             fclose($h);
@@ -1253,6 +1246,12 @@ PROMPT;
             $importWorldKnowledgeCsv($seed);
         });
 
+        $applyPatch('world_knowledge_aliases', 202607220002, static function () use ($db): void {
+            $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
+            $stats = stobeWorldKnowledgeApplyAliasSeed($db, $seed);
+            stobeLogInfo('World knowledge aliases merged and indexed', $stats);
+        });
+
         $applyPatch('world_state', 202603150001, static function () use ($db): void {
             $db->exec("CREATE TABLE IF NOT EXISTS world_state (
                 id BIGSERIAL PRIMARY KEY,
@@ -2139,6 +2138,16 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
         $applyPatch('rename_name_pool_expansion', 202607190102, static function () use ($db): void {
             $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'rename_names_seed.csv';
             stobeRenameNameImportBaseSeed($db, $seedPath);
+        });
+
+        $applyPatch('minime_remote_service_url', 202607220101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('TXTAI_URL', 'http://127.0.0.1:8082',
+                         'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
+                         NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
         });
 
         stobeLogInfo('DB updates completed (release consolidator)');

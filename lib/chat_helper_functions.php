@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
+
 /**
  * Chat helper functions for StobeServer.
  * Builds context, manages conversation state, formats responses.
@@ -1755,12 +1757,6 @@ function stobeWorldKnowledgeUniqueTerms(array $terms, int $max = 10): array {
     return array_values($unique);
 }
 
-function stobeWorldKnowledgeNormalizeLookupLabel(string $value): string {
-    $normalized = str_replace('_', ' ', strtolower(trim($value)));
-    $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
-    return trim($normalized);
-}
-
 function stobeWorldKnowledgeRaceInsertEnabled(): bool {
     return getSettingBool('ALWAYS_INSERT_RACE', true);
 }
@@ -1818,13 +1814,13 @@ function stobeWorldKnowledgeLookupTopicRowByLabel(string $label): ?array {
         return null;
     }
 
-    $normalized = stobeWorldKnowledgeNormalizeLookupLabel($label);
-    if ($normalized === '') {
+    $comparable = stobeWorldKnowledgeComparableLabel($label);
+    if ($comparable === '') {
         return null;
     }
 
     try {
-        $row = $db->fetchOne(
+        $rows = $db->fetchAll(
             "SELECT
                 id,
                 topic,
@@ -1832,28 +1828,30 @@ function stobeWorldKnowledgeLookupTopicRowByLabel(string $label): ?array {
                 COALESCE(topic_desc_basic, '') AS topic_desc_basic,
                 COALESCE(knowledge_class, '') AS knowledge_class,
                 COALESCE(knowledge_class_basic, '') AS knowledge_class_basic,
-                COALESCE(tags, '') AS tags
+                COALESCE(tags, '') AS tags,
+                regexp_replace(lower(COALESCE(topic, '')), '[^a-z0-9]+', '', 'g') = $1 AS canonical_match
              FROM world_knowledge
-             WHERE LOWER(BTRIM(REPLACE(COALESCE(topic, ''), '_', ' '))) = $1
+             WHERE regexp_replace(lower(COALESCE(topic, '')), '[^a-z0-9]+', '', 'g') = $1
                 OR EXISTS (
                     SELECT 1
                     FROM regexp_split_to_table(COALESCE(aliases, ''), ',') AS alias_value(alias_token)
-                    WHERE LOWER(BTRIM(REPLACE(alias_token, '_', ' '))) = $1
+                    WHERE regexp_replace(lower(BTRIM(alias_token)), '[^a-z0-9]+', '', 'g') = $1
                 )
-             ORDER BY
-                CASE
-                    WHEN LOWER(BTRIM(REPLACE(COALESCE(topic, ''), '_', ' '))) = $1 THEN 0
-                    ELSE 1
-                END,
-                id DESC
-             LIMIT 1",
-            [$normalized]
+             ORDER BY canonical_match DESC, id DESC",
+            [$comparable]
         );
     } catch (Throwable $exception) {
         return null;
     }
 
-    return is_array($row) ? $row : null;
+    if (!is_array($rows) || count($rows) === 0) {
+        return null;
+    }
+    $canonicalMatch = strtolower(trim(strval($rows[0]['canonical_match'] ?? '')));
+    if (in_array($canonicalMatch, ['1', 't', 'true', 'yes', 'on'], true)) {
+        return $rows[0];
+    }
+    return count($rows) === 1 ? $rows[0] : null;
 }
 
 function stobeWorldKnowledgeResolveForcedRaceHints(
@@ -2251,15 +2249,16 @@ function stobeWorldKnowledgeMinimeServiceAvailable(): bool
         return boolval($available);
     }
 
-    $socket = @fsockopen('127.0.0.1', 8082, $errno, $errstr, 0.1);
+    $serviceSocket = stobeMiniMeServiceSocket();
+    $socket = @fsockopen($serviceSocket['socket_host'], $serviceSocket['port'], $errno, $errstr, 0.1);
     if ($socket) {
         fclose($socket);
         $available = true;
     } else {
         $available = false;
         stobeLogWarn('World knowledge Minime service unavailable; using heuristic fallback', [
-            'host' => '127.0.0.1',
-            'port' => 8082,
+            'host' => $serviceSocket['host'],
+            'port' => $serviceSocket['port'],
         ]);
     }
 
@@ -2283,7 +2282,7 @@ function stobeWorldKnowledgeMinimeTopicRequest(string $text): ?string
         $timeout = 20;
     }
 
-    $url = 'http://127.0.0.1:8082/topic?text=' . urlencode($payload);
+    $url = stobeMiniMeServiceEndpoint('topic', ['text' => $payload]);
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',
@@ -5396,8 +5395,8 @@ function queryWorldKnowledgeForNpc(
     $primaryTopic = count($topics) > 0 ? strval($topics[0]) : $message;
 
     $db = $GLOBALS["db"];
-    $vectorExpr = "COALESCE(native_vector, to_tsvector('english', COALESCE(topic, '') || ' ' || COALESCE(topic_desc, '') || ' ' || COALESCE(topic_desc_basic, '')))";
-    $aliasExpr = "to_tsvector('simple', regexp_replace(replace(lower(COALESCE(topic, '')), '_', ' '), ',', ' ', 'g'))";
+    $vectorExpr = "COALESCE(wk.native_vector, to_tsvector('english', COALESCE(wk.topic, '') || ' ' || COALESCE(wk.aliases, '') || ' ' || COALESCE(wk.topic_desc, '') || ' ' || COALESCE(wk.topic_desc_basic, '')))";
+    $aliasExpr = "to_tsvector('simple', regexp_replace(replace(lower(COALESCE(wk.topic, '') || ' ' || COALESCE(wk.aliases, '')), '_', ' '), ',', ' ', 'g'))";
     $scoreParts = ['0'];
     $whereParts = [];
     $params = [];
@@ -5425,6 +5424,40 @@ function queryWorldKnowledgeForNpc(
     $addSignal($locationContext, 2.0, 'location');
     $addSignal($contextKeywords, 1.0, 'context');
     $addSignal($message, 1.0, 'message');
+
+    $exactTopicKeys = [];
+    $primaryTopicKey = stobeWorldKnowledgeComparableLabel($primaryTopic);
+    if (strlen($primaryTopicKey) >= 2) {
+        $exactTopicKeys[$primaryTopicKey] = true;
+    }
+    foreach (stobeWorldKnowledgeFindUniqueAliasKeysInText($db, $message) as $messageAliasKey) {
+        $exactTopicKeys[$messageAliasKey] = true;
+    }
+
+    foreach (array_keys($exactTopicKeys) as $exactTopicKey) {
+        $params[] = $exactTopicKey;
+        $exactIdx = count($params);
+        $canonicalExactExpr = "regexp_replace(lower(COALESCE(wk.topic, '')), '[^a-z0-9]+', '', 'g') = $" . $exactIdx;
+        $aliasExactExpr = "EXISTS (
+            SELECT 1
+            FROM regexp_split_to_table(COALESCE(wk.aliases, ''), ',') AS exact_alias(alias_token)
+            WHERE regexp_replace(lower(BTRIM(exact_alias.alias_token)), '[^a-z0-9]+', '', 'g') = $" . $exactIdx . "
+        )";
+        $uniqueAliasExpr = $aliasExactExpr . " AND (
+            SELECT COUNT(*)
+            FROM world_knowledge alias_owner
+            WHERE EXISTS (
+                SELECT 1
+                FROM regexp_split_to_table(COALESCE(alias_owner.aliases, ''), ',') AS owner_alias(alias_token)
+                WHERE regexp_replace(lower(BTRIM(owner_alias.alias_token)), '[^a-z0-9]+', '', 'g') = $" . $exactIdx . "
+            )
+        ) = 1";
+        $scoreParts[] = "(CASE WHEN {$canonicalExactExpr} THEN 120 ELSE 0 END)";
+        $scoreParts[] = "(CASE WHEN ({$uniqueAliasExpr}) THEN 100 ELSE 0 END)";
+        $whereParts[] = $canonicalExactExpr;
+        $whereParts[] = "({$uniqueAliasExpr})";
+        $notes[] = 'exact topic/alias:' . $exactTopicKey;
+    }
 
     if (stobeWorldKnowledgeHasQueryableTerms($primaryTopic)) {
         $params[] = $primaryTopic;
@@ -5459,15 +5492,15 @@ function queryWorldKnowledgeForNpc(
     $safeLimit = max(1, min(6, $limit));
     $candidateLimit = max(8, min(40, $safeLimit * 6));
     $query = "SELECT
-                id,
-                topic,
-                topic_desc,
-                COALESCE(topic_desc_basic, '') AS topic_desc_basic,
-                COALESCE(knowledge_class, '') AS knowledge_class,
-                COALESCE(knowledge_class_basic, '') AS knowledge_class_basic,
-                COALESCE(tags, '') AS tags,
+                wk.id,
+                wk.topic,
+                wk.topic_desc,
+                COALESCE(wk.topic_desc_basic, '') AS topic_desc_basic,
+                COALESCE(wk.knowledge_class, '') AS knowledge_class,
+                COALESCE(wk.knowledge_class_basic, '') AS knowledge_class_basic,
+                COALESCE(wk.tags, '') AS tags,
                 (" . implode(' + ', $scoreParts) . ") AS combined_rank
-              FROM world_knowledge
+              FROM world_knowledge wk
               WHERE (" . implode(' OR ', $whereParts) . ")
               ORDER BY combined_rank DESC, id DESC
               LIMIT " . intval($candidateLimit);

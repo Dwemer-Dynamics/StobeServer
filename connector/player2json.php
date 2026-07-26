@@ -150,7 +150,11 @@ function stobeAdapterPlayer2json(array $config): array {
 }
 
 function stobeCallLLMPlayer2json(array $messages, array $config, array $meta = []): string|false {
-    return callLLM($messages, stobeAdapterPlayer2json($config), $meta);
+    $runtime = stobeAdapterPlayer2json($config);
+    if (function_exists('stobePlayer2HealthMarkUsed')) {
+        stobePlayer2HealthMarkUsed(strval($runtime['base_url'] ?? ''));
+    }
+    return callLLM($messages, $runtime, $meta);
 }
 
 function stobeCallLLMStreamPlayer2json(
@@ -159,5 +163,9 @@ function stobeCallLLMStreamPlayer2json(
     callable $onTextDelta,
     array $meta = []
 ): string|false {
-    return callLLMStream($messages, stobeAdapterPlayer2json($config), $onTextDelta, $meta);
+    $runtime = stobeAdapterPlayer2json($config);
+    if (function_exists('stobePlayer2HealthMarkUsed')) {
+        stobePlayer2HealthMarkUsed(strval($runtime['base_url'] ?? ''));
+    }
+    return callLLMStream($messages, $runtime, $onTextDelta, $meta);
 }

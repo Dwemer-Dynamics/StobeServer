@@ -5,6 +5,9 @@ set -Eeuo pipefail
 database="${STOBE_DB_NAME:-stobe}"
 owner="${STOBE_DB_USER:-dwemer}"
 backup_dir="${STOBE_BACKUP_DIR:-/var/backups/stobe}"
+admin_user="${STOBE_DB_ADMIN_USER:-}"
+admin_host="${STOBE_DB_ADMIN_HOST:-127.0.0.1}"
+admin_port="${STOBE_DB_ADMIN_PORT:-5432}"
 timestamp="$(date -u +%Y%m%d%H%M%S)"
 staging_database="${database}_utf8_${timestamp}"
 backup_database="${database}_sql_ascii_${timestamp}"
@@ -23,14 +26,43 @@ validate_identifier "$database" "database name"
 validate_identifier "$owner" "database owner"
 validate_identifier "$staging_database" "staging database name"
 validate_identifier "$backup_database" "backup database name"
+if [[ -n "$admin_user" ]]; then
+    validate_identifier "$admin_user" "database administrator"
+fi
 
-if [[ "$(id -u)" -ne 0 && "$(id -un)" != "postgres" ]]; then
+if [[ -z "$admin_user" && "$(id -u)" -ne 0 && "$(id -un)" != "postgres" ]]; then
     echo "Run this migration as root or postgres, for example:" >&2
     echo "  sudo bash /var/www/html/StobeServer/tools/migrate-stobe-db-utf8-wsl.sh" >&2
     exit 2
 fi
 
+lock_root="/var/lock"
+if [[ -n "$admin_user" && "$(id -u)" -ne 0 ]]; then
+    lock_root="${TMPDIR:-/tmp}"
+fi
+lock_file="${lock_root}/stobe-db-utf8-${database}.lock"
+exec 9>"$lock_file"
+if ! flock -n 9; then
+    echo "Another Stobe database migration is already running for '${database}'." >&2
+    exit 3
+fi
+
 run_postgres() {
+    if [[ -n "$admin_user" ]]; then
+        local command="$1"
+        shift
+        case "$command" in
+            psql|createdb|dropdb|pg_dump|pg_restore)
+                PGPASSWORD="${STOBE_DB_ADMIN_PASSWORD:-}" \
+                    "$command" -h "$admin_host" -p "$admin_port" -U "$admin_user" "$@"
+                ;;
+            *)
+                echo "Unsupported PostgreSQL command: ${command}" >&2
+                return 2
+                ;;
+        esac
+        return
+    fi
     if [[ "$(id -un)" == "postgres" ]]; then
         "$@"
     else
@@ -150,7 +182,7 @@ if [[ "$current_encoding" != "SQL_ASCII" ]]; then
 fi
 
 mkdir -p "$backup_dir"
-if [[ "$(id -un)" != "postgres" ]]; then
+if [[ -z "$admin_user" && "$(id -un)" != "postgres" ]]; then
     chown postgres:postgres "$backup_dir"
 fi
 

@@ -34,6 +34,40 @@ function npc_bios_build_url(array $params, bool $isEmbed): string
     return $base . ($qs !== "" ? ("?" . $qs) : "");
 }
 
+function npc_bios_render_pagination(
+    int $page,
+    int $totalRows,
+    int $pageSize,
+    string $pageKey,
+    array $params,
+    bool $isEmbed
+): void {
+    $totalPages = max(1, intval(ceil($totalRows / max(1, $pageSize))));
+    if ($totalPages <= 1) {
+        echo '<div class="pagination-bar"><span>' . intval($totalRows) . ' entries</span></div>';
+        return;
+    }
+
+    echo '<div class="pagination-bar">';
+    if ($page > 1) {
+        $previous = $params;
+        $previous[$pageKey] = $page - 1;
+        echo '<a class="action-button" href="' . h(npc_bios_build_url($previous, $isEmbed)) . '">Previous</a>';
+    } else {
+        echo '<span class="pagination-placeholder"></span>';
+    }
+    echo '<span>Page ' . intval($page) . ' of ' . intval($totalPages)
+        . ' (' . intval($totalRows) . ' entries)</span>';
+    if ($page < $totalPages) {
+        $next = $params;
+        $next[$pageKey] = $page + 1;
+        echo '<a class="action-button" href="' . h(npc_bios_build_url($next, $isEmbed)) . '">Next</a>';
+    } else {
+        echo '<span class="pagination-placeholder"></span>';
+    }
+    echo '</div>';
+}
+
 function npc_bios_wants_json(): bool
 {
     $requestedWith = strtolower(strval($_SERVER["HTTP_X_REQUESTED_WITH"] ?? ""));
@@ -57,13 +91,32 @@ function npc_bios_toggle_enabled(sql $db, string $baseTable, string $customTable
     $table = $source === "custom" ? $customTable : ($source === "base" ? $baseTable : "");
     $okToggle = false;
     if ($rowId > 0 && $table !== "") {
-        $okToggle = $db->exec(
+        $result = $db->exec(
             "UPDATE {$table}
              SET is_enabled = $1,
-                 updated_at = NOW()
+                  updated_at = NOW()
              WHERE id = $2",
             [$targetEnabled ? "1" : "0", $rowId]
-        ) !== false;
+        );
+        if ($result === false) {
+            stobeLogError('NPC biography state update failed', [
+                'table' => $table,
+                'row_id' => $rowId,
+                'source' => $source,
+                'db_error' => $db->GetLastError(),
+            ]);
+        } else {
+            $affectedRows = $db->affectedRows($result);
+            $okToggle = $affectedRows === 1;
+            if (!$okToggle) {
+                stobeLogWarn('NPC biography state update matched no row', [
+                    'table' => $table,
+                    'row_id' => $rowId,
+                    'source' => $source,
+                    'affected_rows' => $affectedRows,
+                ]);
+            }
+        }
     }
     if (npc_bios_wants_json()) {
         if (!$okToggle) {
@@ -140,7 +193,7 @@ function npc_bios_read_uploaded_csv(string $tmpPath): array
 
 $db = $GLOBALS["db"];
 $validTypes = ["personality", "backstory", "speechstyle", "occupation", "appearance", "goals"];
-$maxBrowseRows = 5000;
+$browsePageSize = 100;
 $isEmbed = isset($_GET["embed"]) && strval($_GET["embed"]) === "1";
 
 $activeTab = strtolower(npc_bios_trim($_GET["tab"] ?? "bio_random"));
@@ -151,6 +204,9 @@ if (!in_array($activeTab, ["bio_random", "bio_unique", "rename_token"], true)) {
 $qRandom = npc_bios_trim($_GET["q_random"] ?? "");
 $qUnique = npc_bios_trim($_GET["q_unique"] ?? "");
 $qToken = npc_bios_trim($_GET["q_token"] ?? "");
+$pageRandom = max(1, intval($_GET["page_random"] ?? 1));
+$pageUnique = max(1, intval($_GET["page_unique"] ?? 1));
+$pageToken = max(1, intval($_GET["page_token"] ?? 1));
 $enabledRandom = strtolower(npc_bios_trim($_GET["enabled_random"] ?? "all"));
 if (!in_array($enabledRandom, ["all", "enabled", "disabled"], true)) {
     $enabledRandom = "all";
@@ -416,26 +472,29 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $action = strtolower(npc_bios_trim($_POST["action"] ?? ""));
 
         if ($action === "toggle_random_enabled") {
-        $activeTab = "bio_random";
-        npc_bios_toggle_enabled($db, "bio_random", "bio_random_custom", "bio_random", "bio_random", "random", [
-            "q_random" => npc_bios_trim($_POST["q_random"] ?? ""),
-            "letter_random" => npc_bios_trim($_POST["letter_random"] ?? ""),
-            "enabled_random" => npc_bios_trim($_POST["enabled_random"] ?? "all"),
-        ], $isEmbed);
+            $activeTab = "bio_random";
+            npc_bios_toggle_enabled($db, "bio_random", "bio_random_custom", "bio_random", "bio_random", "random", [
+                "q_random" => npc_bios_trim($_POST["q_random"] ?? ""),
+                "letter_random" => npc_bios_trim($_POST["letter_random"] ?? ""),
+                "enabled_random" => npc_bios_trim($_POST["enabled_random"] ?? "all"),
+                "page_random" => max(1, intval($_POST["page_random"] ?? 1)),
+            ], $isEmbed);
         } elseif ($action === "toggle_unique_enabled") {
-        $activeTab = "bio_unique";
-        npc_bios_toggle_enabled($db, "bio_unique", "bio_unique_custom", "bio_unique", "bio_unique", "unique", [
-            "q_unique" => npc_bios_trim($_POST["q_unique"] ?? ""),
-            "letter_unique" => npc_bios_trim($_POST["letter_unique"] ?? ""),
-            "enabled_unique" => npc_bios_trim($_POST["enabled_unique"] ?? "all"),
-        ], $isEmbed);
+            $activeTab = "bio_unique";
+            npc_bios_toggle_enabled($db, "bio_unique", "bio_unique_custom", "bio_unique", "bio_unique", "unique", [
+                "q_unique" => npc_bios_trim($_POST["q_unique"] ?? ""),
+                "letter_unique" => npc_bios_trim($_POST["letter_unique"] ?? ""),
+                "enabled_unique" => npc_bios_trim($_POST["enabled_unique"] ?? "all"),
+                "page_unique" => max(1, intval($_POST["page_unique"] ?? 1)),
+            ], $isEmbed);
         } elseif ($action === "toggle_token_enabled") {
-        $activeTab = "rename_token";
-        npc_bios_toggle_enabled($db, "rename_token_global", "rename_token_global_custom", "rename token", "rename_token", "token", [
-            "q_token" => npc_bios_trim($_POST["q_token"] ?? ""),
-            "letter_token" => npc_bios_trim($_POST["letter_token"] ?? ""),
-            "enabled_token" => npc_bios_trim($_POST["enabled_token"] ?? "all"),
-        ], $isEmbed);
+            $activeTab = "rename_token";
+            npc_bios_toggle_enabled($db, "rename_token_global", "rename_token_global_custom", "rename token", "rename_token", "token", [
+                "q_token" => npc_bios_trim($_POST["q_token"] ?? ""),
+                "letter_token" => npc_bios_trim($_POST["letter_token"] ?? ""),
+                "enabled_token" => npc_bios_trim($_POST["enabled_token"] ?? "all"),
+                "page_token" => max(1, intval($_POST["page_token"] ?? 1)),
+            ], $isEmbed);
         } elseif ($action === "save_random") {
         $activeTab = "bio_random";
         $rowId = intval($_POST["row_id"] ?? 0);
@@ -692,6 +751,14 @@ if ($enabledRandom === "enabled") {
     $randomWhereParts[] = "COALESCE(v.is_enabled, TRUE) = FALSE";
 }
 $randomWhere = count($randomWhereParts) > 0 ? ("WHERE " . implode(" AND ", $randomWhereParts)) : "";
+$randomCountRow = $db->fetchOne(
+    "SELECT COUNT(*) AS total FROM combined_bio_random v $randomWhere",
+    $randomParams
+);
+$randomTotalRows = intval(is_array($randomCountRow) ? ($randomCountRow["total"] ?? 0) : 0);
+$randomTotalPages = max(1, intval(ceil($randomTotalRows / $browsePageSize)));
+$pageRandom = min($pageRandom, $randomTotalPages);
+$randomOffset = ($pageRandom - 1) * $browsePageSize;
 $randomRows = $db->fetchAll(
     "SELECT
         v.*,
@@ -705,7 +772,7 @@ $randomRows = $db->fetchAll(
      FROM combined_bio_random v
      $randomWhere
      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(COALESCE(v.type, '')), v.id DESC
-     LIMIT " . intval($maxBrowseRows),
+     LIMIT " . intval($browsePageSize) . " OFFSET " . intval($randomOffset),
     $randomParams
 );
 
@@ -729,6 +796,14 @@ if ($enabledUnique === "enabled") {
     $uniqueWhereParts[] = "COALESCE(v.is_enabled, TRUE) = FALSE";
 }
 $uniqueWhere = count($uniqueWhereParts) > 0 ? ("WHERE " . implode(" AND ", $uniqueWhereParts)) : "";
+$uniqueCountRow = $db->fetchOne(
+    "SELECT COUNT(*) AS total FROM combined_bio_unique v $uniqueWhere",
+    $uniqueParams
+);
+$uniqueTotalRows = intval(is_array($uniqueCountRow) ? ($uniqueCountRow["total"] ?? 0) : 0);
+$uniqueTotalPages = max(1, intval(ceil($uniqueTotalRows / $browsePageSize)));
+$pageUnique = min($pageUnique, $uniqueTotalPages);
+$uniqueOffset = ($pageUnique - 1) * $browsePageSize;
 $uniqueRows = $db->fetchAll(
     "SELECT
         v.*,
@@ -741,7 +816,7 @@ $uniqueRows = $db->fetchAll(
      FROM combined_bio_unique v
      $uniqueWhere
      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(COALESCE(v.type, '')), v.id DESC
-     LIMIT " . intval($maxBrowseRows),
+     LIMIT " . intval($browsePageSize) . " OFFSET " . intval($uniqueOffset),
     $uniqueParams
 );
 
@@ -763,6 +838,14 @@ if ($enabledToken === "enabled") {
     $tokenWhereParts[] = "COALESCE(v.is_enabled, TRUE) = FALSE";
 }
 $tokenWhere = count($tokenWhereParts) > 0 ? ("WHERE " . implode(" AND ", $tokenWhereParts)) : "";
+$tokenCountRow = $db->fetchOne(
+    "SELECT COUNT(*) AS total FROM combined_rename_token_global v $tokenWhere",
+    $tokenParams
+);
+$tokenTotalRows = intval(is_array($tokenCountRow) ? ($tokenCountRow["total"] ?? 0) : 0);
+$tokenTotalPages = max(1, intval(ceil($tokenTotalRows / $browsePageSize)));
+$pageToken = min($pageToken, $tokenTotalPages);
+$tokenOffset = ($pageToken - 1) * $browsePageSize;
 $tokenRows = $db->fetchAll(
     "SELECT
         v.*,
@@ -774,7 +857,7 @@ $tokenRows = $db->fetchAll(
      FROM combined_rename_token_global v
      $tokenWhere
      ORDER BY LOWER(COALESCE(v.token, '')), v.id DESC
-     LIMIT " . intval($maxBrowseRows),
+     LIMIT " . intval($browsePageSize) . " OFFSET " . intval($tokenOffset),
     $tokenParams
 );
 
@@ -1058,10 +1141,40 @@ $tokenRows = $db->fetchAll(
             border-color: rgba(187, 68, 68, 0.8);
             background: rgba(187, 68, 68, 0.16);
         }
+        .pagination-bar {
+            display: grid;
+            grid-template-columns: 120px 1fr 120px;
+            align-items: center;
+            gap: 12px;
+            margin-top: 14px;
+            text-align: center;
+            color: #c9d3e5;
+        }
+        .pagination-bar .action-button:last-child {
+            justify-self: end;
+        }
+        .pagination-placeholder {
+            min-width: 1px;
+        }
         @media (max-width: 1000px) {
             main { padding-left: 4%; padding-right: 4%; }
             .grid-two { grid-template-columns: 1fr; }
             .content-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 600px) {
+            .pagination-bar {
+                grid-template-columns: 1fr 1fr;
+            }
+            .pagination-bar > span:not(.pagination-placeholder) {
+                grid-column: 1 / -1;
+                grid-row: 1;
+            }
+            .pagination-bar .action-button:first-child {
+                justify-self: start;
+            }
+            .pagination-placeholder {
+                display: none;
+            }
         }
         .modal-content {
             background: #2a2a2a;
@@ -1203,6 +1316,7 @@ $tokenRows = $db->fetchAll(
                                         <input type="hidden" name="q_random" value="<?= h($qRandom) ?>">
                                         <input type="hidden" name="letter_random" value="<?= h($letterRandom) ?>">
                                         <input type="hidden" name="enabled_random" value="<?= h($enabledRandom) ?>">
+                                        <input type="hidden" name="page_random" value="<?= intval($pageRandom) ?>">
                                         <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                                         <button class="<?= $isEnabled ? "btn-danger" : "btn-save" ?>" type="submit">
                                             <?= $isEnabled ? "Disable" : "Enable" ?>
@@ -1224,6 +1338,19 @@ $tokenRows = $db->fetchAll(
                 </tbody>
             </table>
             </div>
+            <?php npc_bios_render_pagination(
+                $pageRandom,
+                $randomTotalRows,
+                $browsePageSize,
+                "page_random",
+                [
+                    "tab" => "bio_random",
+                    "q_random" => $qRandom,
+                    "letter_random" => $letterRandom,
+                    "enabled_random" => $enabledRandom,
+                ],
+                $isEmbed
+            ); ?>
             </div>
 
             <div class="modal fade" id="bioRandomModal" tabindex="-1" aria-hidden="true">
@@ -1371,6 +1498,7 @@ $tokenRows = $db->fetchAll(
                                         <input type="hidden" name="q_unique" value="<?= h($qUnique) ?>">
                                         <input type="hidden" name="letter_unique" value="<?= h($letterUnique) ?>">
                                         <input type="hidden" name="enabled_unique" value="<?= h($enabledUnique) ?>">
+                                        <input type="hidden" name="page_unique" value="<?= intval($pageUnique) ?>">
                                         <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                                         <button class="<?= $isEnabled ? "btn-danger" : "btn-save" ?>" type="submit">
                                             <?= $isEnabled ? "Disable" : "Enable" ?>
@@ -1392,6 +1520,19 @@ $tokenRows = $db->fetchAll(
                 </tbody>
             </table>
             </div>
+            <?php npc_bios_render_pagination(
+                $pageUnique,
+                $uniqueTotalRows,
+                $browsePageSize,
+                "page_unique",
+                [
+                    "tab" => "bio_unique",
+                    "q_unique" => $qUnique,
+                    "letter_unique" => $letterUnique,
+                    "enabled_unique" => $enabledUnique,
+                ],
+                $isEmbed
+            ); ?>
             </div>
 
             <div class="modal fade" id="bioUniqueModal" tabindex="-1" aria-hidden="true">
@@ -1523,6 +1664,7 @@ $tokenRows = $db->fetchAll(
                                         <input type="hidden" name="q_token" value="<?= h($qToken) ?>">
                                         <input type="hidden" name="letter_token" value="<?= h($letterToken) ?>">
                                         <input type="hidden" name="enabled_token" value="<?= h($enabledToken) ?>">
+                                        <input type="hidden" name="page_token" value="<?= intval($pageToken) ?>">
                                         <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                                         <button class="<?= $isEnabled ? "btn-danger" : "btn-save" ?>" type="submit">
                                             <?= $isEnabled ? "Disable" : "Enable" ?>
@@ -1544,6 +1686,19 @@ $tokenRows = $db->fetchAll(
                     </tbody>
                 </table>
             </div>
+            <?php npc_bios_render_pagination(
+                $pageToken,
+                $tokenTotalRows,
+                $browsePageSize,
+                "page_token",
+                [
+                    "tab" => "rename_token",
+                    "q_token" => $qToken,
+                    "letter_token" => $letterToken,
+                    "enabled_token" => $enabledToken,
+                ],
+                $isEmbed
+            ); ?>
             </div>
 
             <div class="modal fade" id="renameTokenModal" tabindex="-1" aria-hidden="true">

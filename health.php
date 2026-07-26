@@ -24,6 +24,9 @@ $response = [
     'database' => false,
     'database_encoding' => '',
     'database_encoding_supported' => false,
+    'database_schema_ready' => false,
+    'database_upgrade_required' => true,
+    'database_repair_command' => '',
     'timestamp' => time(),
 ];
 
@@ -36,10 +39,20 @@ try {
     $response['database_encoding'] = $response['database'] ? stobeDatabaseEncoding($db) : '';
     $response['database_encoding_supported'] = $response['database']
         && stobeDatabaseEncodingIsSupported($db);
-    $response['ok'] = $response['database'] && $response['database_encoding_supported'];
+    $readiness = $response['database'] ? stobeDatabaseReadiness($db) : [
+        'ready' => false,
+        'schema_ready' => false,
+        'missing' => ['database connection'],
+        'repair_command' => stobeDatabaseRepairCommand(),
+    ];
+    $response['database_schema_ready'] = boolval($readiness['schema_ready'] ?? false);
+    $response['database_upgrade_required'] = !boolval($readiness['ready'] ?? false);
+    $response['database_repair_command'] = strval($readiness['repair_command'] ?? '');
+    $response['database_missing'] = array_values($readiness['missing'] ?? []);
+    $response['ok'] = $response['database'] && boolval($readiness['ready'] ?? false);
     $response['status'] = $response['ok'] ? 'ok' : 'degraded';
-    if ($response['database'] && !$response['database_encoding_supported']) {
-        $response['error'] = stobeDatabaseEncodingError($db);
+    if ($response['database'] && !$response['ok']) {
+        $response['error'] = stobeDatabaseReadinessError($db);
     }
 } catch (Throwable $e) {
     $response['error'] = $e->getMessage();

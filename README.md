@@ -66,16 +66,21 @@ powershell -ExecutionPolicy Bypass -File .\tools\create-stobe-db-wsl.ps1
 
 StobeServer requires a UTF-8 PostgreSQL database because NPC profiles, event
 history, prompts, memories, and structured JSON can contain Unicode. Older
-builds could inherit `SQL_ASCII` from the PostgreSQL template. Migrate an
-affected WSL installation without discarding its data by running:
+builds could inherit `SQL_ASCII` from the PostgreSQL template. Normal
+DwemerDistro updates now detect and migrate those databases before applying
+schema updates. The server returns a database-upgrade maintenance response
+instead of continuing against an incompatible or incomplete schema.
+
+To run or retry the complete repair manually:
 
 ```bash
-sudo bash /var/www/html/StobeServer/tools/migrate-stobe-db-utf8-wsl.sh
+sudo php /var/www/html/StobeServer/debug/run_db_updates.php
 ```
 
-The migration creates a safety dump and a disconnected rollback database,
-restores all Stobe application schemas into UTF-8, and verifies every table row
-count and sequence position before replacing the active database.
+The updater invokes the UTF-8 migration when required, creates a safety dump
+and a disconnected rollback database, restores all Stobe application schemas
+into UTF-8, verifies every table row count and sequence position, and then
+replays pending database updates.
 
 ## PR Submissions
 

@@ -13070,8 +13070,7 @@ function getLlmConfigForNpcPurpose(array|false $npcData, string $purpose = 'resp
 }
 
 function getMemoryTxtaiUrl(): string {
-    // Stobe memory config: always use local txtai endpoint.
-    return 'http://127.0.0.1:8082';
+    return stobeGetMiniMeServiceUrl();
 }
 
 function getMemoryUseText2Vec(): bool {

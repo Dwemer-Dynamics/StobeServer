@@ -1,6 +1,7 @@
 <?php
 $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "bootstrap.php");
+require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "world_knowledge_aliases.php");
 if (!isset($GLOBALS["db"]) || !($GLOBALS["db"] instanceof sql)) {
     $GLOBALS["db"] = new sql();
 }
@@ -37,16 +38,7 @@ function world_knowledgeUpdateNativeVector(int $id): void
     if ($id <= 0) {
         return;
     }
-    $db = $GLOBALS["db"];
-    $db->exec(
-        "UPDATE world_knowledge
-         SET native_vector =
-            setweight(to_tsvector('simple', COALESCE(topic, '')), 'A')
-            || setweight(to_tsvector('simple', COALESCE(topic_desc, '')), 'B')
-            || setweight(to_tsvector('simple', COALESCE(topic_desc_basic, '')), 'C')
-         WHERE id = $1",
-        [$id]
-    );
+    stobeWorldKnowledgeUpdateNativeVector($GLOBALS["db"], $id);
 }
 
 function world_knowledgeUpsertByTopic(array $payload): int
