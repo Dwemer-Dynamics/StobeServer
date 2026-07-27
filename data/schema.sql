@@ -3456,7 +3456,7 @@ INSERT INTO core_api_badge (label, api_key) VALUES
 ('Inworld', ''),
 ('Nano-GPT', ''),
 ('Groq', ''),
-('Player2', 'STOBE')
+('Player2', '019cf504-1461-74e7-b4da-045b14e9019d')
 ON CONFLICT (label) DO NOTHING;
 
 INSERT INTO core_llm_connector (
@@ -3535,7 +3535,7 @@ INSERT INTO core_llm_connector (
     750,
     1.0,
     FALSE,
-    '{"player2_game_key":"STOBE"}'::jsonb
+    '{"player2_game_key":"019cf504-1461-74e7-b4da-045b14e9019d"}'::jsonb
 )
 ON CONFLICT (name) DO NOTHING;
 

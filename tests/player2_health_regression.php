@@ -22,6 +22,10 @@ player2HealthAssert(
         === 'https://player2.example:443/v1/health',
     'docs URL should normalize to the Player2 health endpoint'
 );
+player2HealthAssert(
+    stobePlayer2GameKeyHeader() === 'player2-game-key: 019cf504-1461-74e7-b4da-045b14e9019d',
+    'health requests should identify STOBE with its registered Player2 Game Client Id'
+);
 
 $state = [
     'last_activity' => 950,

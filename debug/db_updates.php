@@ -867,11 +867,11 @@ PROMPT;
         });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {
-            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','STOBE') ON CONFLICT (label) DO NOTHING");
+            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','019cf504-1461-74e7-b4da-045b14e9019d') ON CONFLICT (label) DO NOTHING");
             $badge = $db->fetchOne("SELECT id FROM core_api_badge WHERE LOWER(label) IN ('player2','stobe') ORDER BY CASE WHEN LOWER(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1");
             $badgeId = intval($badge['id'] ?? 0);
             $db->exec("INSERT INTO core_llm_connector (name, connector_type, api_badge_id, api_key, base_url, model, max_tokens, temperature, is_default, config)
-                VALUES ('Player2 Local','player2json',$1,'','http://127.0.0.1:4315/v1/chat/completions','player2-app-selected',750,1.0,FALSE,'{\"player2_game_key\":\"STOBE\"}'::jsonb)
+                VALUES ('Player2 Local','player2json',$1,'','http://127.0.0.1:4315/v1/chat/completions','player2-app-selected',750,1.0,FALSE,'{\"player2_game_key\":\"019cf504-1461-74e7-b4da-045b14e9019d\"}'::jsonb)
                 ON CONFLICT (name) DO UPDATE SET connector_type=EXCLUDED.connector_type, api_badge_id=COALESCE(core_llm_connector.api_badge_id,EXCLUDED.api_badge_id)", [$badgeId > 0 ? $badgeId : null]);
             $std = $db->fetchOne("SELECT id FROM core_llm_connector WHERE LOWER(name)='gemini 2.5 flash' LIMIT 1");
             $stdId = intval($std['id'] ?? 0);
@@ -2147,6 +2147,40 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                          'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
                          NOW())
                  ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
+        $applyPatch('player2_game_client_id', 202607270101, static function () use ($db): void {
+            $gameClientId = '019cf504-1461-74e7-b4da-045b14e9019d';
+            $db->exec(
+                "UPDATE core_api_badge
+                 SET api_key = $1
+                 WHERE LOWER(label) IN ('player2', 'stobe')
+                   AND (
+                       BTRIM(COALESCE(api_key, '')) = ''
+                       OR UPPER(BTRIM(api_key)) = 'STOBE'
+                   )",
+                [$gameClientId]
+            );
+            $db->exec(
+                "UPDATE core_llm_connector
+                 SET config = jsonb_set(
+                     CASE
+                         WHEN config IS NULL OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+                         ELSE config
+                     END,
+                     '{player2_game_key}',
+                     to_jsonb($1::text),
+                     TRUE
+                 )
+                 WHERE LOWER(COALESCE(connector_type, '')) = 'player2json'
+                   AND (
+                       config IS NULL
+                       OR jsonb_typeof(config) <> 'object'
+                       OR BTRIM(COALESCE(config->>'player2_game_key', '')) = ''
+                       OR UPPER(BTRIM(config->>'player2_game_key')) = 'STOBE'
+                   )",
+                [$gameClientId]
             );
         });
 
