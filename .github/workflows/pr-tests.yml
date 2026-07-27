@@ -113,6 +113,8 @@ jobs:
             "tests/npc_profile_lock_controls_regression.php"
             "tests/playthrough_rollback_regression.php"
             "tests/playthrough_storage_regression.php"
+            "tests/player2_client_id_db_regression.php"
+            "tests/player2_client_id_regression.php"
             "tests/player2_health_regression.php"
             "tests/rechat_flow_regression.php"
             "tests/rechat_selection_regression.php"

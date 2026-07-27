@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'player2_config.php';
+
 const STOBE_PLAYER2_HEALTH_ACTIVITY_TTL = 180;
 const STOBE_PLAYER2_HEALTH_ACTIVITY_WRITE_INTERVAL = 15;
 const STOBE_PLAYER2_HEALTH_USE_TTL = 300;
@@ -113,7 +115,7 @@ function stobePlayer2HealthRequest(string $url): array
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => 2,
             CURLOPT_TIMEOUT => 5,
-            CURLOPT_HTTPHEADER => ['player2-game-key: STOBE'],
+            CURLOPT_HTTPHEADER => [stobePlayer2GameKeyHeader()],
         ]);
         $body = curl_exec($handle);
         $error = curl_error($handle);
@@ -130,7 +132,7 @@ function stobePlayer2HealthRequest(string $url): array
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',
-            'header' => "player2-game-key: STOBE\r\n",
+            'header' => stobePlayer2GameKeyHeader() . "\r\n",
             'timeout' => 5,
             'ignore_errors' => true,
         ],

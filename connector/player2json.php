@@ -5,6 +5,8 @@
  * Uses OpenAI-compatible endpoint plus player2-game-key header.
  */
 
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'player2_config.php';
+
 function stobePlayer2CanConnect(string $host, int $port): bool {
     if ($host === '' || $port <= 0) {
         return false;
@@ -140,8 +142,8 @@ function stobeAdapterPlayer2json(array $config): array {
     if ($gameKey === '') {
         $gameKey = trim(strval($runtime['api_key'] ?? ''));
     }
-    if ($gameKey === '') {
-        $gameKey = 'STOBE';
+    if ($gameKey === '' || strcasecmp($gameKey, 'STOBE') === 0) {
+        $gameKey = STOBE_PLAYER2_GAME_CLIENT_ID;
     }
     $connectorConfig['player2_game_key'] = $gameKey;
     $runtime['config'] = $connectorConfig;

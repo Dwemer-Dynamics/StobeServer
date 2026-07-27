@@ -540,7 +540,7 @@ function stobeQuickstartEnsurePlayer2ConnectorId(sql $db): int
     if ($badgeId <= 0) {
         $db->exec(
             "INSERT INTO core_api_badge (label, api_key)
-             VALUES ('Player2', 'STOBE')
+             VALUES ('Player2', '019cf504-1461-74e7-b4da-045b14e9019d')
              ON CONFLICT (label) DO NOTHING"
         );
         $badgeRow = $db->fetchOne(
@@ -559,7 +559,7 @@ function stobeQuickstartEnsurePlayer2ConnectorId(sql $db): int
             model, max_tokens, temperature, is_default, config
          ) VALUES (
             'Player2 Local', 'player2json', $1, '', 'http://127.0.0.1:4315/v1/chat/completions',
-            'player2-app-selected', 750, 1.0, FALSE, '{\"player2_game_key\":\"STOBE\"}'::jsonb
+            'player2-app-selected', 750, 1.0, FALSE, '{\"player2_game_key\":\"019cf504-1461-74e7-b4da-045b14e9019d\"}'::jsonb
          )
          ON CONFLICT (name) DO NOTHING",
         [$badgeId > 0 ? $badgeId : null]
