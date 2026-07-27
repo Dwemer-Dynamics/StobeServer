@@ -109,6 +109,7 @@ jobs:
             "tests/ingress_people_regression.php"
             "tests/import_rules_regression.php"
             "tests/main_ingress_http_regression.php"
+            "tests/memory_event_allowlist_regression.php"
             "tests/npc_history_snapshot_regression.php"
             "tests/npc_profile_lock_controls_regression.php"
             "tests/playthrough_rollback_regression.php"
