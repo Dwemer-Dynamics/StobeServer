@@ -91,7 +91,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
@@ -845,6 +845,14 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                         <span class="toggle-title">AUTO_DIARY_ENABLED</span>
                                     </label>
                                     <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
+                                </div>
+                                <div class="toggle-card">
+                                    <label>
+                                        <input type="hidden" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="">
+                                        <input type="checkbox" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="1" <?= $metaBool('LATEST_DIARY_CONTEXT_ENABLED') ? 'checked' : '' ?>>
+                                        <span class="toggle-title">Include Latest Diary Entry</span>
+                                    </label>
+                                    <div class="toggle-desc">Adds the NPC's latest diary entry to the character section of every response prompt.</div>
                                 </div>
                             </div>
                         </div>

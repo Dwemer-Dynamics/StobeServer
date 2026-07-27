@@ -60,6 +60,7 @@ function loadPromptTemplate(string $templateName): string {
         . "#NPC_GOALS#\n"
         . "</goals>\n"
         . "#NPC_MIDDLE_TERM_MEMORY#\n"
+        . "#NPC_LATEST_DIARY#\n"
         . "</character>\n\n"
         . "<general_instructions>\n"
         . "#GENERAL_INSTRUCTIONS#\n"
@@ -2504,6 +2505,47 @@ function stobePromptXmlEscape(mixed $value): string {
     $text = str_replace(["\r\n", "\r"], "\n", $text);
     // Keep apostrophes readable in text nodes while still escaping XML control chars.
     return htmlspecialchars($text, ENT_COMPAT | ENT_XML1, 'UTF-8');
+}
+
+function stobeBuildLatestDiaryContextBlock(string $npcName, array $npcData): string
+{
+    $safeNpcName = normalizeParticipantNameToken($npcName);
+    if ($safeNpcName === '') {
+        return '';
+    }
+
+    $profileMetadata = getCoreProfileMetadataForNpc($npcData);
+    if (!coerceBoolean($profileMetadata['LATEST_DIARY_CONTEXT_ENABLED'] ?? false)) {
+        return '';
+    }
+
+    try {
+        $entry = $GLOBALS['db']->fetchOne(
+            "SELECT topic, content
+             FROM diarylog
+             WHERE lower(trim(people)) = lower($1)
+             ORDER BY gamets DESC, localts DESC, rowid DESC
+             LIMIT 1",
+            [$safeNpcName]
+        );
+    } catch (Throwable $e) {
+        stobeLogWarn('Unable to load latest diary context', [
+            'npc_name' => $safeNpcName,
+            'error' => $e->getMessage(),
+        ]);
+        return '';
+    }
+
+    $content = trim(strval($entry['content'] ?? ''));
+    if ($content === '') {
+        return '';
+    }
+
+    $topic = trim(strval($entry['topic'] ?? ''));
+    $diaryText = $topic !== '' ? "Date: {$topic}\n{$content}" : $content;
+    return "<latest_diary_entry>\n"
+        . stobePromptXmlEscape($diaryText)
+        . "\n</latest_diary_entry>";
 }
 
 function stobeBuildPlayerInputPromptContent(string $speaker, string $targetNpc, string $message): string
@@ -10734,6 +10776,7 @@ function buildSystemPrompt(
         '#NPC_MIDDLE_TERM_MEMORY#' => stobePromptContextOptionEnabled('enabled_character_subsections', 'middle_term_memory')
             ? stobeBuildMiddleTermMemoryPromptBlock($npcData, $npcName)
             : '',
+        '#NPC_LATEST_DIARY#' => stobeBuildLatestDiaryContextBlock($npcName, $npcData),
         '#PLAYER_NAME#' => stobePromptXmlEscape($playerName),
         '#PLAYER_CATS#' => stobePromptXmlEscape($playerCats),
         '#GENERAL_INSTRUCTIONS#' => stobePromptXmlEscape($generalInstructions),
