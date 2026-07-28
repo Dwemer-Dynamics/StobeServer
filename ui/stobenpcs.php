@@ -2152,13 +2152,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     <div id="profile_llm_summary" style="display:grid; grid-template-columns: 170px 1fr; gap:8px 10px; color:#cfd9ea; border:1px solid #4a4a4a; border-radius:8px; padding:10px; margin-bottom:8px;">
         <div style="color:#e6b76c; font-weight:700; white-space:nowrap;">Profile LLMs</div>
         <div style="display:grid; grid-template-columns: 120px 1fr; gap:4px 10px;">
-            <div style="color:#9fb1c9;">Response</div><div><?= htmlspecialchars($pc ? $m($pc['response_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">Diary</div><div><?= htmlspecialchars($pc ? $m($pc['diary_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">Autochat</div><div><?= htmlspecialchars($pc ? $m($pc['autochat_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">Memory</div><div><?= htmlspecialchars($pc ? $m($pc['middleterm_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">Background</div><div><?= htmlspecialchars($pc ? $m($pc['backgroundlife_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">Dynamic</div><div><?= htmlspecialchars($pc ? $m($pc['dynamic_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">Relationship</div><div><?= htmlspecialchars($pc ? $m($pc['relationship_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x1F4AC; Response</div><div><?= htmlspecialchars($pc ? $m($pc['response_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x1F4D9; Diary</div><div><?= htmlspecialchars($pc ? $m($pc['diary_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x1F4AD; Autochat</div><div><?= htmlspecialchars($pc ? $m($pc['autochat_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x1F9E0; Memory</div><div><?= htmlspecialchars($pc ? $m($pc['middleterm_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x1F30D; Background</div><div><?= htmlspecialchars($pc ? $m($pc['backgroundlife_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x267B;&#xFE0F; Dynamic</div><div><?= htmlspecialchars($pc ? $m($pc['dynamic_connector'] ?? '') : 'N/A') ?></div>
+            <div style="color:#9fb1c9;">&#x1F91D; Relationship</div><div><?= htmlspecialchars($pc ? $m($pc['relationship_connector'] ?? '') : 'N/A') ?></div>
         </div>
     </div>
     <script>
@@ -2179,13 +2179,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             box.innerHTML = ''
                 + '<div style="color:#e6b76c; font-weight:700; white-space:nowrap;">Profile LLMs</div>'
                 + '<div style="display:grid; grid-template-columns: 120px 1fr; gap:4px 10px;">'
-                + '<div style="color:#9fb1c9;">Response</div><div>' + String(response || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">Diary</div><div>' + String(diary || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">Autochat</div><div>' + String(autochat || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">Memory</div><div>' + String(memory || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">Background</div><div>' + String(background || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">Dynamic</div><div>' + String(dynamic || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">Relationship</div><div>' + String(relationship || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x1F4AC; Response</div><div>' + String(response || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x1F4D9; Diary</div><div>' + String(diary || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x1F4AD; Autochat</div><div>' + String(autochat || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x1F9E0; Memory</div><div>' + String(memory || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x1F30D; Background</div><div>' + String(background || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x267B;&#xFE0F; Dynamic</div><div>' + String(dynamic || 'N/A') + '</div>'
+                + '<div style="color:#9fb1c9;">&#x1F91D; Relationship</div><div>' + String(relationship || 'N/A') + '</div>'
                 + '</div>';
         }
         document.addEventListener('DOMContentLoaded', function(){
@@ -2293,15 +2293,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .npc-editor-tab:focus-visible { outline:2px solid #e6b76c; outline-offset:2px; }
 .npc-editor-panels { display:block; }
 .npc-editor-panel[hidden] { display:none !important; }
+.npc-editor-panel[data-npc-editor-panel="bios"] { grid-template-columns:minmax(0, 1fr); }
 @media (max-width:700px) { .npc-editor-tabs { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
 </style>
 <script>
 (function(){
     const fieldSections = {
         general: new Set(['npc_name','profile_id','lock_profile','npc_favorite','gender','race','base','refid','oghma_knowledge_tags','worldknowledge_tags','world_knowledge_tags','voiceid','faction','dynamic_profile','middle_term_enabled','individual_memory_enabled','auto_diary_enabled','auto_diary_wait_enabled','salutation_after_a_while','prompt_head']),
-        bios: new Set(['core','npc_static_bio','appearance','personality','occupation','speechstyle','goals']),
-        relationships: new Set(['relationships','relationships_jsonb']),
-        info: new Set(['skills','emote_moods','middle_term_latest','metadata','extended_data'])
+        bios: new Set(['core','npc_static_bio','appearance','personality','occupation','skills','speechstyle','goals']),
+        relationships: new Set(['relationships','relationships_jsonb','middle_term_latest']),
+        info: new Set(['emote_moods','metadata','extended_data'])
     };
 
     function initNpcEditorTabs(){
