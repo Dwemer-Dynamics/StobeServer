@@ -727,15 +727,15 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 
     <div class="layout">
         <section class="cardx profiles-list-panel">
-            <div class="toolbar">
-                <form method="get" action="profiles.php" style="display:inline;">
+            <div class="toolbar sidebar-action-grid">
+                <form method="get" action="profiles.php">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <input type="hidden" name="create_blank" value="1">
-                    <button type="submit" class="btn-save">New Profile</button>
+                    <button type="submit" class="btn-save">New</button>
                 </form>
-                <button type="button" id="import_profile_btn" class="btn-secondary">Import Profile</button>
-                <button type="button" id="open_import_rules_btn" class="btn-secondary">Profile Rules</button>
-                <button type="button" id="profile_test_all_btn" class="btn-secondary">Test All Profiles</button>
+                <button type="button" id="import_profile_btn" class="btn-secondary">Import</button>
+                <button type="button" id="open_import_rules_btn" class="btn-secondary">Rules</button>
+                <button type="button" id="profile_test_all_btn" class="btn-secondary">Test</button>
             </div>
             <div class="list">
                 <?php foreach ($profiles as $row): ?>

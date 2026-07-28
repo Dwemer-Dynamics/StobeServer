@@ -6,6 +6,12 @@
     font-display: swap;
 }
 
+:root {
+    --log-accent: #e6b76c;
+    --log-accent-hover: #c9984f;
+    --log-accent-soft: rgba(230, 183, 108, 0.2);
+    --log-button-text: #ffffff;
+}
 /* ==========================================================================
    Combined Diary and Adventure Log Styles
    ========================================================================== */
@@ -43,6 +49,7 @@
 
 .calendar td.has-event {
     color: #ffffff;
+    background-color: transparent;
 }
 
 .calendar td a {
@@ -59,9 +66,9 @@
 }
 
 .calendar td.has-event a {
-    background-color: rgba(230, 183, 108, 0.9);
-    color: white;
-    border: 2px solid rgb(172, 76, 0);
+    background-color: var(--log-accent);
+    color: var(--log-button-text);
+    border: 2px solid var(--log-accent-hover);
     border-radius: 5px;
     box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.2);
     transition: all 0.3s ease-in-out;
@@ -75,10 +82,10 @@
 }
 
 .calendar td.has-event a:hover {
-    background-color: rgb(172, 76, 0, 0.95);
+    background-color: var(--log-accent-hover);
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-    color: white;
+    color: var(--log-button-text);
 }
 
 .calendar td.has-event a:hover::after {
@@ -88,7 +95,7 @@
     left: 50%;
     transform: translateX(-50%);
     background-color: #333;
-    color: white;
+    color: var(--log-button-text);
     padding: 5px 10px;
     border-radius: 5px;
     font-size: 12px;
@@ -98,14 +105,14 @@
 
 .calendar td.current-date a {
     background-color: #28a745;
-    color: white;
+    color: var(--log-button-text);
     border: 2px solid #1e7e34;
     font-weight: bold;
 }
 
 .calendar td.current-date.has-event a {
     background-color: #28a745;
-    color: white;
+    color: var(--log-button-text);
     border: 2px solid #1e7e34;
 }
 
@@ -138,14 +145,14 @@
     padding: 8px 15px;
     text-decoration: none;
     border-radius: 5px;
-    background-color: rgba(230, 183, 108, 0.9);
-    color: white;
-    border: 2px solid rgb(172, 76, 0);
+    background-color: var(--log-accent);
+    color: var(--log-button-text);
+    border: 2px solid var(--log-accent-hover);
     transition: all 0.3s ease;
 }
 
 .calendar-navigation a:hover {
-    background-color: rgb(172, 76, 0, 0.95);
+    background-color: var(--log-accent-hover);
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
@@ -166,14 +173,14 @@
 }
 
 .calendar-mode-toggle .btn-primary {
-    background-color: rgba(230, 183, 108, 0.9);
-    color: white;
-    border: 2px solid rgb(172, 76, 0);
+    background-color: var(--log-accent);
+    color: var(--log-button-text);
+    border: 2px solid var(--log-accent-hover);
 }
 
 .calendar-mode-toggle .btn-secondary {
     background-color: #6c757d;
-    color: white;
+    color: var(--log-button-text);
     border: 2px solid #545b62;
 }
 
@@ -183,7 +190,7 @@
 }
 
 .calendar-mode-toggle .btn-primary:hover {
-    background-color: rgb(172, 76, 0, 0.95);
+    background-color: var(--log-accent-hover);
 }
 
 /* CSV Buttons Container */
@@ -198,6 +205,33 @@
 
 .csv-buttons button {
     min-width: 200px;
+}
+
+.log-page-shell {
+    width: 100%;
+}
+
+.log-action-button {
+    display: inline-flex;
+    min-width: 200px;
+    min-height: 38px;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 15px;
+    border: 1px solid var(--log-accent-hover);
+    border-radius: 5px;
+    background: var(--log-accent);
+    color: var(--log-button-text) !important;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.log-action-button:hover {
+    background: var(--log-accent-hover);
+    color: var(--log-button-text) !important;
+    text-decoration: none;
 }
 
 /* Event Table Styles */
@@ -224,7 +258,7 @@
 }
 
 .event-table .entry-cell:hover {
-    background-color: rgba(230, 183, 108, 0.2);
+    background-color: var(--log-accent-soft);
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
@@ -296,7 +330,7 @@ main.container {
 
 .people-search:focus {
     outline: none;
-    border-color: rgb(230, 183, 108);
+    border-color: var(--log-accent);
 }
 
 .people-list form {
@@ -328,13 +362,13 @@ main.container {
 
 .people-item:hover {
     background-color: #555555;
-    border-color: rgb(230, 183, 108);
+    border-color: var(--log-accent);
     transform: translateX(5px);
 }
 
 .people-count {
-    background-color: rgb(230, 183, 108);
-    color: white;
+    background-color: var(--log-accent);
+    color: var(--log-button-text);
     padding: 4px 8px;
     border-radius: 4px;
     font-size: 14px;
@@ -343,10 +377,10 @@ main.container {
 
 .pdf-export-btn {
     padding: 10px 18px;
-    background-color: rgb(230, 183, 108);
-    border: 2px solid rgb(172, 76, 0);
+    background-color: var(--log-accent);
+    border: 2px solid var(--log-accent-hover);
     border-radius: 6px;
-    color: #fff;
+    color: var(--log-button-text);
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
@@ -360,7 +394,7 @@ main.container {
 }
 
 .pdf-export-btn:hover {
-    background-color: rgb(172, 76, 0);
+    background-color: var(--log-accent-hover);
     transform: translateY(-1px);
     box-shadow: 0 4px 10px rgba(0,0,0,0.3);
 }
@@ -398,7 +432,7 @@ main.container {
 .modal-body label {
     display: block;
     margin-top: 15px;
-    color: #e6b76c;
+    color: var(--log-accent);
     font-weight: bold;
 }
 

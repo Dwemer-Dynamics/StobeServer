@@ -444,7 +444,7 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
     <title>AI Responses</title>
     <link rel="icon" type="image/x-icon" href="/StobeServer/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/main.css?v=<?= (int) @filemtime(__DIR__ . '/css/main.css') ?>">
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         body {
@@ -588,9 +588,9 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
         }
 
         .view-contents-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
+            background: #e6b76c;
+            border: 1px solid #c9984f;
+            color: #ffffff;
             padding: 8px 16px;
             text-align: center;
             text-decoration: none;
@@ -599,14 +599,15 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
             margin: 2px;
             cursor: pointer;
             border-radius: 6px;
-            transition: all 0.3s ease;
+            transition: background-color 0.15s ease, border-color 0.15s ease;
             font-weight: 600;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: none;
         }
 
         .view-contents-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+            background: #c9984f;
+            border-color: #b48644;
+            color: #ffffff;
         }
 
         .modal {

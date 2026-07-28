@@ -334,8 +334,8 @@ function renderCsvButtons(): void
     $allCsvHref = diaryUrl($allCsvParams);
     ?>
     <div class="csv-buttons">
-        <a href="<?= h($currentCsvHref) ?>" class="button">Download Current Date</a>
-        <a href="<?= h($allCsvHref) ?>" class="button">Download Entire Diary Log</a>
+        <a href="<?= h($currentCsvHref) ?>" class="log-action-button">Download Current Date</a>
+        <a href="<?= h($allCsvHref) ?>" class="log-action-button">Download Entire Diary Log</a>
     </div>
     <?php
 }
@@ -606,17 +606,19 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
         }
 
     </style>
+<link rel="stylesheet" href="css/diary_adventure.css?v=<?= (int) @filemtime(__DIR__ . '/css/diary_adventure.css') ?>">
 </head>
 <body>
 <?php if (!$isEmbed): ?>
     <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
 <?php endif; ?>
 
-<main>
-    <div class="indent5">
-        <h1>Diary Log</h1>
-        <h2>All timestamps are UTC. Calendar labels use Kenshi game time (`gamets`).</h2>
-        <h3>Filtered view of diary entries by day, with CSV export.</h3>
+<main class="container">
+    <div class="log-page-shell">
+        <div class="page-header">
+            <h1>Diary Log</h1>
+            <p>Browse diary entries by Kenshi date or character and export the current view.</p>
+        </div>
 
         <form method="get" class="filter-toolbar">
             <div class="filter-panel">
@@ -676,7 +678,7 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
 
         <?= renderCalendar($month, $year, $allEventDates) ?>
 
-        <table>
+        <table class="event-table" id="event-table">
             <colgroup>
                 <col style="width: 12%;">
                 <col style="width: 34%;">
@@ -741,7 +743,7 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
                 <div class="diary-modal-entry" id="diaryModalContent"></div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="button" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="log-action-button" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
