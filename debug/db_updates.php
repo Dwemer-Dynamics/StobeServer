@@ -2184,6 +2184,13 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('latest_diary_context', 202607270201, static function () use ($db): void {
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_diarylog_people_gamets
+                 ON diarylog (LOWER(TRIM(people)), gamets DESC, localts DESC, rowid DESC)'
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

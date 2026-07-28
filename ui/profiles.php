@@ -91,7 +91,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
@@ -624,7 +624,9 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card .toggle-title { color:#dfe6f4; font-weight:700; font-size:12px; }
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
-.top-toggle-wrap .top-toggle-title { color: #e6b76c; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.top-toggle-groups { display:grid; gap:9px; }
+.top-toggle-group { padding:9px; border:1px solid #3f3f3f; border-radius:8px; background:#202020; }
+.top-toggle-wrap .top-toggle-title { color:#e6b76c; font-family:'MagicCards', serif; font-size:1em; font-weight:700; letter-spacing:.4px; word-spacing:4px; margin-bottom:7px; }
 .profile-role-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
 .profile-editor-toolbar { position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; padding:10px 12px; border:1px solid #454545; border-radius:8px; background:rgba(31,31,31,.97); box-shadow:0 4px 14px rgba(0,0,0,.28); }
 .profile-editor-toolbar-label { color:#9fb1c9; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
@@ -820,32 +822,49 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             </label>
                         </div>
                         <div class="top-toggle-wrap">
-                            <div class="top-toggle-title">Profile Runtime Toggles</div>
-                            <div class="toggle-grid">
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">DYNAMIC_PROFILE_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
-                                </div>
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">MIDDLE_TERM_MEMORY_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
-                                </div>
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">AUTO_DIARY_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
-                                </div>
+                            <div class="top-toggle-groups">
+                                <section class="top-toggle-group">
+                                    <div class="top-toggle-title">Profiles &amp; Memories</div>
+                                    <div class="toggle-grid">
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Dynamic Profile</span>
+                                            </label>
+                                            <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Middle Term Memory</span>
+                                            </label>
+                                            <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="top-toggle-group">
+                                    <div class="top-toggle-title">Diary</div>
+                                    <div class="toggle-grid">
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Auto Diary</span>
+                                            </label>
+                                            <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="1" <?= $metaBool('LATEST_DIARY_CONTEXT_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Include Latest Diary Entry</span>
+                                            </label>
+                                            <div class="toggle-desc">Adds the NPC's latest diary entry to the character section of every response prompt.</div>
+                                        </div>
+                                    </div>
+                                </section>
                             </div>
                         </div>
 

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS diarylog (
 CREATE INDEX IF NOT EXISTS idx_diarylog_people ON diarylog (people);
 CREATE INDEX IF NOT EXISTS idx_diarylog_gamets ON diarylog (gamets DESC, localts DESC, rowid DESC);
 CREATE INDEX IF NOT EXISTS idx_diarylog_localts ON diarylog (localts DESC);
+CREATE INDEX IF NOT EXISTS idx_diarylog_people_gamets ON diarylog (LOWER(TRIM(people)), gamets DESC, localts DESC, rowid DESC);
 
 -- ----------------------------------------------------------
 -- GENERAL_SETTINGS — All configuration (no conf.php)
