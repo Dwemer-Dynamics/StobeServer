@@ -36,6 +36,32 @@ function stobeAiNpcFieldValue(array $row, string $key, string $fallback = 'Unkno
     return $value === '' ? $fallback : $value;
 }
 
+function stobeAiNpcSnapshotValue(array $row, string $key): string {
+    $value = trim(strval($row[$key] ?? ''));
+    if ($value === '') {
+        return '(none recorded)';
+    }
+
+    $decoded = json_decode($value, true);
+    if (is_array($decoded)) {
+        if (count($decoded) === 0) {
+            return '(none recorded)';
+        }
+        return json_encode(
+            $decoded,
+            JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+    }
+    return $value;
+}
+
+function stobeAiNpcBoolValue(mixed $value): bool {
+    if (is_bool($value)) {
+        return $value;
+    }
+    return in_array(strtolower(trim(strval($value))), ['1', 't', 'true', 'yes', 'on'], true);
+}
+
 function stobeAiNpcRelationshipSummary(mixed $rawRelationships): string {
     $relationshipMap = stobeNormalizeRelationshipMap($rawRelationships);
     if (count($relationshipMap) === 0) {
@@ -271,6 +297,28 @@ if ($action === 'detail') {
     $lines[] = "Original Name: " . $originalName;
     $lines[] = "Current Profile: " . $profileLabel;
     $lines[] = "Voice ID: " . $voiceIdLabel;
+    $lines[] = "Race: " . stobeAiNpcFieldValue($row, 'race');
+    $lines[] = "Gender: " . stobeAiNpcFieldValue($row, 'gender');
+    $lines[] = "Faction: " . stobeAiNpcFieldValue($row, 'faction');
+    $lines[] = "Blood: " . stobeAiNpcFieldValue($row, 'blood');
+    $lines[] = "Hunger: " . stobeAiNpcFieldValue($row, 'hunger');
+    $lines[] = "Animal: " . (stobeAiNpcBoolValue($row['is_animal'] ?? false) ? 'Yes' : 'No');
+    $lines[] = "Slave: " . (stobeAiNpcBoolValue($row['is_slave'] ?? false) ? 'Yes' : 'No');
+    $lines[] = "";
+    $lines[] = "Equipment:";
+    $lines[] = stobeAiNpcSnapshotValue($row, 'equipment');
+    $lines[] = "";
+    $lines[] = "Inventory:";
+    $lines[] = stobeAiNpcSnapshotValue($row, 'inventory');
+    $lines[] = "";
+    $lines[] = "Skills:";
+    $lines[] = stobeAiNpcSnapshotValue($row, 'skills');
+    $lines[] = "";
+    $lines[] = "Limbs:";
+    $lines[] = stobeAiNpcSnapshotValue($row, 'limbs');
+    $lines[] = "";
+    $lines[] = "Bounty:";
+    $lines[] = stobeAiNpcSnapshotValue($row, 'bounty');
     $lines[] = "";
     $lines[] = "Backstory:";
     $lines[] = stobeAiNpcFieldValue($row, 'backstory', '(empty)');
