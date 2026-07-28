@@ -300,9 +300,9 @@ function stobeGroupSortWeight(string $group): int
 {
     static $weights = [
         'Prompt & Rechat' => 5,
-        'Core' => 10,
+        'Memory' => 10,
+        'Core' => 20,
         'Bored Event' => 30,
-        'Memory' => 40,
         'World Knowledge' => 50,
         'LLM & API' => 70,
         'Other' => 80,
