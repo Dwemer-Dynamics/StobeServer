@@ -274,7 +274,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'WHISPER_')
         || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE'], true)
     ) {
-        return 'Rechat';
+        return 'Prompt & Rechat';
     }
     if (in_array($idUpper, [
         'CONTEXT_HISTORY',
@@ -291,7 +291,7 @@ function stobeInferGroup(string $id): string
         return 'Core';
     }
     if (in_array($idUpper, ['PROMPT_HEAD', 'EMOTEMOODS', 'ROLEPLAY_INSTRUCTIONS', 'GENERAL_INSTRUCTIONS', 'ACTIONS_ALLOWLIST'], true)) {
-        return 'Prompting';
+        return 'Prompt & Rechat';
     }
     return 'Other';
 }
@@ -299,9 +299,8 @@ function stobeInferGroup(string $id): string
 function stobeGroupSortWeight(string $group): int
 {
     static $weights = [
-        'Prompting' => 5,
+        'Prompt & Rechat' => 5,
         'Core' => 10,
-        'Rechat' => 20,
         'Bored Event' => 30,
         'Memory' => 40,
         'World Knowledge' => 50,
@@ -358,7 +357,14 @@ function stobeRenderPromptContextSection(
 ): string {
     ob_start();
     ?>
-    <section class="content-section" data-group="context-selections">
+    <section
+        class="content-section"
+        data-group="context-selections"
+        data-settings-panel="context-knowledge"
+        role="tabpanel"
+        aria-labelledby="settings-tab-context-knowledge"
+        hidden
+    >
         <h2><?= h($promptContextSectionTitle) ?></h2>
         <div class="prompt-context-wrap">
             <div class="prompt-context-intro">
@@ -478,10 +484,13 @@ foreach ($grouped as $groupName => $rows) {
         $priorityMap = [
             'PROMPT_HEAD' => 0,
             'EMOTEMOODS' => 1,
+            'ROLEPLAY_INSTRUCTIONS' => 2,
+            'GENERAL_INSTRUCTIONS' => 3,
+            'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
-            'RECHAT_MODE' => 0,
-            'ENFORCE_STRICT_RECHAT_RESPONSE' => 1,
-            'SPEAKER_RECHAT' => 2,
+            'RECHAT_MODE' => 20,
+            'ENFORCE_STRICT_RECHAT_RESPONSE' => 21,
+            'SPEAKER_RECHAT' => 22,
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
@@ -512,6 +521,30 @@ uksort($grouped, function ($a, $b) {
     }
     return $wa <=> $wb;
 });
+
+$settingsTabs = [
+    'prompt-rechat' => 'Prompt & Rechat',
+    'ai-memory' => 'AI & Memory',
+    'context-knowledge' => 'Context & Knowledge',
+    'general' => 'General',
+];
+
+$groupTabs = [
+    'Prompt & Rechat' => 'prompt-rechat',
+    'Memory' => 'ai-memory',
+    'LLM & API' => 'ai-memory',
+    'World Knowledge' => 'context-knowledge',
+    'Core' => 'general',
+    'Bored Event' => 'general',
+    'Other' => 'general',
+];
+
+$tabControlPanels = [
+    'prompt-rechat' => 'settings-panel-prompt-rechat-prompt-rechat',
+    'ai-memory' => 'settings-panel-ai-memory-memory',
+    'context-knowledge' => 'settings-panel-context-knowledge-world-knowledge',
+    'general' => 'settings-panel-general-core',
+];
 
 ?>
 <!DOCTYPE html>
@@ -608,6 +641,40 @@ uksort($grouped, function ($a, $b) {
             border: 1px solid rgba(72, 187, 120, 0.22);
             font-weight: 700;
         }
+        .settings-tabs {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 14px;
+            padding: 8px;
+            border: 1px solid #3a3a3a;
+            border-radius: 10px;
+            background: rgba(30, 30, 30, 0.92);
+        }
+        .settings-tab {
+            min-height: 40px;
+            padding: 8px 12px;
+            border: 1px solid #444;
+            border-radius: 7px;
+            background: #303030;
+            color: #ddd;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .settings-tab:hover {
+            border-color: rgba(230, 183, 108, 0.55);
+            background: #383838;
+        }
+        .settings-tab.is-active {
+            border-color: #e6b76c;
+            color: #fff;
+            background: #3b3429;
+            box-shadow: inset 0 0 0 1px rgba(230, 183, 108, 0.18);
+        }
+        .settings-tab:focus-visible {
+            outline: 2px solid #e6b76c;
+            outline-offset: 2px;
+        }
         .content-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -646,6 +713,20 @@ uksort($grouped, function ($a, $b) {
             grid-template-columns: minmax(220px, 280px) minmax(360px, 720px) minmax(220px, 1fr);
             gap: 12px 16px;
             align-items: center;
+        }
+        .connector-section .provider-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .connector-section .provider-card {
+            grid-template-columns: 1fr;
+            align-content: start;
+            align-items: start;
+        }
+        .connector-section .provider-body {
+            width: 100%;
+        }
+        .connector-section .provider-help {
+            margin-top: 0;
         }
         .provider-head {
             display: flex;
@@ -783,6 +864,11 @@ uksort($grouped, function ($a, $b) {
             }
         }
         @media (max-width: 900px) {
+            .settings-tabs,
+            .connector-section .provider-grid {
+                grid-template-columns: 1fr;
+            }
+
             .page-header-row {
                 align-items: flex-start;
             }
@@ -818,11 +904,39 @@ uksort($grouped, function ($a, $b) {
         <div class="status-banner"><?= h($statusMessage) ?></div>
     <?php endif; ?>
 
+    <div class="settings-tabs" role="tablist" aria-label="Global settings categories">
+        <?php foreach ($settingsTabs as $tabId => $tabLabel): ?>
+            <button
+                type="button"
+                class="settings-tab<?= $tabId === 'prompt-rechat' ? ' is-active' : '' ?>"
+                id="settings-tab-<?= h($tabId) ?>"
+                role="tab"
+                aria-selected="<?= $tabId === 'prompt-rechat' ? 'true' : 'false' ?>"
+                aria-controls="<?= h($tabControlPanels[$tabId]) ?>"
+                data-settings-tab="<?= h($tabId) ?>"
+            ><?= h($tabLabel) ?></button>
+        <?php endforeach; ?>
+    </div>
+
     <form method="post" action="<?= h($selfPage) ?>" id="stobeSettingsForm">
         <div class="content-grid" id="settingsGrid">
             <?php $promptContextSectionRendered = false; ?>
             <?php foreach ($grouped as $groupName => $rows): ?>
-                <section class="content-section" data-group="<?= h(strtolower($groupName)) ?>">
+                <?php
+                    $groupTab = $groupTabs[$groupName] ?? 'general';
+                    $isInitialTab = $groupTab === 'prompt-rechat';
+                    $groupSlug = trim(preg_replace('/[^a-z0-9]+/i', '-', strtolower($groupName)), '-');
+                    $sectionClasses = 'content-section' . ($groupName === 'LLM & API' ? ' connector-section' : '');
+                ?>
+                <section
+                    class="<?= h($sectionClasses) ?>"
+                    id="settings-panel-<?= h($groupTab) ?>-<?= h($groupSlug) ?>"
+                    data-group="<?= h(strtolower($groupName)) ?>"
+                    data-settings-panel="<?= h($groupTab) ?>"
+                    role="tabpanel"
+                    aria-labelledby="settings-tab-<?= h($groupTab) ?>"
+                    <?= $isInitialTab ? '' : 'hidden' ?>
+                >
                     <h2><?= h($groupName) ?></h2>
                     <div class="provider-grid">
                         <?php foreach ($rows as $row): ?>
@@ -906,6 +1020,78 @@ uksort($grouped, function ($a, $b) {
             <?php endif; ?>
         </div>
     </form>
+
+    <script>
+    (() => {
+        const storageKey = 'stobe-global-settings-tab';
+        const tabs = Array.from(document.querySelectorAll('[data-settings-tab]'));
+        const panels = Array.from(document.querySelectorAll('[data-settings-panel]'));
+        const form = document.getElementById('stobeSettingsForm');
+        const validTabs = new Set(tabs.map((tab) => tab.dataset.settingsTab));
+
+        function activateTab(tabId, focusTab = false) {
+            if (!validTabs.has(tabId)) {
+                tabId = 'prompt-rechat';
+            }
+
+            tabs.forEach((tab) => {
+                const active = tab.dataset.settingsTab === tabId;
+                tab.classList.toggle('is-active', active);
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
+                tab.tabIndex = active ? 0 : -1;
+                if (active && focusTab) {
+                    tab.focus();
+                }
+            });
+
+            panels.forEach((panel) => {
+                panel.hidden = panel.dataset.settingsPanel !== tabId;
+            });
+
+            try {
+                sessionStorage.setItem(storageKey, tabId);
+            } catch (error) {
+                // Storage can be unavailable in privacy-restricted browsers.
+            }
+        }
+
+        tabs.forEach((tab, index) => {
+            tab.addEventListener('click', () => activateTab(tab.dataset.settingsTab));
+            tab.addEventListener('keydown', (event) => {
+                let nextIndex = null;
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                    nextIndex = (index + 1) % tabs.length;
+                } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                    nextIndex = (index - 1 + tabs.length) % tabs.length;
+                } else if (event.key === 'Home') {
+                    nextIndex = 0;
+                } else if (event.key === 'End') {
+                    nextIndex = tabs.length - 1;
+                }
+
+                if (nextIndex !== null) {
+                    event.preventDefault();
+                    activateTab(tabs[nextIndex].dataset.settingsTab, true);
+                }
+            });
+        });
+
+        form?.addEventListener('invalid', (event) => {
+            const panel = event.target.closest('[data-settings-panel]');
+            if (panel) {
+                activateTab(panel.dataset.settingsPanel);
+            }
+        }, true);
+
+        let initialTab = 'prompt-rechat';
+        try {
+            initialTab = sessionStorage.getItem(storageKey) || initialTab;
+        } catch (error) {
+            // Keep the default tab when storage is unavailable.
+        }
+        activateTab(initialTab);
+    })();
+    </script>
 </main>
 </body>
 </html>
