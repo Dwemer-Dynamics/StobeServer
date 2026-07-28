@@ -350,6 +350,63 @@ function stobePrettySettingLabel(string $id): string
     return ucwords(str_replace('_', ' ', strtolower($idUpper)));
 }
 
+function stobeIconForSetting(string $id): string
+{
+    $idUpper = strtoupper(trim($id));
+    $icons = [
+        'PROMPT_HEAD' => '🔝',
+        'EMOTEMOODS' => '🎭',
+        'RECHAT_MODE' => '🔁',
+        'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
+        'SPEAKER_RECHAT' => '🗣️',
+        'MEMORY_ENABLED' => '🧠',
+        'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
+        'TXTAI_URL' => '🔗',
+        'BRACKET_ORIGINAL_NAME' => '🏷️',
+        'RELATIONSHIP_SYSTEM' => '💞',
+        'RELATIONSHIP_SYSTEM_ENABLED' => '💞',
+        'RELATION_SYSTEM_ENABLED' => '💞',
+        'PLAYER_FACTION_CUSTOM_NAME' => '🏴',
+        'PLAYER_FACTION_PROMPT' => '📜',
+        'AUTO_LOCK_PROFILE' => '🔒',
+        'HTTP_TIMEOUT' => '⌛',
+        'WORLD_KNOWLEDGE_ENABLED' => '📚',
+        'ALWAYS_INSERT_RACE' => '🧬',
+        'WORLD_KNOWLEDGE_AMOUNT' => '🔢',
+        'WORLD_KNOWLEDGE_CONTEXT_HISTORY' => '🕰️',
+        'WORLD_KNOWLEDGE_CONTEXT_KEYWORDS' => '🔑',
+        'WORLD_KNOWLEDGE_MIN_RANK' => '🎖️',
+        'PLAYTHROUGH_AUTOLOAD_ENABLED' => '💾',
+        'PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED' => '🧹',
+        'AUTO_CREATE_SUMMARY_MIN_EVENTS' => '📝',
+        'DYNAMIC_PROFILE_LOAD_GRACE_SECONDS' => '⏳',
+        'PLAYTHROUGH_AUTOLOAD_COOLDOWN_SECONDS' => '⏱️',
+        'PLAYTHROUGH_AUTOLOAD_FRESH_SQUAD_MAX_AGE_SECONDS' => '👥',
+        'PLAYTHROUGH_AUTOLOAD_MAX_GAMETS_DELTA' => '🕒',
+        'PLAYTHROUGH_AUTOLOAD_MIN_SCORE' => '🎯',
+        'PLAYTHROUGH_AUTOLOAD_MIN_SQUAD_OVERLAP' => '🤝',
+    ];
+    if (isset($icons[$idUpper])) {
+        return $icons[$idUpper];
+    }
+    if (str_starts_with($idUpper, 'CORE_CONNECTOR_')) {
+        return '🔌';
+    }
+    if (str_contains($idUpper, 'API_KEY') || str_contains($idUpper, 'SECRET') || str_contains($idUpper, 'TOKEN')) {
+        return '🔑';
+    }
+    if (str_contains($idUpper, 'MEMORY')) {
+        return '🧠';
+    }
+    if (str_contains($idUpper, 'WORLD_KNOWLEDGE')) {
+        return '📚';
+    }
+    if (str_contains($idUpper, 'COOLDOWN') || str_contains($idUpper, 'INTERVAL') || str_ends_with($idUpper, '_SECONDS')) {
+        return '⏱️';
+    }
+    return '🧩';
+}
+
 function stobeRenderPromptContextSection(
     string $promptContextSectionTitle,
     array $promptContextCatalog,
@@ -751,6 +808,19 @@ if (isset($grouped['LLM & API'])) {
             min-width: 0;
             flex-wrap: wrap;
         }
+        .provider-icon {
+            width: 30px;
+            height: 30px;
+            flex: 0 0 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #4a4a4a;
+            border-radius: 7px;
+            background: rgba(20, 20, 20, 0.7);
+            font-size: 17px;
+            line-height: 1;
+        }
         .provider-body {
             display: flex;
             gap: 8px;
@@ -972,6 +1042,7 @@ if (isset($grouped['LLM & API'])) {
                             >
                                 <div class="provider-head">
                                     <div class="provider-title">
+                                        <div class="provider-icon" aria-hidden="true"><?= h(stobeIconForSetting($id)) ?></div>
                                         <div><?= h($label) ?></div>
                                         <?php if ($type === 'bool'): ?>
                                             <div class="provider-toggle">
