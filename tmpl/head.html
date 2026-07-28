@@ -29,7 +29,7 @@
     <link rel="stylesheet" href="https://unpkg.com/@highlightjs/cdn-assets@11.7.0/styles/default.min.css" />
     <?php $isEmbedHead = isset($_GET['embed']) && strval($_GET['embed']) === '1'; ?>
     <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/style_new.css" />
-    <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css" />
+    <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css?v=<?= (int) @filemtime(__DIR__ . '/../ui/css/main.css') ?>" />
     <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/stobe-theme.css?v=<?php echo filemtime(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'ui' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'stobe-theme.css'); ?>" />
     <?php if (!$isEmbedHead): ?>
     <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/navbar.css" />

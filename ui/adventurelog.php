@@ -400,8 +400,8 @@ function renderCsvButtons(): void
     $allCsvHref = adventureUrl($allCsvParams);
     ?>
     <div class="csv-buttons">
-        <a href="<?= h($currentCsvHref) ?>" class="button">Download Current Date</a>
-        <a href="<?= h($allCsvHref) ?>" class="button">Download Entire Adventure Log</a>
+        <a href="<?= h($currentCsvHref) ?>" class="log-action-button">Download Current Date</a>
+        <a href="<?= h($allCsvHref) ?>" class="log-action-button">Download Entire Adventure Log</a>
     </div>
     <?php
 }
@@ -583,17 +583,19 @@ $rows = filterMirroredPlayerChatRows(buildAdventureRows($db, $eventTypes, $start
             color: yellow;
         }
     </style>
+<link rel="stylesheet" href="css/diary_adventure.css?v=<?= (int) @filemtime(__DIR__ . '/css/diary_adventure.css') ?>">
 </head>
 <body>
 <?php if (!$isEmbed): ?>
     <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
 <?php endif; ?>
 
-<main>
-    <div class="indent5">
-        <h1>Adventure Log</h1>
-        <h2>All timestamps are UTC. Calendar labels use Kenshi game time (`gamets`).</h2>
-        <h3>Filtered view of event log data by day, with CSV export.</h3>
+<main class="container">
+    <div class="log-page-shell">
+        <div class="page-header">
+            <h1>Adventure Log</h1>
+            <p>Browse event history by Kenshi date and export the current view.</p>
+        </div>
 
         <?php renderCsvButtons(); ?>
 
@@ -628,7 +630,7 @@ $rows = filterMirroredPlayerChatRows(buildAdventureRows($db, $eventTypes, $start
 
         <?= renderCalendar($month, $year, $allEventDates) ?>
 
-        <table>
+        <table class="event-table" id="event-table">
             <colgroup>
                 <col style="width: 50%;">
                 <col style="width: 25%;">
