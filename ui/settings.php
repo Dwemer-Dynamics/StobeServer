@@ -523,16 +523,19 @@ uksort($grouped, function ($a, $b) {
 });
 
 $settingsTabs = [
-    'prompt-rechat' => 'Prompt & Rechat',
-    'ai-memory' => 'AI & Memory',
-    'context-knowledge' => 'Context & Knowledge',
-    'general' => 'General',
+    'prompt-rechat' => '💬 Prompt & Rechat',
+    'ai-memory' => '🧠 AI & Memory',
 ];
+if (isset($grouped['LLM & API'])) {
+    $settingsTabs['global-connectors'] = '🔌 Global Connectors';
+}
+$settingsTabs['context-knowledge'] = '📚 Context & Knowledge';
+$settingsTabs['general'] = '⚙️ General';
 
 $groupTabs = [
     'Prompt & Rechat' => 'prompt-rechat',
     'Memory' => 'ai-memory',
-    'LLM & API' => 'ai-memory',
+    'LLM & API' => 'global-connectors',
     'World Knowledge' => 'context-knowledge',
     'Core' => 'general',
     'Bored Event' => 'general',
@@ -545,6 +548,9 @@ $tabControlPanels = [
     'context-knowledge' => 'settings-panel-context-knowledge-world-knowledge',
     'general' => 'settings-panel-general-core',
 ];
+if (isset($grouped['LLM & API'])) {
+    $tabControlPanels['global-connectors'] = 'settings-panel-global-connectors-llm-api';
+}
 
 ?>
 <!DOCTYPE html>
@@ -643,7 +649,7 @@ $tabControlPanels = [
         }
         .settings-tabs {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 8px;
             margin-bottom: 14px;
             padding: 8px;
@@ -652,6 +658,7 @@ $tabControlPanels = [
             background: rgba(30, 30, 30, 0.92);
         }
         .settings-tab {
+            position: relative;
             min-height: 40px;
             padding: 8px 12px;
             border: 1px solid #444;
@@ -660,16 +667,18 @@ $tabControlPanels = [
             color: #ddd;
             font-weight: 700;
             cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
         }
         .settings-tab:hover {
             border-color: rgba(230, 183, 108, 0.55);
             background: #383838;
         }
-        .settings-tab.is-active {
-            border-color: #e6b76c;
-            color: #fff;
-            background: #3b3429;
-            box-shadow: inset 0 0 0 1px rgba(230, 183, 108, 0.18);
+        body .settings-tabs .settings-tab.is-active {
+            border-color: #e6b76c !important;
+            color: #fff !important;
+            background: rgba(82, 67, 42, 0.95) !important;
+            box-shadow: inset 0 0 0 1px rgba(230, 183, 108, 0.28), 0 0 12px rgba(230, 183, 108, 0.24) !important;
+            transform: translateY(-1px) !important;
         }
         .settings-tab:focus-visible {
             outline: 2px solid #e6b76c;
