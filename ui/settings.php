@@ -524,29 +524,27 @@ uksort($grouped, function ($a, $b) {
 
 $settingsTabs = [
     'prompt-rechat' => '💬 Prompt & Rechat',
-    'ai-memory' => '🧠 AI & Memory',
+    'ai-memory' => '🧠 Memory & Others',
 ];
+$settingsTabs['context-knowledge'] = '📚 Context & Knowledge';
 if (isset($grouped['LLM & API'])) {
     $settingsTabs['global-connectors'] = '🔌 Global Connectors';
 }
-$settingsTabs['context-knowledge'] = '📚 Context & Knowledge';
-$settingsTabs['general'] = '⚙️ General';
 
 $groupTabs = [
     'Prompt & Rechat' => 'prompt-rechat',
     'Memory' => 'ai-memory',
-    'LLM & API' => 'global-connectors',
+    'Core' => 'ai-memory',
+    'Bored Event' => 'ai-memory',
+    'Other' => 'ai-memory',
     'World Knowledge' => 'context-knowledge',
-    'Core' => 'general',
-    'Bored Event' => 'general',
-    'Other' => 'general',
+    'LLM & API' => 'global-connectors',
 ];
 
 $tabControlPanels = [
     'prompt-rechat' => 'settings-panel-prompt-rechat-prompt-rechat',
     'ai-memory' => 'settings-panel-ai-memory-memory',
     'context-knowledge' => 'settings-panel-context-knowledge-world-knowledge',
-    'general' => 'settings-panel-general-core',
 ];
 if (isset($grouped['LLM & API'])) {
     $tabControlPanels['global-connectors'] = 'settings-panel-global-connectors-llm-api';
