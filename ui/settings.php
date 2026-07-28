@@ -575,10 +575,12 @@ if (isset($grouped['LLM & API'])) {
             color: #f8f9fa;
         }
         main.page-wrap {
-            padding-top: 30px;
-            padding-bottom: 24px;
-            padding-left: 5px;
-            padding-right: 5px;
+            padding-top: 40px;
+            padding-bottom: 40px;
+            padding-left: 10%;
+            padding-right: 10%;
+            width: 100%;
+            margin: 0;
         }
         .page-header {
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -874,6 +876,11 @@ if (isset($grouped['LLM & API'])) {
             .settings-tabs,
             .connector-section .provider-grid {
                 grid-template-columns: 1fr;
+            }
+
+            main.page-wrap {
+                padding-left: 5%;
+                padding-right: 5%;
             }
 
             .page-header-row {
