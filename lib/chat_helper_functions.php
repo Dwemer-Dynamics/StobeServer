@@ -4596,11 +4596,27 @@ function stobeResolveStructuredDialogueContractParts(
     ];
 }
 
+function stobeStructuredDialogueMessageDescription(string $npcName, string $eventType): string
+{
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if ($safeNpc === '') {
+        $safeNpc = 'the NPC';
+    }
+    if (!stobeInlineNarrationApplies($safeNpc, $eventType)) {
+        return 'lines of ' . $safeNpc . '\'s dialogue';
+    }
+    return 'begin with one brief third-person scene description in single asterisks, '
+        . 'then put ' . $safeNpc . '\'s spoken dialogue outside the asterisks. '
+        . 'Example: *She glances toward the gate.* We should leave. '
+        . 'Do not wrap the entire reply in asterisks';
+}
+
 function stobeBuildStructuredDialogueSchemaPrompt(
     string $npcName,
     array $actions,
     array $moods,
-    string $strictListener = ''
+    string $strictListener = '',
+    string $eventType = 'chat'
 ): array
 {
     $safeNpc = normalizeParticipantNameToken($npcName);
@@ -4619,7 +4635,7 @@ function stobeBuildStructuredDialogueSchemaPrompt(
     return [
         'character' => $safeNpc,
         'listener' => $listenerDescription,
-        'message' => 'lines of dialogue',
+        'message' => stobeStructuredDialogueMessageDescription($safeNpc, $eventType),
         'mood' => $moodDescription,
         'action' => implode('|', $actions),
         'target' => 'action target actor or destination name',
@@ -4643,6 +4659,7 @@ function stobeBuildStructuredDialogueResponseFormat(
     }
     $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
     $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
+    $messageDescription = stobeStructuredDialogueMessageDescription($safeNpc, $eventType);
     $safeStrictListener = normalizeParticipantNameToken($strictListener);
     $listenerProperty = [
         'type' => 'string',
@@ -4670,7 +4687,7 @@ function stobeBuildStructuredDialogueResponseFormat(
                     'listener' => $listenerProperty,
                     'message' => [
                         'type' => 'string',
-                        'description' => 'lines of ' . $safeNpc . '\'s dialogue',
+                        'description' => $messageDescription,
                     ],
                     'mood' => [
                         'type' => 'string',
@@ -4747,7 +4764,13 @@ function stobeBuildOutputContractUserPrompt(
     }
     $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
     $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
-    $schema = stobeBuildStructuredDialogueSchemaPrompt($safeNpc, $actions, $moods, $safeStrictListener);
+    $schema = stobeBuildStructuredDialogueSchemaPrompt(
+        $safeNpc,
+        $actions,
+        $moods,
+        $safeStrictListener,
+        $eventType
+    );
 
     return $actionLine
         . " Use <speech_style> for reference.\n"
@@ -11760,7 +11783,7 @@ function stobeInlineNarrationPromptMessages(
     if (!stobeInlineNarrationApplies($actor, $eventType)) {
         return $messages;
     }
-    $fallback = 'If useful, begin the reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
+    $fallback = 'Begin each reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
     $instruction = function_exists('stobeGetPromptTemplateValue')
         ? stobeGetPromptTemplateValue('inline_narration_prompt', $fallback)
         : $fallback;

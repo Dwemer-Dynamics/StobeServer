@@ -1885,6 +1885,18 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 [$prompt]
             );
         });
+        $applyPatch('prompts', 202607290001, static function () use ($db): void {
+            $prompt = 'Begin each reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, custom_prompt, description, updated_at)
+                 VALUES ('inline_narration_prompt', $1, '', 'Formatting instruction used when narrator inline narration mode is enabled.', NOW())
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
         $applyPatch('core_profiles', 202604110102, static function () use ($db): void {
             $db->exec(
                 "UPDATE core_profiles
