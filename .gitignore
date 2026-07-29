@@ -28,13 +28,3 @@
 *.swp
 *.swo
 *.log
-
-# Regenerable Kenshi world-state analysis artifacts
-/data/world_state/vanilla_world_knowledge_generation.json
-/data/world_state/vanilla_world_state_addenda.csv
-/data/world_state/vanilla_world_state_catalog.full.json
-/data/world_state/vanilla_world_state_coverage.json
-/data/world_state/vanilla_world_state_coverage.md
-/data/world_state/vanilla_world_state_source_of_truth.json
-/data/world_state/vanilla_world_state_wiki_comparison.md
-/data/world_state/wiki_world_state_sources.json
