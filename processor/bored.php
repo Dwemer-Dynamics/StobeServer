@@ -270,9 +270,10 @@ $relationshipEval = stobeEvaluateRelationshipsForTurn(
     $speakerData,
     'bored'
 );
-$responseText = stobeStripParentheticalDialogueText(
-    sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)))
-);
+$responseText = sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)));
+if (!stobeInlineNarrationApplies($speakerNpc, 'bored')) {
+    $responseText = stobeStripParentheticalDialogueText($responseText);
+}
 
 if ($responseText === '' && count($responseActions) === 0) {
     echo "ok";
@@ -300,5 +301,13 @@ if ($alreadyStreamed) {
         streamResponse($speakerNpc, 'ScriptQueue', '', $speakerData, $responseActions, 'bored', $listener, $gamets);
     }
 } else {
-    streamResponse($speakerNpc, 'ScriptQueue', $responseText, $speakerData, $responseActions, 'bored', $listener, $gamets);
+    stobeStreamDialogueResponse(
+        $speakerNpc,
+        $speakerData,
+        $responseText,
+        $responseActions,
+        'bored',
+        $listener,
+        intval($gamets)
+    );
 }
