@@ -58,6 +58,16 @@ try {
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
             ],
             [
+                'id' => 'ALWAYS_INSERT_LOCATION',
+                'value' => 'true',
+                'description' => 'When true, always inject matching World Knowledge for locations shown in the current prompt context.',
+            ],
+            [
+                'id' => 'ALWAYS_INSERT_PEOPLE',
+                'value' => 'true',
+                'description' => 'When true, always inject matching World Knowledge for people shown in the current prompt context.',
+            ],
+            [
                 'id' => 'TXTAI_URL',
                 'value' => 'http://127.0.0.1:8082',
                 'description' => 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
@@ -275,7 +285,10 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'DYNAMIC_PROFILE_')) {
         return 'Core';
     }
-    if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_') || $idUpper === 'ALWAYS_INSERT_RACE') {
+    if (
+        str_starts_with($idUpper, 'WORLD_KNOWLEDGE_')
+        || in_array($idUpper, ['ALWAYS_INSERT_RACE', 'ALWAYS_INSERT_LOCATION', 'ALWAYS_INSERT_PEOPLE'], true)
+    ) {
         return 'World Knowledge';
     }
     if (str_starts_with($idUpper, 'BORED_EVENT_')) {
@@ -344,6 +357,8 @@ function stobePrettySettingLabel(string $id): string
         'PLAYER_FACTION_CUSTOM_NAME' => 'Player Faction Custom Name',
         'PLAYER_FACTION_PROMPT' => 'Player Faction Prompt',
         'ALWAYS_INSERT_RACE' => 'Always Insert Race Knowledge',
+        'ALWAYS_INSERT_LOCATION' => 'Always Insert Location Knowledge',
+        'ALWAYS_INSERT_PEOPLE' => 'Always Insert People Knowledge',
         'BRACKET_ORIGINAL_NAME' => 'Bracket Original Name',
         'RECHAT_MODE' => 'Rechat Mode',
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
@@ -387,6 +402,8 @@ function stobeIconForSetting(string $id): string
         'HTTP_TIMEOUT' => '⌛',
         'WORLD_KNOWLEDGE_ENABLED' => '📚',
         'ALWAYS_INSERT_RACE' => '🧬',
+        'ALWAYS_INSERT_LOCATION' => '📍',
+        'ALWAYS_INSERT_PEOPLE' => '👥',
         'WORLD_KNOWLEDGE_AMOUNT' => '🔢',
         'WORLD_KNOWLEDGE_CONTEXT_HISTORY' => '🕰️',
         'WORLD_KNOWLEDGE_CONTEXT_KEYWORDS' => '🔑',
@@ -573,6 +590,8 @@ foreach ($grouped as $groupName => $rows) {
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
             'ALWAYS_INSERT_RACE' => 1,
+            'ALWAYS_INSERT_LOCATION' => 2,
+            'ALWAYS_INSERT_PEOPLE' => 3,
             'PLAYTHROUGH_AUTOLOAD_ENABLED' => 0,
             'PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED' => 1,
         ];

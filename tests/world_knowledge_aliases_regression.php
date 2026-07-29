@@ -161,6 +161,97 @@ try {
         'normal retrieval should resolve a two-character exact alias inside a sentence'
     );
 
+    $personTopic = 'UT Context Person ' . $seed;
+    $animalTopic = 'UT Context Animal ' . $seed;
+    $locationTopic = 'UT Context Location ' . $seed;
+    $wrongCategoryTopic = 'UT Context Item ' . $seed;
+    $db->exec(
+        "INSERT INTO world_knowledge (topic, topic_desc, topic_desc_basic, aliases, tags)
+         VALUES
+         ($1, 'Person context description.', 'Person context description.', '', 'Characters, Unique'),
+         ($2, 'Animal context description.', 'Animal context description.', '', 'Animals, Characters'),
+         ($3, 'Location context description.', 'Location context description.', '', 'Locations'),
+         ($4, 'Item context description.', 'Item context description.', '', 'Items')",
+        [$personTopic, $animalTopic, $locationTopic, $wrongCategoryTopic]
+    );
+    $db->exec(
+        "INSERT INTO general_settings (id, value, description, updated_at)
+         VALUES
+            ('ALWAYS_INSERT_PEOPLE', 'true', 'Test setting', NOW()),
+            ('ALWAYS_INSERT_LOCATION', 'true', 'Test setting', NOW())
+         ON CONFLICT (id) DO UPDATE
+         SET value = EXCLUDED.value,
+             updated_at = NOW()"
+    );
+
+    $contextNpcData = [
+        'name' => $personTopic . ' [Original]',
+        'is_animal' => false,
+        'world_knowledge_tags' => 'knowall',
+        'extended_data' => [
+            'nearby_actors' => [
+                ['name' => $personTopic, 'is_animal' => false],
+                ['name' => $animalTopic, 'is_animal' => true],
+                ['name' => $wrongCategoryTopic, 'is_animal' => false],
+            ],
+            'points_of_interest' => [
+                ['name' => $locationTopic, 'type' => 'town'],
+                ['name' => $wrongCategoryTopic, 'type' => 'shop'],
+            ],
+        ],
+    ];
+
+    $peopleSignals = stobeWorldKnowledgeCollectForcedPeopleSignals(
+        $personTopic . ' [Original]',
+        $contextNpcData,
+        'UT Context Speaker ' . $seed
+    );
+    worldKnowledgeAliasAssert(
+        in_array(stobeWorldKnowledgeNormalizeLookupLabel($personTopic), $peopleSignals, true),
+        'people context should normalize bracket-renamed NPCs to their base names'
+    );
+    worldKnowledgeAliasAssert(
+        !in_array(stobeWorldKnowledgeNormalizeLookupLabel($animalTopic), $peopleSignals, true),
+        'people context should skip nearby animals'
+    );
+
+    $peopleHints = stobeWorldKnowledgeResolveForcedPeopleHints(
+        $personTopic . ' [Original]',
+        $contextNpcData,
+        'UT Context Speaker ' . $seed,
+        'chat'
+    );
+    worldKnowledgeAliasAssert(
+        count($peopleHints) === 1 && str_starts_with(strval($peopleHints[0]), $personTopic . ':'),
+        'forced people knowledge should include matching character articles and reject non-character categories'
+    );
+
+    $locationSignals = stobeWorldKnowledgeCollectForcedLocationSignals($contextNpcData);
+    worldKnowledgeAliasAssert(
+        in_array(stobeWorldKnowledgeNormalizeLookupLabel($locationTopic), $locationSignals, true),
+        'location context should include rendered points of interest'
+    );
+    $locationHints = stobeWorldKnowledgeResolveForcedLocationHints(
+        $personTopic . ' [Original]',
+        $contextNpcData,
+        'chat'
+    );
+    worldKnowledgeAliasAssert(
+        count($locationHints) === 1 && str_starts_with(strval($locationHints[0]), $locationTopic . ':'),
+        'forced location knowledge should include matching location articles and reject non-location categories'
+    );
+
+    $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_PEOPLE'");
+    worldKnowledgeAliasAssert(
+        stobeWorldKnowledgeCollectForcedPeopleSignals($personTopic, $contextNpcData, '') === [],
+        'disabled forced people knowledge should collect no context signals'
+    );
+    $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_LOCATION'");
+    worldKnowledgeAliasAssert(
+        stobeWorldKnowledgeCollectForcedLocationSignals($contextNpcData) === [],
+        'disabled forced location knowledge should collect no context signals'
+    );
+
     $db->exec('ROLLBACK');
 } catch (Throwable $exception) {
     $db->exec('ROLLBACK');
