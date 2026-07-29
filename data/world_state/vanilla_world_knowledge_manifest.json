@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "wiki_api": "https://kenshi.fandom.com/api.php",
+  "license": "CC BY-SA",
+  "topics": [
+    {
+      "topic": "Ghost",
+      "wiki_title": "Ghost",
+      "source_url": "https://kenshi.fandom.com/wiki/Ghost",
+      "knowledge_class_basic": "Characters",
+      "aliases": [
+        "Suchon"
+      ],
+      "tags": [
+        "Bosses",
+        "Bounty",
+        "Characters",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Gutterhead",
+      "wiki_title": "Gutterhead",
+      "source_url": "https://kenshi.fandom.com/wiki/Gutterhead",
+      "knowledge_class_basic": "Characters",
+      "aliases": [],
+      "tags": [
+        "Bosses",
+        "Bounty",
+        "Characters",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Beep",
+      "wiki_title": "Beep",
+      "source_url": "https://kenshi.fandom.com/wiki/Beep",
+      "knowledge_class_basic": "Characters",
+      "aliases": [],
+      "tags": [
+        "Characters",
+        "Playable",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Agnu",
+      "wiki_title": "Agnu",
+      "source_url": "https://kenshi.fandom.com/wiki/Agnu",
+      "knowledge_class_basic": "Characters",
+      "aliases": [],
+      "tags": [
+        "Characters",
+        "Playable",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Shek Kingdom",
+      "wiki_title": "Shek Kingdom",
+      "source_url": "https://kenshi.fandom.com/wiki/Shek_Kingdom",
+      "knowledge_class_basic": "Factions",
+      "aliases": [
+        "Shek faction"
+      ],
+      "tags": [
+        "Factions",
+        "Shek"
+      ]
+    },
+    {
+      "topic": "Flotsam Ninjas",
+      "wiki_title": "Flotsam Ninjas",
+      "source_url": "https://kenshi.fandom.com/wiki/Flotsam_Ninjas",
+      "knowledge_class_basic": "Factions",
+      "aliases": [
+        "Flotsam faction",
+        "Flotsam rebels"
+      ],
+      "tags": [
+        "Factions"
+      ]
+    },
+    {
+      "topic": "Grey",
+      "wiki_title": "Grey",
+      "source_url": "https://kenshi.fandom.com/wiki/Grey",
+      "knowledge_class_basic": "Characters",
+      "aliases": [],
+      "tags": [
+        "Characters",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Jaegar",
+      "wiki_title": "Jaegar",
+      "source_url": "https://kenshi.fandom.com/wiki/Jaegar",
+      "knowledge_class_basic": "Characters",
+      "aliases": [
+        "Jaegar the Mad"
+      ],
+      "tags": [
+        "Bounty",
+        "Characters",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Elder",
+      "wiki_title": "Elder",
+      "source_url": "https://kenshi.fandom.com/wiki/Elder",
+      "knowledge_class_basic": "Characters",
+      "aliases": [
+        "Skeleton Bandit King"
+      ],
+      "tags": [
+        "Bosses",
+        "Bounty",
+        "Characters",
+        "Unique"
+      ]
+    },
+    {
+      "topic": "Spider Foreman",
+      "wiki_title": "Spider Foreman",
+      "source_url": "https://kenshi.fandom.com/wiki/Spider_Foreman",
+      "knowledge_class_basic": "Characters",
+      "aliases": [
+        "Spider Factory Foreman"
+      ],
+      "tags": [
+        "Bosses",
+        "Bounty",
+        "Characters",
+        "Unique"
+      ]
+    }
+  ]
+}

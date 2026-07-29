@@ -233,6 +233,116 @@ CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWE
 CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
 
 -- ----------------------------------------------------------
+-- WORLD_STATE_DEFINITION - loaded vanilla and mod query definitions
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state_definition (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    source_mod TEXT NOT NULL DEFAULT '',
+    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+    rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+    runtime_catalog_id TEXT NOT NULL DEFAULT '',
+    is_vanilla BOOLEAN NOT NULL DEFAULT FALSE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    first_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_world_state_definition_active
+    ON world_state_definition (active, query_name);
+CREATE INDEX IF NOT EXISTS idx_world_state_definition_source
+    ON world_state_definition (source_mod, active);
+
+-- ----------------------------------------------------------
+-- WORLD_STATE_QUERY_RESULT - current evaluated query values
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state_query_result (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    is_true BOOLEAN NOT NULL,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    catalog_sha256 TEXT NOT NULL DEFAULT '',
+    first_observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_evaluated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    changed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_result_value
+    ON world_state_query_result (is_true, query_name);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_result_evaluated
+    ON world_state_query_result (last_evaluated_at DESC);
+
+-- ----------------------------------------------------------
+-- WORLD_STATE_ADDENDUM - generated defaults + user overrides
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state_addendum (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    source_mod TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT 'vanilla',
+    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    when_true TEXT NOT NULL DEFAULT '',
+    when_false TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    catalog_sha256 TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS world_state_addendum_custom (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    source_mod TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT 'custom',
+    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    when_true TEXT NOT NULL DEFAULT '',
+    when_false TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_world_state_addendum_enabled
+    ON world_state_addendum (enabled, query_id);
+CREATE INDEX IF NOT EXISTS idx_world_state_addendum_origin
+    ON world_state_addendum (origin, source_mod);
+CREATE INDEX IF NOT EXISTS idx_world_state_addendum_custom_enabled
+    ON world_state_addendum_custom (enabled, query_id);
+
+CREATE OR REPLACE VIEW combined_world_state_addendum AS
+SELECT
+    c.query_id,
+    c.query_name,
+    c.source_mod,
+    c.origin,
+    c.matched_topics,
+    c.when_true,
+    c.when_false,
+    c.enabled,
+    ''::TEXT AS catalog_sha256,
+    c.created_at,
+    c.updated_at,
+    TRUE AS is_custom
+FROM world_state_addendum_custom c
+UNION ALL
+SELECT
+    b.query_id,
+    b.query_name,
+    b.source_mod,
+    b.origin,
+    b.matched_topics,
+    b.when_true,
+    b.when_false,
+    b.enabled,
+    b.catalog_sha256,
+    b.created_at,
+    b.updated_at,
+    FALSE AS is_custom
+FROM world_state_addendum b
+LEFT JOIN world_state_addendum_custom c ON c.query_id = b.query_id
+WHERE c.query_id IS NULL;
+
+-- ----------------------------------------------------------
 -- FACTION_RELATIONS - global faction-to-faction current state
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS faction_relation_state (

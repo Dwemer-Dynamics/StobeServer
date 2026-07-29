@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-29T22:19:18.660294+00:00",
+  "model": "z-ai/glm-5.2",
+  "manifest_sha256": "768b21f7f42ac1abeba77ac19df43d1827ba43773310a00d8e28a917048fdf02",
+  "topic_count": 10,
+  "cache_hits": 10,
+  "validation": {
+    "passed": true,
+    "errors": []
+  },
+  "sources": [
+    {
+      "topic": "Ghost",
+      "source_url": "https://kenshi.fandom.com/wiki/Ghost",
+      "page_id": 9360,
+      "resolved_title": "Ghost",
+      "revision_id": 95402,
+      "revision_timestamp": "2026-03-20T01:36:51Z",
+      "extract_sha256": "cf40ddaaf207ab0d3918a733afa34b214ee305491331948fc9179b1d2cb8571c",
+      "summary": "Suchon, commonly known as Ghost, is the leader of the Berserkers, a faction of Shek who reject civilization for a barbaric lifestyle. He was formerly a warrior of the Shek Kingdom before being exiled in disgrace after losing a battle. Now, he wanders the world as a shadow of his former self, seeking an unattainable peace in the afterlife. Ghost possesses a maniacal personality."
+    },
+    {
+      "topic": "Gutterhead",
+      "source_url": "https://kenshi.fandom.com/wiki/Gutterhead",
+      "page_id": 12149,
+      "resolved_title": "Gutterhead",
+      "revision_id": 94591,
+      "revision_timestamp": "2025-12-29T15:59:51Z",
+      "extract_sha256": "d38778e7d977880679d8a11afd613befde64d789fb5a492cf4c5aad1d26a8e68",
+      "summary": "Gutterhead is a Scorchlander who serves as the influential leader of the Scavengers faction. He commands a group of Scavengers from within the Old Control Tower. The United Cities distributes wanted posters bearing his likeness."
+    },
+    {
+      "topic": "Beep",
+      "source_url": "https://kenshi.fandom.com/wiki/Beep",
+      "page_id": 7525,
+      "resolved_title": "Beep",
+      "revision_id": 95572,
+      "revision_timestamp": "2026-05-26T05:33:53Z",
+      "extract_sha256": "39a19d96fac939b1589e4f86a94df757d90c5e9d3c3090912f53928a4fab2184",
+      "summary": "Beep is a Hiveless Western Worker Drone who was exiled from the Hive for being defective. He possesses a brave, dumb, and honorable personality, frequently proclaiming himself to be the strongest warrior. He is known for his unique vocalizations and distinct dialogue, including special interactions with Agnu and Skeletons."
+    },
+    {
+      "topic": "Agnu",
+      "source_url": "https://kenshi.fandom.com/wiki/Agnu",
+      "page_id": 10612,
+      "resolved_title": "Agnu",
+      "revision_id": 94425,
+      "revision_timestamp": "2025-11-28T05:45:55Z",
+      "extract_sha256": "a7ea60e5ab855a56fe35f85b41d3bbd4a63d6048c3a7ab4f5c98d596acabfd52",
+      "summary": "Agnu is a unique Soldierbot and a potential companion. He is associated with the Thrall Masters and the Tower of Abuse. Agnu is incapable of speech and communicates solely through unintelligible screams and noises. He shares unique dialogue exchanges with Beep."
+    },
+    {
+      "topic": "Shek Kingdom",
+      "source_url": "https://kenshi.fandom.com/wiki/Shek_Kingdom",
+      "page_id": 7045,
+      "resolved_title": "Shek Kingdom",
+      "revision_id": 95472,
+      "revision_timestamp": "2026-04-10T15:08:34Z",
+      "extract_sha256": "7cca1de3d22f94715d637cac076153b2fd7b28e07df87ec7f37c783b55939509",
+      "summary": "The Shek Kingdom is a tribalistic nation of Shek residing in the Stenn Desert, centered around their capital of Admag. Founded by the legendary warrior Kral, their culture revolves around martial prowess and the pursuit of glory through battle, leading to a society that values strength over intellect. Under the rule of Queen Esata, the kingdom has been forced to adopt a more defensive posture and open its cities to trade due to severe population losses from prolonged conflicts. This shift in policy has caused internal fractures, with many traditionalists deserting to join splinter factions like Kral's Chosen."
+    },
+    {
+      "topic": "Flotsam Ninjas",
+      "source_url": "https://kenshi.fandom.com/wiki/Flotsam_Ninjas",
+      "page_id": 7507,
+      "resolved_title": "Flotsam Ninjas",
+      "revision_id": 94730,
+      "revision_timestamp": "2026-01-15T09:21:44Z",
+      "extract_sha256": "7e320b78d41810fa7a91a4c706a1246a593cceaefb620266675b6f36033e9426",
+      "summary": "The Flotsam Ninjas are a small rebel faction composed primarily of women and escapees from the Holy Nation, along with volunteers from Deadcat. Under the leadership of Moll, they reside in Flotsam Village near the Cannibal Plains and conduct subversive activities against the Holy Nation, including assassinations and aiding escapees. Their religious beliefs diverge from the Holy Nation by venerating both Okran and Narko as integral parts of the cosmic balance, leading to their classification as heretics."
+    },
+    {
+      "topic": "Grey",
+      "source_url": "https://kenshi.fandom.com/wiki/Grey",
+      "page_id": 12486,
+      "resolved_title": "Grey",
+      "revision_id": 93838,
+      "revision_timestamp": "2025-10-29T20:52:22Z",
+      "extract_sha256": "3ec4fe816af6f019c4d1205ed5a6cf62217476bc76b442c1c624dca55472dd9b",
+      "summary": "Grey is a Hive Prince and a dedicated member of the Anti-Slavers who oversees new initiates for the faction. He operates out of the Anti-Slavers' headquarters in Spring, where he works closely with Tinfist. Known for his honorable personality, Grey is considered a wanted criminal by both the Holy Nation and the United Cities."
+    },
+    {
+      "topic": "Jaegar",
+      "source_url": "https://kenshi.fandom.com/wiki/Jaegar",
+      "page_id": 12157,
+      "resolved_title": "Jaegar",
+      "revision_id": 91925,
+      "revision_timestamp": "2025-08-27T06:25:20Z",
+      "extract_sha256": "9795b8f921baa34ea33e8aff3f6a8c284e7744b412cb3f71504347bae911cc6f",
+      "summary": "Jaegar is a Scorchlander who operates as a member of the Anti-Slavers. He possesses a brave personality. His affiliation with the Anti-Slavers makes him a wanted target of both the Holy Nation and the United Cities."
+    },
+    {
+      "topic": "Elder",
+      "source_url": "https://kenshi.fandom.com/wiki/Elder",
+      "page_id": 10633,
+      "resolved_title": "Elder",
+      "revision_id": 91457,
+      "revision_timestamp": "2025-07-28T20:46:43Z",
+      "extract_sha256": "c5dc806a12f7d2724c8df659daebc97a8c0952886d11ded9966f5d7df2d8ae19",
+      "summary": "The Elder is the leader of the Skeleton Bandits faction and operates from Iron HQ. He is a skeleton who oversees the bandit activities in the region. His leadership defines the presence and organization of the Skeleton Bandits around The Crags."
+    },
+    {
+      "topic": "Spider Foreman",
+      "source_url": "https://kenshi.fandom.com/wiki/Spider_Foreman",
+      "page_id": 8329,
+      "resolved_title": "Spider Foreman",
+      "revision_id": 95414,
+      "revision_timestamp": "2026-03-24T20:53:17Z",
+      "extract_sha256": "ba700320c9c4f6bdd8a7b014364558f4e42f027bfdf10d414a085f31610917c6",
+      "summary": "The Spider Foreman is a member of the Old Machines faction located in the Spider Factory on the Forbidden Isle. He holds a managerial role within the facility. He is a notable figure among the mechanical entities of the Old Machines."
+    }
+  ]
+}

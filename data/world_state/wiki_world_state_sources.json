@@ -1,0 +1,1603 @@
+{
+    "schema_version":  1,
+    "authority_policy":  {
+                             "valid_state_definition":  "The installed vanilla FCS catalog is authoritative.",
+                             "wiki_role":  "Wiki sources confirm public names and document notable actors or locations; omission does not invalidate an FCS record.",
+                             "conflict_policy":  "Retain the FCS record and report the wiki disagreement for manual review."
+                         },
+    "sources":  [
+                    {
+                        "id":  "kenshi_wiki_world_states",
+                        "title":  "World States",
+                        "url":  "https://kenshi.wiki/w/World_States",
+                        "permanent_url":  "https://kenshi.wiki/index.php?title=World_States\u0026oldid=26630",
+                        "revision_id":  26630,
+                        "revision_timestamp":  "2025-05-27T00:10:00Z",
+                        "license":  "CC BY-SA",
+                        "retrieval":  "Pinned public-page snapshot; the current site API does not expose this historical content."
+                    },
+                    {
+                        "id":  "kenshi_fandom_world_states",
+                        "title":  "World States",
+                        "url":  "https://kenshi.fandom.com/wiki/World_States",
+                        "page_id":  10835,
+                        "revision_id":  95844,
+                        "revision_timestamp":  "2026-07-20T21:25:11Z",
+                        "license":  "CC BY-SA",
+                        "retrieval":  "MediaWiki API"
+                    },
+                    {
+                        "id":  "kenshi_fandom_town_overrides",
+                        "title":  "Town Overrides",
+                        "url":  "https://kenshi.fandom.com/wiki/Town_Overrides",
+                        "page_id":  11092,
+                        "revision_id":  86441,
+                        "revision_timestamp":  "2024-01-03T18:59:03Z",
+                        "license":  "CC BY-SA",
+                        "retrieval":  "MediaWiki API"
+                    },
+                    {
+                        "id":  "kenshi_fandom_character_pages",
+                        "title":  "Individual character pages",
+                        "url":  "https://kenshi.fandom.com/wiki/Category:Characters",
+                        "revision_id":  0,
+                        "revision_timestamp":  null,
+                        "license":  "CC BY-SA",
+                        "retrieval":  "MediaWiki API; each actor entry carries its own page revision."
+                    }
+                ],
+    "actor_aliases":  {
+                          "Yabuta Chief":  "63371-Dialogue.mod"
+                      },
+    "town_aliases":  {
+                         "Free Settlement":  [
+                                                 "The Free City"
+                                             ],
+                         "Slave Markets":  [
+                                               "Slave Market"
+                                           ],
+                         "Slave Farm South":  [
+                                                  "Slave Farm S"
+                                              ],
+                         "Hive Village":  [
+                                              "Hive Village N"
+                                          ]
+                     },
+    "actor_entries":  [
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Shek Kingdom",
+                              "wiki_title":  "Bayan",
+                              "display_name":  "Bayan",
+                              "page_url":  "https://kenshi.wiki/w/Bayan"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Shek Kingdom",
+                              "wiki_title":  "Esata The Stone Golem",
+                              "display_name":  "Esata The Stone Golem",
+                              "page_url":  "https://kenshi.wiki/w/Esata_The_Stone_Golem"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Shek Kingdom",
+                              "wiki_title":  "Flying Bull",
+                              "display_name":  "Flying Bull",
+                              "page_url":  "https://kenshi.wiki/w/Flying_Bull"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Shek Kingdom",
+                              "wiki_title":  "Mukai the Mountain",
+                              "display_name":  "Mukai the Mountain",
+                              "page_url":  "https://kenshi.wiki/w/Mukai_the_Mountain"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Shek Kingdom",
+                              "wiki_title":  "Seto",
+                              "display_name":  "Seto",
+                              "page_url":  "https://kenshi.wiki/w/Seto"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "The Holy Nation",
+                              "wiki_title":  "Holy Lord Phoenix",
+                              "display_name":  "Holy Lord Phoenix",
+                              "page_url":  "https://kenshi.wiki/w/Holy_Lord_Phoenix"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "The Holy Nation",
+                              "wiki_title":  "High Inquisitor Valtena",
+                              "display_name":  "High Inquisitor Valtena",
+                              "page_url":  "https://kenshi.wiki/w/High_Inquisitor_Valtena"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "The Holy Nation",
+                              "wiki_title":  "High Inquisitor Seta",
+                              "display_name":  "High Inquisitor Seta",
+                              "page_url":  "https://kenshi.wiki/w/High_Inquisitor_Seta"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Emperor Tengu",
+                              "display_name":  "Emperor Tengu",
+                              "page_url":  "https://kenshi.wiki/w/Emperor_Tengu"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lady Sanda",
+                              "display_name":  "Lady Sanda",
+                              "page_url":  "https://kenshi.wiki/w/Lady_Sanda"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lady Tsugi",
+                              "display_name":  "Lady Tsugi",
+                              "page_url":  "https://kenshi.wiki/w/Lady_Tsugi"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lady Merin",
+                              "display_name":  "Lady Merin",
+                              "page_url":  "https://kenshi.wiki/w/Lady_Merin"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Inaba",
+                              "display_name":  "Lord Inaba",
+                              "page_url":  "https://kenshi.wiki/w/Lord_Inaba"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Ohta",
+                              "display_name":  "Lord Ohta",
+                              "page_url":  "https://kenshi.wiki/w/Lord_Ohta"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Yoshinaga",
+                              "display_name":  "Lord Yoshinaga",
+                              "page_url":  "https://kenshi.wiki/w/Lord_Yoshinaga"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Shiro",
+                              "display_name":  "Lord Shiro",
+                              "page_url":  "https://kenshi.wiki/w/Lord_Shiro"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Nagata",
+                              "display_name":  "Lord Nagata",
+                              "page_url":  "https://kenshi.wiki/w/Lord_Nagata"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Longen",
+                              "display_name":  "Longen",
+                              "page_url":  "https://kenshi.wiki/w/Longen"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Lady Kana",
+                              "display_name":  "Lady Kana",
+                              "page_url":  "https://kenshi.wiki/w/Lady_Kana"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Mistress Grace",
+                              "display_name":  "Slave Mistress Grace",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Mistress_Grace"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Market Master",
+                              "display_name":  "Slave Market Master",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Market_Master"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Mistress Ren",
+                              "display_name":  "Slave Mistress Ren",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Mistress_Ren"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Grande",
+                              "display_name":  "Slave Master Grande",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Master_Grande"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Haga",
+                              "display_name":  "Slave Master Haga",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Master_Haga"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Ruben",
+                              "display_name":  "Slave Master Ruben",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Master_Ruben"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Wada",
+                              "display_name":  "Slave Master Wada",
+                              "page_url":  "https://kenshi.wiki/w/Slave_Master_Wada"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Tinfist",
+                              "display_name":  "Tinfist",
+                              "page_url":  "https://kenshi.wiki/w/Tinfist"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Tora the Fearless",
+                              "display_name":  "Tora the Fearless",
+                              "page_url":  "https://kenshi.wiki/w/Tora_the_Fearless"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Ghost",
+                              "display_name":  "Ghost",
+                              "page_url":  "https://kenshi.wiki/w/Ghost"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Crab Queen",
+                              "display_name":  "Crab Queen",
+                              "page_url":  "https://kenshi.wiki/w/Crab_Queen"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Moll",
+                              "display_name":  "Moll",
+                              "page_url":  "https://kenshi.wiki/w/Moll"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Gorrillo",
+                              "display_name":  "Gorrillo",
+                              "page_url":  "https://kenshi.wiki/w/Gorrillo"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Big Gray",
+                              "display_name":  "Big Gray",
+                              "page_url":  "https://kenshi.wiki/w/Big_Gray"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Big Grim",
+                              "display_name":  "Big Grim",
+                              "page_url":  "https://kenshi.wiki/w/Big_Grim"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Valamon",
+                              "display_name":  "Valamon",
+                              "page_url":  "https://kenshi.wiki/w/Valamon"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Boss Simion",
+                              "display_name":  "Boss Simion",
+                              "page_url":  "https://kenshi.wiki/w/Boss_Simion"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Red Sabre Boss",
+                              "display_name":  "Red Sabre Boss",
+                              "page_url":  "https://kenshi.wiki/w/Red_Sabre_Boss"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Elder",
+                              "display_name":  "Elder",
+                              "page_url":  "https://kenshi.wiki/w/Elder"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Savant",
+                              "display_name":  "Savant",
+                              "page_url":  "https://kenshi.wiki/w/Savant"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Queen of the South",
+                              "display_name":  "Queen of the South",
+                              "page_url":  "https://kenshi.wiki/w/Queen_of_the_South"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Big Al",
+                              "display_name":  "Big Al",
+                              "page_url":  "https://kenshi.wiki/w/Big_Al"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Shade",
+                              "display_name":  "Shade",
+                              "page_url":  "https://kenshi.wiki/w/Shade"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "The Queen",
+                              "display_name":  "The Queen",
+                              "page_url":  "https://kenshi.wiki/w/The_Queen"
+                          },
+                          {
+                              "source_id":  "kenshi_wiki_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Yabuta Chief",
+                              "display_name":  "Yabuta Chief",
+                              "page_url":  "https://kenshi.wiki/w/Yabuta_Chief"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "The Holy Nation",
+                              "wiki_title":  "Holy Lord Phoenix",
+                              "display_name":  "Holy Lord Phoenix",
+                              "resolved_title":  "Holy Lord Phoenix",
+                              "fcs_name":  "Holy Lord Phoenix",
+                              "string_id":  "17225-Dialogue.mod",
+                              "page_id":  8045,
+                              "page_revision_id":  95734,
+                              "page_revision_timestamp":  "2026-07-12T05:41:44Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Holy_Lord_Phoenix"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "The Holy Nation",
+                              "wiki_title":  "High Inquisitor Valtena",
+                              "display_name":  "High Inquisitor Valtena",
+                              "resolved_title":  "High Inquisitor Valtena",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  9797,
+                              "page_revision_id":  94924,
+                              "page_revision_timestamp":  "2026-02-09T14:20:17Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/High_Inquisitor_Valtena"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "The Holy Nation",
+                              "wiki_title":  "High Inquisitor Seta",
+                              "display_name":  "High Inquisitor Seta",
+                              "resolved_title":  "High Inquisitor Seta",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  9104,
+                              "page_revision_id":  94923,
+                              "page_revision_timestamp":  "2026-02-09T14:19:38Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/High_Inquisitor_Seta"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Emperor Tengu",
+                              "display_name":  "Emperor Tengu",
+                              "resolved_title":  "Emperor Tengu",
+                              "fcs_name":  "Emperor Tengu",
+                              "string_id":  "51751-Dialogue.mod",
+                              "page_id":  8225,
+                              "page_revision_id":  95413,
+                              "page_revision_timestamp":  "2026-03-23T17:12:31Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Emperor_Tengu"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lady Sanda",
+                              "display_name":  "Lady Sanda",
+                              "resolved_title":  "Lady Sanda",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  9811,
+                              "page_revision_id":  94805,
+                              "page_revision_timestamp":  "2026-01-26T21:18:27Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lady_Sanda"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lady Tsugi",
+                              "display_name":  "Lady Tsugi",
+                              "resolved_title":  "Lady Tsugi",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  12324,
+                              "page_revision_id":  94804,
+                              "page_revision_timestamp":  "2026-01-26T21:18:20Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lady_Tsugi"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lady Merin",
+                              "display_name":  "Lady Merin",
+                              "resolved_title":  "Lady Merin",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  15444,
+                              "page_revision_id":  92868,
+                              "page_revision_timestamp":  "2025-10-09T19:12:55Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lady_Merin"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Inaba",
+                              "display_name":  "Lord Inaba",
+                              "resolved_title":  "Lord Inaba",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8500,
+                              "page_revision_id":  94331,
+                              "page_revision_timestamp":  "2025-11-19T05:25:22Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lord_Inaba"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Ohta",
+                              "display_name":  "Lord Ohta",
+                              "resolved_title":  "Lord Ohta",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8602,
+                              "page_revision_id":  91559,
+                              "page_revision_timestamp":  "2025-08-04T05:25:47Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lord_Ohta"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Yoshinaga",
+                              "display_name":  "Lord Yoshinaga",
+                              "resolved_title":  "Lord Yoshinaga",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  9783,
+                              "page_revision_id":  93870,
+                              "page_revision_timestamp":  "2025-10-30T07:48:20Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lord_Yoshinaga"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Shiro",
+                              "display_name":  "Lord Shiro",
+                              "resolved_title":  "Lord Shiro",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  12337,
+                              "page_revision_id":  93423,
+                              "page_revision_timestamp":  "2025-10-16T20:45:27Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lord_Shiro"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "United Cities",
+                              "wiki_title":  "Lord Nagata",
+                              "display_name":  "Lord Nagata",
+                              "resolved_title":  "Lord Nagata",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  12360,
+                              "page_revision_id":  94275,
+                              "page_revision_timestamp":  "2025-11-15T21:46:10Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lord_Nagata"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Longen",
+                              "display_name":  "Longen",
+                              "resolved_title":  "Longen",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8618,
+                              "page_revision_id":  95007,
+                              "page_revision_timestamp":  "2026-02-14T07:29:11Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Longen"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Lady Kana",
+                              "display_name":  "Lady Kana",
+                              "resolved_title":  "Lady Kana",
+                              "fcs_name":  "Lady Kana",
+                              "string_id":  "51708-Dialogue.mod",
+                              "page_id":  7539,
+                              "page_revision_id":  92869,
+                              "page_revision_timestamp":  "2025-10-09T19:13:16Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Lady_Kana"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Mistress Grace",
+                              "display_name":  "Slave Mistress Grace",
+                              "resolved_title":  "Slave Mistress Grace",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13338,
+                              "page_revision_id":  92892,
+                              "page_revision_timestamp":  "2025-10-09T19:28:06Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Mistress_Grace"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Market Master",
+                              "display_name":  "Slave Market Master",
+                              "resolved_title":  "Slave Market Master",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13341,
+                              "page_revision_id":  93534,
+                              "page_revision_timestamp":  "2025-10-18T18:31:02Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Market_Master"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Mistress Ren",
+                              "display_name":  "Slave Mistress Ren",
+                              "resolved_title":  "Slave Mistress Ren",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13349,
+                              "page_revision_id":  92893,
+                              "page_revision_timestamp":  "2025-10-09T19:28:20Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Mistress_Ren"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Grande",
+                              "display_name":  "Slave Master Grande",
+                              "resolved_title":  "Slave Master Grande",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13372,
+                              "page_revision_id":  89527,
+                              "page_revision_timestamp":  "2024-11-09T11:52:28Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Master_Grande"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Haga",
+                              "display_name":  "Slave Master Haga",
+                              "resolved_title":  "Slave Master Haga",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13380,
+                              "page_revision_id":  93428,
+                              "page_revision_timestamp":  "2025-10-16T20:48:30Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Master_Haga"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Ruben",
+                              "display_name":  "Slave Master Ruben",
+                              "resolved_title":  "Slave Master Ruben",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13382,
+                              "page_revision_id":  92890,
+                              "page_revision_timestamp":  "2025-10-09T19:27:19Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Master_Ruben"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Traders Guild",
+                              "wiki_title":  "Slave Master Wada",
+                              "display_name":  "Slave Master Wada",
+                              "resolved_title":  "Slave Master Wada",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  20651,
+                              "page_revision_id":  92891,
+                              "page_revision_timestamp":  "2025-10-09T19:27:51Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Slave_Master_Wada"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Esata the Stone Golem",
+                              "display_name":  "Esata the Stone Golem",
+                              "resolved_title":  "Esata the Stone Golem",
+                              "fcs_name":  "Esata the Stone Golem",
+                              "string_id":  "43159-Dialogue.mod",
+                              "page_id":  8049,
+                              "page_revision_id":  95687,
+                              "page_revision_timestamp":  "2026-06-09T19:09:25Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Esata_the_Stone_Golem"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Mukai the Mountain",
+                              "display_name":  "Mukai the Mountain",
+                              "resolved_title":  "Mukai the Mountain",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  13625,
+                              "page_revision_id":  95075,
+                              "page_revision_timestamp":  "2026-02-27T21:12:33Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Mukai_the_Mountain"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Tinfist",
+                              "display_name":  "Tinfist",
+                              "resolved_title":  "Tinfist",
+                              "fcs_name":  "Tinfist",
+                              "string_id":  "59030-Dialogue.mod",
+                              "page_id":  10319,
+                              "page_revision_id":  95306,
+                              "page_revision_timestamp":  "2026-03-12T16:16:03Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Tinfist"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Tora the Fearless",
+                              "display_name":  "Tora the Fearless",
+                              "resolved_title":  "Tora the Fearless",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  9278,
+                              "page_revision_id":  93216,
+                              "page_revision_timestamp":  "2025-10-12T19:31:20Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Tora_the_Fearless"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Ghost",
+                              "display_name":  "Ghost",
+                              "resolved_title":  "Ghost",
+                              "fcs_name":  "Ghost",
+                              "string_id":  "56730-Dialogue.mod",
+                              "page_id":  9360,
+                              "page_revision_id":  95402,
+                              "page_revision_timestamp":  "2026-03-20T01:36:51Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Ghost"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Flying Bull",
+                              "display_name":  "Flying Bull",
+                              "resolved_title":  "Flying Bull",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8573,
+                              "page_revision_id":  94127,
+                              "page_revision_timestamp":  "2025-11-07T10:40:24Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Flying_Bull"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Crab Queen",
+                              "display_name":  "Crab Queen",
+                              "resolved_title":  "Crab Queen",
+                              "fcs_name":  "Crab Queen",
+                              "string_id":  "62827-rebirth.mod",
+                              "page_id":  12753,
+                              "page_revision_id":  95383,
+                              "page_revision_timestamp":  "2026-03-15T19:27:51Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Crab_Queen"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Moll",
+                              "display_name":  "Moll",
+                              "resolved_title":  "Moll",
+                              "fcs_name":  "Moll",
+                              "string_id":  "50350-rebirth.mod",
+                              "page_id":  8226,
+                              "page_revision_id":  94910,
+                              "page_revision_timestamp":  "2026-02-07T16:03:35Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Moll"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Gorrillo",
+                              "display_name":  "Gorrillo",
+                              "resolved_title":  "Gorrillo",
+                              "fcs_name":  "Gorrillo",
+                              "string_id":  "96263-rebirth.mod",
+                              "page_id":  10927,
+                              "page_revision_id":  91476,
+                              "page_revision_timestamp":  "2025-07-28T21:03:03Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Gorrillo"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Big Gray",
+                              "display_name":  "Big Gray",
+                              "resolved_title":  "Big Gray",
+                              "fcs_name":  "Big Gray",
+                              "string_id":  "48718-Dialogue.mod",
+                              "page_id":  10001,
+                              "page_revision_id":  92904,
+                              "page_revision_timestamp":  "2025-10-09T20:41:25Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Big_Gray"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Big Grim",
+                              "display_name":  "Big Grim",
+                              "resolved_title":  "Big Grim",
+                              "fcs_name":  "Big Grim",
+                              "string_id":  "48447-Dialogue.mod",
+                              "page_id":  8490,
+                              "page_revision_id":  95002,
+                              "page_revision_timestamp":  "2026-02-13T16:10:23Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Big_Grim"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Valamon",
+                              "display_name":  "Valamon",
+                              "resolved_title":  "Valamon",
+                              "fcs_name":  "Valamon",
+                              "string_id":  "95756-__december17.mod",
+                              "page_id":  12532,
+                              "page_revision_id":  92485,
+                              "page_revision_timestamp":  "2025-09-28T11:47:10Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Valamon"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Boss Simion",
+                              "display_name":  "Boss Simion",
+                              "resolved_title":  "Boss Simion",
+                              "fcs_name":  "Boss Simion",
+                              "string_id":  "65004-Dialogue.mod",
+                              "page_id":  8554,
+                              "page_revision_id":  95172,
+                              "page_revision_timestamp":  "2026-03-05T19:23:31Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Boss_Simion"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Red Sabre Boss",
+                              "display_name":  "Red Sabre Boss",
+                              "resolved_title":  "Red Sabre Boss",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8700,
+                              "page_revision_id":  94473,
+                              "page_revision_timestamp":  "2025-12-08T20:41:16Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Red_Sabre_Boss"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Elder",
+                              "display_name":  "Elder",
+                              "resolved_title":  "Elder",
+                              "fcs_name":  "Elder",
+                              "string_id":  "62807-rebirth.mod",
+                              "page_id":  10633,
+                              "page_revision_id":  91457,
+                              "page_revision_timestamp":  "2025-07-28T20:46:43Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Elder"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Savant",
+                              "display_name":  "Savant",
+                              "resolved_title":  "Savant",
+                              "fcs_name":  "Savant",
+                              "string_id":  "62981-Dialogue.mod",
+                              "page_id":  10632,
+                              "page_revision_id":  94904,
+                              "page_revision_timestamp":  "2026-02-06T19:59:09Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Savant"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Queen of the South",
+                              "display_name":  "Queen of the South",
+                              "resolved_title":  "Queen of the South",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  11943,
+                              "page_revision_id":  91450,
+                              "page_revision_timestamp":  "2025-07-28T20:38:59Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Queen_of_the_South"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Big Al",
+                              "display_name":  "Big Al",
+                              "resolved_title":  "Big Al",
+                              "fcs_name":  "Big Al",
+                              "string_id":  "48738-Dialogue.mod",
+                              "page_id":  8502,
+                              "page_revision_id":  92096,
+                              "page_revision_timestamp":  "2025-09-04T21:23:50Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Big_Al"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Shade",
+                              "display_name":  "Shade",
+                              "resolved_title":  "Shade",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8889,
+                              "page_revision_id":  93163,
+                              "page_revision_timestamp":  "2025-10-12T05:29:20Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Shade"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "The Queen",
+                              "display_name":  "The Queen",
+                              "resolved_title":  "The Queen",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  9189,
+                              "page_revision_id":  92645,
+                              "page_revision_timestamp":  "2025-10-04T05:54:42Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/The_Queen"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Yabuta of the Sands",
+                              "display_name":  "Yabuta of the Sands",
+                              "resolved_title":  "Yabuta of the Sands",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  11280,
+                              "page_revision_id":  89942,
+                              "page_revision_timestamp":  "2025-01-16T19:50:20Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Yabuta_of_the_Sands"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Screamer the False",
+                              "display_name":  "Screamer the False",
+                              "resolved_title":  "Screamer the False",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  12046,
+                              "page_revision_id":  94911,
+                              "page_revision_timestamp":  "2026-02-07T16:11:27Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Screamer_the_False"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Ponk",
+                              "display_name":  "Ponk",
+                              "resolved_title":  "Ponk",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  12049,
+                              "page_revision_id":  94912,
+                              "page_revision_timestamp":  "2026-02-07T16:12:47Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Ponk"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "Bugmaster",
+                              "display_name":  "Bugmaster",
+                              "resolved_title":  "Bugmaster",
+                              "fcs_name":  "Bugmaster",
+                              "string_id":  "51333-rebirth.mod",
+                              "page_id":  7860,
+                              "page_revision_id":  94342,
+                              "page_revision_timestamp":  "2025-11-21T12:17:29Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Bugmaster"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_world_states",
+                              "section":  "Other",
+                              "wiki_title":  "King Gurgler",
+                              "display_name":  "King Gurgler",
+                              "resolved_title":  "King Gurgler",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  10852,
+                              "page_revision_id":  88639,
+                              "page_revision_timestamp":  "2024-09-28T15:22:41Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/King_Gurgler"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Gutterhead",
+                              "display_name":  "Gutterhead",
+                              "resolved_title":  "Gutterhead",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  12149,
+                              "page_revision_id":  94591,
+                              "page_revision_timestamp":  "2025-12-29T15:59:51Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Gutterhead"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Grey",
+                              "display_name":  "Grey",
+                              "resolved_title":  "Grey",
+                              "fcs_name":  "Grey",
+                              "string_id":  "56734-Dialogue.mod",
+                              "page_id":  12486,
+                              "page_revision_id":  93838,
+                              "page_revision_timestamp":  "2025-10-29T20:52:22Z",
+                              "has_world_states_section":  false,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Grey"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Jaegar",
+                              "display_name":  "Jaegar",
+                              "resolved_title":  "Jaegar",
+                              "fcs_name":  "Jaegar",
+                              "string_id":  "56890-Dialogue.mod",
+                              "page_id":  12157,
+                              "page_revision_id":  91925,
+                              "page_revision_timestamp":  "2025-08-27T06:25:20Z",
+                              "has_world_states_section":  false,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Jaegar"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Bo",
+                              "display_name":  "Bo",
+                              "resolved_title":  "Bo",
+                              "fcs_name":  "Bo",
+                              "string_id":  "7994-D-Dialogue.mod",
+                              "page_id":  8154,
+                              "page_revision_id":  95548,
+                              "page_revision_timestamp":  "2026-05-10T00:26:34Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Bo"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Big Darkbrow",
+                              "display_name":  "Big Darkbrow",
+                              "resolved_title":  "Big Darkbrow",
+                              "fcs_name":  "Big Darkbrow",
+                              "string_id":  "48739-Dialogue.mod",
+                              "page_id":  13840,
+                              "page_revision_id":  92903,
+                              "page_revision_timestamp":  "2025-10-09T20:40:46Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Big_Darkbrow"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Beep",
+                              "display_name":  "Beep",
+                              "resolved_title":  "Beep",
+                              "fcs_name":  "Beep",
+                              "string_id":  "57390-rebirth.mod",
+                              "page_id":  7525,
+                              "page_revision_id":  95572,
+                              "page_revision_timestamp":  "2026-05-26T05:33:53Z",
+                              "has_world_states_section":  false,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Beep"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Agnu",
+                              "display_name":  "Agnu",
+                              "resolved_title":  "Agnu",
+                              "fcs_name":  "Agnu",
+                              "string_id":  "97095-rebirth.mod",
+                              "page_id":  10612,
+                              "page_revision_id":  94425,
+                              "page_revision_timestamp":  "2025-11-28T05:45:55Z",
+                              "has_world_states_section":  false,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Agnu"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Mad Cat-Lon",
+                              "display_name":  "Mad Cat-Lon",
+                              "resolved_title":  "Mad Cat-Lon",
+                              "fcs_name":  "Mad Cat-Lon",
+                              "string_id":  "1533858-rebirth.mod",
+                              "page_id":  10605,
+                              "page_revision_id":  92863,
+                              "page_revision_timestamp":  "2025-10-09T19:07:51Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Mad_Cat-Lon"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Seto",
+                              "display_name":  "Seto",
+                              "resolved_title":  "Seto",
+                              "fcs_name":  "Seto",
+                              "string_id":  "57412-Dialogue.mod",
+                              "page_id":  8220,
+                              "page_revision_id":  94940,
+                              "page_revision_timestamp":  "2026-02-11T15:25:48Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Seto"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Bayan",
+                              "display_name":  "Bayan",
+                              "resolved_title":  "Bayan",
+                              "fcs_name":  "Bayan",
+                              "string_id":  "43176-Dialogue.mod",
+                              "page_id":  9310,
+                              "page_revision_id":  94500,
+                              "page_revision_timestamp":  "2025-12-10T14:15:23Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Bayan"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Eyegore",
+                              "display_name":  "Eyegore",
+                              "resolved_title":  "Eyegore",
+                              "fcs_name":  "Eyegore",
+                              "string_id":  "56576-Dialogue.mod",
+                              "page_id":  8509,
+                              "page_revision_id":  95008,
+                              "page_revision_timestamp":  "2026-02-14T07:34:46Z",
+                              "has_world_states_section":  false,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Eyegore"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Dust King",
+                              "display_name":  "Dust King",
+                              "resolved_title":  "Dust King",
+                              "fcs_name":  "Dust King",
+                              "string_id":  "2849-gamedata.base",
+                              "page_id":  7165,
+                              "page_revision_id":  94594,
+                              "page_revision_timestamp":  "2025-12-30T16:47:28Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Dust_King"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Spider Foreman",
+                              "display_name":  "Spider Foreman",
+                              "resolved_title":  "Spider Foreman",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8329,
+                              "page_revision_id":  95414,
+                              "page_revision_timestamp":  "2026-03-24T20:53:17Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Spider_Foreman"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Dimak",
+                              "display_name":  "Dimak",
+                              "resolved_title":  "Dimak",
+                              "fcs_name":  "Dimak",
+                              "string_id":  "56888-Dialogue.mod",
+                              "page_id":  9763,
+                              "page_revision_id":  95393,
+                              "page_revision_timestamp":  "2026-03-18T05:48:10Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Dimak"
+                          },
+                          {
+                              "source_id":  "kenshi_fandom_character_pages",
+                              "section":  "Supplemental FCS cross-check",
+                              "wiki_title":  "Sand Ninja Oni",
+                              "display_name":  "Sand Ninja Oni",
+                              "resolved_title":  "Sand Ninja Oni",
+                              "fcs_name":  null,
+                              "string_id":  null,
+                              "page_id":  8540,
+                              "page_revision_id":  92883,
+                              "page_revision_timestamp":  "2025-10-09T19:23:05Z",
+                              "has_world_states_section":  true,
+                              "page_url":  "https://kenshi.fandom.com/wiki/Sand_Ninja_Oni"
+                          }
+                      ],
+    "town_entries":  [
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Empire",
+                             "wiki_title":  "Brink",
+                             "display_name":  "Brink",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Brink"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Bark",
+                             "display_name":  "Bark",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Bark"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Drin",
+                             "display_name":  "Drin",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Drin"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Fishing Village",
+                             "display_name":  "Fishing Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Fishing_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Free Settlement",
+                             "display_name":  "Free Settlement",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Free_Settlement"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Heft",
+                             "display_name":  "Heft",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Heft"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Heng",
+                             "display_name":  "Heng",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Heng"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Port North",
+                             "display_name":  "Port North",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Port_North"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Port South",
+                             "display_name":  "Port South",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Port_South"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Sho-Battai",
+                             "display_name":  "Sho-Battai",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Sho-Battai"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Stoat",
+                             "display_name":  "Stoat",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Stoat"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Emperor Tengu\u0027s Influence",
+                             "wiki_title":  "Trader\u0027s Edge",
+                             "display_name":  "Trader\u0027s Edge",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Trader\u0027s_Edge"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Northeastern Slavers",
+                             "wiki_title":  "Eyesocket",
+                             "display_name":  "Eyesocket",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Eyesocket"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Northeastern Slavers",
+                             "wiki_title":  "Slave Farm",
+                             "display_name":  "Slave Farm",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Slave_Farm"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Northeastern Slavers",
+                             "wiki_title":  "South Stone Camp",
+                             "display_name":  "South Stone Camp",
+                             "page_url":  "https://kenshi.fandom.com/wiki/South_Stone_Camp"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Northeastern Slavers",
+                             "wiki_title":  "Stone Camp",
+                             "display_name":  "Stone Camp",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Stone_Camp"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southwest",
+                             "wiki_title":  "Catun",
+                             "display_name":  "Catun",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Catun"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southwest",
+                             "wiki_title":  "Clownsteady",
+                             "display_name":  "Clownsteady",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Clownsteady"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southwest",
+                             "wiki_title":  "Drifter\u0027s Last",
+                             "display_name":  "Drifter\u0027s Last",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Drifter\u0027s_Last"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southwest",
+                             "wiki_title":  "Manhunter Base",
+                             "display_name":  "Manhunter Base",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Manhunter_Base"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southwest",
+                             "wiki_title":  "Slave Markets",
+                             "display_name":  "Slave Markets",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Slave_Markets"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southwest",
+                             "wiki_title":  "Slave Farm South",
+                             "display_name":  "Slave Farm South",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Slave_Farm_South"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Bad Teeth",
+                             "display_name":  "Bad Teeth",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Bad_Teeth"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Blister Hill",
+                             "display_name":  "Blister Hill",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Blister_Hill"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Holy Military Base",
+                             "display_name":  "Holy Military Base",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Holy_Military_Base"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Holy Mines",
+                             "display_name":  "Holy Mines",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Holy_Mines"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Okran\u0027s Fist",
+                             "display_name":  "Okran\u0027s Fist",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Okran\u0027s_Fist"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Okran\u0027s Shield",
+                             "display_name":  "Okran\u0027s Shield",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Okran\u0027s_Shield"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Rebirth",
+                             "display_name":  "Rebirth",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Rebirth"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Holy Nation Territory",
+                             "wiki_title":  "Stack",
+                             "display_name":  "Stack",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Stack"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Shek Kingdom",
+                             "wiki_title":  "Admag",
+                             "display_name":  "Admag",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Admag"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Shek Kingdom",
+                             "wiki_title":  "Squin",
+                             "display_name":  "Squin",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Squin"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Ark",
+                             "display_name":  "Ark",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Ark"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Crab Town",
+                             "display_name":  "Crab Town",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Crab_Town"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Crab Village",
+                             "display_name":  "Crab Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Crab_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Iron HQ",
+                             "display_name":  "Iron HQ",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Iron_HQ"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Reaver Camp",
+                             "display_name":  "Reaver Camp",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Reaver_Camp"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Skinhouse",
+                             "display_name":  "Skinhouse",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Skinhouse"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Southeast",
+                             "wiki_title":  "Skinhouse HQ",
+                             "display_name":  "Skinhouse HQ",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Skinhouse_HQ"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Swamps",
+                             "wiki_title":  "Grayflayer Village",
+                             "display_name":  "Grayflayer Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Grayflayer_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Swamps",
+                             "wiki_title":  "Rot",
+                             "display_name":  "Rot",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Rot"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Swamps",
+                             "wiki_title":  "Shark",
+                             "display_name":  "Shark",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Shark"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "The Swamps",
+                             "wiki_title":  "Stone Rat Village",
+                             "display_name":  "Stone Rat Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Stone_Rat_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Other Locations",
+                             "wiki_title":  "Cult Village",
+                             "display_name":  "Cult Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Cult_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Other Locations",
+                             "wiki_title":  "Fort Simion",
+                             "display_name":  "Fort Simion",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Fort_Simion"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Other Locations",
+                             "wiki_title":  "New Kralia",
+                             "display_name":  "New Kralia",
+                             "page_url":  "https://kenshi.fandom.com/wiki/New_Kralia"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Other Locations",
+                             "wiki_title":  "Raider Camp",
+                             "display_name":  "Raider Camp",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Raider_Camp"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Other Locations",
+                             "wiki_title":  "Settled Nomads",
+                             "display_name":  "Settled Nomads",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Settled_Nomads"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Fogman Invasions",
+                             "wiki_title":  "Distant Hive Village",
+                             "display_name":  "Distant Hive Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Distant_Hive_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Fogman Invasions",
+                             "wiki_title":  "Hive Village",
+                             "display_name":  "Hive Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Hive_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Fogman Invasions",
+                             "wiki_title":  "Southern Hive (Location)",
+                             "display_name":  "Southern Hive",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Southern_Hive_(Location)"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Fogman Invasions",
+                             "wiki_title":  "Southern Hive Village",
+                             "display_name":  "Southern Hive Village",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Southern_Hive_Village"
+                         },
+                         {
+                             "source_id":  "kenshi_fandom_town_overrides",
+                             "section":  "Fogman Invasions",
+                             "wiki_title":  "Western Hive (Location)",
+                             "display_name":  "Western Hive",
+                             "page_url":  "https://kenshi.fandom.com/wiki/Western_Hive_(Location)"
+                         }
+                     ]
+}
