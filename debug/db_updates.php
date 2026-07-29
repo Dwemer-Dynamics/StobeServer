@@ -2191,6 +2191,37 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('general_settings', 202607280101, static function () use ($db): void {
+            $intervalHours = 24;
+            $legacyHoursRow = $db->fetchOne(
+                "SELECT value FROM conf_opts WHERE id = 'DYNAMIC_PROFILE_INTERVAL_HOURS' LIMIT 1"
+            );
+            $legacyHours = trim(strval($legacyHoursRow['value'] ?? ''));
+            if (preg_match('/^-?\d+$/', $legacyHours) === 1) {
+                $intervalHours = intval($legacyHours);
+            } else {
+                $legacyMinutesRow = $db->fetchOne(
+                    "SELECT value FROM conf_opts WHERE id = 'DYNAMIC_PROFILE_INTERVAL_MINUTES' LIMIT 1"
+                );
+                $legacyMinutes = trim(strval($legacyMinutesRow['value'] ?? ''));
+                if (preg_match('/^-?\d+$/', $legacyMinutes) === 1) {
+                    $intervalHours = intval(ceil(intval($legacyMinutes) / 60));
+                }
+            }
+            $intervalHours = max(1, min(720, $intervalHours));
+
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('DYNAMIC_PROFILE_INTERVAL_HOURS', $1,
+                         'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.',
+                         NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [strval($intervalHours)]
+            );
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

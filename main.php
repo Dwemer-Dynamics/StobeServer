@@ -349,7 +349,7 @@ try {
     }
 
     if (function_exists('stobeEnsureBackgroundProcessorRunning')) {
-        stobeEnsureBackgroundProcessorRunning(false);
+        stobeEnsureBackgroundProcessorRunning(true);
     }
 } catch (Throwable $exception) {
     stobeLogException($exception, 'Event routing failed', [
