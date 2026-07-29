@@ -201,6 +201,9 @@ function stobeSettingType(string $id, string $value): string
     if ($idUpper === 'RECHAT_MODE') {
         return 'select';
     }
+    if ($idUpper === 'DYNAMIC_PROFILE_INTERVAL_HOURS') {
+        return 'int';
+    }
     if (stobeSettingLooksBoolean($value)) {
         return 'bool';
     }
