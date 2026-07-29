@@ -4,11 +4,12 @@
  * Read-only recent event browser for the in-game STOBE menu.
  *
  * POST JSON:
- *   {"filter":"all|dialogue|actions|travel|combat|trade","limit":60}
+ *   {"filter":"default|all|dialogue|actions|travel|combat|trade","limit":60}
  */
 
 $path = dirname(__FILE__) . DIRECTORY_SEPARATOR;
 require($path . "lib/bootstrap.php");
+require_once($path . "lib/event_filter_functions.php");
 require_once($path . "lib/utils_game_timestamp.php");
 
 header('Content-Type: application/json; charset=utf-8');
@@ -26,7 +27,7 @@ if (!is_array($payload)) {
     return;
 }
 
-$filter = strtolower(trim(strval($payload['filter'] ?? 'all')));
+$filter = strtolower(trim(strval($payload['filter'] ?? 'default')));
 $limit = max(10, min(100, intval($payload['limit'] ?? 60)));
 $whereByFilter = [
     'all' => "TRUE",
@@ -36,17 +37,32 @@ $whereByFilter = [
     'combat' => "LOWER(type) IN ('combat', 'combatstart', 'combatend', 'death', 'limblost', 'limb_loss', 'knockout', 'healed', 'healing')",
     'trade' => "LOWER(type) IN ('trade', 'buy', 'sell', 'purchase', 'sale', 'item_transfer')",
 ];
-if (!isset($whereByFilter[$filter])) {
-    $filter = 'all';
+if ($filter !== 'default' && !isset($whereByFilter[$filter])) {
+    $filter = 'default';
 }
 
 $db = $GLOBALS['db'];
+$queryParams = [];
+if ($filter === 'default') {
+    $hiddenTypes = stobeEventsAllHiddenTypes(stobeEventsPersistedHiddenTypes());
+    $placeholders = [];
+    foreach ($hiddenTypes as $index => $hiddenType) {
+        $placeholders[] = '$' . ($index + 1);
+        $queryParams[] = $hiddenType;
+    }
+    $where = empty($placeholders)
+        ? 'TRUE'
+        : 'type NOT IN (' . implode(', ', $placeholders) . ')';
+} else {
+    $where = $whereByFilter[$filter];
+}
 $rows = $db->fetchAll(
     "SELECT rowid, type, data, people, location, gamets, localts
      FROM eventlog
-     WHERE " . $whereByFilter[$filter] . "
+     WHERE " . $where . "
      ORDER BY gamets DESC, COALESCE(ts, localts) DESC, rowid DESC
-     LIMIT " . strval($limit)
+     LIMIT " . strval($limit),
+    $queryParams
 );
 
 $lines = [];

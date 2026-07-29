@@ -6,6 +6,7 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+require_once($path . "lib/event_filter_functions.php");
 $isEmbed = isset($_GET['embed']) && (string)$_GET['embed'] === '1';
 
 function h(mixed $value): string
@@ -44,11 +45,6 @@ function eventsUrl(int $page, int $limit, bool $autorefresh = false, array $extr
     return "events.php?" . http_build_query($params);
 }
 
-function stobeEventsDefaultHiddenTypes(): array
-{
-    return ['inputtext', 'inputtext_s', 'bored', 'infonpc', 'infonpc_close', 'infoloc'];
-}
-
 function stobeEventsTypePlaceholders(int $count, int $startIndex = 1): string
 {
     $placeholders = [];
@@ -58,39 +54,6 @@ function stobeEventsTypePlaceholders(int $count, int $startIndex = 1): string
         $nextIndex++;
     }
     return implode(', ', $placeholders);
-}
-
-function stobeNormalizeTypeList(array $types): array
-{
-    $normalized = [];
-    foreach ($types as $type) {
-        $type = trim((string)$type);
-        if ($type === '') {
-            continue;
-        }
-        $normalized[$type] = $type;
-    }
-    return array_values($normalized);
-}
-
-function stobeEventsPersistedHiddenConfKey(): string
-{
-    return 'stobe_eventlog_hidden_types';
-}
-
-function stobeEventsPersistedHiddenTypes(): array
-{
-    $rawValue = trim(getConfOpt(stobeEventsPersistedHiddenConfKey(), ''));
-    if ($rawValue === '') {
-        return [];
-    }
-
-    $decoded = json_decode($rawValue, true);
-    if (is_array($decoded)) {
-        return stobeNormalizeTypeList($decoded);
-    }
-
-    return stobeNormalizeTypeList(explode(',', $rawValue));
 }
 
 function stobeEventsSavePersistedHiddenTypes(array $types): void
@@ -104,14 +67,6 @@ function stobeEventsSavePersistedHiddenTypes(array $types): void
     }
 
     setConfOpt($confKey, json_encode(array_values($normalized), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-}
-
-function stobeEventsAllHiddenTypes(array $persistedHiddenTypes = []): array
-{
-    return stobeNormalizeTypeList(array_merge(
-        stobeEventsDefaultHiddenTypes(),
-        $persistedHiddenTypes
-    ));
 }
 
 function safeFetchAll(sql $db, string $query, array $params = []): array
