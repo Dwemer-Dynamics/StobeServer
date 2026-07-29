@@ -5605,6 +5605,10 @@ function queryWorldKnowledgeForNpc(
             continue;
         }
 
+        $worldStateAddenda = stobeWorldStatePromptAddendaForTopic($topic, 4);
+        if (count($worldStateAddenda) > 0) {
+            $desc .= ' ' . implode(' ', $worldStateAddenda);
+        }
         $line = $topic . ': ' . $desc;
         $line = trim($line);
 

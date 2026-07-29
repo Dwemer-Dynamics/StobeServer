@@ -13,6 +13,7 @@ if ($useLegacy) {
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -162,7 +163,11 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 $runSqlSeedFile($seedPath, $spec['missing'], $spec['empty'], $spec['normalized']);
             }
         };
-        $importWorldKnowledgeCsv = static function (string $seedPath) use ($db): void {
+        $importWorldKnowledgeCsv = static function (
+            string $seedPath,
+            ?array $allowedTopics = null,
+            bool $updateExisting = true
+        ) use ($db): void {
             if (!is_file($seedPath)) {
                 stobeLogWarn('world_knowledge import skipped: seed file missing', ['path' => $seedPath]);
                 return;
@@ -196,6 +201,16 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     $map[$name] = intval($i);
                 }
             }
+            $allowedTopicKeys = null;
+            if (is_array($allowedTopics)) {
+                $allowedTopicKeys = [];
+                foreach ($allowedTopics as $allowedTopic) {
+                    $key = strtolower(trim(strval($allowedTopic)));
+                    if ($key !== '') {
+                        $allowedTopicKeys[$key] = true;
+                    }
+                }
+            }
             $pick = static function (array $row, array $columnMap, array $aliases, int $fallback = -1) use ($normalizeHeader): string {
                 foreach ($aliases as $alias) {
                     $k = $normalizeHeader($alias);
@@ -224,9 +239,15 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 if ($topic === '' || ($desc === '' && $descBasic === '')) {
                     continue;
                 }
+                if (is_array($allowedTopicKeys) && !isset($allowedTopicKeys[strtolower($topic)])) {
+                    continue;
+                }
                 $existing = $db->fetchOne("SELECT id FROM world_knowledge WHERE LOWER(topic)=LOWER($1) LIMIT 1", [$topic]);
                 $id = intval($existing['id'] ?? 0);
                 if ($id > 0) {
+                    if (!$updateExisting) {
+                        continue;
+                    }
                     $db->exec(
                         "UPDATE world_knowledge
                          SET topic=$1, topic_desc=$2, topic_desc_basic=$3,
@@ -1279,6 +1300,23 @@ PROMPT;
             stobeLogInfo('World knowledge aliases merged and indexed', $stats);
         });
 
+        $applyPatch('world_knowledge_world_state_topics', 202607290100, static function () use ($importWorldKnowledgeCsv): void {
+            $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
+            $topics = [
+                'Ghost',
+                'Gutterhead',
+                'Beep',
+                'Agnu',
+                'Shek Kingdom',
+                'Flotsam Ninjas',
+                'Grey',
+                'Jaegar',
+                'Elder',
+                'Spider Foreman',
+            ];
+            $importWorldKnowledgeCsv($seed, $topics, false);
+        });
+
         $applyPatch('world_state', 202603150001, static function () use ($db): void {
             $db->exec("CREATE TABLE IF NOT EXISTS world_state (
                 id BIGSERIAL PRIMARY KEY,
@@ -2272,6 +2310,125 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 [strval($intervalHours)]
             );
         });
+
+        $applyPatch('world_state_query_result', 202607290101, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_query_result (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    is_true BOOLEAN NOT NULL,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    catalog_sha256 TEXT NOT NULL DEFAULT '',
+                    first_observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_evaluated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    changed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_query_result_value
+                 ON world_state_query_result (is_true, query_name)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_query_result_evaluated
+                 ON world_state_query_result (last_evaluated_at DESC)'
+            );
+        });
+
+        $applyPatch('world_state_addendum', 202607290102, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_addendum (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    source_mod TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL DEFAULT 'vanilla',
+                    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    when_true TEXT NOT NULL DEFAULT '',
+                    when_false TEXT NOT NULL DEFAULT '',
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    catalog_sha256 TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_addendum_custom (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    source_mod TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL DEFAULT 'custom',
+                    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    when_true TEXT NOT NULL DEFAULT '',
+                    when_false TEXT NOT NULL DEFAULT '',
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_addendum_enabled
+                 ON world_state_addendum (enabled, query_id)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_addendum_origin
+                 ON world_state_addendum (origin, source_mod)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_addendum_custom_enabled
+                 ON world_state_addendum_custom (enabled, query_id)'
+            );
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_world_state_addendum AS
+                 SELECT
+                    c.query_id, c.query_name, c.source_mod, c.origin,
+                    c.matched_topics, c.when_true, c.when_false, c.enabled,
+                    ''::TEXT AS catalog_sha256, c.created_at, c.updated_at,
+                    TRUE AS is_custom
+                 FROM world_state_addendum_custom c
+                 UNION ALL
+                 SELECT
+                    b.query_id, b.query_name, b.source_mod, b.origin,
+                    b.matched_topics, b.when_true, b.when_false, b.enabled,
+                    b.catalog_sha256, b.created_at, b.updated_at,
+                    FALSE AS is_custom
+                 FROM world_state_addendum b
+                 LEFT JOIN world_state_addendum_custom c ON c.query_id = b.query_id
+                 WHERE c.query_id IS NULL"
+            );
+        });
+
+        $applyPatch('world_state_definition', 202607290103, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_definition (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    source_mod TEXT NOT NULL DEFAULT '',
+                    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+                    rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    runtime_catalog_id TEXT NOT NULL DEFAULT '',
+                    is_vanilla BOOLEAN NOT NULL DEFAULT FALSE,
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    first_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_definition_active
+                 ON world_state_definition (active, query_name)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_definition_source
+                 ON world_state_definition (source_mod, active)'
+            );
+        });
+
+        try {
+            $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
+            stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
+        } catch (Throwable $exception) {
+            stobeLogException($exception, 'World-state addendum seed failed');
+        }
 
         stobeLogInfo('DB updates completed (release consolidator)');
     }

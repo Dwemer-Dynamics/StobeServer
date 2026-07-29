@@ -66,8 +66,8 @@ foreach ($seedRows as $seedRow) {
         $seedAliasCount++;
     }
 }
-worldKnowledgeAliasAssert(count($seedRows) === 548, 'world knowledge seed should retain all 548 source rows');
-worldKnowledgeAliasAssert($seedAliasCount === 41, 'world knowledge seed should contain the 41 reviewed aliases');
+worldKnowledgeAliasAssert(count($seedRows) === 558, 'world knowledge seed should retain all 558 source rows');
+worldKnowledgeAliasAssert($seedAliasCount === 48, 'world knowledge seed should contain the 48 reviewed aliases');
 worldKnowledgeAliasAssert(($aliasOwners['uc'] ?? '') === 'United Cities', 'reviewed seed should include UC for United Cities');
 
 $seed = strval(time()) . '_' . strval(random_int(1000, 9999));

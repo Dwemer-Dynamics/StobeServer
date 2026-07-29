@@ -62,7 +62,7 @@ $tabs = [
     ['id' => 'keys', 'group' => 'ai-voice', 'icon' => '&#x1F511;', 'label' => 'API Keys', 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'settings', 'group' => 'world-behavior', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'rename_names', 'group' => 'world-behavior', 'icon' => '&#x1F3F7;&#xFE0F;', 'label' => 'Rename Names', 'page' => 'rename_names.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'world_knowledge', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World Knowledge', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'world', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'desc', 'group' => 'world-behavior', 'icon' => '&#x1F4DC;', 'label' => 'Descriptions', 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'actions', 'group' => 'world-behavior', 'icon' => '&#x2694;&#xFE0F;', 'label' => 'Action Editor', 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'prompts', 'group' => 'world-behavior', 'icon' => '&#x1F4DD;', 'label' => 'Prompts Manager', 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
@@ -74,9 +74,21 @@ $tabGroups = [
     'world-behavior' => 'World & Behavior',
 ];
 
+$worldViews = [
+    'knowledge' => ['label' => 'World Knowledge', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
+    'state' => ['label' => 'World State', 'page' => 'world_state.php', 'status' => 'wired', 'embed' => true],
+];
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'npcs')));
-if ($activeTab === 'oghma') {
-    $activeTab = 'world_knowledge';
+$worldView = strtolower(trim((string)($_GET['world_view'] ?? 'knowledge')));
+if (in_array($activeTab, ['oghma', 'world_knowledge'], true)) {
+    $activeTab = 'world';
+    $worldView = 'knowledge';
+} elseif ($activeTab === 'world_state') {
+    $activeTab = 'world';
+    $worldView = 'state';
+}
+if (!isset($worldViews[$worldView])) {
+    $worldView = 'knowledge';
 }
 $tabMap = [];
 foreach ($tabs as $tab) {
@@ -237,10 +249,23 @@ if (!isset($tabMap[$activeTab])) {
             <?php
                 $isActive = ($activeTab === $tab['id']);
                 $hasPage = ($tab['status'] === 'wired' && !empty($tab['page']));
-                $targetSrc = $hasPage ? buildTabTargetSrc($tab, $webRoot) : '';
+                $targetTab = $tab['id'] === 'world' ? $worldViews[$worldView] : $tab;
+                $targetSrc = $hasPage ? buildTabTargetSrc($targetTab, $webRoot) : '';
             ?>
             <div id="tab-<?= h($tab['id']) ?>" class="tab-content <?= $isActive ? 'active' : '' ?>">
                 <?php if ($hasPage): ?>
+                    <?php if ($tab['id'] === 'world'): ?>
+                        <div class="tab-buttons" role="tablist" aria-label="World pages">
+                            <?php foreach ($worldViews as $viewId => $view): ?>
+                                <a
+                                    class="tab-button <?= $worldView === $viewId ? 'active' : '' ?>"
+                                    role="tab"
+                                    aria-selected="<?= $worldView === $viewId ? 'true' : 'false' ?>"
+                                    href="?tab=world&amp;world_view=<?= h($viewId) ?>"
+                                ><?= h($view['label']) ?></a>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
                     <div class="embed-wrap">
                         <iframe
                             class="embed"
@@ -259,7 +284,7 @@ if (!isset($tabMap[$activeTab])) {
 
 <script>
 (function(){
-    const buttons = document.querySelectorAll('.tab-button');
+    const buttons = document.querySelectorAll('button.tab-button[data-tab]');
     const groups = document.querySelectorAll('.tab-group');
     const tabs = document.querySelectorAll('.tab-content');
 

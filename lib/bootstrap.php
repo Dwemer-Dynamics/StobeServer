@@ -84,6 +84,7 @@ require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-omnivoice.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-cartesia.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-inworld.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'data_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'memory_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'chat_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'diary_helper_functions.php');
