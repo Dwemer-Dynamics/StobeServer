@@ -204,9 +204,35 @@ try {
     mainIngressAssert(is_array($targetData), 'main.php should JIT-create target profile from profile/people payload');
 
     $GLOBALS['db']->exec('DELETE FROM eventlog');
+    $injectionResponse = mainIngressHttpRequest(
+        $port,
+        mainIngressRequestPath(
+            'injection',
+            time(),
+            999002,
+            $speaker . ': The town gate collapses',
+            [
+                'profile' => $target,
+                'mode' => 'inject',
+                'people' => json_encode([$speaker, $target], JSON_UNESCAPED_SLASHES),
+            ]
+        )
+    );
+    mainIngressAssertSameInt(200, intval($injectionResponse['status']), 'main.php injection request should return HTTP 200');
+    mainIngressAssertSame('ok', trim(strval($injectionResponse['body'])), 'plain injection should acknowledge storage');
+    $injectionRows = mainIngressEventRows();
+    mainIngressAssertSameInt(1, count($injectionRows), 'plain injection through main.php should store exactly one row');
+    mainIngressAssertSame('injection', strval($injectionRows[0]['type'] ?? ''), 'main ingress injection row should preserve event type');
+    mainIngressAssertSame(
+        $speaker . ': (The town gate collapses) (talking to: ' . $target . ')',
+        strval($injectionRows[0]['data'] ?? ''),
+        'main ingress injection should store a parenthetical world event'
+    );
+
+    $GLOBALS['db']->exec('DELETE FROM eventlog');
     $unknownResponse = mainIngressHttpRequest(
         $port,
-        mainIngressRequestPath('ut_unhandled_event', time(), 999002, 'payload stored only')
+        mainIngressRequestPath('ut_unhandled_event', time(), 999003, 'payload stored only')
     );
     mainIngressAssertSameInt(200, intval($unknownResponse['status']), 'unhandled main.php event should return HTTP 200');
     mainIngressAssertSame('ok', trim(strval($unknownResponse['body'])), 'unhandled main.php event should return ok');
