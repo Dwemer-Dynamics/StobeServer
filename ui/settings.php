@@ -62,6 +62,11 @@ try {
                 'value' => 'http://127.0.0.1:8082',
                 'description' => 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
             ],
+            [
+                'id' => 'DYNAMIC_PROFILE_INTERVAL_HOURS',
+                'value' => '24',
+                'description' => 'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.',
+            ],
         ];
 
         foreach ($requiredSettings as $requiredSetting) {
@@ -233,6 +238,9 @@ function stobeSettingSelectOptions(string $id): array
 function stobeNormalizeSettingValue(string $id, string $rawValue, string $type): string
 {
     $value = trim($rawValue);
+    if (strtoupper(trim($id)) === 'DYNAMIC_PROFILE_INTERVAL_HOURS') {
+        return strval(max(1, min(720, intval($value))));
+    }
     if ($type === 'bool') {
         $lower = strtolower($value);
         return in_array($lower, ['1', 'true', 'yes', 'on'], true) ? 'true' : 'false';
@@ -260,6 +268,9 @@ function stobeInferGroup(string $id): string
     }
     if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_') || $idUpper === 'TXTAI_URL') {
         return 'Memory';
+    }
+    if (str_starts_with($idUpper, 'DYNAMIC_PROFILE_')) {
+        return 'Core';
     }
     if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_') || $idUpper === 'ALWAYS_INSERT_RACE') {
         return 'World Knowledge';
@@ -342,6 +353,7 @@ function stobePrettySettingLabel(string $id): string
         'HTTP_TIMEOUT' => 'HTTP Timeout',
         'CONTEXT_HISTORY' => 'Context History',
         'TXTAI_URL' => 'MiniMe / TXT2VEC URL',
+        'DYNAMIC_PROFILE_INTERVAL_HOURS' => 'Dynamic Profile Update Interval',
     ];
     if (isset($customLabels[$idUpper])) {
         return $customLabels[$idUpper];
@@ -553,6 +565,7 @@ foreach ($grouped as $groupName => $rows) {
             'RELATION_SYSTEM_ENABLED' => 2,
             'PLAYER_FACTION_CUSTOM_NAME' => 3,
             'PLAYER_FACTION_PROMPT' => 4,
+            'DYNAMIC_PROFILE_INTERVAL_HOURS' => 5,
             'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
@@ -1033,6 +1046,7 @@ if (isset($grouped['LLM & API'])) {
                                 $inputId = 'setting_' . preg_replace('/[^a-zA-Z0-9_]+/', '_', $id);
                                 $label = stobePrettySettingLabel($id);
                                 $checked = in_array(strtolower(trim($value)), ['true', '1', 'yes', 'on'], true);
+                                $isDynamicProfileInterval = strtoupper(trim($id)) === 'DYNAMIC_PROFILE_INTERVAL_HOURS';
                             ?>
                             <div
                                 class="provider-card"
@@ -1072,7 +1086,14 @@ if (isset($grouped['LLM & API'])) {
                                     <?php elseif ($type === 'textarea'): ?>
                                         <textarea id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]"><?= h($value) ?></textarea>
                                     <?php elseif ($type === 'int'): ?>
-                                        <input type="number" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>" step="1">
+                                        <input
+                                            type="number"
+                                            id="<?= h($inputId) ?>"
+                                            name="settings[<?= h($id) ?>]"
+                                            value="<?= h($value) ?>"
+                                            step="1"
+                                            <?= $isDynamicProfileInterval ? 'min="1" max="720"' : '' ?>
+                                        >
                                     <?php elseif ($type === 'float'): ?>
                                         <input type="number" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>" step="0.01">
                                     <?php elseif ($type === 'password'): ?>

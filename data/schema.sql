@@ -3430,6 +3430,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('WORLD_KNOWLEDGE_CONTEXT_KEYWORDS','8',           'Max world knowledge context keywords'),
 ('WORLD_KNOWLEDGE_MIN_RANK',       '3.30',         'Minimum combined rank for world knowledge hints (Herika-aligned threshold)'),
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
+('DYNAMIC_PROFILE_INTERVAL_HOURS', '24', 'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
 ('TXTAI_URL',            'http://127.0.0.1:8082', 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.'),
