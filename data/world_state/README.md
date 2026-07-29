@@ -25,17 +25,21 @@ The extractor:
 - Applies and validates explicit query mappings from `vanilla_world_state_knowledge_map.csv`.
 - Fails when FCS exposes an unsupported rule, consumer, value, or unresolved reference.
 
-Generated files:
+Committed inputs and runtime data:
 
-- `vanilla_world_state_catalog.json`: complete rules, consumers, town variants, mappings, and prompt translations.
+- `vanilla_world_state_catalog.json`: compact runtime query definitions, mappings, and prompt translations.
+- `vanilla_world_knowledge_manifest.json`: approved wiki sources, aliases, classes, and tags for missing World Knowledge topics.
+- `vanilla_world_state_knowledge_map.csv`: explicit query-to-topic mappings used during every catalog regeneration.
+
+Regenerable review artifacts are ignored by Git:
+
+- `vanilla_world_state_catalog.full.json`: complete rules, consumers, town variants, mappings, and prompt translations.
 - `vanilla_world_state_addenda.csv`: compact prompt-addendum review sheet.
-- `vanilla_world_state_coverage.json`: machine-readable validation and coverage counts.
-- `vanilla_world_state_coverage.md`: human-readable extraction and semantic coverage report.
+- `vanilla_world_state_coverage.json` and `.md`: machine-readable and human-readable coverage reports.
 - `wiki_world_state_sources.json`: pinned wiki revisions, actor String IDs, and documented town locations.
 - `vanilla_world_state_source_of_truth.json`: FCS-authoritative records enriched with wiki corroboration.
 - `vanilla_world_state_wiki_comparison.md`: wiki-confirmed, FCS-only, and unresolved comparison report.
-- `vanilla_world_knowledge_manifest.json`: approved wiki sources, aliases, classes, and tags for missing World Knowledge topics.
-- `vanilla_world_state_knowledge_map.csv`: explicit query-to-topic mappings used during every catalog regeneration.
+- `vanilla_world_knowledge_generation.json`: GLM generation provenance and cache.
 
 Generate the approved missing World Knowledge articles through OpenRouter GLM:
 
@@ -56,6 +60,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\refresh-kenshi-world
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build-kenshi-world-state-source-of-truth.ps1
 ```
 
-FCS remains authoritative because the wiki intentionally documents notable actors and locations rather than every composite query. Wiki omissions are retained as coverage gaps and never remove valid FCS records.
+The source-of-truth builder reads `vanilla_world_state_catalog.full.json`, so run the extractor before rebuilding the wiki comparison. FCS remains authoritative because the wiki intentionally documents notable actors and locations rather than every composite query. Wiki omissions are retained as coverage gaps and never remove valid FCS records.
 
 The extractor never reads live game memory or enables a background `GameData` scan. Stobe evaluates loaded queries on its safe game-thread path, and StobeServer consumes those results for prompt-time addenda.

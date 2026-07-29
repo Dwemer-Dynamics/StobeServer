@@ -685,11 +685,33 @@ $coverage = [ordered]@{
 
 New-Item -ItemType Directory -Force -Path $resolvedOutputDirectory | Out-Null
 $catalogPath = Join-Path $resolvedOutputDirectory 'vanilla_world_state_catalog.json'
+$fullCatalogPath = Join-Path $resolvedOutputDirectory 'vanilla_world_state_catalog.full.json'
 $coveragePath = Join-Path $resolvedOutputDirectory 'vanilla_world_state_coverage.json'
 $addendaPath = Join-Path $resolvedOutputDirectory 'vanilla_world_state_addenda.csv'
 $reportPath = Join-Path $resolvedOutputDirectory 'vanilla_world_state_coverage.md'
 
-$catalogJson = $catalog | ConvertTo-Json -Depth 20
+$runtimeCatalog = [ordered]@{
+    schema_version = 1
+    queries = @($catalogQueries | ForEach-Object {
+        [ordered]@{
+            query_id = [string]$_.query_id
+            query_name = [string]$_.query_name
+            source_mod = [string]$_.source_mod
+            classification = [string]$_.classification
+            player_involvement_required = [bool]$_.player_involvement_required
+            rules = @($_.rules)
+            world_knowledge = [ordered]@{
+                matched_topics = @($_.world_knowledge.matched_topics)
+            }
+            prompt_addendum = [ordered]@{
+                when_true = $_.prompt_addendum.when_true
+                when_false = $_.prompt_addendum.when_false
+            }
+        }
+    })
+}
+$runtimeCatalogJson = $runtimeCatalog | ConvertTo-Json -Depth 12 -Compress
+$fullCatalogJson = $catalog | ConvertTo-Json -Depth 20
 $coverageJson = $coverage | ConvertTo-Json -Depth 10
 $addendaCsv = ($addendumRows | Sort-Object query_id | ConvertTo-Csv -NoTypeInformation) -join "`r`n"
 
@@ -757,13 +779,15 @@ $reportLines.Add('## Runtime Integration')
 $reportLines.Add('')
 $reportLines.Add('StobeServer seeds built-in addenda from this catalog and injects current query-result text at prompt time. Stobe remains responsible for safe game-thread query evaluation; the extractor never enables a background `GameData` scan.')
 
-Write-Utf8WithoutBom -Path $catalogPath -Content ($catalogJson + "`n")
+Write-Utf8WithoutBom -Path $catalogPath -Content ($runtimeCatalogJson + "`n")
+Write-Utf8WithoutBom -Path $fullCatalogPath -Content ($fullCatalogJson + "`n")
 Write-Utf8WithoutBom -Path $coveragePath -Content ($coverageJson + "`n")
 Write-Utf8WithoutBom -Path $addendaPath -Content ($addendaCsv + "`r`n")
 Write-Utf8WithoutBom -Path $reportPath -Content (($reportLines -join "`n") + "`n")
 
 Write-Output "Loaded $($catalog.summary.total_records_loaded) vanilla FCS records."
 Write-Output "Exported $($catalog.summary.world_event_state_queries) world-state queries and $($catalog.summary.world_event_state_consumers) consumers."
-Write-Output "Catalog: $catalogPath"
+Write-Output "Runtime catalog: $catalogPath"
+Write-Output "Full analysis catalog: $fullCatalogPath"
 Write-Output "Coverage: $coveragePath"
 Write-Output "Addenda: $addendaPath"

@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = Split-Path -Parent $scriptDirectory
 if ([string]::IsNullOrWhiteSpace($CatalogPath)) {
-    $CatalogPath = Join-Path $repositoryRoot 'data\world_state\vanilla_world_state_catalog.json'
+    $CatalogPath = Join-Path $repositoryRoot 'data\world_state\vanilla_world_state_catalog.full.json'
 }
 if ([string]::IsNullOrWhiteSpace($WikiSourcesPath)) {
     $WikiSourcesPath = Join-Path $repositoryRoot 'data\world_state\wiki_world_state_sources.json'

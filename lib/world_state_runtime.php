@@ -537,21 +537,6 @@ function stobeWorldStateImportModAddendaRows(array $rows): array
     return $result;
 }
 
-function stobeWorldStateSourceOfTruth(): array
-{
-    static $source = null;
-    if (is_array($source)) {
-        return $source;
-    }
-
-    $path = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR
-        . 'world_state' . DIRECTORY_SEPARATOR . 'vanilla_world_state_source_of_truth.json';
-    $raw = @file_get_contents($path);
-    $decoded = is_string($raw) ? json_decode($raw, true) : null;
-    $source = is_array($decoded) ? $decoded : [];
-    return $source;
-}
-
 function stobeWorldStateParseBool(mixed $value): ?bool
 {
     if (is_bool($value)) {
@@ -1001,38 +986,4 @@ function stobeWorldStatePromptAddendaForTopic(string $topic, int $limit = 4): ar
         }
     }
     return $addenda;
-}
-
-function stobeWorldStateWikiByQuery(): array
-{
-    $byQuery = [];
-    foreach (stobeWorldStateSourceOfTruth()['character_states'] ?? [] as $character) {
-        if (!is_array($character)) {
-            continue;
-        }
-        foreach ($character['query_ids'] ?? [] as $queryId) {
-            $queryId = trim(strval($queryId));
-            if ($queryId === '') {
-                continue;
-            }
-            if (!isset($byQuery[$queryId])) {
-                $byQuery[$queryId] = ['statuses' => [], 'references' => []];
-            }
-            $status = trim(strval($character['wiki_status'] ?? ''));
-            if ($status !== '') {
-                $byQuery[$queryId]['statuses'][$status] = true;
-            }
-            foreach ($character['wiki_references'] ?? [] as $reference) {
-                if (!is_array($reference)) {
-                    continue;
-                }
-                $url = trim(strval($reference['page_url'] ?? ''));
-                $title = trim(strval($reference['wiki_title'] ?? ''));
-                if ($url !== '') {
-                    $byQuery[$queryId]['references'][$url] = $title !== '' ? $title : $url;
-                }
-            }
-        }
-    }
-    return $byQuery;
 }
