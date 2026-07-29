@@ -3,7 +3,33 @@
 if (!function_exists('stobeNarratorName')) {
     function stobeNarratorName(): string
     {
-        return 'The Narrator';
+        return Narrator::CANONICAL_NAME;
+    }
+}
+
+if (!function_exists('stobeNarratorRoleplayName')) {
+    function stobeNarratorRoleplayName(): string
+    {
+        $narrator = stobeGetNarrator();
+        return $narrator ? $narrator->getRoleplayName() : Narrator::DEFAULT_ROLEPLAY_NAME;
+    }
+}
+
+if (!function_exists('stobeNarratorDisplayNameHeaderValue')) {
+    function stobeNarratorDisplayNameHeaderValue(): string
+    {
+        return base64_encode(stobeNarratorRoleplayName());
+    }
+}
+
+if (!function_exists('stobeRenderNarratorDisplayText')) {
+    function stobeRenderNarratorDisplayText(string $text): string
+    {
+        $displayName = stobeNarratorRoleplayName();
+        if (strcasecmp($displayName, stobeNarratorName()) === 0) {
+            return $text;
+        }
+        return str_ireplace(stobeNarratorName(), $displayName, $text);
     }
 }
 
@@ -80,6 +106,7 @@ if (!function_exists('stobeBuildNarratorNpcData')) {
         }
 
         $defaults['name'] = $name;
+        $defaults['roleplay_name'] = $narrator->getRoleplayName();
         $defaults['race'] = trim(strval($settings['race'] ?? '')) !== '' ? trim(strval($settings['race'])) : 'Unknown';
         $defaults['faction'] = trim(strval($settings['faction'] ?? '')) !== '' ? trim(strval($settings['faction'])) : 'Narrator';
         $defaults['gender'] = trim(strval($narratorData['gender'] ?? 'male'));
@@ -254,7 +281,10 @@ if (!function_exists('stobeFilterNarratorRowsForContext')) {
                 continue;
             }
             if (stobeContextRowInvolvesNarrator($row)) {
-                continue;
+                $preserveInline = coerceBoolean($GLOBALS['PRESERVE_INLINE_NARRATION_CONTEXT'] ?? false);
+                if (!$preserveInline || strcasecmp(trim(strval($row['type'] ?? '')), 'inline_narration') !== 0) {
+                    continue;
+                }
             }
             $filtered[] = $row;
         }
@@ -403,6 +433,7 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
                     . ' Never use second-person pronouns like "you" or "your".';
             }
 
+            $displayName = stobeNarratorRoleplayName();
             $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets), $speaker)
                 . "\n\n"
                 . buildSystemPrompt(
@@ -416,12 +447,12 @@ if (!function_exists('stobeTryTriggerRandomNarration')) {
                 )
                 . "\n\n<speech_mode>\n"
                 . "  <mode>narrator</mode>\n"
-                . "  <instruction>You are The Narrator delivering a brief scene interjection in third-person storytelling style. The speaker is the focal subject, not a direct addressee. Do not emit action tags.</instruction>\n"
+                . "  <instruction>You are " . stobePromptXmlEscape($displayName) . " delivering a brief scene interjection in third-person storytelling style. The speaker is the focal subject, not a direct addressee. Do not emit action tags.</instruction>\n"
                 . "</speech_mode>";
 
             $userContent = "<random_narration_event>\n"
                 . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
-                . "  <target>" . stobePromptXmlEscape($narratorName) . "</target>\n"
+                . "  <target>" . stobePromptXmlEscape($displayName) . "</target>\n"
                 . "  <focus_subject>" . stobePromptXmlEscape($speaker) . "</focus_subject>\n"
                 . "  <trigger>" . stobePromptXmlEscape($trigger) . "</trigger>\n"
                 . "  <previous_speaker>" . stobePromptXmlEscape($previousSpeaker) . "</previous_speaker>\n"

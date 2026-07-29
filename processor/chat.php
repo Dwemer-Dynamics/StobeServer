@@ -820,7 +820,7 @@ if ($dialogueMode === 'whisper') {
 } elseif ($dialogueMode === 'autochat') {
     $deliveryStyleInstruction = 'The player triggered a bored-event automatic chat. Keep responses brief and natural for overheard conversation.';
 } elseif ($dialogueMode === 'narrator') {
-    $deliveryStyleInstruction = 'You are The Narrator in a private one-on-one conversation. Reply directly to the speaker as conversation. Never narrate scenes, atmosphere, or actions in this mode. Never emit action tags.';
+    $deliveryStyleInstruction = 'You are ' . stobeNarratorRoleplayName() . ' in a private one-on-one conversation. Reply directly to the speaker as conversation. Never narrate scenes, atmosphere, or actions in this mode. Never emit action tags.';
 } elseif ($injectionChatMode) {
     $deliveryStyleInstruction = 'The player supplied an established in-world event, not spoken dialogue. Accept the event as true and give one immediate in-character response from the target NPC without claiming the player said the event aloud.';
 }
@@ -1050,11 +1050,14 @@ if (!$manualActionForcedEmoteOnly && !$narratorMode) {
         $npcData,
         'chat'
     );
-    $responseText = stobeStripParentheticalDialogueText(
-        sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)))
-    );
+    $responseText = sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)));
+    if (!stobeInlineNarrationApplies($targetNpc, 'chat')) {
+        $responseText = stobeStripParentheticalDialogueText($responseText);
+    }
 }
-$responseText = stobeStripParentheticalDialogueText($responseText);
+if (!stobeInlineNarrationApplies($targetNpc, 'chat')) {
+    $responseText = stobeStripParentheticalDialogueText($responseText);
+}
 if ($responseText === '' && count($responseActions) === 0) {
     $responseText = '...';
 }
@@ -1066,5 +1069,13 @@ if ($alreadyStreamed) {
         streamResponse($targetNpc, 'ScriptQueue', '', $npcData, $responseActions, 'chat', $replyTarget, $gamets);
     }
 } else {
-    streamResponse($targetNpc, 'ScriptQueue', $responseText, $npcData, $responseActions, 'chat', $replyTarget, $gamets);
+    stobeStreamDialogueResponse(
+        $targetNpc,
+        $npcData,
+        $responseText,
+        $responseActions,
+        'chat',
+        $replyTarget,
+        intval($gamets)
+    );
 }

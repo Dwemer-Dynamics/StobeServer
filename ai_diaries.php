@@ -38,6 +38,10 @@ function stobeDiaryListToken(string $value): string {
     return trim(preg_replace('/[\x00-\x1F,\|]+/u', ' ', $value) ?? '');
 }
 
+function stobeDiaryDisplayName(string $name): string {
+    return stobeIsNarratorName($name) ? stobeNarratorRoleplayName() : $name;
+}
+
 if ($action === 'list') {
     $rows = $db->fetchAll(
         "SELECT
@@ -58,7 +62,7 @@ if ($action === 'list') {
             continue;
         }
         $entryCount = intval($row['entry_count'] ?? 0);
-        $display = $name . ' (' . strval($entryCount) . ')';
+        $display = stobeDiaryDisplayName($name) . ' (' . strval($entryCount) . ')';
         $entries[] = $display . "|" . $name;
     }
 
@@ -151,7 +155,9 @@ if ($action === 'entry') {
 
     $lines = [
         $topic,
-        'Written by: ' . normalizeParticipantNameToken(strval($row['people'] ?? '')),
+        'Written by: ' . stobeDiaryDisplayName(
+            normalizeParticipantNameToken(strval($row['people'] ?? ''))
+        ),
         'Date: ' . stobeGametsDateLabel(intval($row['gamets'] ?? 0)),
     ];
     $location = trim(strval($row['location'] ?? ''));
@@ -206,7 +212,7 @@ if ($action === 'detail') {
     }
 
     $lines = [];
-    $lines[] = "Name: " . $sid;
+    $lines[] = "Name: " . stobeDiaryDisplayName($sid);
     $lines[] = "Entries: " . strval(count($rows));
     $latestGamets = intval($rows[0]['gamets'] ?? 0);
     $lines[] = "Latest: " . stobeGametsDateLabel($latestGamets);

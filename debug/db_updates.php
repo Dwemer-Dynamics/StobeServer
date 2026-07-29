@@ -557,6 +557,33 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 );
             }
         });
+        $applyPatch('core_narrator', 202607280001, static function () use ($db): void {
+            $defaults = [
+                'roleplay_name' => 'The Narrator',
+                'diary_enabled' => '0',
+                'auto_diary_enabled' => '0',
+                'only_diary_access' => '0',
+                'inline_narration_mode' => 'disabled',
+                'preserve_inline_narration_context' => '0',
+            ];
+            foreach ($defaults as $key => $value) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ($1, $2)
+                     ON CONFLICT (id) DO NOTHING",
+                    [$key, $value]
+                );
+            }
+
+            $oldCore = "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Tamriel. Provide unique insight and descriptions of what is going on in the world.";
+            $newCore = "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Kenshi. Provide unique insight and descriptions of what is going on in the world.";
+            $db->exec(
+                "UPDATE core_narrator
+                 SET value = $1
+                 WHERE id = 'core' AND value = $2",
+                [$newCore, $oldCore]
+            );
+        });
         $applyPatch('prompts', 202603130214, static function () use ($db): void {
             $analysisPrompt = <<<'PROMPT'
 You are a relationship analyzer for Kenshi NPCs. Analyze relationship descriptions and output JSON.
@@ -1844,6 +1871,18 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      description = EXCLUDED.description,
                      updated_at = NOW()",
                 [$prompt, $description]
+            );
+        });
+        $applyPatch('prompts', 202607280001, static function () use ($db): void {
+            $prompt = 'If useful, begin the reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, custom_prompt, description, updated_at)
+                 VALUES ('inline_narration_prompt', $1, '', 'Formatting instruction used when narrator inline narration mode is enabled.', NOW())
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
             );
         });
         $applyPatch('core_profiles', 202604110102, static function () use ($db): void {

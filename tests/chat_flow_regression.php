@@ -122,4 +122,18 @@ $expectedData = 'Ruka: Hello there (talking to: UT_BEEP_TARGET)';
 chatFlowAssertSame($expectedData, strval($rows[0]['data'] ?? ''), 'inputtext row should preserve normalized target payload');
 chatFlowAssertSame($expectedData, strval($rows[1]['data'] ?? ''), 'mirrored chat row should preserve normalized target payload');
 
+$inlineParts = stobeExtractInlineNarrationParts(
+    '*Ruka studies the gate.* *Dust rolls across the road.* We leave now.'
+);
+chatFlowAssertSameInt(
+    2,
+    count(is_array($inlineParts['narrations'] ?? null) ? $inlineParts['narrations'] : []),
+    'inline narration parser should extract multiple leading narration blocks'
+);
+chatFlowAssertSame(
+    'We leave now.',
+    strval($inlineParts['dialogue'] ?? ''),
+    'inline narration parser should preserve spoken dialogue'
+);
+
 echo "All chat flow regression tests passed.\n";

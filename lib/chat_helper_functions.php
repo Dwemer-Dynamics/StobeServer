@@ -4143,7 +4143,17 @@ function stobeBuildMemoryEventContextMessages(
         (function_exists('stobeIsNarratorName') && stobeIsNarratorName($safeNpc))
         || strcasecmp($safeNpc, 'The Narrator') === 0
     ) {
-        return [];
+        if (!function_exists('stobeBuildNarratorDiaryRecallBlock')) {
+            return [];
+        }
+        $diaryBlock = stobeBuildNarratorDiaryRecallBlock($queryText, $currentGamets);
+        if ($diaryBlock === '') {
+            return [];
+        }
+        return [[
+            'role' => 'user',
+            'content' => "<memory> The narrator recalls this diary entry: [{$diaryBlock}] </memory>",
+        ]];
     }
 
     $blocks = [];
@@ -10544,7 +10554,9 @@ function stobeBuildNarratorSystemPrompt(
     int $currentGamets = 0,
     string $eventType = 'chat'
 ): string {
-    $narratorName = function_exists('stobeNarratorName') ? stobeNarratorName() : 'The Narrator';
+    $narratorName = function_exists('stobeNarratorRoleplayName')
+        ? stobeNarratorRoleplayName()
+        : 'The Narrator';
     $metadata = normalizeNpcMetadataPayload($narratorData['metadata'] ?? []);
     $safeSpeaker = normalizeParticipantNameToken($speakerName);
     $normalizedEventType = strtolower(trim($eventType));
@@ -11674,6 +11686,197 @@ function stobeComputeStructuredStreamMessageDelta(string $previousMessage, strin
     return substr($currentMessage, $commonPrefixLength);
 }
 
+function stobeGetInlineNarrationMode(): string
+{
+    $mode = '';
+    try {
+        $mode = strtolower(trim(strval((new Narrator())->get('inline_narration_mode') ?? 'disabled')));
+    } catch (Throwable) {
+        $mode = strtolower(trim(strval($GLOBALS['INLINE_NARRATION_MODE'] ?? 'disabled')));
+    }
+    return in_array($mode, ['disabled', 'narrator', 'npc', 'text_only'], true)
+        ? $mode
+        : 'disabled';
+}
+
+function stobeInlineNarrationApplies(string $actor, string $eventType = ''): bool
+{
+    if (stobeGetInlineNarrationMode() === 'disabled') {
+        return false;
+    }
+    if (function_exists('stobeIsNarratorName') && stobeIsNarratorName($actor)) {
+        return false;
+    }
+    return !in_array(
+        strtolower(trim($eventType)),
+        ['narration', 'narrator_welcome', 'inline_narration', 'diary', 'diary_narrator'],
+        true
+    );
+}
+
+/**
+ * Split one or more leading *narration* blocks from the spoken dialogue.
+ */
+function stobeExtractInlineNarrationParts(string $text): array
+{
+    $remaining = trim(sanitizeForKenshi($text));
+    $narrations = [];
+    while ($remaining !== '' && preg_match('/^\*([^*]+)\*\s*(.*)$/su', $remaining, $match) === 1) {
+        $narration = trim(strval($match[1] ?? ''));
+        if ($narration !== '') {
+            $narrations[] = $narration;
+        }
+        $next = trim(strval($match[2] ?? ''));
+        if ($next === $remaining) {
+            break;
+        }
+        $remaining = $next;
+    }
+
+    // Recover the common malformed form "*scene sentence. Spoken dialogue*".
+    if (count($narrations) === 1 && $remaining === '' && str_starts_with(trim($text), '*')) {
+        $wrapped = $narrations[0];
+        if (preg_match('/^(.+?[.!?])\s+(.+)$/su', $wrapped, $match) === 1) {
+            $dialogueLead = trim(strval($match[2] ?? ''));
+            if (preg_match('/^(?:I|We|You|Yes|No|Indeed|Maybe|Perhaps|Come|Let|Do|Don\'t|Can|Could|Should|Would|This|That|There)\b/iu', $dialogueLead) === 1) {
+                $narrations = [trim(strval($match[1] ?? ''))];
+                $remaining = $dialogueLead;
+            }
+        }
+    }
+
+    return [
+        'narrations' => $narrations,
+        'dialogue' => $remaining,
+        'has_narration' => count($narrations) > 0,
+    ];
+}
+
+function stobeInlineNarrationPromptMessages(
+    array $messages,
+    string $actor,
+    string $eventType
+): array {
+    if (!stobeInlineNarrationApplies($actor, $eventType)) {
+        return $messages;
+    }
+    $fallback = 'If useful, begin the reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
+    $instruction = function_exists('stobeGetPromptTemplateValue')
+        ? stobeGetPromptTemplateValue('inline_narration_prompt', $fallback)
+        : $fallback;
+    $messages[] = [
+        'role' => 'system',
+        'content' => "<inline_narration_format>\n  <instruction>"
+            . stobePromptXmlEscape($instruction)
+            . "</instruction>\n</inline_narration_format>",
+    ];
+    return $messages;
+}
+
+/**
+ * Emit inline narration with the configured actor, subtitle, and TTS routing.
+ */
+function stobeStreamDialogueResponse(
+    string $actor,
+    array|false $actorData,
+    string $message,
+    array $actions = [],
+    string $eventType = 'chat',
+    string $listener = '',
+    int $gamets = 0
+): void {
+    $mode = stobeGetInlineNarrationMode();
+    $applies = stobeInlineNarrationApplies($actor, $eventType);
+    $parts = $applies ? stobeExtractInlineNarrationParts($message) : [
+        'narrations' => [],
+        'dialogue' => $message,
+        'has_narration' => false,
+    ];
+
+    if (count($actions) > 0) {
+        streamResponse($actor, 'ScriptQueue', '', $actorData, $actions, $eventType, $listener, $gamets);
+    }
+
+    if (!$applies || empty($parts['has_narration'])) {
+        $clean = stobeStripParentheticalDialogueText($message);
+        streamResponse($actor, 'ScriptQueue', $clean, $actorData, [], $eventType, $listener, $gamets);
+        return;
+    }
+
+    $narrations = is_array($parts['narrations'] ?? null) ? $parts['narrations'] : [];
+    $dialogue = stobeStripParentheticalDialogueText(strval($parts['dialogue'] ?? ''));
+    $narrationDisplay = [];
+    foreach ($narrations as $narrationRaw) {
+        $narration = trim(strval($narrationRaw));
+        if ($narration !== '') {
+            $narrationDisplay[] = '*' . trim($narration, '* ') . '*';
+        }
+    }
+
+    if ($mode === 'narrator') {
+        $narratorData = function_exists('stobeBuildNarratorNpcData')
+            ? stobeBuildNarratorNpcData()
+            : false;
+        foreach ($narrations as $index => $narrationRaw) {
+            $narration = trim(strval($narrationRaw));
+            if ($narration === '') {
+                continue;
+            }
+            streamResponse(
+                function_exists('stobeNarratorName') ? stobeNarratorName() : 'The Narrator',
+                'ScriptQueue',
+                $narrationDisplay[$index] ?? ('*' . trim($narration, '* ') . '*'),
+                $narratorData,
+                [],
+                'inline_narration',
+                $listener,
+                $gamets,
+                ['tts_text' => $narration, 'single_segment' => true]
+            );
+        }
+        if ($dialogue !== '') {
+            streamResponse($actor, 'ScriptQueue', $dialogue, $actorData, [], $eventType, $listener, $gamets);
+        }
+        return;
+    }
+
+    $displayText = trim(implode(' ', $narrationDisplay) . ' ' . $dialogue);
+    if ($mode === 'text_only') {
+        streamResponse(
+            $actor,
+            'ScriptQueue',
+            $displayText,
+            $actorData,
+            [],
+            $eventType,
+            $listener,
+            $gamets,
+            [
+                'tts_text' => $dialogue,
+                'suppress_tts' => $dialogue === '',
+                'single_segment' => true,
+            ]
+        );
+        return;
+    }
+
+    $npcSpeech = trim(implode(' ', array_map(
+        static fn($value): string => trim(strval($value), '* '),
+        $narrations
+    )) . ' ' . $dialogue);
+    streamResponse(
+        $actor,
+        'ScriptQueue',
+        $displayText,
+        $actorData,
+        [],
+        $eventType,
+        $listener,
+        $gamets,
+        ['tts_text' => $npcSpeech, 'single_segment' => true]
+    );
+}
+
 function stobeStreamDialogueViaLlm(
     string $actor,
     array|false $actorData,
@@ -11682,6 +11885,7 @@ function stobeStreamDialogueViaLlm(
     string $eventType = 'chat',
     array $meta = []
 ): array {
+    $messages = stobeInlineNarrationPromptMessages($messages, $actor, $eventType);
     $result = [
         'ok' => false,
         'used_streaming' => false,
@@ -11714,6 +11918,51 @@ function stobeStreamDialogueViaLlm(
     $streamGamets = max(0, intval($meta['stream_gamets'] ?? 0));
     if ($streamListener === '') {
         $streamListener = trim(strval($meta['stream_listener'] ?? ''));
+    }
+
+    if (stobeInlineNarrationApplies($actor, $eventType)) {
+        $rawResponse = '';
+        $streamed = stobeCallLLMStream(
+            $messages,
+            $llmConfig,
+            static function (string $delta) use (&$rawResponse): void {
+                $rawResponse .= $delta;
+            },
+            $streamMeta
+        );
+        if ($streamed === false) {
+            return $result;
+        }
+        if (is_string($streamed) && trim($streamed) !== '') {
+            $rawResponse = $streamed;
+        }
+
+        $parsed = stobeParseStructuredDialogueResponse($rawResponse, $eventType);
+        $isStructured = boolval($parsed['is_structured'] ?? false);
+        $responseText = $isStructured
+            ? sanitizeForKenshi(trim(strval($parsed['message'] ?? '')))
+            : sanitizeForKenshi(trim($rawResponse));
+        $rawActions = [];
+        $parsedAction = trim(strval($parsed['action_tag'] ?? ''));
+        if ($parsedAction !== '') {
+            $rawActions[] = $parsedAction;
+        }
+        $extraction = extractAndNormalizeActionTags($responseText, $eventType, $actionConfig);
+        $responseText = sanitizeForKenshi(trim(strval($extraction['text'] ?? $responseText)));
+        if (is_array($extraction['actions'] ?? null)) {
+            $rawActions = array_merge($rawActions, $extraction['actions']);
+        }
+
+        $result['ok'] = true;
+        $result['used_streaming'] = true;
+        $result['raw_response'] = trim($rawResponse);
+        $result['response_text'] = $responseText;
+        $result['actions'] = stobeDedupeActionList($rawActions, $eventType, $actionConfig);
+        $result['actions_streamed'] = false;
+        $result['structured_json'] = $isStructured;
+        $result['listener'] = normalizeParticipantNameToken(strval($parsed['listener'] ?? ''));
+        $result['chunks_emitted'] = 0;
+        return $result;
     }
 
     if (is_array($structuredResponseFormat)) {
@@ -12046,7 +12295,8 @@ function streamResponse(
     array $actions = [],
     string $deliveryEventType = '',
     string $deliveryListener = '',
-    int $deliveryGamets = 0
+    int $deliveryGamets = 0,
+    array $options = []
 ): void {
     // Normalize accidental raw JSON payloads (including truncated JSON) before
     // splitting into streamed lines.
@@ -12108,14 +12358,14 @@ function streamResponse(
             break;
         }
         $line = rtrim(strval($rawLine), "\r");
-        if (strcasecmp($action, 'ScriptQueue') === 0) {
+        if (strcasecmp($action, 'ScriptQueue') === 0 && empty($options['single_segment'])) {
             $line = stobeStripParentheticalDialogueText($line);
         }
         if ($line === '') {
             continue;
         }
         $lineChunks = [$line];
-        if (strcasecmp($action, 'ScriptQueue') === 0) {
+        if (strcasecmp($action, 'ScriptQueue') === 0 && empty($options['single_segment'])) {
             $splitChunks = stobeSplitSentencesStream($line);
             if (is_array($splitChunks) && count($splitChunks) > 0) {
                 $lineChunks = $splitChunks;
@@ -12143,8 +12393,12 @@ function streamResponse(
 
             $ttsHash = '';
             $ttsDurationMs = 0;
-            if ($ttsEnabled && strcasecmp($action, 'ScriptQueue') === 0) {
-                $ttsResult = stobeSynthesizePocketTtsLine($actor, $chunk, $actorData);
+            $ttsText = array_key_exists('tts_text', $options)
+                ? trim(strval($options['tts_text']))
+                : $chunk;
+            $suppressTts = boolval($options['suppress_tts'] ?? false) || $ttsText === '';
+            if ($ttsEnabled && !$suppressTts && strcasecmp($action, 'ScriptQueue') === 0) {
+                $ttsResult = stobeSynthesizePocketTtsLine($actor, $ttsText, $actorData);
                 $ttsHash = trim(strval($ttsResult['hash'] ?? ''));
                 $ttsDurationMs = intval($ttsResult['duration_ms'] ?? 0);
             }

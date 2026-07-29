@@ -79,6 +79,9 @@ if (count($rows) === 0) {
 
         $people = trim(strval($row['people'] ?? ''));
         if ($people !== '') {
+            if (function_exists('stobeRenderNarratorDisplayText')) {
+                $people = stobeRenderNarratorDisplayText($people);
+            }
             $lines[] = 'People: ' . $people;
         }
         $location = trim(strval($row['location'] ?? ''));
@@ -88,6 +91,9 @@ if (count($rows) === 0) {
 
         $data = trim(strval($row['data'] ?? ''));
         if ($data !== '') {
+            if (function_exists('stobeRenderNarratorDisplayText')) {
+                $data = stobeRenderNarratorDisplayText($data);
+            }
             if (strlen($data) > 2000) {
                 $data = substr($data, 0, 1997) . '...';
             }

@@ -16,6 +16,9 @@ error_reporting(E_ALL);
 
 $path = dirname(__FILE__) . DIRECTORY_SEPARATOR;
 require($path . "lib/bootstrap.php");
+if (!headers_sent() && function_exists('stobeNarratorDisplayNameHeaderValue')) {
+    header('X-Narrator-Display-Name: ' . stobeNarratorDisplayNameHeaderValue());
+}
 
 $GLOBALS["AVOID_TTS_CACHE"] = true;
 $GLOBALS["SEMAPHORES_TIMEOUT"] = 300;
@@ -293,6 +296,7 @@ try {
             break;
 
         case 'diary':
+        case 'diary_narrator':
             require_once($path . "processor/diary.php");
             break;
 
