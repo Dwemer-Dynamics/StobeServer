@@ -62,6 +62,14 @@ function stobeAiNpcBoolValue(mixed $value): bool {
     return in_array(strtolower(trim(strval($value))), ['1', 't', 'true', 'yes', 'on'], true);
 }
 
+function stobeAiNpcJsonObject(mixed $value): array {
+    if (is_array($value)) {
+        return $value;
+    }
+    $decoded = json_decode(strval($value), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
 function stobeAiNpcRelationshipSummary(mixed $rawRelationships): string {
     $relationshipMap = stobeNormalizeRelationshipMap($rawRelationships);
     if (count($relationshipMap) === 0) {
@@ -110,7 +118,7 @@ function stobeAiNpcRelationshipSummary(mixed $rawRelationships): string {
     return implode("\n", $lines);
 }
 
-function stobeAiNpcResolveProfileLabel(array $row): string {
+function stobeAiNpcResolveProfile(array $row): array {
     $db = $GLOBALS["db"];
     $profileId = intval($row['profile_id'] ?? 0);
     $attached = $profileId > 0;
@@ -120,11 +128,14 @@ function stobeAiNpcResolveProfileLabel(array $row): string {
     }
 
     if ($profileId <= 0) {
-        return $attached ? ('Profile #' . strval(intval($row['profile_id'] ?? 0))) : 'Unassigned';
+        return [
+            'label' => $attached ? ('Profile #' . strval(intval($row['profile_id'] ?? 0))) : 'Unassigned',
+            'metadata' => [],
+        ];
     }
 
     $profileRow = $db->fetchOne(
-        "SELECT label
+        "SELECT label, metadata
          FROM core_profiles
          WHERE id = $1
          LIMIT 1",
@@ -132,13 +143,96 @@ function stobeAiNpcResolveProfileLabel(array $row): string {
     );
     $label = trim(strval($profileRow['label'] ?? ''));
     if ($label === '') {
-        return $attached ? ('Profile #' . strval($profileId)) : 'Default Profile';
+        $label = $attached ? ('Profile #' . strval($profileId)) : 'Default Profile';
+    } elseif (!$attached) {
+        $label .= ' (inherited default)';
     }
 
-    if ($attached) {
-        return $label;
+    return [
+        'label' => $label,
+        'metadata' => stobeAiNpcJsonObject($profileRow['metadata'] ?? []),
+    ];
+}
+
+function stobeAiNpcSettingsSummary(array $row, array $profileMetadata): string {
+    $metadata = stobeAiNpcJsonObject($row['metadata'] ?? []);
+    $extendedData = stobeAiNpcJsonObject($row['extended_data'] ?? []);
+
+    $resolveInheritedToggle = static function (
+        string $key,
+        bool $profileDefault
+    ) use ($metadata): string {
+        if (array_key_exists($key, $metadata)
+            && $metadata[$key] !== null
+            && trim(strval($metadata[$key])) !== '') {
+            return (stobeAiNpcBoolValue($metadata[$key]) ? 'On' : 'Off') . ' (NPC override)';
+        }
+        return ($profileDefault ? 'On' : 'Off') . ' (profile)';
+    };
+
+    $dynamicProfile = $resolveInheritedToggle(
+        'DYNAMIC_PROFILE_ENABLED',
+        stobeAiNpcBoolValue($profileMetadata['DYNAMIC_PROFILE_ENABLED'] ?? false)
+    );
+    $middleTermMemory = $resolveInheritedToggle(
+        'MIDDLE_TERM_MEMORY_ENABLED',
+        stobeAiNpcBoolValue($profileMetadata['MIDDLE_TERM_MEMORY_ENABLED'] ?? false)
+    );
+    if (array_key_exists('middle_term_enabled', $extendedData)
+        && $extendedData['middle_term_enabled'] !== null
+        && trim(strval($extendedData['middle_term_enabled'])) !== '') {
+        $middleTermMemory = (stobeAiNpcBoolValue($extendedData['middle_term_enabled']) ? 'On' : 'Off')
+            . ' (NPC override)';
     }
-    return $label . ' (inherited default)';
+    $autoDiary = $resolveInheritedToggle(
+        'AUTO_DIARY_ENABLED',
+        stobeAiNpcBoolValue($profileMetadata['AUTO_DIARY_ENABLED'] ?? false)
+    );
+
+    return implode("\n", [
+        'Favorite: ' . (stobeAiNpcBoolValue($row['npc_favorite'] ?? false) ? 'Yes' : 'No'),
+        'Profile Locked: ' . (stobeAiNpcBoolValue($row['lock_profile'] ?? false) ? 'Yes' : 'No'),
+        'Dynamic Profile: ' . $dynamicProfile,
+        'Middle Term Memory: ' . $middleTermMemory,
+        'Individual Memory Bank: '
+            . (stobeAiNpcBoolValue($extendedData['individual_memory_enabled'] ?? false) ? 'On' : 'Off'),
+        'Auto Diary: ' . $autoDiary,
+    ]);
+}
+
+function stobeAiNpcRecentEvents(array $row): string {
+    $metadata = stobeAiNpcJsonObject($row['metadata'] ?? []);
+    $storageId = normalizeStorageIdToken(strval($metadata['storage_id'] ?? ($metadata['refid'] ?? '')));
+    $name = trim(strval($row['name'] ?? ''));
+    $filter = $storageId !== '' ? $storageId : $name;
+    $events = $filter !== '' ? DataEventLog(12, $filter) : [];
+    if (count($events) === 0 && $storageId !== '' && $name !== '') {
+        $events = DataEventLog(12, $name);
+    }
+
+    $lines = [];
+    foreach ($events as $event) {
+        if (!is_array($event)) {
+            continue;
+        }
+        $line = trim(stobeFormatEventHistoryLine($event, true));
+        if ($line === '') {
+            continue;
+        }
+        if (strlen($line) > 700) {
+            $line = substr($line, 0, 697) . '...';
+        }
+        $lines[] = $line;
+        $location = trim(strval($event['location'] ?? ''));
+        if ($location !== '') {
+            $lines[] = 'Location: ' . $location;
+        }
+        $lines[] = '';
+    }
+
+    return count($lines) > 0
+        ? rtrim(implode("\n", $lines))
+        : 'No recent events found for this NPC.';
 }
 
 function stobeAiNpcResolveVoiceId(array $row): string {
@@ -289,10 +383,13 @@ if ($action === 'detail') {
     if ($originalName === '') {
         $originalName = '(none)';
     }
-    $profileLabel = stobeAiNpcResolveProfileLabel($row);
+    $profile = stobeAiNpcResolveProfile($row);
+    $profileLabel = strval($profile['label'] ?? 'Unassigned');
+    $profileMetadata = is_array($profile['metadata'] ?? null) ? $profile['metadata'] : [];
     $voiceIdLabel = stobeAiNpcResolveVoiceId($row);
 
     $lines = [];
+    $lines[] = "IDENTITY";
     $lines[] = "Name: " . $name;
     $lines[] = "Original Name: " . $originalName;
     $lines[] = "Current Profile: " . $profileLabel;
@@ -300,6 +397,11 @@ if ($action === 'detail') {
     $lines[] = "Race: " . stobeAiNpcFieldValue($row, 'race');
     $lines[] = "Gender: " . stobeAiNpcFieldValue($row, 'gender');
     $lines[] = "Faction: " . stobeAiNpcFieldValue($row, 'faction');
+    $lines[] = "";
+    $lines[] = "SETTINGS";
+    $lines[] = stobeAiNpcSettingsSummary($row, $profileMetadata);
+    $lines[] = "";
+    $lines[] = "LIVE STATUS";
     $lines[] = "Blood: " . stobeAiNpcFieldValue($row, 'blood');
     $lines[] = "Hunger: " . stobeAiNpcFieldValue($row, 'hunger');
     $lines[] = "Animal: " . (stobeAiNpcBoolValue($row['is_animal'] ?? false) ? 'Yes' : 'No');
@@ -320,6 +422,8 @@ if ($action === 'detail') {
     $lines[] = "Bounty:";
     $lines[] = stobeAiNpcSnapshotValue($row, 'bounty');
     $lines[] = "";
+    $lines[] = "BIOGRAPHY";
+    $lines[] = "";
     $lines[] = "Backstory:";
     $lines[] = stobeAiNpcFieldValue($row, 'backstory', '(empty)');
     $lines[] = "";
@@ -338,9 +442,13 @@ if ($action === 'detail') {
     $lines[] = "Goals:";
     $lines[] = stobeAiNpcFieldValue($row, 'goals', '(empty)');
     $lines[] = "";
-    $lines[] = "Relationships:";
+    $lines[] = "RELATIONSHIPS";
     $lines[] = $relationships === '' ? 'No relationship data.' : $relationships;
     $lines[] = "";
+    $lines[] = "RECENT EVENTS";
+    $lines[] = stobeAiNpcRecentEvents($row);
+    $lines[] = "";
+    $lines[] = "LAST UPDATED";
     $lines[] = "Game TS Last Updated: " . strval(intval($row['gamets_last_updated'] ?? 0));
     $lines[] = "Updated At: " . trim(strval($row['updated_at'] ?? ''));
 
