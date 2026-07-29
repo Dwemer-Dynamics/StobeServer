@@ -32,6 +32,7 @@ function eventTypeFilterList(): array
         "quest",
         "itemfound",
         "inputtext",
+        "injection",
         "goodnight",
         "goodmorning",
         "ginputtext",

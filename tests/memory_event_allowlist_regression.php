@@ -20,6 +20,7 @@ function memoryEventAllowlistAssert(bool $condition, string $message): void
 $durableEvents = [
     'inputtext',
     'inputtext_s',
+    'injection',
     'chat',
     'rechat',
     'bored',

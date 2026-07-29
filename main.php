@@ -167,7 +167,7 @@ if (function_exists('stobeHandlePotentialGametsRollback')) {
 
 $incomingPeople = trim((string)($_GET['people'] ?? ''));
 if ($incomingPeople === '' &&
-    ($eventType === 'inputtext' || $eventType === 'inputtext_s')) {
+    ($eventType === 'inputtext' || $eventType === 'inputtext_s' || $eventType === 'injection')) {
     // Keep people IDs authoritative from client payloads; do not synthesize "|player".
     $incomingPeople = '[]';
 }
@@ -185,12 +185,12 @@ if (function_exists('stobeAnnotatePeopleTokensWithNpcStates')) {
 $GLOBALS["CACHE_PEOPLE"] = $incomingPeople;
 
 $speakerName = '';
-if ($eventType === 'inputtext' || $eventType === 'inputtext_s') {
+if ($eventType === 'inputtext' || $eventType === 'inputtext_s' || $eventType === 'injection') {
     $speakerParts = explode(': ', $eventData, 2);
     $speakerName = trim((string)($speakerParts[0] ?? ''));
 }
 
-$jitEligibleTypes = ['inputtext', 'inputtext_s', 'chat', 'rechat', 'bored', 'infonpc'];
+$jitEligibleTypes = ['inputtext', 'inputtext_s', 'injection', 'chat', 'rechat', 'bored', 'infonpc'];
 if (in_array($eventType, $jitEligibleTypes, true)) {
     $participantIdentities = extractParticipantIdentities([
         'people' => $incomingPeople,
@@ -249,6 +249,7 @@ try {
     switch ($eventType) {
         case 'inputtext':
         case 'inputtext_s':
+        case 'injection':
             require_once($path . "processor/chat.php");
             break;
 
