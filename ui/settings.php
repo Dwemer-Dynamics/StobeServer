@@ -822,7 +822,8 @@ if (isset($grouped['LLM & API'])) {
             gap: 10px;
             color: #e0e0e0;
             min-width: 0;
-            flex-wrap: wrap;
+            width: 100%;
+            flex-wrap: nowrap;
         }
         .provider-icon {
             width: 30px;
@@ -872,9 +873,10 @@ if (isset($grouped['LLM & API'])) {
             line-height: 1.4;
         }
         .provider-toggle {
-            margin-left: 10px;
+            margin-left: auto;
             display: flex;
             align-items: center;
+            flex: 0 0 auto;
         }
         .provider-toggle input[type="checkbox"] {
             accent-color: #176529;
