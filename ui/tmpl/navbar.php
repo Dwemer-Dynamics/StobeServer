@@ -18,7 +18,7 @@ $configurationPages = [
     'narrator_management.php', 'llm_connectors.php', 'tts_connectors.php',
     'api_badges.php', 'api_key.php', 'settings.php', 'description.php',
     'npc_bios.php', 'action_editor.php', 'prompts_manager.php',
-    'voice_manager.php', 'world_knowledge.php', 'world_knowledge_rules.php', 'quickstart.php',
+    'voice_manager.php', 'world_knowledge.php', 'quickstart.php',
 ];
 $controlPanelPages = [
     'controlpanel_hub.php', 'logs.php', 'request_logs.php', 'audit.php',
