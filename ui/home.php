@@ -245,6 +245,34 @@ try {
     // Keep default N/A.
 }
 
+$activeModelSlot = '1';
+try {
+    $activeModelRow = $db->fetchOne(
+        "SELECT value FROM conf_opts WHERE id='stobe_profile_model' LIMIT 1"
+    );
+    $candidate = trim(strval(is_array($activeModelRow) ? ($activeModelRow['value'] ?? '') : ''));
+    if (in_array($candidate, ['1', '2', '3', '4'], true)) {
+        $activeModelSlot = $candidate;
+    }
+} catch (Throwable $exception) {
+    // Keep the standard model fallback.
+}
+$activeModelLabels = [
+    '1' => 'Standard',
+    '2' => 'Fast',
+    '3' => 'Powerful',
+    '4' => 'Experimental',
+];
+$activeModelDisplay = $activeModelLabels[$activeModelSlot];
+
+$playerFactionSquadmateCount = safeCount(
+    $db,
+    "SELECT COUNT(*) AS total
+     FROM core_npc_master n
+     INNER JOIN core_profiles p ON p.id = n.profile_id
+     WHERE COALESCE(p.is_player_faction_profile, FALSE) = TRUE"
+);
+
 $latestTimelineRow = $db->fetchOne(
     "SELECT COALESCE(MAX(localts), 0) AS last_localts, COALESCE(MAX(gamets), 0) AS last_gamets
      FROM eventlog"
@@ -285,6 +313,8 @@ $currentPlaythroughContent = "
         <tr><th>Stats</th><th>Value</th></tr>
         <tr><td>Last Played (UTC)</td><td>" . h($lastPlayedUtc) . "</td></tr>
         <tr><td>Current In-Game Time</td><td>" . h($currentInGameTime) . "</td></tr>
+        <tr><td>STOBE Active Model</td><td>" . h($activeModelDisplay) . "</td></tr>
+        <tr><td>Player Faction Squadmates</td><td>" . h($playerFactionSquadmateCount) . "</td></tr>
         <tr><td>Background Processor</td><td>" . h($backgroundProcessorDisplay) . "</td></tr>
     </table>
 </div>";
