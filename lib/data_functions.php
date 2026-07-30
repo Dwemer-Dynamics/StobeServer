@@ -10618,6 +10618,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         'trader_shop_sources' => $traderShopSourceSummaries,
         'trader_shop_source_count' => $traderShopSourceCount,
         'trader_shop_item_count' => $traderShopItemCount,
+        'player_base' => function_exists('stobeNormalizePlayerBaseSnapshot')
+            ? stobeNormalizePlayerBaseSnapshot($snapshot['player_base'] ?? [], true)
+            : [],
     ]);
 
     if ($storageId !== '') {
@@ -13534,6 +13537,9 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
             $traderShopItemCount += $sourceItemCount;
         }
     }
+    $playerBase = function_exists('stobeNormalizePlayerBaseSnapshot')
+        ? stobeNormalizePlayerBaseSnapshot($extended['player_base'] ?? [], false)
+        : [];
 
     $redundantTopLevel = [
         'stats',
@@ -13589,6 +13595,12 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
                 unset($extended[$key]);
             }
         }
+    }
+
+    if (count($playerBase) > 0) {
+        $extended['player_base'] = $playerBase;
+    } elseif (array_key_exists('player_base', $extended)) {
+        unset($extended['player_base']);
     }
 
     return $extended;

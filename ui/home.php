@@ -273,6 +273,38 @@ $playerFactionSquadmateCount = safeCount(
      WHERE COALESCE(p.is_player_faction_profile, FALSE) = TRUE"
 );
 
+$currentPlayerBase = function_exists('stobeGetCurrentPlayerBaseState')
+    ? stobeGetCurrentPlayerBaseState(30)
+    : [];
+$playerBaseRows = '';
+if (count($currentPlayerBase) > 0) {
+    $generated = floatval($currentPlayerBase['power_generated'] ?? 0);
+    $required = floatval($currentPlayerBase['power_required'] ?? 0);
+    $surplus = $generated - $required;
+    $powerStatus = $surplus >= 0
+        ? ('surplus ' . number_format($surplus, 1))
+        : ('deficit ' . number_format(abs($surplus), 1));
+    $playerBaseRows .= '<tr><td>Current Player Base</td><td>'
+        . h($currentPlayerBase['name'] ?? 'Player Base') . '</td></tr>';
+    $playerBaseRows .= '<tr><td>Base Power</td><td>'
+        . h(number_format($generated, 1) . ' / ' . number_format($required, 1) . ' (' . $powerStatus . ')')
+        . '</td></tr>';
+    $batteryCapacity = floatval($currentPlayerBase['battery_capacity'] ?? 0);
+    if ($batteryCapacity > 0) {
+        $playerBaseRows .= '<tr><td>Base Battery</td><td>'
+            . h(number_format(floatval($currentPlayerBase['battery_charge'] ?? 0), 1)
+                . ' / ' . number_format($batteryCapacity, 1))
+            . '</td></tr>';
+    }
+    $playerBaseRows .= '<tr><td>Squadmates At Base</td><td>'
+        . h(intval($currentPlayerBase['members_inside'] ?? 0)) . '</td></tr>';
+    if (coerceBoolean($currentPlayerBase['has_gates'] ?? false)) {
+        $playerBaseRows .= '<tr><td>Base Gates</td><td>'
+            . (coerceBoolean($currentPlayerBase['gates_closed'] ?? false) ? 'Closed' : 'Open')
+            . '</td></tr>';
+    }
+}
+
 $latestTimelineRow = $db->fetchOne(
     "SELECT COALESCE(MAX(localts), 0) AS last_localts, COALESCE(MAX(gamets), 0) AS last_gamets
      FROM eventlog"
@@ -315,6 +347,7 @@ $currentPlaythroughContent = "
         <tr><td>Current In-Game Time</td><td>" . h($currentInGameTime) . "</td></tr>
         <tr><td>STOBE Active Model</td><td>" . h($activeModelDisplay) . "</td></tr>
         <tr><td>Player Faction Squadmates</td><td>" . h($playerFactionSquadmateCount) . "</td></tr>
+        {$playerBaseRows}
         <tr><td>Background Processor</td><td>" . h($backgroundProcessorDisplay) . "</td></tr>
     </table>
 </div>";

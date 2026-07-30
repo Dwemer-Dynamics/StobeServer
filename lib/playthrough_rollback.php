@@ -26,6 +26,7 @@ function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
         'gamedata' => true,
         'npc_snapshot' => true,
         'world_state' => true,
+        'player_base_state' => true,
         'chat_json' => true,
         'item_image_upload' => true,
         'portrait_upload' => true,
