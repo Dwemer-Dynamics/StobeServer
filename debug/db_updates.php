@@ -2448,6 +2448,19 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('general_settings', 202607300101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'COMPACT_CHAT_HISTORY_ENABLED',
+                    'false',
+                    'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
         $applyPatch('core_profiles', 202607290301, static function () use ($db): void {
             $db->exec(
                 "ALTER TABLE core_profiles

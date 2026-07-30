@@ -644,9 +644,6 @@ $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     $message,
     intval($gamets)
 );
-if (count($memoryContextMessages) > 0) {
-    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
-}
 
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/llm_dispatcher.php');
@@ -892,6 +889,16 @@ if ($dialogueMode === 'cheat') {
         . "  <request>" . stobePromptXmlEscape($message) . "</request>\n"
         . "</cheat_request>";
 }
+$compactHistory = stobeApplyCompactChatHistory(
+    $systemPrompt,
+    $historyMessages,
+    $targetNpc,
+    stobeShouldCompactChatHistory($targetNpc)
+);
+$systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
+$historyMessages = is_array($compactHistory['history_messages'] ?? null)
+    ? $compactHistory['history_messages']
+    : $historyMessages;
 $messages = [
     [
         'role' => 'system',
@@ -900,6 +907,9 @@ $messages = [
 ];
 foreach ($historyMessages as $historyMessage) {
     $messages[] = $historyMessage;
+}
+foreach ($memoryContextMessages as $memoryContextMessage) {
+    $messages[] = $memoryContextMessage;
 }
 $messages[] = [
     'role' => 'user',
