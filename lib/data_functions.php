@@ -11628,7 +11628,16 @@ function saveCoreProfile(array $fields): int {
     $dynamicConnector = ($fields['dynamic_connector'] ?? '') === '' ? null : intval($fields['dynamic_connector']);
     $relationshipConnector = ($fields['relationship_connector'] ?? '') === '' ? null : intval($fields['relationship_connector']);
     $ttsConnector = ($fields['tts_connector_id'] ?? '') === '' ? null : intval($fields['tts_connector_id']);
-    $metadataJson = normalizeJsonString($fields['metadata'] ?? '{}');
+    $metadata = $fields['metadata'] ?? [];
+    if (is_string($metadata)) {
+        $decodedMetadata = json_decode($metadata, true);
+        $metadata = is_array($decodedMetadata) ? $decodedMetadata : [];
+    }
+    if (!is_array($metadata)) {
+        $metadata = [];
+    }
+    unset($metadata['LLM_RESPONSE_MODE']);
+    $metadataJson = normalizeJsonString($metadata);
     $wasPlayerFactionProfile = false;
     if ($id > 0) {
         $existingFlags = $db->fetchOne(
@@ -12160,7 +12169,6 @@ function ensurePocketTtsPlaceholderConnectorId(): int {
 
 function getDefaultCoreProfileMetadata(): array {
     return [
-        'LLM_RESPONSE_MODE' => 'standard',
         'DYNAMIC_PROFILE_ENABLED' => false,
         'MIDDLE_TERM_MEMORY_ENABLED' => false,
         'AUTO_DIARY_ENABLED' => false,
@@ -12996,42 +13004,31 @@ function stobeReadLayeredSettingRaw(
 
 function stobeProfileLlmTierDefinitions(): array {
     return [
-        'standard' => ['field' => 'llm_primary_id', 'label' => 'Standard'],
-        'fast' => ['field' => 'llm_secondary_id', 'label' => 'Fast'],
-        'powerful' => ['field' => 'llm_tertiary_id', 'label' => 'Powerful'],
-        'experimental' => ['field' => 'llm_quaternary_id', 'label' => 'Experimental'],
+        1 => ['field' => 'llm_primary_id', 'label' => 'Standard'],
+        2 => ['field' => 'llm_secondary_id', 'label' => 'Fast'],
+        3 => ['field' => 'llm_tertiary_id', 'label' => 'Powerful'],
+        4 => ['field' => 'llm_quaternary_id', 'label' => 'Experimental'],
     ];
 }
 
-function stobeNormalizeProfileLlmMode(mixed $value): string {
-    $mode = strtolower(trim(strval($value ?? '')));
-    return array_key_exists($mode, stobeProfileLlmTierDefinitions()) ? $mode : 'standard';
-}
-
-function stobeProfileLlmModeFromMetadata(mixed $metadata): string {
-    if (is_string($metadata)) {
-        $decoded = json_decode($metadata, true);
-        $metadata = is_array($decoded) ? $decoded : [];
-    }
-    if (!is_array($metadata)) {
-        return 'standard';
-    }
-    return stobeNormalizeProfileLlmMode($metadata['LLM_RESPONSE_MODE'] ?? 'standard');
+function stobeGetGlobalProfileLlmSlot(): int {
+    $slot = intval(getConfOpt('stobe_profile_model', '1'));
+    return $slot >= 1 && $slot <= 4 ? $slot : 1;
 }
 
 /**
- * Resolves the selected response tier while retaining legacy profile fallbacks.
+ * Resolves the globally selected response tier while retaining legacy profile fallbacks.
  */
 function stobeResolveProfileResponseConnectorId(array $profileRow): int {
     $tiers = stobeProfileLlmTierDefinitions();
-    $mode = stobeProfileLlmModeFromMetadata($profileRow['metadata'] ?? []);
+    $slot = stobeGetGlobalProfileLlmSlot();
     $candidateFields = [
-        $tiers[$mode]['field'],
-        $tiers['standard']['field'],
+        $tiers[$slot]['field'],
+        $tiers[1]['field'],
         'response_connector',
-        $tiers['fast']['field'],
-        $tiers['powerful']['field'],
-        $tiers['experimental']['field'],
+        $tiers[2]['field'],
+        $tiers[3]['field'],
+        $tiers[4]['field'],
     ];
     foreach (array_unique($candidateFields) as $field) {
         $connectorId = intval($profileRow[$field] ?? 0);

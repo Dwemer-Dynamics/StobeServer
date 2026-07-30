@@ -107,10 +107,6 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         }
     }
 
-    if (array_key_exists('LLM_RESPONSE_MODE', $metaVis)) {
-        $base['LLM_RESPONSE_MODE'] = stobeNormalizeProfileLlmMode($metaVis['LLM_RESPONSE_MODE']);
-    }
-
     if (array_key_exists('DYNAMIC_PROFILE_FIELDS', $metaVis)) {
         $allowed = ['personality', 'occupation', 'speechstyle', 'goals'];
         $rawFields = $metaVis['DYNAMIC_PROFILE_FIELDS'];
@@ -912,8 +908,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             $connectorGroups = [
                                 [
                                     'title' => 'Response LLM Modes',
-                                    'description' => 'Choose the active response mode, then assign an LLM connector to each tier.',
-                                    'mode_selector' => true,
+                                    'description' => 'Assign the connector used by each global response mode.',
                                     'rows' => [
                                         ['field' => 'llm_primary_id', 'label' => 'Standard LLM', 'options' => 'llm'],
                                         ['field' => 'llm_secondary_id', 'label' => 'Fast LLM', 'options' => 'llm'],
@@ -942,17 +937,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                     <h3 class="connector-group-title"><?= h($connectorGroup['title']) ?></h3>
                                     <div class="connector-group-subtitle"><?= h($connectorGroup['description']) ?></div>
                                     <div class="connector-group-fields">
-                                        <?php if (!empty($connectorGroup['mode_selector'])): ?>
-                                            <div class="connector-option-card">
-                                                <label for="llm_response_mode"><span aria-hidden="true">&#x1F39B;&#xFE0F;</span> Default Response Mode</label>
-                                                <div class="connector-help-inline">Normal dialogue uses this tier, falling back to Standard when its connector is unavailable.</div>
-                                                <select id="llm_response_mode" name="meta_vis[LLM_RESPONSE_MODE]">
-                                                    <?php foreach (stobeProfileLlmTierDefinitions() as $modeKey => $modeDefinition): ?>
-                                                        <option value="<?= h($modeKey) ?>" <?= stobeProfileLlmModeFromMetadata($metaData) === $modeKey ? 'selected' : '' ?>><?= h($modeDefinition['label']) ?></option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                            </div>
-                                        <?php endif; ?>
                                         <?php foreach ($connectorGroup['rows'] as $connectorRow): ?>
                                             <?php
                                                 $field = $connectorRow['field'];

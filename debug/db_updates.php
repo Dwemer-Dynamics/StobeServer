@@ -276,7 +276,6 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         };
 
         $defaultMetadata = json_encode([
-            'LLM_RESPONSE_MODE' => 'standard',
             'DYNAMIC_PROFILE_ENABLED' => false,
             'MIDDLE_TERM_MEMORY_ENABLED' => false,
             'AUTO_DIARY_ENABLED' => false,
@@ -2460,15 +2459,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             $db->exec(
                 "UPDATE core_profiles
                  SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
-                     response_connector = COALESCE(response_connector, llm_primary_id),
-                     metadata = CASE
-                        WHEN metadata IS NULL OR jsonb_typeof(metadata) <> 'object'
-                            THEN '{\"LLM_RESPONSE_MODE\":\"standard\"}'::jsonb
-                        WHEN LOWER(COALESCE(metadata->>'LLM_RESPONSE_MODE', '')) NOT IN
-                             ('standard', 'fast', 'powerful', 'experimental')
-                            THEN jsonb_set(metadata, '{LLM_RESPONSE_MODE}', '\"standard\"'::jsonb, true)
-                        ELSE metadata
-                     END"
+                     response_connector = COALESCE(response_connector, llm_primary_id)"
             );
             $foreignKeys = [
                 'core_profiles_llm_primary_fk' => 'llm_primary_id',
@@ -2490,6 +2481,28 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      END $$"
                 );
             }
+        });
+
+        $applyPatch('core_profiles', 202607290302, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO conf_opts (id, value, updated_at)
+                 VALUES ('stobe_profile_model', '1', NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+            $db->exec(
+                "UPDATE conf_opts
+                 SET value = '1',
+                     updated_at = NOW()
+                 WHERE id = 'stobe_profile_model'
+                   AND (value IS NULL OR value NOT IN ('1', '2', '3', '4'))"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = metadata - 'LLM_RESPONSE_MODE',
+                     updated_at = NOW()
+                 WHERE jsonb_typeof(metadata) = 'object'
+                   AND metadata ? 'LLM_RESPONSE_MODE'"
+            );
         });
 
         try {

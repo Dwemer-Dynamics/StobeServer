@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS conf_opts (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+INSERT INTO conf_opts (id, value, updated_at)
+VALUES ('stobe_profile_model', '1', NOW())
+ON CONFLICT (id) DO NOTHING;
+
 -- ----------------------------------------------------------
 -- PROMPTS - Default + custom prompt templates
 -- ----------------------------------------------------------
@@ -848,7 +852,6 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     relationship_connector INT,
     tts_connector_id INT,
     metadata JSONB DEFAULT $${
-        "LLM_RESPONSE_MODE": "standard",
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
         "AUTO_DIARY_ENABLED": false,
@@ -1802,7 +1805,6 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS relationship_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS prompt_head TEXT DEFAULT '';
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS profile_prompt TEXT DEFAULT '';
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
-    "LLM_RESPONSE_MODE": "standard",
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
     "AUTO_DIARY_ENABLED": false,
@@ -1827,16 +1829,8 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
 
 UPDATE core_profiles
 SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
-    response_connector = COALESCE(response_connector, llm_primary_id),
-    metadata = CASE
-        WHEN metadata IS NULL OR jsonb_typeof(metadata) <> 'object'
-            THEN '{"LLM_RESPONSE_MODE":"standard"}'::jsonb
-        WHEN NOT (metadata ? 'LLM_RESPONSE_MODE')
-            THEN jsonb_set(metadata, '{LLM_RESPONSE_MODE}', '"standard"'::jsonb, true)
-        ELSE metadata
-    END;
+    response_connector = COALESCE(response_connector, llm_primary_id);
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
-    "LLM_RESPONSE_MODE": "standard",
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
     "AUTO_DIARY_ENABLED": false,
@@ -1862,7 +1856,6 @@ UPDATE core_profiles
 SET metadata = CASE
     WHEN metadata IS NULL OR metadata = '[]'::jsonb OR jsonb_typeof(metadata) <> 'object'
         THEN $${
-            "LLM_RESPONSE_MODE": "standard",
             "DYNAMIC_PROFILE_ENABLED": false,
             "MIDDLE_TERM_MEMORY_ENABLED": false,
             "AUTO_DIARY_ENABLED": false,
@@ -1885,7 +1878,6 @@ SET metadata = CASE
             "BORED_EVENT_CHANCE": 50
         }$$::jsonb
     ELSE $${
-        "LLM_RESPONSE_MODE": "standard",
         "DYNAMIC_PROFILE_ENABLED": false,
         "MIDDLE_TERM_MEMORY_ENABLED": false,
         "AUTO_DIARY_ENABLED": false,
@@ -4062,14 +4054,12 @@ WHERE COALESCE(
 
 UPDATE core_profiles
 SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
-    response_connector = COALESCE(response_connector, llm_primary_id),
-    metadata = CASE
-        WHEN metadata IS NULL OR jsonb_typeof(metadata) <> 'object'
-            THEN '{"LLM_RESPONSE_MODE":"standard"}'::jsonb
-        WHEN NOT (metadata ? 'LLM_RESPONSE_MODE')
-            THEN jsonb_set(metadata, '{LLM_RESPONSE_MODE}', '"standard"'::jsonb, true)
-        ELSE metadata
-    END;
+    response_connector = COALESCE(response_connector, llm_primary_id);
+
+UPDATE core_profiles
+SET metadata = metadata - 'LLM_RESPONSE_MODE'
+WHERE jsonb_typeof(metadata) = 'object'
+  AND metadata ? 'LLM_RESPONSE_MODE';
 
 CREATE TABLE IF NOT EXISTS core_narrator (
     id TEXT PRIMARY KEY,
