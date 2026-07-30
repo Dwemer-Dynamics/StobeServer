@@ -3536,7 +3536,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('WORLD_KNOWLEDGE_ENABLED',        'true',         'Enable world knowledge retrieval'),
 ('ALWAYS_INSERT_RACE',             'true',         'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.'),
 ('ALWAYS_INSERT_LOCATION',         'true',         'When true, always inject matching World Knowledge for locations shown in the current prompt context.'),
-('ALWAYS_INSERT_PEOPLE',           'true',         'When true, always inject matching World Knowledge for people shown in the current prompt context.'),
+('ALWAYS_INSERT_PEOPLE',           'true',         'When true, always inject matching World Knowledge for characters shown in the current prompt context.'),
 ('WORLD_KNOWLEDGE_AMOUNT',         '2',            'Max extracted world knowledge topics per turn'),
 ('WORLD_KNOWLEDGE_CONTEXT_HISTORY','16',           'Recent event rows used for world knowledge keyword context'),
 ('WORLD_KNOWLEDGE_CONTEXT_KEYWORDS','8',           'Max world knowledge context keywords'),

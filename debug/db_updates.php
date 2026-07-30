@@ -2431,11 +2431,20 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      'When true, always inject matching World Knowledge for locations shown in the current prompt context.',
                      NOW()),
                     ('ALWAYS_INSERT_PEOPLE', 'true',
-                     'When true, always inject matching World Knowledge for people shown in the current prompt context.',
+                     'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
                      NOW())
                  ON CONFLICT (id) DO UPDATE
                  SET description = EXCLUDED.description,
                      updated_at = NOW()"
+            );
+        });
+
+        $applyPatch('general_settings', 202607290202, static function () use ($db): void {
+            $db->exec(
+                "UPDATE general_settings
+                 SET description = 'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
+                     updated_at = NOW()
+                 WHERE id = 'ALWAYS_INSERT_PEOPLE'"
             );
         });
 

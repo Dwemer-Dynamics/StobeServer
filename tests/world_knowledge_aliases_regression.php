@@ -208,11 +208,11 @@ try {
     );
     worldKnowledgeAliasAssert(
         in_array(stobeWorldKnowledgeNormalizeLookupLabel($personTopic), $peopleSignals, true),
-        'people context should normalize bracket-renamed NPCs to their base names'
+        'character context should normalize bracket-renamed NPCs to their base names'
     );
     worldKnowledgeAliasAssert(
         !in_array(stobeWorldKnowledgeNormalizeLookupLabel($animalTopic), $peopleSignals, true),
-        'people context should skip nearby animals'
+        'character context should skip nearby animals'
     );
 
     $peopleHints = stobeWorldKnowledgeResolveForcedPeopleHints(
@@ -223,7 +223,7 @@ try {
     );
     worldKnowledgeAliasAssert(
         count($peopleHints) === 1 && str_starts_with(strval($peopleHints[0]), $personTopic . ':'),
-        'forced people knowledge should include matching character articles and reject non-character categories'
+        'forced character knowledge should include matching character articles and reject non-character categories'
     );
 
     $locationSignals = stobeWorldKnowledgeCollectForcedLocationSignals($contextNpcData);
@@ -244,7 +244,7 @@ try {
     $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_PEOPLE'");
     worldKnowledgeAliasAssert(
         stobeWorldKnowledgeCollectForcedPeopleSignals($personTopic, $contextNpcData, '') === [],
-        'disabled forced people knowledge should collect no context signals'
+        'disabled forced character knowledge should collect no context signals'
     );
     $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_LOCATION'");
     worldKnowledgeAliasAssert(

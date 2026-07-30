@@ -65,7 +65,7 @@ try {
             [
                 'id' => 'ALWAYS_INSERT_PEOPLE',
                 'value' => 'true',
-                'description' => 'When true, always inject matching World Knowledge for people shown in the current prompt context.',
+                'description' => 'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
             ],
             [
                 'id' => 'TXTAI_URL',
@@ -358,7 +358,7 @@ function stobePrettySettingLabel(string $id): string
         'PLAYER_FACTION_PROMPT' => 'Player Faction Prompt',
         'ALWAYS_INSERT_RACE' => 'Always Insert Race Knowledge',
         'ALWAYS_INSERT_LOCATION' => 'Always Insert Location Knowledge',
-        'ALWAYS_INSERT_PEOPLE' => 'Always Insert People Knowledge',
+        'ALWAYS_INSERT_PEOPLE' => 'Always Insert Character Knowledge',
         'BRACKET_ORIGINAL_NAME' => 'Bracket Original Name',
         'RECHAT_MODE' => 'Rechat Mode',
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
