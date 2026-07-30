@@ -1773,7 +1773,11 @@ if (isset($_GET["delete"])) {
         $cntRow = $GLOBALS["db"]->fetchOne(
             "SELECT COUNT(*) AS cnt
              FROM core_profiles
-             WHERE response_connector = $1
+             WHERE llm_primary_id = $1
+                OR llm_secondary_id = $1
+                OR llm_tertiary_id = $1
+                OR llm_quaternary_id = $1
+                OR response_connector = $1
                 OR diary_connector = $1
                 OR autochat_connector = $1
                 OR middleterm_connector = $1

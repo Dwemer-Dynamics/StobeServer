@@ -276,6 +276,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         };
 
         $defaultMetadata = json_encode([
+            'LLM_RESPONSE_MODE' => 'standard',
             'DYNAMIC_PROFILE_ENABLED' => false,
             'MIDDLE_TERM_MEMORY_ENABLED' => false,
             'AUTO_DIARY_ENABLED' => false,
@@ -2446,6 +2447,49 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      updated_at = NOW()
                  WHERE id = 'ALWAYS_INSERT_PEOPLE'"
             );
+        });
+
+        $applyPatch('core_profiles', 202607290301, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE core_profiles
+                    ADD COLUMN IF NOT EXISTS llm_primary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_secondary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_tertiary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_quaternary_id INT"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+                     response_connector = COALESCE(response_connector, llm_primary_id),
+                     metadata = CASE
+                        WHEN metadata IS NULL OR jsonb_typeof(metadata) <> 'object'
+                            THEN '{\"LLM_RESPONSE_MODE\":\"standard\"}'::jsonb
+                        WHEN LOWER(COALESCE(metadata->>'LLM_RESPONSE_MODE', '')) NOT IN
+                             ('standard', 'fast', 'powerful', 'experimental')
+                            THEN jsonb_set(metadata, '{LLM_RESPONSE_MODE}', '\"standard\"'::jsonb, true)
+                        ELSE metadata
+                     END"
+            );
+            $foreignKeys = [
+                'core_profiles_llm_primary_fk' => 'llm_primary_id',
+                'core_profiles_llm_secondary_fk' => 'llm_secondary_id',
+                'core_profiles_llm_tertiary_fk' => 'llm_tertiary_id',
+                'core_profiles_llm_quaternary_fk' => 'llm_quaternary_id',
+            ];
+            foreach ($foreignKeys as $constraintName => $columnName) {
+                $db->exec(
+                    "DO $$
+                     BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint WHERE conname = '{$constraintName}'
+                        ) THEN
+                            ALTER TABLE core_profiles
+                            ADD CONSTRAINT {$constraintName}
+                            FOREIGN KEY ({$columnName}) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+                        END IF;
+                     END $$"
+                );
+            }
         });
 
         try {

@@ -11551,12 +11551,20 @@ function getAllCoreProfiles(): array {
     return $db->fetchAll(
         "SELECT p.*,
                 rc.name AS response_connector_name,
+                lp.name AS llm_primary_name,
+                ls.name AS llm_secondary_name,
+                lt.name AS llm_tertiary_name,
+                lq.name AS llm_quaternary_name,
                 dc.name AS diary_connector_name,
                 ac.name AS autochat_connector_name,
                 mc.name AS middleterm_connector_name,
                 tc.name AS tts_connector_name
          FROM core_profiles p
          LEFT JOIN core_llm_connector rc ON rc.id = p.response_connector
+         LEFT JOIN core_llm_connector lp ON lp.id = p.llm_primary_id
+         LEFT JOIN core_llm_connector ls ON ls.id = p.llm_secondary_id
+         LEFT JOIN core_llm_connector lt ON lt.id = p.llm_tertiary_id
+         LEFT JOIN core_llm_connector lq ON lq.id = p.llm_quaternary_id
          LEFT JOIN core_llm_connector dc ON dc.id = p.diary_connector
          LEFT JOIN core_llm_connector ac ON ac.id = p.autochat_connector
          LEFT JOIN core_llm_connector mc ON mc.id = p.middleterm_connector
@@ -11570,12 +11578,20 @@ function getCoreProfileById(int $id): array|false {
     return $db->fetchOne(
         "SELECT p.*,
                 rc.name AS response_connector_name,
+                lp.name AS llm_primary_name,
+                ls.name AS llm_secondary_name,
+                lt.name AS llm_tertiary_name,
+                lq.name AS llm_quaternary_name,
                 dc.name AS diary_connector_name,
                 ac.name AS autochat_connector_name,
                 mc.name AS middleterm_connector_name,
                 tc.name AS tts_connector_name
          FROM core_profiles p
          LEFT JOIN core_llm_connector rc ON rc.id = p.response_connector
+         LEFT JOIN core_llm_connector lp ON lp.id = p.llm_primary_id
+         LEFT JOIN core_llm_connector ls ON ls.id = p.llm_secondary_id
+         LEFT JOIN core_llm_connector lt ON lt.id = p.llm_tertiary_id
+         LEFT JOIN core_llm_connector lq ON lq.id = p.llm_quaternary_id
          LEFT JOIN core_llm_connector dc ON dc.id = p.diary_connector
          LEFT JOIN core_llm_connector ac ON ac.id = p.autochat_connector
          LEFT JOIN core_llm_connector mc ON mc.id = p.middleterm_connector
@@ -11598,7 +11614,13 @@ function saveCoreProfile(array $fields): int {
     $isPlayerFactionProfile = coerceBoolean($fields['is_player_faction_profile'] ?? false);
     $promptHead = trim(strval($fields['prompt_head'] ?? ''));
     $profilePrompt = trim(strval($fields['profile_prompt'] ?? ''));
-    $responseConnector = ($fields['response_connector'] ?? '') === '' ? null : intval($fields['response_connector']);
+    $legacyResponseConnector = ($fields['response_connector'] ?? '') === '' ? null : intval($fields['response_connector']);
+    $primaryConnector = ($fields['llm_primary_id'] ?? '') === ''
+        ? $legacyResponseConnector
+        : intval($fields['llm_primary_id']);
+    $secondaryConnector = ($fields['llm_secondary_id'] ?? '') === '' ? null : intval($fields['llm_secondary_id']);
+    $tertiaryConnector = ($fields['llm_tertiary_id'] ?? '') === '' ? null : intval($fields['llm_tertiary_id']);
+    $quaternaryConnector = ($fields['llm_quaternary_id'] ?? '') === '' ? null : intval($fields['llm_quaternary_id']);
     $diaryConnector = ($fields['diary_connector'] ?? '') === '' ? null : intval($fields['diary_connector']);
     $autochatConnector = ($fields['autochat_connector'] ?? '') === '' ? null : intval($fields['autochat_connector']);
     $middletermConnector = ($fields['middleterm_connector'] ?? '') === '' ? null : intval($fields['middleterm_connector']);
@@ -11648,19 +11670,23 @@ function saveCoreProfile(array $fields): int {
              SET label = $1,
                  is_default_npc = $2,
                  is_player_faction_profile = $3,
-                 prompt_head = $4,
-                 profile_prompt = $5,
-                 response_connector = $6,
-                 diary_connector = $7,
-                 autochat_connector = $8,
-                 middleterm_connector = $9,
-                 backgroundlife_connector = $10,
-                 dynamic_connector = $11,
-                 relationship_connector = $12,
-                 tts_connector_id = $13,
-                 metadata = $14::jsonb,
-                 updated_at = NOW()
-             WHERE id = $15
+                  prompt_head = $4,
+                  profile_prompt = $5,
+                  llm_primary_id = $6,
+                  llm_secondary_id = $7,
+                  llm_tertiary_id = $8,
+                  llm_quaternary_id = $9,
+                  response_connector = $6,
+                  diary_connector = $10,
+                  autochat_connector = $11,
+                  middleterm_connector = $12,
+                  backgroundlife_connector = $13,
+                  dynamic_connector = $14,
+                  relationship_connector = $15,
+                  tts_connector_id = $16,
+                  metadata = $17::jsonb,
+                  updated_at = NOW()
+             WHERE id = $18
              RETURNING id",
             [
                 $label,
@@ -11668,7 +11694,10 @@ function saveCoreProfile(array $fields): int {
                 $isPlayerFactionProfile,
                 $promptHead,
                 $profilePrompt,
-                $responseConnector,
+                $primaryConnector,
+                $secondaryConnector,
+                $tertiaryConnector,
+                $quaternaryConnector,
                 $diaryConnector,
                 $autochatConnector,
                 $middletermConnector,
@@ -11707,6 +11736,10 @@ function saveCoreProfile(array $fields): int {
                 is_player_faction_profile,
                 prompt_head,
                 profile_prompt,
+                llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -11717,7 +11750,7 @@ function saveCoreProfile(array $fields): int {
                 tts_connector_id,
                 metadata
              ) VALUES (
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$6,$10,$11,$12,$13,$14,$15,$16,$17::jsonb
              )
              RETURNING id",
             [
@@ -11726,7 +11759,10 @@ function saveCoreProfile(array $fields): int {
                 $isPlayerFactionProfile,
                 $promptHead,
                 $profilePrompt,
-                $responseConnector,
+                $primaryConnector,
+                $secondaryConnector,
+                $tertiaryConnector,
+                $quaternaryConnector,
                 $diaryConnector,
                 $autochatConnector,
                 $middletermConnector,
@@ -12124,6 +12160,7 @@ function ensurePocketTtsPlaceholderConnectorId(): int {
 
 function getDefaultCoreProfileMetadata(): array {
     return [
+        'LLM_RESPONSE_MODE' => 'standard',
         'DYNAMIC_PROFILE_ENABLED' => false,
         'MIDDLE_TERM_MEMORY_ENABLED' => false,
         'AUTO_DIARY_ENABLED' => false,
@@ -12232,6 +12269,7 @@ function ensureDefaultCoreProfile(): int {
              SET is_default_npc = TRUE,
                  prompt_head = COALESCE(prompt_head, ''),
                  profile_prompt = COALESCE(profile_prompt, ''),
+                 llm_primary_id = COALESCE($2::INT, llm_primary_id, response_connector),
                  response_connector = COALESCE($2::INT, response_connector),
                  diary_connector = COALESCE($3::INT, diary_connector),
                  autochat_connector = COALESCE($4::INT, autochat_connector),
@@ -12269,6 +12307,7 @@ function ensureDefaultCoreProfile(): int {
                 is_default_npc,
                 prompt_head,
                 profile_prompt,
+                llm_primary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -12278,8 +12317,8 @@ function ensureDefaultCoreProfile(): int {
                 relationship_connector,
                 tts_connector_id,
                 metadata
-            ) VALUES (
-                $1, TRUE, '', '', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
+             ) VALUES (
+                $1, TRUE, '', '', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
             )
             RETURNING id",
             [
@@ -12955,6 +12994,54 @@ function stobeReadLayeredSettingRaw(
     return false;
 }
 
+function stobeProfileLlmTierDefinitions(): array {
+    return [
+        'standard' => ['field' => 'llm_primary_id', 'label' => 'Standard'],
+        'fast' => ['field' => 'llm_secondary_id', 'label' => 'Fast'],
+        'powerful' => ['field' => 'llm_tertiary_id', 'label' => 'Powerful'],
+        'experimental' => ['field' => 'llm_quaternary_id', 'label' => 'Experimental'],
+    ];
+}
+
+function stobeNormalizeProfileLlmMode(mixed $value): string {
+    $mode = strtolower(trim(strval($value ?? '')));
+    return array_key_exists($mode, stobeProfileLlmTierDefinitions()) ? $mode : 'standard';
+}
+
+function stobeProfileLlmModeFromMetadata(mixed $metadata): string {
+    if (is_string($metadata)) {
+        $decoded = json_decode($metadata, true);
+        $metadata = is_array($decoded) ? $decoded : [];
+    }
+    if (!is_array($metadata)) {
+        return 'standard';
+    }
+    return stobeNormalizeProfileLlmMode($metadata['LLM_RESPONSE_MODE'] ?? 'standard');
+}
+
+/**
+ * Resolves the selected response tier while retaining legacy profile fallbacks.
+ */
+function stobeResolveProfileResponseConnectorId(array $profileRow): int {
+    $tiers = stobeProfileLlmTierDefinitions();
+    $mode = stobeProfileLlmModeFromMetadata($profileRow['metadata'] ?? []);
+    $candidateFields = [
+        $tiers[$mode]['field'],
+        $tiers['standard']['field'],
+        'response_connector',
+        $tiers['fast']['field'],
+        $tiers['powerful']['field'],
+        $tiers['experimental']['field'],
+    ];
+    foreach (array_unique($candidateFields) as $field) {
+        $connectorId = intval($profileRow[$field] ?? 0);
+        if ($connectorId > 0) {
+            return $connectorId;
+        }
+    }
+    return 0;
+}
+
 function stobePurposeToProfileConnectorColumn(string $purposeKey): string {
     if ($purposeKey === 'autochat') {
         return 'autochat_connector';
@@ -13027,8 +13114,6 @@ function getProfileLlmConnectorForNpcByPurpose(array|false $npcData, string $pur
     if ($purposeKey === '') {
         $purposeKey = 'response';
     }
-    $profileColumn = stobePurposeToProfileConnectorColumn($purposeKey);
-
     // NPC override layer (highest precedence)
     $overrideConnectorId = stobeResolveNpcConnectorOverrideId($npcData, $purposeKey);
     if ($overrideConnectorId > 0) {
@@ -13044,6 +13129,26 @@ function getProfileLlmConnectorForNpcByPurpose(array|false $npcData, string $pur
     }
 
     $db = $GLOBALS["db"];
+    if ($purposeKey === 'response') {
+        $profileRow = $db->fetchOne(
+            "SELECT llm_primary_id,
+                    llm_secondary_id,
+                    llm_tertiary_id,
+                    llm_quaternary_id,
+                    response_connector,
+                    metadata
+             FROM core_profiles
+             WHERE id = $1
+             LIMIT 1",
+            [$profileId]
+        );
+        if (!$profileRow) {
+            return false;
+        }
+        return stobeFetchLlmConnectorById(stobeResolveProfileResponseConnectorId($profileRow));
+    }
+
+    $profileColumn = stobePurposeToProfileConnectorColumn($purposeKey);
     $row = $db->fetchOne(
         "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key
          FROM core_profiles p

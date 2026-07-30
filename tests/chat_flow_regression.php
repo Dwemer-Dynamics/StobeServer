@@ -136,4 +136,43 @@ chatFlowAssertSame(
     'inline narration parser should preserve spoken dialogue'
 );
 
+chatFlowAssertSame(
+    'experimental',
+    stobeProfileLlmModeFromMetadata('{"LLM_RESPONSE_MODE":"experimental"}'),
+    'profile response mode should be read from JSON metadata'
+);
+chatFlowAssertSame(
+    'standard',
+    stobeProfileLlmModeFromMetadata(['LLM_RESPONSE_MODE' => 'invalid']),
+    'invalid profile response modes should fall back to Standard'
+);
+chatFlowAssertSameInt(
+    303,
+    stobeResolveProfileResponseConnectorId([
+        'metadata' => ['LLM_RESPONSE_MODE' => 'powerful'],
+        'llm_primary_id' => 101,
+        'llm_tertiary_id' => 303,
+        'response_connector' => 101,
+    ]),
+    'selected response tier should resolve before Standard'
+);
+chatFlowAssertSameInt(
+    101,
+    stobeResolveProfileResponseConnectorId([
+        'metadata' => ['LLM_RESPONSE_MODE' => 'fast'],
+        'llm_primary_id' => 101,
+        'llm_secondary_id' => null,
+        'response_connector' => 101,
+    ]),
+    'an unavailable response tier should fall back to Standard'
+);
+chatFlowAssertSameInt(
+    404,
+    stobeResolveProfileResponseConnectorId([
+        'metadata' => [],
+        'response_connector' => 404,
+    ]),
+    'legacy response connector should remain a valid fallback'
+);
+
 echo "All chat flow regression tests passed.\n";
