@@ -76,6 +76,7 @@ $tabGroups = [
 
 $worldViews = [
     'knowledge' => ['label' => 'World Knowledge', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
+    'rules' => ['label' => 'Context Rules', 'page' => 'world_knowledge_rules.php', 'status' => 'wired', 'embed' => true],
     'state' => ['label' => 'World State', 'page' => 'world_state.php', 'status' => 'wired', 'embed' => true],
 ];
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'npcs')));

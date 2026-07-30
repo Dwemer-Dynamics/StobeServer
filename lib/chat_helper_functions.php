@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'world_knowledge_context_rules.php';
 
 /**
  * Chat helper functions for StobeServer.
@@ -2044,6 +2045,7 @@ function stobeWorldKnowledgeResolveForcedSignalHints(
     $isKnowAll = in_array('knowall', $knowledgeTags, true);
     $hints = [];
     $seenTopics = [];
+    $seenPayloads = [];
 
     foreach ($signals as $signal) {
         $row = stobeWorldKnowledgeLookupTopicRowByLabel(strval($signal));
@@ -2060,8 +2062,8 @@ function stobeWorldKnowledgeResolveForcedSignalHints(
         }
 
         $topic = trim(strval($payload['topic'] ?? ''));
-        $desc = trim(preg_replace('/\s+/u', ' ', strval($payload['desc'] ?? '')) ?? '');
-        if ($topic === '' || $desc === '') {
+        $line = stobeWorldKnowledgeBuildHintLine($topic, strval($payload['desc'] ?? ''));
+        if ($topic === '' || $line === '') {
             continue;
         }
 
@@ -2069,8 +2071,16 @@ function stobeWorldKnowledgeResolveForcedSignalHints(
         if ($topicKey === '' || isset($seenTopics[$topicKey])) {
             continue;
         }
+        $payloadFingerprint = stobeWorldKnowledgeHintPayloadFingerprint($line);
+        if ($payloadFingerprint !== '' && isset($seenPayloads[$payloadFingerprint])) {
+            $seenTopics[$topicKey] = true;
+            continue;
+        }
         $seenTopics[$topicKey] = true;
-        $hints[] = $topic . ': ' . $desc;
+        if ($payloadFingerprint !== '') {
+            $seenPayloads[$payloadFingerprint] = true;
+        }
+        $hints[] = $line;
     }
 
     return $hints;
@@ -5644,7 +5654,9 @@ function queryWorldKnowledgeForNpc(
     string $playerMessage,
     int $limit = 3,
     array|false $npcData = false,
-    string $eventType = 'chat'
+    string $eventType = 'chat',
+    array $excludedPayloads = [],
+    array $additionalAuditNotes = []
 ): array {
     $queryStartedAt = microtime(true);
 
@@ -5695,7 +5707,7 @@ function queryWorldKnowledgeForNpc(
     $scoreParts = ['0'];
     $whereParts = [];
     $params = [];
-    $notes = [];
+    $notes = $additionalAuditNotes;
 
     $addSignal = static function (string $signalText, float $weight, string $label) use (&$params, &$scoreParts, &$whereParts, $vectorExpr, &$notes): void {
         $text = trim($signalText);
@@ -5802,7 +5814,7 @@ function queryWorldKnowledgeForNpc(
 
     $rows = $db->fetchAll($query, $params);
     $hints = [];
-    $seenHints = [];
+    $seenHints = $excludedPayloads;
     $selectedTopic = '';
     $selectedMode = '';
     $selectedRank = 0.0;
@@ -5820,23 +5832,14 @@ function queryWorldKnowledgeForNpc(
         }
 
         $topic = trim(strval($payload['topic'] ?? ''));
-        $desc = trim(preg_replace('/\s+/u', ' ', strval($payload['desc'] ?? '')) ?? '');
-        if ($topic === '' || $desc === '') {
+        $line = stobeWorldKnowledgeBuildHintLine($topic, strval($payload['desc'] ?? ''));
+        $dedupeKey = stobeWorldKnowledgeHintPayloadFingerprint($line);
+        if ($line === '' || ($dedupeKey !== '' && isset($seenHints[$dedupeKey]))) {
             continue;
         }
-
-        $worldStateAddenda = stobeWorldStatePromptAddendaForTopic($topic, 4);
-        if (count($worldStateAddenda) > 0) {
-            $desc .= ' ' . implode(' ', $worldStateAddenda);
+        if ($dedupeKey !== '') {
+            $seenHints[$dedupeKey] = true;
         }
-        $line = $topic . ': ' . $desc;
-        $line = trim($line);
-
-        $dedupeKey = strtolower($topic . '|' . $desc);
-        if ($line === '' || isset($seenHints[$dedupeKey])) {
-            continue;
-        }
-        $seenHints[$dedupeKey] = true;
         $hints[] = $line;
 
         if ($selectedTopic === '') {
@@ -11062,23 +11065,48 @@ function buildSystemPrompt(
     $knowledgeEnabled = stobePromptContextOptionEnabled('enabled_sections', 'knowledge');
     if ($knowledgeEnabled && stobePromptContextOptionEnabled('enabled_knowledge_subsections', 'world_knowledge')) {
         $knowledgeLimit = max(1, min(6, getSettingInt('WORLD_KNOWLEDGE_AMOUNT', 2)));
-        $forcedRaceHints = stobeWorldKnowledgeResolveForcedRaceHints($npcName, $npcData, $playerName, $eventType);
-        $forcedLocationHints = stobeWorldKnowledgeResolveForcedLocationHints($npcName, $npcData, $eventType);
-        $forcedPeopleHints = stobeWorldKnowledgeResolveForcedPeopleHints($npcName, $npcData, $playerName, $eventType);
-        $loreHints = queryWorldKnowledgeForNpc($npcName, $playerMessage, $knowledgeLimit, $npcData, $eventType);
-        $seenKnowledgeHints = [];
-        foreach (array_merge($forcedRaceHints, $forcedLocationHints, $forcedPeopleHints, $loreHints) as $hint) {
-            $line = trim(strval($hint));
-            if ($line === '') {
-                continue;
-            }
-            $lineKey = strtolower($line);
-            if (isset($seenKnowledgeHints[$lineKey])) {
-                continue;
-            }
-            $seenKnowledgeHints[$lineKey] = true;
-            $knowledgeHints[] = $line;
-        }
+        $seenKnowledgePayloads = [];
+        stobeWorldKnowledgeAppendUniqueHints(
+            $knowledgeHints,
+            stobeWorldKnowledgeResolveForcedRaceHints($npcName, $npcData, $playerName, $eventType),
+            $seenKnowledgePayloads
+        );
+        stobeWorldKnowledgeAppendUniqueHints(
+            $knowledgeHints,
+            stobeWorldKnowledgeResolveForcedLocationHints($npcName, $npcData, $eventType),
+            $seenKnowledgePayloads
+        );
+        stobeWorldKnowledgeAppendUniqueHints(
+            $knowledgeHints,
+            stobeWorldKnowledgeResolveForcedPeopleHints($npcName, $npcData, $playerName, $eventType),
+            $seenKnowledgePayloads
+        );
+        $contextRuleAuditNotes = [];
+        stobeWorldKnowledgeAppendUniqueHints(
+            $knowledgeHints,
+            stobeWorldKnowledgeResolveContextRuleHints(
+                $npcName,
+                $npcData,
+                $playerName,
+                $eventType,
+                $seenKnowledgePayloads,
+                $contextRuleAuditNotes
+            ),
+            $seenKnowledgePayloads
+        );
+        stobeWorldKnowledgeAppendUniqueHints(
+            $knowledgeHints,
+            queryWorldKnowledgeForNpc(
+                $npcName,
+                $playerMessage,
+                $knowledgeLimit,
+                $npcData,
+                $eventType,
+                $seenKnowledgePayloads,
+                $contextRuleAuditNotes
+            ),
+            $seenKnowledgePayloads
+        );
     }
 
     if ($knowledgeEnabled && (count($knowledgeHints) > 0 || $playerFactionPromptBlock !== '')) {

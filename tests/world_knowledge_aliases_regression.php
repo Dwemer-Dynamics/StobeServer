@@ -241,6 +241,173 @@ try {
         'forced location knowledge should include matching location articles and reject non-location categories'
     );
 
+    $duplicateTopicA = 'UT Duplicate Lore A ' . $seed;
+    $duplicateTopicB = 'UT Duplicate Lore B ' . $seed;
+    $duplicateDescription = "Identical lore with\n variable whitespace.";
+    $db->exec(
+        "INSERT INTO world_knowledge (topic, topic_desc, topic_desc_basic, aliases, tags)
+         VALUES
+            ($1, $3, $3, '', 'Test'),
+            ($2, '  Identical lore with variable   whitespace. ', 'Identical lore with variable whitespace.', '', 'Test')",
+        [$duplicateTopicA, $duplicateTopicB, $duplicateDescription]
+    );
+    $duplicateRows = $db->fetchAll(
+        "SELECT id, topic, topic_desc, topic_desc_basic, knowledge_class, knowledge_class_basic, aliases, tags
+         FROM world_knowledge
+         WHERE topic IN ($1, $2)
+         ORDER BY topic",
+        [$duplicateTopicA, $duplicateTopicB]
+    );
+    $duplicateHints = [];
+    $duplicateSeen = [];
+    foreach ($duplicateRows as $duplicateRow) {
+        $duplicatePayload = stobeWorldKnowledgeSelectKnowledgePayload($duplicateRow, ['knowall'], true);
+        stobeWorldKnowledgeAppendUniqueHints(
+            $duplicateHints,
+            [stobeWorldKnowledgeBuildHintLine(
+                strval($duplicatePayload['topic'] ?? ''),
+                strval($duplicatePayload['desc'] ?? '')
+            )],
+            $duplicateSeen
+        );
+    }
+    worldKnowledgeAliasAssert(
+        count($duplicateHints) === 1,
+        'different topics with whitespace-equivalent final lore should be inserted once'
+    );
+    $rankedDuplicateHints = queryWorldKnowledgeForNpc(
+        'UT Duplicate Tester ' . $seed,
+        'Tell me about ' . $duplicateTopicB,
+        1,
+        [
+            'name' => 'UT Duplicate Tester ' . $seed,
+            'world_knowledge_tags' => 'knowall',
+            'extended_data' => [],
+        ],
+        'chat',
+        $duplicateSeen
+    );
+    worldKnowledgeAliasAssert(
+        $rankedDuplicateHints === [],
+        'ranked retrieval should skip lore already inserted by forced or rule retrieval'
+    );
+
+    $ruleTopic = 'UT Rule Topic ' . $seed;
+    $ruleTagTopic = 'UT Rule Tag Topic ' . $seed;
+    $db->exec(
+        "INSERT INTO world_knowledge (topic, topic_desc, topic_desc_basic, aliases, tags)
+         VALUES
+            ($1, 'Rule topic description.', 'Rule topic description.', 'UT Rule Alias', 'Rules'),
+            ($2, 'Rule tag description.', 'Rule tag description.', '', 'Rule Group')",
+        [$ruleTopic, $ruleTagTopic]
+    );
+    $savedRule = stobeWorldKnowledgeSaveContextRule($db, [
+        'context_rule_label' => 'Shek in The Hub',
+        'context_rule_enabled' => '1',
+        'context_rule_priority' => '10',
+        'context_rule_selector_type' => 'topic',
+        'context_rule_selector_value' => 'UT Rule Alias',
+        'context_rule_max_articles' => '1',
+        'condition_race' => 'Shek, Greenlander',
+        'condition_town' => 'The Hub',
+        'condition_event_type' => 'chat',
+    ]);
+    worldKnowledgeAliasAssert(boolval($savedRule['ok'] ?? false), 'context rule should save');
+    $ruleContextNpcData = [
+        'name' => 'UT Rule NPC ' . $seed,
+        'race' => 'Shek',
+        'faction' => 'Player Faction',
+        'profile_id' => 7,
+        'world_knowledge_tags' => 'knowall',
+        'extended_data' => [
+            'environment' => [
+                'town_name' => 'The Hub',
+                'region' => 'Border Zone',
+                'indoors' => false,
+                'outdoors' => true,
+                'weather' => 'Dust storm',
+            ],
+            'nearby_actors' => [
+                ['name' => 'Nearby Tester', 'is_animal' => false],
+            ],
+        ],
+    ];
+    $ruleContext = stobeWorldKnowledgeBuildRuleContext(
+        'UT Rule NPC ' . $seed,
+        $ruleContextNpcData,
+        'Player',
+        'chat'
+    );
+    worldKnowledgeAliasAssert(
+        stobeWorldKnowledgeContextRuleMatches(
+            ['race' => ['Shek'], 'town' => ['The Hub'], 'event_type' => ['chat']],
+            $ruleContext,
+            $ruleReasons
+        ),
+        'all populated rule conditions should match current Kenshi context'
+    );
+    worldKnowledgeAliasAssert(
+        !stobeWorldKnowledgeContextRuleMatches(['race' => ['Hive']], $ruleContext),
+        'a missing condition value should reject the rule'
+    );
+    worldKnowledgeAliasAssert(
+        count(stobeWorldKnowledgeFindRowsForRuleSelector($db, 'topic', 'UT Rule Alias', 1)) === 1,
+        'topic selectors should resolve exact aliases'
+    );
+    worldKnowledgeAliasAssert(
+        count(stobeWorldKnowledgeFindRowsForRuleSelector($db, 'tag', 'Rule Group', 5)) === 1,
+        'tag selectors should resolve bounded article rows'
+    );
+    $ruleAuditNotes = [];
+    $ruleHints = stobeWorldKnowledgeResolveContextRuleHints(
+        'UT Rule NPC ' . $seed,
+        $ruleContextNpcData,
+        'Player',
+        'chat',
+        [],
+        $ruleAuditNotes
+    );
+    worldKnowledgeAliasAssert(
+        count($ruleHints) === 1 && str_starts_with(strval($ruleHints[0]), $ruleTopic . ':'),
+        'matching context rules should insert permitted World Knowledge'
+    );
+    worldKnowledgeAliasAssert(
+        count($ruleAuditNotes) === 1 && str_contains(strval($ruleAuditNotes[0]), 'Shek in The Hub'),
+        'matching context rules should report their reason to retrieval audit notes'
+    );
+    $ruleAuditInput = 'Tell me about ' . $ruleTopic;
+    queryWorldKnowledgeForNpc(
+        'UT Rule NPC ' . $seed,
+        $ruleAuditInput,
+        1,
+        $ruleContextNpcData,
+        'chat',
+        [],
+        $ruleAuditNotes
+    );
+    $ruleAuditRow = $db->fetchOne(
+        'SELECT keywords FROM audit_memory WHERE input = $1 ORDER BY created_at DESC LIMIT 1',
+        [$ruleAuditInput]
+    );
+    worldKnowledgeAliasAssert(
+        str_contains(strval($ruleAuditRow['keywords'] ?? ''), 'context rule')
+            && str_contains(strval($ruleAuditRow['keywords'] ?? ''), 'Shek in The Hub'),
+        'ranked retrieval audit should persist matched context rule details'
+    );
+    $excludedRulePayload = [
+        stobeWorldKnowledgeHintPayloadFingerprint(strval($ruleHints[0])) => true,
+    ];
+    worldKnowledgeAliasAssert(
+        stobeWorldKnowledgeResolveContextRuleHints(
+            'UT Rule NPC ' . $seed,
+            $ruleContextNpcData,
+            'Player',
+            'chat',
+            $excludedRulePayload
+        ) === [],
+        'context rules should not repeat a payload already inserted by forced retrieval'
+    );
+
     $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_PEOPLE'");
     worldKnowledgeAliasAssert(
         stobeWorldKnowledgeCollectForcedPeopleSignals($personTopic, $contextNpcData, '') === [],
