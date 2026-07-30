@@ -2423,6 +2423,31 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('general_settings', 202607290201, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES
+                    ('ALWAYS_INSERT_LOCATION', 'true',
+                     'When true, always inject matching World Knowledge for locations shown in the current prompt context.',
+                     NOW()),
+                    ('ALWAYS_INSERT_PEOPLE', 'true',
+                     'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
+                     NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+        });
+
+        $applyPatch('general_settings', 202607290202, static function () use ($db): void {
+            $db->exec(
+                "UPDATE general_settings
+                 SET description = 'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
+                     updated_at = NOW()
+                 WHERE id = 'ALWAYS_INSERT_PEOPLE'"
+            );
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
