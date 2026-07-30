@@ -91,7 +91,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
@@ -243,7 +243,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
         'is_player_faction_profile' => $isPlayerFactionProfilePost,
         'prompt_head' => strval($_POST['prompt_head'] ?? ''),
         'profile_prompt' => strval($_POST['profile_prompt'] ?? ''),
-        'response_connector' => post_int_or_null('response_connector'),
+        'llm_primary_id' => post_int_or_null('llm_primary_id'),
+        'llm_secondary_id' => post_int_or_null('llm_secondary_id'),
+        'llm_tertiary_id' => post_int_or_null('llm_tertiary_id'),
+        'llm_quaternary_id' => post_int_or_null('llm_quaternary_id'),
         'diary_connector' => post_int_or_null('diary_connector'),
         'autochat_connector' => post_int_or_null('autochat_connector'),
         'middleterm_connector' => post_int_or_null('middleterm_connector'),
@@ -274,7 +277,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
             'is_player_faction_profile' => false,
             'prompt_head' => strval($source['prompt_head'] ?? ''),
             'profile_prompt' => strval($source['profile_prompt'] ?? ''),
-            'response_connector' => $source['response_connector'] ?? null,
+            'llm_primary_id' => $source['llm_primary_id'] ?? ($source['response_connector'] ?? null),
+            'llm_secondary_id' => $source['llm_secondary_id'] ?? null,
+            'llm_tertiary_id' => $source['llm_tertiary_id'] ?? null,
+            'llm_quaternary_id' => $source['llm_quaternary_id'] ?? null,
             'diary_connector' => $source['diary_connector'] ?? null,
             'autochat_connector' => $source['autochat_connector'] ?? null,
             'middleterm_connector' => $source['middleterm_connector'] ?? null,
@@ -346,7 +352,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
         'is_player_faction_profile' => $makePlayerFactionProfile,
         'prompt_head' => strval($profileData['prompt_head'] ?? ''),
         'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
-        'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
+        'llm_primary_id' => normalize_imported_fk_id(
+            'core_llm_connector',
+            $profileData['llm_primary_id'] ?? ($profileData['response_connector'] ?? null)
+        ),
+        'llm_secondary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_secondary_id'] ?? null),
+        'llm_tertiary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_tertiary_id'] ?? null),
+        'llm_quaternary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_quaternary_id'] ?? null),
         'diary_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['diary_connector'] ?? null),
         'autochat_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['autochat_connector'] ?? null),
         'middleterm_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['middleterm_connector'] ?? null),
@@ -624,7 +636,9 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card .toggle-title { color:#dfe6f4; font-weight:700; font-size:12px; }
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
-.top-toggle-wrap .top-toggle-title { color: #e6b76c; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.top-toggle-groups { display:grid; gap:9px; }
+.top-toggle-group { padding:9px; border:1px solid #3f3f3f; border-radius:8px; background:#202020; }
+.top-toggle-wrap .top-toggle-title { color:#e6b76c; font-family:'MagicCards', serif; font-size:1em; font-weight:700; letter-spacing:.4px; word-spacing:4px; margin-bottom:7px; }
 .profile-role-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
 .profile-editor-toolbar { position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; padding:10px 12px; border:1px solid #454545; border-radius:8px; background:rgba(31,31,31,.97); box-shadow:0 4px 14px rgba(0,0,0,.28); }
 .profile-editor-toolbar-label { color:#9fb1c9; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
@@ -725,15 +739,15 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 
     <div class="layout">
         <section class="cardx profiles-list-panel">
-            <div class="toolbar">
-                <form method="get" action="profiles.php" style="display:inline;">
+            <div class="toolbar sidebar-action-grid">
+                <form method="get" action="profiles.php">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <input type="hidden" name="create_blank" value="1">
-                    <button type="submit" class="btn-save">New Profile</button>
+                    <button type="submit" class="btn-save">New</button>
                 </form>
-                <button type="button" id="import_profile_btn" class="btn-secondary">Import Profile</button>
-                <button type="button" id="open_import_rules_btn" class="btn-secondary">Profile Rules</button>
-                <button type="button" id="profile_test_all_btn" class="btn-secondary">Test All Profiles</button>
+                <button type="button" id="import_profile_btn" class="btn-secondary">Import</button>
+                <button type="button" id="open_import_rules_btn" class="btn-secondary">Rules</button>
+                <button type="button" id="profile_test_all_btn" class="btn-secondary">Test</button>
             </div>
             <div class="list">
                 <?php foreach ($profiles as $row): ?>
@@ -820,38 +834,58 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             </label>
                         </div>
                         <div class="top-toggle-wrap">
-                            <div class="top-toggle-title">Profile Runtime Toggles</div>
-                            <div class="toggle-grid">
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">DYNAMIC_PROFILE_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
-                                </div>
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">MIDDLE_TERM_MEMORY_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
-                                </div>
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">AUTO_DIARY_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
-                                </div>
+                            <div class="top-toggle-groups">
+                                <section class="top-toggle-group">
+                                    <div class="top-toggle-title">Profiles &amp; Memories</div>
+                                    <div class="toggle-grid">
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Dynamic Profile</span>
+                                            </label>
+                                            <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Middle Term Memory</span>
+                                            </label>
+                                            <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="top-toggle-group">
+                                    <div class="top-toggle-title">Diary</div>
+                                    <div class="toggle-grid">
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Auto Diary</span>
+                                            </label>
+                                            <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <label>
+                                                <input type="hidden" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="1" <?= $metaBool('LATEST_DIARY_CONTEXT_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Include Latest Diary Entry</span>
+                                            </label>
+                                            <div class="toggle-desc">Adds the NPC's latest diary entry to the character section of every response prompt.</div>
+                                        </div>
+                                    </div>
+                                </section>
                             </div>
                         </div>
 
                         <?php
                             $connectorIcons = [
-                                'response_connector' => '&#x1F3AD;',
+                                'llm_primary_id' => '&#x1F3AD;',
+                                'llm_secondary_id' => '&#x26A1;',
+                                'llm_tertiary_id' => '&#x1F9E0;',
+                                'llm_quaternary_id' => '&#x1F9EA;',
                                 'diary_connector' => '&#x1F4D4;',
                                 'autochat_connector' => '&#x1F4AC;',
                                 'middleterm_connector' => '&#x1F9E0;',
@@ -860,7 +894,10 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 'relationship_connector' => '&#x1F91D;',
                             ];
                             $connectorDescriptions = [
-                                'response_connector' => 'General purpose LLM for standard in-character roleplay dialogue.',
+                                'llm_primary_id' => 'Reliable default LLM for normal in-character dialogue.',
+                                'llm_secondary_id' => 'Faster LLM for responses where lower latency is preferred.',
+                                'llm_tertiary_id' => 'Higher-capability LLM for complex or important responses.',
+                                'llm_quaternary_id' => 'Optional model slot for testing new or specialized LLMs.',
                                 'diary_connector' => 'LLM for writing diary entries in the character voice.',
                                 'autochat_connector' => 'LLM used by Autochat to convert player intent into roleplayed speech.',
                                 'middleterm_connector' => 'LLM used for memory summaries and middle-term context refresh.',
@@ -870,19 +907,22 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             ];
                             $connectorGroups = [
                                 [
-                                    'title' => 'Response Connectors',
-                                    'description' => 'Connectors that directly generate dialogue and player-facing responses.',
+                                    'title' => 'Response LLM Modes',
+                                    'description' => 'Assign the connector used by each global response mode.',
                                     'rows' => [
-                                        ['field' => 'response_connector', 'label' => 'Response Connector', 'options' => 'llm'],
-                                        ['field' => 'autochat_connector', 'label' => 'Autochat Connector', 'options' => 'llm'],
-                                        ['field' => 'backgroundlife_connector', 'label' => 'Background Life Connector', 'options' => 'llm'],
+                                        ['field' => 'llm_primary_id', 'label' => 'Standard LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_secondary_id', 'label' => 'Fast LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_tertiary_id', 'label' => 'Powerful LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_quaternary_id', 'label' => 'Experimental LLM', 'options' => 'llm'],
                                     ],
                                 ],
                                 [
-                                    'title' => 'Other Connectors',
-                                    'description' => 'Voice, memory, diary, profile, and relationship processing services.',
+                                    'title' => 'Task Connectors',
+                                    'description' => 'Dedicated connectors for voice and background profile tasks.',
                                     'rows' => [
                                         ['field' => 'tts_connector_id', 'label' => 'TTS Connector', 'options' => 'tts'],
+                                        ['field' => 'autochat_connector', 'label' => 'Autochat Connector', 'options' => 'llm'],
+                                        ['field' => 'backgroundlife_connector', 'label' => 'Background Life Connector', 'options' => 'llm'],
                                         ['field' => 'diary_connector', 'label' => 'Diary Connector', 'options' => 'llm'],
                                         ['field' => 'middleterm_connector', 'label' => 'Memory Connector', 'options' => 'llm'],
                                         ['field' => 'dynamic_connector', 'label' => 'Dynamic Connector', 'options' => 'llm'],

@@ -170,6 +170,53 @@ chatProcessorAssert(
     'inline target flow should JIT-create the extracted target profile'
 );
 
+$injectSpeaker = 'UT_INJECT_SPEAKER';
+$injectTarget = 'UT_INJECT_TARGET';
+chatProcessorClearEventlog();
+$injectOutput = chatProcessorRun(
+    'injection',
+    $injectSpeaker . ': A dust storm tears the gate from its hinges',
+    ['profile' => $injectTarget, 'mode' => 'inject'],
+    '["' . $injectSpeaker . '","' . $injectTarget . '"]'
+);
+chatProcessorAssertSame(
+    'ok',
+    chatProcessorNormalizeWireLine($injectOutput),
+    'plain injection should acknowledge storage without generating a response'
+);
+$injectRows = chatProcessorEventRows();
+chatProcessorAssertSameInt(1, count($injectRows), 'plain injection should store exactly one event row');
+chatProcessorAssertSame('injection', strval($injectRows[0]['type'] ?? ''), 'plain injection should use the injection event type');
+chatProcessorAssertSame(
+    $injectSpeaker . ': (A dust storm tears the gate from its hinges) (talking to: ' . $injectTarget . ')',
+    strval($injectRows[0]['data'] ?? ''),
+    'plain injection should store a parenthetical world event'
+);
+
+$injectChatSpeaker = 'UT_INJECT_CHAT_SPEAKER';
+$injectChatTarget = 'UT_INJECT_CHAT_TARGET';
+chatProcessorClearEventlog();
+$injectChatOutput = chatProcessorRun(
+    'injection',
+    $injectChatSpeaker . ': The bar door slams shut behind everyone',
+    ['profile' => $injectChatTarget, 'mode' => 'inject_chat'],
+    '["' . $injectChatSpeaker . '","' . $injectChatTarget . '"]'
+);
+chatProcessorAssertSame(
+    $injectChatTarget . '|ScriptQueue|No OpenRouter API key configured yet.',
+    chatProcessorNormalizeWireLine($injectChatOutput),
+    'inject and chat should continue to one target response'
+);
+$injectChatRows = chatProcessorEventRows();
+chatProcessorAssertSameInt(2, count($injectChatRows), 'inject and chat should store the event and one response without a mirrored player chat row');
+chatProcessorAssertSame('injection', strval($injectChatRows[0]['type'] ?? ''), 'inject and chat should preserve the injection event type');
+chatProcessorAssertSame('chat', strval($injectChatRows[1]['type'] ?? ''), 'inject and chat should store the target response as chat');
+chatProcessorAssertSame(
+    $injectChatSpeaker . ': (The bar door slams shut behind everyone) (talking to: ' . $injectChatTarget . ')',
+    strval($injectChatRows[0]['data'] ?? ''),
+    'inject and chat should store the world event without converting it to dialogue'
+);
+
 $autochatSpeaker = 'UT_CHAT_AUTO_SPEAKER';
 $autochatTarget = 'UT_CHAT_AUTO_TARGET';
 chatProcessorClearEventlog();

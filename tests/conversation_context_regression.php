@@ -301,4 +301,18 @@ contextFlowAssertSame(
     'narrator mode context should retain ordinary chat rows alongside narrator rows'
 );
 
+$inlineNarratorRow = [[
+    'type' => 'inline_narration',
+    'data' => stobeNarratorName() . ': Ruka studies the gate.',
+    'people' => '["' . stobeNarratorName() . '","Ruka"]',
+]];
+$GLOBALS['PRESERVE_INLINE_NARRATION_CONTEXT'] = true;
+$preservedInline = stobeFilterNarratorRowsForContext($inlineNarratorRow, 'Beep', 'talk', 'Ruka');
+contextFlowAssertSameInt(
+    1,
+    count($preservedInline),
+    'inline narrator context should be retained when its setting is enabled'
+);
+$GLOBALS['PRESERVE_INLINE_NARRATION_CONTEXT'] = false;
+
 echo "All conversation context regression tests passed.\n";

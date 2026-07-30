@@ -66,8 +66,8 @@ foreach ($seedRows as $seedRow) {
         $seedAliasCount++;
     }
 }
-worldKnowledgeAliasAssert(count($seedRows) === 548, 'world knowledge seed should retain all 548 source rows');
-worldKnowledgeAliasAssert($seedAliasCount === 41, 'world knowledge seed should contain the 41 reviewed aliases');
+worldKnowledgeAliasAssert(count($seedRows) === 558, 'world knowledge seed should retain all 558 source rows');
+worldKnowledgeAliasAssert($seedAliasCount === 48, 'world knowledge seed should contain the 48 reviewed aliases');
 worldKnowledgeAliasAssert(($aliasOwners['uc'] ?? '') === 'United Cities', 'reviewed seed should include UC for United Cities');
 
 $seed = strval(time()) . '_' . strval(random_int(1000, 9999));
@@ -159,6 +159,148 @@ try {
     worldKnowledgeAliasAssert(
         count($hints) === 1 && str_starts_with(strval($hints[0]), $topic . ':'),
         'normal retrieval should resolve a two-character exact alias inside a sentence'
+    );
+
+    $personTopic = 'UT Context Person ' . $seed;
+    $animalTopic = 'UT Context Animal ' . $seed;
+    $locationTopic = 'UT Context Location ' . $seed;
+    $wrongCategoryTopic = 'UT Context Item ' . $seed;
+    $db->exec(
+        "INSERT INTO world_knowledge (topic, topic_desc, topic_desc_basic, aliases, tags)
+         VALUES
+         ($1, 'Person context description.', 'Person context description.', '', 'Characters, Unique'),
+         ($2, 'Animal context description.', 'Animal context description.', '', 'Animals, Characters'),
+         ($3, 'Location context description.', 'Location context description.', '', 'Locations'),
+         ($4, 'Item context description.', 'Item context description.', '', 'Items')",
+        [$personTopic, $animalTopic, $locationTopic, $wrongCategoryTopic]
+    );
+    $db->exec(
+        "INSERT INTO general_settings (id, value, description, updated_at)
+         VALUES
+            ('ALWAYS_INSERT_PEOPLE', 'true', 'Test setting', NOW()),
+            ('ALWAYS_INSERT_LOCATION', 'true', 'Test setting', NOW())
+         ON CONFLICT (id) DO UPDATE
+         SET value = EXCLUDED.value,
+             updated_at = NOW()"
+    );
+
+    $contextNpcData = [
+        'name' => $personTopic . ' [Original]',
+        'is_animal' => false,
+        'world_knowledge_tags' => 'knowall',
+        'extended_data' => [
+            'nearby_actors' => [
+                ['name' => $personTopic, 'is_animal' => false],
+                ['name' => $animalTopic, 'is_animal' => true],
+                ['name' => $wrongCategoryTopic, 'is_animal' => false],
+            ],
+            'points_of_interest' => [
+                ['name' => $locationTopic, 'type' => 'town'],
+                ['name' => $wrongCategoryTopic, 'type' => 'shop'],
+            ],
+        ],
+    ];
+
+    $peopleSignals = stobeWorldKnowledgeCollectForcedPeopleSignals(
+        $personTopic . ' [Original]',
+        $contextNpcData,
+        'UT Context Speaker ' . $seed
+    );
+    worldKnowledgeAliasAssert(
+        in_array(stobeWorldKnowledgeNormalizeLookupLabel($personTopic), $peopleSignals, true),
+        'character context should normalize bracket-renamed NPCs to their base names'
+    );
+    worldKnowledgeAliasAssert(
+        !in_array(stobeWorldKnowledgeNormalizeLookupLabel($animalTopic), $peopleSignals, true),
+        'character context should skip nearby animals'
+    );
+
+    $peopleHints = stobeWorldKnowledgeResolveForcedPeopleHints(
+        $personTopic . ' [Original]',
+        $contextNpcData,
+        'UT Context Speaker ' . $seed,
+        'chat'
+    );
+    worldKnowledgeAliasAssert(
+        count($peopleHints) === 1 && str_starts_with(strval($peopleHints[0]), $personTopic . ':'),
+        'forced character knowledge should include matching character articles and reject non-character categories'
+    );
+
+    $locationSignals = stobeWorldKnowledgeCollectForcedLocationSignals($contextNpcData);
+    worldKnowledgeAliasAssert(
+        in_array(stobeWorldKnowledgeNormalizeLookupLabel($locationTopic), $locationSignals, true),
+        'location context should include rendered points of interest'
+    );
+    $locationHints = stobeWorldKnowledgeResolveForcedLocationHints(
+        $personTopic . ' [Original]',
+        $contextNpcData,
+        'chat'
+    );
+    worldKnowledgeAliasAssert(
+        count($locationHints) === 1 && str_starts_with(strval($locationHints[0]), $locationTopic . ':'),
+        'forced location knowledge should include matching location articles and reject non-location categories'
+    );
+
+    $duplicateTopicA = 'UT Duplicate Lore A ' . $seed;
+    $duplicateTopicB = 'UT Duplicate Lore B ' . $seed;
+    $duplicateDescription = "Identical lore with\n variable whitespace.";
+    $db->exec(
+        "INSERT INTO world_knowledge (topic, topic_desc, topic_desc_basic, aliases, tags)
+         VALUES
+            ($1, $3, $3, '', 'Test'),
+            ($2, '  Identical lore with variable   whitespace. ', 'Identical lore with variable whitespace.', '', 'Test')",
+        [$duplicateTopicA, $duplicateTopicB, $duplicateDescription]
+    );
+    $duplicateRows = $db->fetchAll(
+        "SELECT id, topic, topic_desc, topic_desc_basic, knowledge_class, knowledge_class_basic, aliases, tags
+         FROM world_knowledge
+         WHERE topic IN ($1, $2)
+         ORDER BY topic",
+        [$duplicateTopicA, $duplicateTopicB]
+    );
+    $duplicateHints = [];
+    $duplicateSeen = [];
+    foreach ($duplicateRows as $duplicateRow) {
+        $duplicatePayload = stobeWorldKnowledgeSelectKnowledgePayload($duplicateRow, ['knowall'], true);
+        stobeWorldKnowledgeAppendUniqueHints(
+            $duplicateHints,
+            [stobeWorldKnowledgeBuildHintLine(
+                strval($duplicatePayload['topic'] ?? ''),
+                strval($duplicatePayload['desc'] ?? '')
+            )],
+            $duplicateSeen
+        );
+    }
+    worldKnowledgeAliasAssert(
+        count($duplicateHints) === 1,
+        'different topics with whitespace-equivalent final lore should be inserted once'
+    );
+    $rankedDuplicateHints = queryWorldKnowledgeForNpc(
+        'UT Duplicate Tester ' . $seed,
+        'Tell me about ' . $duplicateTopicB,
+        1,
+        [
+            'name' => 'UT Duplicate Tester ' . $seed,
+            'world_knowledge_tags' => 'knowall',
+            'extended_data' => [],
+        ],
+        'chat',
+        $duplicateSeen
+    );
+    worldKnowledgeAliasAssert(
+        $rankedDuplicateHints === [],
+        'ranked retrieval should skip lore already inserted by forced retrieval'
+    );
+
+    $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_PEOPLE'");
+    worldKnowledgeAliasAssert(
+        stobeWorldKnowledgeCollectForcedPeopleSignals($personTopic, $contextNpcData, '') === [],
+        'disabled forced character knowledge should collect no context signals'
+    );
+    $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_LOCATION'");
+    worldKnowledgeAliasAssert(
+        stobeWorldKnowledgeCollectForcedLocationSignals($contextNpcData) === [],
+        'disabled forced location knowledge should collect no context signals'
     );
 
     $db->exec('ROLLBACK');

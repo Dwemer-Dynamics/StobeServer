@@ -5,7 +5,7 @@
  *
  * Behavior:
  * - Periodically refreshes enabled NPC profile fields via LLM.
- * - Interval is controlled by conf_opts key DYNAMIC_PROFILE_INTERVAL_HOURS.
+ * - Interval is controlled by the DYNAMIC_PROFILE_INTERVAL_HOURS global setting.
  * - Interval uses Kenshi in-game gamets, not wall-clock time.
  * - Per-NPC real-time cooldown prevents bursty refresh loops.
  * - Respects NPC/profile layered setting DYNAMIC_PROFILE_ENABLED.
@@ -44,16 +44,16 @@ function stobeDynamicProfileAllowedEventType(string $eventType): bool
 
 function stobeDynamicProfileIntervalHours(): int
 {
-    $raw = trim(strval(getConfOpt('DYNAMIC_PROFILE_INTERVAL_HOURS', '')));
+    $raw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_HOURS', '')));
     if ($raw === '') {
-        $raw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_HOURS', '24')));
+        $raw = trim(strval(getConfOpt('DYNAMIC_PROFILE_INTERVAL_HOURS', '')));
     }
 
     // Backward compatibility: older plugin/runtime sent minutes.
     if ($raw === '') {
         $legacyRaw = trim(strval(getConfOpt('DYNAMIC_PROFILE_INTERVAL_MINUTES', '')));
         if ($legacyRaw === '') {
-            $legacyRaw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_MINUTES', '1440')));
+            $legacyRaw = trim(strval(getSetting('DYNAMIC_PROFILE_INTERVAL_MINUTES', '')));
         }
         $legacyMinutes = parseIntLike($legacyRaw, 1440);
         if ($legacyMinutes < 1) {

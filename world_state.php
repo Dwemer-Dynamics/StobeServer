@@ -3,7 +3,7 @@
 /**
  * StobeServer - World state ingest endpoint.
  *
- * Receives serialized WorldEventStateQuery payloads from Stobe.dll.
+ * Receives static query definitions and evaluated query results from Stobe.dll.
  */
 
 error_reporting(E_ALL);
@@ -38,6 +38,60 @@ if ($gamets < 0) {
 }
 if (function_exists('stobeHandlePotentialGametsRollback')) {
     stobeHandlePotentialGametsRollback($gamets, 'world_state');
+}
+
+$source = trim(strval($payload['source'] ?? ''));
+if (in_array($source, ['world_event_state_result', 'world_event_state_snapshot'], true)) {
+    $definitionStats = [
+        'processed' => 0,
+        'rejected' => 0,
+        'deactivated' => 0,
+    ];
+    if (
+        $source === 'world_event_state_snapshot'
+        && stobeWorldStateParseBool($payload['definitions_full_snapshot'] ?? false) === true
+    ) {
+        $definitionStats = stobeStoreWorldStateDefinitions($payload);
+        if (intval($definitionStats['processed'] ?? -1) < 0) {
+            stobeLogError('world_state failed to persist loaded definitions', [
+                'gamets' => $gamets,
+                'keys' => array_keys($payload),
+            ]);
+            http_response_code(500);
+            echo json_encode(["error" => "Failed to store world-state definitions"]);
+            exit;
+        }
+    }
+
+    $stats = stobeStoreWorldStateQueryResults($payload);
+    if (intval($stats['processed'] ?? -1) < 0) {
+        stobeLogError('world_state failed to persist evaluated results', [
+            'gamets' => $gamets,
+            'keys' => array_keys($payload),
+        ]);
+        http_response_code(500);
+        echo json_encode(["error" => "Failed to store evaluated world state"]);
+        exit;
+    }
+    stobeLogInfo('world_state results stored', [
+        'gamets' => $gamets,
+        'full_snapshot' => boolval($payload['full_snapshot'] ?? false),
+        'processed' => intval($stats['processed'] ?? 0),
+        'changed' => intval($stats['changed'] ?? 0),
+        'rejected' => intval($stats['rejected'] ?? 0),
+        'definitions' => intval($definitionStats['processed'] ?? 0),
+        'definition_rejected' => intval($definitionStats['rejected'] ?? 0),
+    ]);
+    echo json_encode([
+        'status' => 'ok',
+        'gamets' => $gamets,
+        'processed' => intval($stats['processed'] ?? 0),
+        'changed' => intval($stats['changed'] ?? 0),
+        'rejected' => intval($stats['rejected'] ?? 0),
+        'definitions' => intval($definitionStats['processed'] ?? 0),
+        'definition_rejected' => intval($definitionStats['rejected'] ?? 0),
+    ]);
+    exit;
 }
 
 $inserted = storeWorldStateEntries($payload);

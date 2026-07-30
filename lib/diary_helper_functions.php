@@ -349,6 +349,64 @@ function stobeBuildDiaryHistoryText(string $npcName, int $historyLimit): string 
     return implode("\n", $historyLines);
 }
 
+/**
+ * Recall one relevant diary for narrator conversations without exposing general NPC memory.
+ */
+function stobeBuildNarratorDiaryRecallBlock(string $queryText = '', int $currentGamets = 0): string
+{
+    $narrator = function_exists('stobeGetNarrator') ? stobeGetNarrator() : null;
+    if (!$narrator || !$narrator->getBool('diary_enabled', false)) {
+        return '';
+    }
+
+    $params = [];
+    $where = ["COALESCE(BTRIM(content), '') <> ''"];
+    if ($narrator->getBool('only_diary_access', false)) {
+        $params[] = stobeNarratorName();
+        $where[] = 'LOWER(BTRIM(people)) = LOWER($' . count($params) . ')';
+    }
+    if ($currentGamets > 0) {
+        $params[] = $currentGamets;
+        $where[] = 'gamets <= $' . count($params);
+    }
+
+    $query = trim(sanitizeForKenshi($queryText));
+    $order = 'gamets DESC, localts DESC, rowid DESC';
+    if ($query !== '') {
+        $params[] = $query;
+        $queryParam = '$' . count($params);
+        $order = "ts_rank_cd(to_tsvector('simple', COALESCE(topic, '') || ' ' || COALESCE(content, '')), websearch_to_tsquery('simple', {$queryParam})) DESC, "
+            . $order;
+    }
+
+    try {
+        $row = $GLOBALS['db']->fetchOne(
+            'SELECT topic, content, people, gamets
+             FROM diarylog
+             WHERE ' . implode(' AND ', $where) . '
+             ORDER BY ' . $order . '
+             LIMIT 1',
+            $params
+        );
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Narrator diary recall failed');
+        return '';
+    }
+
+    $content = trim(strval($row['content'] ?? ''));
+    if ($content === '') {
+        return '';
+    }
+    $author = normalizeParticipantNameToken(strval($row['people'] ?? ''));
+    if (function_exists('stobeIsNarratorName') && stobeIsNarratorName($author)) {
+        $author = stobeNarratorRoleplayName();
+    }
+    $topic = trim(strval($row['topic'] ?? ''));
+    $headerParts = array_values(array_filter([$author, $topic], static fn(string $value): bool => $value !== ''));
+    $header = count($headerParts) > 0 ? implode(' - ', $headerParts) . ': ' : '';
+    return truncatePromptValue($header . $content, 1800);
+}
+
 function stobeGenerateDiaryEntryForNpc(
     string $npcName,
     int $timestamp,
@@ -364,8 +422,11 @@ function stobeGenerateDiaryEntryForNpc(
         return ['ok' => false, 'reason' => 'missing_npc_name'];
     }
 
-    $npcData = getNpcData($safeNpcName);
-    if (!$npcData) {
+    $isNarrator = function_exists('stobeIsNarratorName') && stobeIsNarratorName($safeNpcName);
+    $npcData = $isNarrator && function_exists('stobeBuildNarratorNpcData')
+        ? stobeBuildNarratorNpcData()
+        : getNpcData($safeNpcName);
+    if (!$npcData && !$isNarrator) {
         storeNpcProfile($safeNpcName, []);
         $npcData = getNpcData($safeNpcName);
     }
@@ -373,12 +434,19 @@ function stobeGenerateDiaryEntryForNpc(
         return ['ok' => false, 'reason' => 'npc_profile_missing', 'npc_name' => $safeNpcName];
     }
 
-    $autoDiaryEnabled = getNpcProfileBoolSetting(
-        $npcData,
-        ['AUTO_DIARY_ENABLED'],
-        'AUTO_DIARY_ENABLED',
-        false
-    );
+    $narrator = $isNarrator && function_exists('stobeGetNarrator') ? stobeGetNarrator() : null;
+    $manualDiaryEnabled = !$isNarrator || ($narrator && $narrator->getBool('diary_enabled', false));
+    if (!$respectAutoFlags && !$manualDiaryEnabled) {
+        return ['ok' => false, 'reason' => 'narrator_diary_disabled', 'npc_name' => $safeNpcName];
+    }
+    $autoDiaryEnabled = $isNarrator
+        ? boolval($narrator && $narrator->getBool('auto_diary_enabled', false))
+        : getNpcProfileBoolSetting(
+            $npcData,
+            ['AUTO_DIARY_ENABLED'],
+            'AUTO_DIARY_ENABLED',
+            false
+        );
     if ($respectAutoFlags && !$autoDiaryEnabled) {
         return ['ok' => false, 'reason' => 'auto_diary_disabled', 'npc_name' => $safeNpcName];
     }
@@ -482,6 +550,9 @@ function stobeGenerateDiaryEntryForNpc(
     $summaryStartGamets = intval($options['summary_start_gamets'] ?? $gamets);
     $summaryEndGamets = intval($options['summary_end_gamets'] ?? $gamets);
 
+    $promptNpcName = $isNarrator && function_exists('stobeNarratorRoleplayName')
+        ? stobeNarratorRoleplayName()
+        : $safeNpcName;
     $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
         . "\n\n"
         . buildSystemPrompt($safeNpcName, $npcData, $playerName, '', false, 'chat', intval($gamets));
@@ -497,7 +568,7 @@ function stobeGenerateDiaryEntryForNpc(
         ? stobeGetPromptTemplateValue('diary_mode_rules', $defaultDiaryModeRules)
         : $defaultDiaryModeRules;
     $diaryModeRules = strtr($diaryModeRulesTemplate, [
-        '#NPC_NAME#' => stobePromptXmlEscape($safeNpcName),
+        '#NPC_NAME#' => stobePromptXmlEscape($promptNpcName),
         '#CURRENT_INGAME_DATETIME#' => stobePromptXmlEscape(strval($kenshiDate['date_label'] ?? '')),
     ]);
     $systemPrompt .= "\n\n" . $diaryModeRules;
@@ -520,8 +591,8 @@ function stobeGenerateDiaryEntryForNpc(
     );
     $diaryPrompt = strtr($diaryPromptTemplate, [
         '#PLAYER_NAME#' => $playerName,
-        '#NPC_NAME#' => $safeNpcName,
-        '#HERIKA_NAME#' => $safeNpcName,
+        '#NPC_NAME#' => $promptNpcName,
+        '#HERIKA_NAME#' => $promptNpcName,
         '#KENSHI_DAY#' => strval(intval($kenshiDate['day_number'] ?? 1)),
         '#KENSHI_TIME_LABEL#' => strval($kenshiDate['time_label'] ?? 'Midday'),
         '#KENSHI_TIME_24#' => strval($kenshiDate['clock_24'] ?? '00:00'),
@@ -596,6 +667,16 @@ function stobeGenerateDiaryEntryForNpc(
             $gamets,
         ]
     );
+    if (function_exists('stobeRegularMemoryStoreRow')) {
+        stobeRegularMemoryStoreRow(
+            $safeNpcName,
+            $diaryContent,
+            'diary',
+            intval($gamets),
+            intval($nowTs),
+            $location
+        );
+    }
 
     setConfOpt($cooldownKey, strval($nowTs));
 
@@ -790,6 +871,52 @@ function stobeMaybeRunAutoDiaryCycle(int $timestamp, int $gamets): void {
             }
 
             $processed++;
+        }
+
+        $narrator = function_exists('stobeGetNarrator') ? stobeGetNarrator() : null;
+        if ($narrator && $narrator->getBool('auto_diary_enabled', false)) {
+            $summaryDay = stobeResolveAutoDiaryEligibleSummaryDay($gamets, 21);
+            $lastNarratorDay = intval(getConfOpt('NARRATOR_AUTO_DIARY_LAST_DAY', '-1'));
+            if ($summaryDay >= 0 && $lastNarratorDay < $summaryDay) {
+                $summaryRange = stobeDiaryDayGametsRange($summaryDay);
+                $narratorName = stobeNarratorName();
+                $historyText = stobeBuildDiaryHistoryTextForGametsRange(
+                    $narratorName,
+                    intval($summaryRange['start'] ?? 0),
+                    intval($summaryRange['end'] ?? 0),
+                    200
+                );
+                $attempted++;
+                if ($historyText !== '') {
+                    $result = stobeGenerateDiaryEntryForNpc(
+                        $narratorName,
+                        $timestamp,
+                        intval($summaryRange['end'] ?? $gamets),
+                        'auto_diary_day',
+                        true,
+                        false,
+                        true,
+                        [
+                            'history_text' => $historyText,
+                            'history_limit_override' => 200,
+                            'kenshi_date_override' => stobeBuildKenshiDateFromGamets(
+                                intval($summaryRange['end'] ?? $gamets)
+                            ),
+                            'summary_day_index' => $summaryDay,
+                            'summary_start_gamets' => intval($summaryRange['start'] ?? 0),
+                            'summary_end_gamets' => intval($summaryRange['end'] ?? $gamets),
+                        ]
+                    );
+                    if (boolval($result['ok'] ?? false)) {
+                        $generated++;
+                    } else {
+                        $failed++;
+                    }
+                } else {
+                    $skipped++;
+                }
+                setConfOpt('NARRATOR_AUTO_DIARY_LAST_DAY', strval($summaryDay), true);
+            }
         }
 
         setConfOpt('AUTO_DIARY_LAST_RUN_TS', strval(time()), true);

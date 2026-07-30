@@ -225,11 +225,11 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.9.3';
+    $serverVersionDisplay = '0.9.5';
 }
 $serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
 if ($serverReleaseDate === '') {
-    $serverReleaseDate = '2026-07-26';
+    $serverReleaseDate = '2026-07-29';
 }
 
 $pluginVersionDisplay = 'N/A';
@@ -255,14 +255,28 @@ if (trim($currentInGameTime) === '') {
     $currentInGameTime = 'N/A';
 }
 
-$backgroundProcessorRunning = false;
+$backgroundProcessorStatus = [
+    'healthy' => false,
+    'state' => 'unknown',
+    'last_tick_age_seconds' => null,
+];
 try {
-    if (function_exists('stobeBackgroundProcessorIsRunning')) {
-        $backgroundProcessorRunning = stobeBackgroundProcessorIsRunning();
+    if (function_exists('stobeBackgroundProcessorStatus')) {
+        $backgroundProcessorStatus = stobeBackgroundProcessorStatus();
     }
 } catch (Throwable $exception) {
-    $backgroundProcessorRunning = false;
+    $backgroundProcessorStatus['state'] = 'unknown';
 }
+$backgroundProcessorState = strval($backgroundProcessorStatus['state'] ?? 'unknown');
+$backgroundProcessorAge = $backgroundProcessorStatus['last_tick_age_seconds'] ?? null;
+$backgroundProcessorDisplay = match ($backgroundProcessorState) {
+    'running' => 'Running',
+    'starting' => 'Starting (waiting for manager tick)',
+    'stalled' => 'Stalled'
+        . (is_int($backgroundProcessorAge) ? ' (last tick ' . $backgroundProcessorAge . 's ago)' : ''),
+    'offline' => 'Not running',
+    default => 'Unknown',
+};
 
 $currentPlaythroughContent = "
 <div class='quest-list'>
@@ -271,7 +285,7 @@ $currentPlaythroughContent = "
         <tr><th>Stats</th><th>Value</th></tr>
         <tr><td>Last Played (UTC)</td><td>" . h($lastPlayedUtc) . "</td></tr>
         <tr><td>Current In-Game Time</td><td>" . h($currentInGameTime) . "</td></tr>
-        <tr><td>Background Processor</td><td>" . ($backgroundProcessorRunning ? "Running" : "Not running") . "</td></tr>
+        <tr><td>Background Processor</td><td>" . h($backgroundProcessorDisplay) . "</td></tr>
     </table>
 </div>";
 

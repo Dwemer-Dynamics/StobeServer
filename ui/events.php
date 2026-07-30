@@ -6,6 +6,7 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+require_once($path . "lib/event_filter_functions.php");
 $isEmbed = isset($_GET['embed']) && (string)$_GET['embed'] === '1';
 
 function h(mixed $value): string
@@ -44,11 +45,6 @@ function eventsUrl(int $page, int $limit, bool $autorefresh = false, array $extr
     return "events.php?" . http_build_query($params);
 }
 
-function stobeEventsDefaultHiddenTypes(): array
-{
-    return ['inputtext', 'inputtext_s', 'bored', 'infonpc', 'infonpc_close', 'infoloc'];
-}
-
 function stobeEventsTypePlaceholders(int $count, int $startIndex = 1): string
 {
     $placeholders = [];
@@ -58,39 +54,6 @@ function stobeEventsTypePlaceholders(int $count, int $startIndex = 1): string
         $nextIndex++;
     }
     return implode(', ', $placeholders);
-}
-
-function stobeNormalizeTypeList(array $types): array
-{
-    $normalized = [];
-    foreach ($types as $type) {
-        $type = trim((string)$type);
-        if ($type === '') {
-            continue;
-        }
-        $normalized[$type] = $type;
-    }
-    return array_values($normalized);
-}
-
-function stobeEventsPersistedHiddenConfKey(): string
-{
-    return 'stobe_eventlog_hidden_types';
-}
-
-function stobeEventsPersistedHiddenTypes(): array
-{
-    $rawValue = trim(getConfOpt(stobeEventsPersistedHiddenConfKey(), ''));
-    if ($rawValue === '') {
-        return [];
-    }
-
-    $decoded = json_decode($rawValue, true);
-    if (is_array($decoded)) {
-        return stobeNormalizeTypeList($decoded);
-    }
-
-    return stobeNormalizeTypeList(explode(',', $rawValue));
 }
 
 function stobeEventsSavePersistedHiddenTypes(array $types): void
@@ -104,14 +67,6 @@ function stobeEventsSavePersistedHiddenTypes(array $types): void
     }
 
     setConfOpt($confKey, json_encode(array_values($normalized), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-}
-
-function stobeEventsAllHiddenTypes(array $persistedHiddenTypes = []): array
-{
-    return stobeNormalizeTypeList(array_merge(
-        stobeEventsDefaultHiddenTypes(),
-        $persistedHiddenTypes
-    ));
 }
 
 function safeFetchAll(sql $db, string $query, array $params = []): array
@@ -202,6 +157,18 @@ if (isset($_GET["delete_last"])) {
         header("Location: " . eventsUrl($page, $limit, $isAutoRefresh));
         exit;
     }
+}
+
+// Handle deletion of one visible row.
+if (isset($_POST["delete_row"])) {
+    $rowid = max(0, intval($_POST["rowid"] ?? 0));
+    if ($rowid > 0) {
+        safeExec($db, "DELETE FROM eventlog WHERE rowid = $1", [$rowid]);
+        header("Location: " . eventsUrl($page, $limit, $isAutoRefresh, ["deleted" => 1]));
+        exit;
+    }
+    header("Location: " . eventsUrl($page, $limit, $isAutoRefresh, ["error" => "invalid_delete"]));
+    exit;
 }
 
 // Handle bulk delete selected.
@@ -311,7 +278,7 @@ $visibleTypeRows = safeFetchAll(
     <title>Events</title>
     <link rel="icon" type="image/x-icon" href="/StobeServer/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/main.css?v=<?= (int) @filemtime(__DIR__ . '/css/main.css') ?>">
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         body {
@@ -564,7 +531,6 @@ $visibleTypeRows = safeFetchAll(
                         <th>Location</th>
                         <th>Game Time</th>
                         <th>Time (UTC)</th>
-                        <th>TS</th>
                         <th>ROWID</th>
                     </tr>
                     </thead>
@@ -579,12 +545,17 @@ $visibleTypeRows = safeFetchAll(
                                 <td><?= h($row["location"] ?? "") ?></td>
                                 <td><?= h(formatGameTs($row["gamets"] ?? 0)) ?></td>
                                 <td><?= h(formatLocalTs($row["localts"] ?? 0)) ?></td>
-                                <td><?= h($row["ts"] ?? "") ?></td>
-                                <td><?= intval($row["rowid"] ?? 0) ?></td>
+                                <td>
+                                    <form method="post" action="<?= h(eventsUrl($page, $limit, $isAutoRefresh)) ?>" onsubmit="return confirm('Delete this event row?');" style="display:inline">
+                                        <input type="hidden" name="delete_row" value="1">
+                                        <input type="hidden" name="rowid" value="<?= intval($row["rowid"] ?? 0) ?>">
+                                        <button type="submit" class="rowid-delete-link"><?= intval($row["rowid"] ?? 0) ?> <i class="bi-trash" aria-hidden="true"></i></button>
+                                    </form>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="9">No event rows found.</td></tr>
+                        <tr><td colspan="8">No event rows found.</td></tr>
                     <?php endif; ?>
                     </tbody>
                 </table>
@@ -610,6 +581,7 @@ let lastRowIdEventLog = 0;
 let totalNewEventsEventLog = 0;
 const currentPageEventLog = <?= intval($page) ?>;
 const currentLimitEventLog = <?= intval($limit) ?>;
+const rowDeleteActionEventLog = <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh)) ?>;
 const deleteLatestEventLogUrls = {
     20: <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh, ["delete_last" => 20])) ?>,
     50: <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh, ["delete_last" => 50])) ?>,
@@ -795,7 +767,6 @@ function updateEventTableEventLog() {
                         row["Location"] || "",
                         row["Game Time"] || "",
                         row["Time (UTC)"] || "",
-                        row["TS"] || "",
                         String(row["ROWID"] || "")
                     ];
 
@@ -803,6 +774,9 @@ function updateEventTableEventLog() {
                         const td = document.createElement("td");
                         if (idx === 0) {
                             td.innerHTML = '<input type="checkbox" class="event-checkbox" data-rowid="' + String(row["ROWID"] || "") + '" style="cursor: pointer; width: 18px; height: 18px;">';
+                        } else if (idx === values.length - 1) {
+                            const rowId = String(row["ROWID"] || "");
+                            td.innerHTML = '<form method="post" action="' + rowDeleteActionEventLog + '" onsubmit="return confirm(\'Delete this event row?\');" style="display:inline"><input type="hidden" name="delete_row" value="1"><input type="hidden" name="rowid" value="' + rowId + '"><button type="submit" class="rowid-delete-link">' + rowId + ' <i class="bi-trash" aria-hidden="true"></i></button></form>';
                         } else {
                             td.textContent = val;
                         }

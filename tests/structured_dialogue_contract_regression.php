@@ -99,6 +99,30 @@ $requiredFields = is_array($responseFormat['json_schema']['schema']['required'] 
     : [];
 contractAssertSameList($expectedFieldOrder, $requiredFields, 'Schema required fields should match prompt contract');
 
+$narrator = new Narrator();
+$originalInlineNarrationMode = strval($narrator->get('inline_narration_mode') ?? 'disabled');
+$narrator->set('inline_narration_mode', 'narrator');
+$inlineResponseFormat = stobeBuildStructuredDialogueResponseFormat('Esata the Stone Golem', false, null, 'chat');
+$inlineMessageDescription = strval(
+    $inlineResponseFormat['json_schema']['schema']['properties']['message']['description'] ?? ''
+);
+contractAssertTrue(
+    str_contains($inlineMessageDescription, 'begin with one brief third-person scene description in single asterisks'),
+    'Enabled inline narration should be required by the structured response schema'
+);
+$inlineContractPrompt = stobeBuildOutputContractUserPrompt(
+    'Esata the Stone Golem',
+    false,
+    false,
+    null,
+    'chat'
+);
+contractAssertTrue(
+    str_contains($inlineContractPrompt, 'begin with one brief third-person scene description in single asterisks'),
+    'Enabled inline narration should be required by the fallback JSON contract'
+);
+$narrator->set('inline_narration_mode', $originalInlineNarrationMode);
+
 $herikaStyle = stobeParseStructuredDialogueResponse(
     '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler.","mood":"kindly","action":"Talk","target":"RANGROO","item":"","lang":"en","amount":0}',
     'chat'

@@ -198,6 +198,112 @@ function stobePocketTtsIsAudioCpp(string $endpoint): bool {
     return preg_match('/\:8086(?:\/|$)/', $endpoint) === 1 || strpos($endpoint, '/v1/audio/speech') !== false;
 }
 
+function stobePocketTtsProbeJson(string $url): array {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_CONNECTTIMEOUT_MS => 350,
+        CURLOPT_TIMEOUT_MS => 1000,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+    curl_close($ch);
+
+    return [
+        'ok' => is_string($response) && $httpCode >= 200 && $httpCode < 300,
+        'decoded' => is_string($response) ? json_decode($response, true) : null,
+    ];
+}
+
+function stobePocketTtsDetectEndpointMode(string $endpoint): string {
+    $endpoint = rtrim($endpoint, '/');
+    $endpoint = preg_replace('#/(?:v1/audio/speech|tts_to_audio)/?$#', '', $endpoint);
+    $health = stobePocketTtsProbeJson($endpoint . '/health');
+    $models = $health['ok']
+        ? stobePocketTtsProbeJson($endpoint . '/v1/models')
+        : ['ok' => false, 'decoded' => null];
+    if ($health['ok'] && $models['ok']) {
+        foreach (($models['decoded']['data'] ?? []) as $model) {
+            $modelId = strtolower(trim(strval($model['id'] ?? '')));
+            $family = strtolower(trim(strval($model['family'] ?? '')));
+            if ($modelId === 'pocket-tts' || $family === 'pocket_tts') {
+                return 'audio_cpp';
+            }
+        }
+    }
+
+    $providerInfo = stobePocketTtsProbeJson($endpoint . '/provider_info');
+    $provider = strtolower(trim(strval($providerInfo['decoded']['provider'] ?? '')));
+    if ($providerInfo['ok'] && in_array($provider, ['pockettts', 'pocket_tts', 'pocket-tts'], true)) {
+        return 'standard';
+    }
+
+    $openApi = stobePocketTtsProbeJson($endpoint . '/openapi.json');
+    if (!$openApi['ok'] || !is_array($openApi['decoded'])) {
+        return '';
+    }
+    $paths = array_keys(is_array($openApi['decoded']['paths'] ?? null) ? $openApi['decoded']['paths'] : []);
+    if (in_array('/languages', $paths, true) || in_array('/get_models_list', $paths, true)) {
+        return '';
+    }
+    if (in_array('/tts_to_audio_form', $paths, true)
+        || (in_array('/tts_to_audio', $paths, true) && in_array('/voices/{voice_id}', $paths, true))) {
+        return 'standard';
+    }
+    return '';
+}
+
+function stobePocketTtsShouldTryFallback(string $endpoint, int $httpCode): bool {
+    return $httpCode === 0
+        || (in_array($httpCode, [404, 405], true)
+            && stobePocketTtsDetectEndpointMode($endpoint) === '');
+}
+
+// Finds a compatible PocketTTS service on the same host after a stale known port fails.
+function stobePocketTtsFindFallbackEndpoint(string $configuredEndpoint): ?string {
+    $normalized = rtrim(trim($configuredEndpoint), '/');
+    $parts = parse_url($normalized);
+    $configuredPort = intval($parts['port'] ?? 0);
+    if (!in_array($configuredPort, [8020, 8024, 8086], true) || empty($parts['host'])) {
+        return null;
+    }
+    $scheme = strtolower(strval($parts['scheme'] ?? 'http'));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        return null;
+    }
+    $host = strval($parts['host']);
+    if (strpos($host, ':') !== false && $host[0] !== '[') {
+        $host = '[' . $host . ']';
+    }
+    $auth = '';
+    if (isset($parts['user'])) {
+        $auth = $parts['user'] . (isset($parts['pass']) ? ':' . $parts['pass'] : '') . '@';
+    }
+    $path = preg_replace(
+        '#/(?:v1/audio/speech|tts_to_audio)/?$#',
+        '',
+        strval($parts['path'] ?? '')
+    );
+    $path = $path === '/' ? '' : rtrim($path, '/');
+
+    foreach ([8086, 8024, 8020] as $port) {
+        if ($port === $configuredPort) {
+            continue;
+        }
+        $candidate = $scheme . '://' . $auth . $host . ':' . $port . $path;
+        $mode = stobePocketTtsDetectEndpointMode($candidate);
+        if ($mode === '') {
+            continue;
+        }
+        if ($mode === 'audio_cpp' && !stobePocketTtsIsAudioCpp($candidate)) {
+            $candidate .= '/v1/audio/speech';
+        }
+        return $candidate;
+    }
+    return null;
+}
+
 function stobeIsRiffWavFile(string $path): bool {
     if ($path === '' || !is_file($path) || !is_readable($path)) {
         return false;
@@ -1355,7 +1461,12 @@ function stobeGetOrCreateCartesiaVoiceId(string $voiceId, array $runtime): strin
     return $remoteId;
 }
 
-function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechText, array $runtime): string|false {
+function stobeSynthesizeViaLocalProviderCore(
+    string $provider,
+    string $speechText,
+    array $runtime,
+    bool $allowPocketTtsPortFallback = true
+): string|false {
     $endpoint = trim(strval($runtime['endpoint'] ?? ''));
     if ($endpoint === '') {
         return false;
@@ -1445,6 +1556,27 @@ function stobeSynthesizeViaLocalProviderCore(string $provider, string $speechTex
     $responseBody = strval($requestResult['response'] ?? '');
 
     if (!is_string($binary) || $binary === '' || $httpCode < 200 || $httpCode >= 300) {
+        if ($provider === 'pocket_tts'
+            && $allowPocketTtsPortFallback
+            && stobePocketTtsShouldTryFallback($endpoint, $httpCode)) {
+            $fallbackEndpoint = stobePocketTtsFindFallbackEndpoint($endpoint);
+            if ($fallbackEndpoint !== null) {
+                $logEndpoint = preg_replace('#//[^/@]+@#', '//', $endpoint);
+                $logFallbackEndpoint = preg_replace('#//[^/@]+@#', '//', $fallbackEndpoint);
+                stobeLogWarn('PocketTTS endpoint unavailable; retrying compatible endpoint', [
+                    'configured_endpoint' => $logEndpoint,
+                    'fallback_endpoint' => $logFallbackEndpoint,
+                ]);
+                $runtime['endpoint'] = $fallbackEndpoint;
+                return stobeSynthesizeViaLocalProviderCore(
+                    $provider,
+                    $speechText,
+                    $runtime,
+                    false
+                );
+            }
+        }
+
         if (in_array($provider, ['xtts', 'omnivoice'], true)) {
             $responseDetail = '';
             if ($responseBody !== '') {

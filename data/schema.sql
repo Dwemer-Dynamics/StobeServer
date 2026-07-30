@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS diarylog (
 CREATE INDEX IF NOT EXISTS idx_diarylog_people ON diarylog (people);
 CREATE INDEX IF NOT EXISTS idx_diarylog_gamets ON diarylog (gamets DESC, localts DESC, rowid DESC);
 CREATE INDEX IF NOT EXISTS idx_diarylog_localts ON diarylog (localts DESC);
+CREATE INDEX IF NOT EXISTS idx_diarylog_people_gamets ON diarylog (LOWER(TRIM(people)), gamets DESC, localts DESC, rowid DESC);
 
 -- ----------------------------------------------------------
 -- GENERAL_SETTINGS — All configuration (no conf.php)
@@ -73,6 +74,10 @@ CREATE TABLE IF NOT EXISTS conf_opts (
     value TEXT DEFAULT '',
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+INSERT INTO conf_opts (id, value, updated_at)
+VALUES ('stobe_profile_model', '1', NOW())
+ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------
 -- PROMPTS - Default + custom prompt templates
@@ -230,6 +235,116 @@ CREATE INDEX IF NOT EXISTS idx_world_state_source ON world_state (source);
 CREATE INDEX IF NOT EXISTS idx_world_state_rule_category ON world_state (rule_category);
 CREATE INDEX IF NOT EXISTS idx_world_state_query_name_lower ON world_state (LOWER(query_name));
 CREATE INDEX IF NOT EXISTS idx_world_state_entity_name_lower ON world_state (LOWER(entity_name));
+
+-- ----------------------------------------------------------
+-- WORLD_STATE_DEFINITION - loaded vanilla and mod query definitions
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state_definition (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    source_mod TEXT NOT NULL DEFAULT '',
+    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+    rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+    runtime_catalog_id TEXT NOT NULL DEFAULT '',
+    is_vanilla BOOLEAN NOT NULL DEFAULT FALSE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    first_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_world_state_definition_active
+    ON world_state_definition (active, query_name);
+CREATE INDEX IF NOT EXISTS idx_world_state_definition_source
+    ON world_state_definition (source_mod, active);
+
+-- ----------------------------------------------------------
+-- WORLD_STATE_QUERY_RESULT - current evaluated query values
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state_query_result (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    is_true BOOLEAN NOT NULL,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    catalog_sha256 TEXT NOT NULL DEFAULT '',
+    first_observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_evaluated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    changed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_result_value
+    ON world_state_query_result (is_true, query_name);
+CREATE INDEX IF NOT EXISTS idx_world_state_query_result_evaluated
+    ON world_state_query_result (last_evaluated_at DESC);
+
+-- ----------------------------------------------------------
+-- WORLD_STATE_ADDENDUM - generated defaults + user overrides
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS world_state_addendum (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    source_mod TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT 'vanilla',
+    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    when_true TEXT NOT NULL DEFAULT '',
+    when_false TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    catalog_sha256 TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS world_state_addendum_custom (
+    query_id TEXT PRIMARY KEY,
+    query_name TEXT NOT NULL DEFAULT '',
+    source_mod TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT 'custom',
+    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    when_true TEXT NOT NULL DEFAULT '',
+    when_false TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_world_state_addendum_enabled
+    ON world_state_addendum (enabled, query_id);
+CREATE INDEX IF NOT EXISTS idx_world_state_addendum_origin
+    ON world_state_addendum (origin, source_mod);
+CREATE INDEX IF NOT EXISTS idx_world_state_addendum_custom_enabled
+    ON world_state_addendum_custom (enabled, query_id);
+
+CREATE OR REPLACE VIEW combined_world_state_addendum AS
+SELECT
+    c.query_id,
+    c.query_name,
+    c.source_mod,
+    c.origin,
+    c.matched_topics,
+    c.when_true,
+    c.when_false,
+    c.enabled,
+    ''::TEXT AS catalog_sha256,
+    c.created_at,
+    c.updated_at,
+    TRUE AS is_custom
+FROM world_state_addendum_custom c
+UNION ALL
+SELECT
+    b.query_id,
+    b.query_name,
+    b.source_mod,
+    b.origin,
+    b.matched_topics,
+    b.when_true,
+    b.when_false,
+    b.enabled,
+    b.catalog_sha256,
+    b.created_at,
+    b.updated_at,
+    FALSE AS is_custom
+FROM world_state_addendum b
+LEFT JOIN world_state_addendum_custom c ON c.query_id = b.query_id
+WHERE c.query_id IS NULL;
 
 -- ----------------------------------------------------------
 -- FACTION_RELATIONS - global faction-to-faction current state
@@ -724,6 +839,10 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     is_player_faction_profile BOOLEAN DEFAULT FALSE,
     prompt_head TEXT DEFAULT '',
     profile_prompt TEXT DEFAULT '',
+    llm_primary_id INT,
+    llm_secondary_id INT,
+    llm_tertiary_id INT,
+    llm_quaternary_id INT,
     response_connector INT,
     diary_connector INT,
     autochat_connector INT,
@@ -1672,28 +1791,11 @@ BEGIN
     END IF;
 END $$;
 
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'core_profiles'
-          AND column_name = 'llm_primary_id'
-    ) THEN
-        UPDATE core_profiles
-        SET response_connector = CASE
-            WHEN response_connector IS NULL THEN llm_primary_id
-            ELSE response_connector
-        END
-        WHERE llm_primary_id IS NOT NULL;
-
-        ALTER TABLE core_profiles DROP CONSTRAINT IF EXISTS core_profiles_llm_primary_fk;
-        ALTER TABLE core_profiles DROP COLUMN IF EXISTS llm_primary_id;
-    END IF;
-END $$;
-
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS response_connector INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_primary_id INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_secondary_id INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_tertiary_id INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_quaternary_id INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS diary_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS autochat_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS middleterm_connector INT;
@@ -1724,6 +1826,10 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
     "BORED_EVENT_CHANCE": 50
 }$$::jsonb;
+
+UPDATE core_profiles
+SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+    response_connector = COALESCE(response_connector, llm_primary_id);
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
@@ -1803,6 +1909,50 @@ BEGIN
         ALTER TABLE core_profiles
         ADD CONSTRAINT core_profiles_tts_connector_fk
         FOREIGN KEY (tts_connector_id) REFERENCES core_tts_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_primary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_primary_fk
+        FOREIGN KEY (llm_primary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_secondary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_secondary_fk
+        FOREIGN KEY (llm_secondary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_tertiary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_tertiary_fk
+        FOREIGN KEY (llm_tertiary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_quaternary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_quaternary_fk
+        FOREIGN KEY (llm_quaternary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -3424,11 +3574,14 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 
 ('WORLD_KNOWLEDGE_ENABLED',        'true',         'Enable world knowledge retrieval'),
 ('ALWAYS_INSERT_RACE',             'true',         'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.'),
+('ALWAYS_INSERT_LOCATION',         'true',         'When true, always inject matching World Knowledge for locations shown in the current prompt context.'),
+('ALWAYS_INSERT_PEOPLE',           'true',         'When true, always inject matching World Knowledge for characters shown in the current prompt context.'),
 ('WORLD_KNOWLEDGE_AMOUNT',         '2',            'Max extracted world knowledge topics per turn'),
 ('WORLD_KNOWLEDGE_CONTEXT_HISTORY','16',           'Recent event rows used for world knowledge keyword context'),
 ('WORLD_KNOWLEDGE_CONTEXT_KEYWORDS','8',           'Max world knowledge context keywords'),
 ('WORLD_KNOWLEDGE_MIN_RANK',       '3.30',         'Minimum combined rank for world knowledge hints (Herika-aligned threshold)'),
 ('DYNAMIC_PROFILE_LOAD_GRACE_SECONDS', '60', 'Cooldown after detected save-load gamets rewind before dynamic profile runs again'),
+('DYNAMIC_PROFILE_INTERVAL_HOURS', '24', 'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.'),
 ('HTTP_TIMEOUT',         '60',           'LLM request timeout seconds'),
 ('MEMORY_ENABLED',       'true',         'Enable memory retrieval/injection'),
 ('TXTAI_URL',            'http://127.0.0.1:8082', 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.'),
@@ -3898,6 +4051,15 @@ WHERE COALESCE(
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ) IS NOT NULL;
+
+UPDATE core_profiles
+SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+    response_connector = COALESCE(response_connector, llm_primary_id);
+
+UPDATE core_profiles
+SET metadata = metadata - 'LLM_RESPONSE_MODE'
+WHERE jsonb_typeof(metadata) = 'object'
+  AND metadata ? 'LLM_RESPONSE_MODE';
 
 CREATE TABLE IF NOT EXISTS core_narrator (
     id TEXT PRIMARY KEY,

@@ -128,6 +128,9 @@ function stobeFormatEventHistoryLine(array $row, bool $includeGamets = true): st
     if ($historyData === '') {
         return '';
     }
+    if (function_exists('stobeRenderNarratorDisplayText')) {
+        $historyData = stobeRenderNarratorDisplayText($historyData);
+    }
 
     if (!$includeGamets) {
         return '[' . $historyType . '] ' . $historyData;

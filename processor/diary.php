@@ -4,7 +4,7 @@
  * Diary processor - profile-driven diary generation for NPCs.
  */
 
-storeEvent($eventType, $timestamp, $gamets, $eventData);
+storeEvent($eventType, $timestamp, $gamets, $eventData, 'pending', '', '', false);
 
 $normalizedEventType = strtolower(trim(strval($eventType)));
 $respectAutoFlags = false;
@@ -32,7 +32,7 @@ stobeLogInfo('Diary event start', [
     'data_preview' => $eventDataPreview,
 ]);
 
-if ($normalizedEventType !== 'diary') {
+if (!in_array($normalizedEventType, ['diary', 'diary_narrator'], true)) {
     $response['reason'] = 'manual_only';
     $response['status_message'] = 'Diary skipped: manual diary trigger only.';
     stobeLogInfo('Diary event skipped: unsupported trigger type', [
@@ -43,7 +43,9 @@ if ($normalizedEventType !== 'diary') {
     return;
 }
 
-$candidates = stobeExtractDiaryCandidates($normalizedEventType, $eventData);
+$candidates = $normalizedEventType === 'diary_narrator'
+    ? [stobeNarratorName()]
+    : stobeExtractDiaryCandidates($normalizedEventType, $eventData);
 if (!$respectAutoFlags) {
     $explicitProfile = normalizeParticipantNameToken(strval($_GET['profile'] ?? ''));
     if ($explicitProfile !== '') {

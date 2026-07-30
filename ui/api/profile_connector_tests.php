@@ -162,7 +162,10 @@ function stobeProfileConnectorTestsBuildPlan(): array
 {
     $slotDefinitions = [
         ['field' => 'tts_connector_id', 'type' => 'tts', 'label' => 'TTS Connector', 'required' => false],
-        ['field' => 'response_connector', 'type' => 'llm', 'label' => 'Response LLM', 'required' => true],
+        ['field' => 'llm_primary_id', 'type' => 'llm', 'label' => 'Standard LLM', 'required' => true],
+        ['field' => 'llm_secondary_id', 'type' => 'llm', 'label' => 'Fast LLM', 'required' => false],
+        ['field' => 'llm_tertiary_id', 'type' => 'llm', 'label' => 'Powerful LLM', 'required' => false],
+        ['field' => 'llm_quaternary_id', 'type' => 'llm', 'label' => 'Experimental LLM', 'required' => false],
         ['field' => 'diary_connector', 'type' => 'llm', 'label' => 'Diary LLM', 'required' => false],
         ['field' => 'autochat_connector', 'type' => 'llm', 'label' => 'Autochat LLM', 'required' => false],
         ['field' => 'middleterm_connector', 'type' => 'llm', 'label' => 'Middle-Term Memory LLM', 'required' => false],

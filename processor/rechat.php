@@ -922,10 +922,10 @@ $relationshipEval = stobeEvaluateRelationshipsForTurn(
     $npcData,
     'rechat'
 );
-$responseText = stobeStripParentheticalDialogueText(
-    sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)))
-);
-$responseText = stobeStripParentheticalDialogueText($responseText);
+$responseText = sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)));
+if (!stobeInlineNarrationApplies($respondingNpc, 'rechat')) {
+    $responseText = stobeStripParentheticalDialogueText($responseText);
+}
 
 if ($responseText === '' && count($responseActions) === 0) {
     echo "ok";
@@ -989,5 +989,13 @@ if ($alreadyStreamed) {
         streamResponse($respondingNpc, 'ScriptQueue', '', $npcData, $responseActions, 'rechat', $replyTarget, $gamets);
     }
 } else {
-    streamResponse($respondingNpc, 'ScriptQueue', $responseText, $npcData, $responseActions, 'rechat', $replyTarget, $gamets);
+    stobeStreamDialogueResponse(
+        $respondingNpc,
+        $npcData,
+        $responseText,
+        $responseActions,
+        'rechat',
+        $replyTarget,
+        intval($gamets)
+    );
 }

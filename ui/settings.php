@@ -58,9 +58,24 @@ try {
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
             ],
             [
+                'id' => 'ALWAYS_INSERT_LOCATION',
+                'value' => 'true',
+                'description' => 'When true, always inject matching World Knowledge for locations shown in the current prompt context.',
+            ],
+            [
+                'id' => 'ALWAYS_INSERT_PEOPLE',
+                'value' => 'true',
+                'description' => 'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
+            ],
+            [
                 'id' => 'TXTAI_URL',
                 'value' => 'http://127.0.0.1:8082',
                 'description' => 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
+            ],
+            [
+                'id' => 'DYNAMIC_PROFILE_INTERVAL_HOURS',
+                'value' => '24',
+                'description' => 'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.',
             ],
         ];
 
@@ -196,6 +211,9 @@ function stobeSettingType(string $id, string $value): string
     if ($idUpper === 'RECHAT_MODE') {
         return 'select';
     }
+    if ($idUpper === 'DYNAMIC_PROFILE_INTERVAL_HOURS') {
+        return 'int';
+    }
     if (stobeSettingLooksBoolean($value)) {
         return 'bool';
     }
@@ -233,6 +251,9 @@ function stobeSettingSelectOptions(string $id): array
 function stobeNormalizeSettingValue(string $id, string $rawValue, string $type): string
 {
     $value = trim($rawValue);
+    if (strtoupper(trim($id)) === 'DYNAMIC_PROFILE_INTERVAL_HOURS') {
+        return strval(max(1, min(720, intval($value))));
+    }
     if ($type === 'bool') {
         $lower = strtolower($value);
         return in_array($lower, ['1', 'true', 'yes', 'on'], true) ? 'true' : 'false';
@@ -261,7 +282,13 @@ function stobeInferGroup(string $id): string
     if (str_starts_with($idUpper, 'MEMORY_') || str_starts_with($idUpper, 'INDIVIDUAL_MEMORY_') || $idUpper === 'TXTAI_URL') {
         return 'Memory';
     }
-    if (str_starts_with($idUpper, 'WORLD_KNOWLEDGE_') || $idUpper === 'ALWAYS_INSERT_RACE') {
+    if (str_starts_with($idUpper, 'DYNAMIC_PROFILE_')) {
+        return 'Core';
+    }
+    if (
+        str_starts_with($idUpper, 'WORLD_KNOWLEDGE_')
+        || in_array($idUpper, ['ALWAYS_INSERT_RACE', 'ALWAYS_INSERT_LOCATION', 'ALWAYS_INSERT_PEOPLE'], true)
+    ) {
         return 'World Knowledge';
     }
     if (str_starts_with($idUpper, 'BORED_EVENT_')) {
@@ -274,7 +301,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'WHISPER_')
         || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE'], true)
     ) {
-        return 'Rechat';
+        return 'Prompt & Rechat';
     }
     if (in_array($idUpper, [
         'CONTEXT_HISTORY',
@@ -291,7 +318,7 @@ function stobeInferGroup(string $id): string
         return 'Core';
     }
     if (in_array($idUpper, ['PROMPT_HEAD', 'EMOTEMOODS', 'ROLEPLAY_INSTRUCTIONS', 'GENERAL_INSTRUCTIONS', 'ACTIONS_ALLOWLIST'], true)) {
-        return 'Prompting';
+        return 'Prompt & Rechat';
     }
     return 'Other';
 }
@@ -299,11 +326,10 @@ function stobeInferGroup(string $id): string
 function stobeGroupSortWeight(string $group): int
 {
     static $weights = [
-        'Prompting' => 5,
-        'Core' => 10,
-        'Rechat' => 20,
+        'Prompt & Rechat' => 5,
+        'Memory' => 10,
+        'Core' => 20,
         'Bored Event' => 30,
-        'Memory' => 40,
         'World Knowledge' => 50,
         'LLM & API' => 70,
         'Other' => 80,
@@ -331,6 +357,8 @@ function stobePrettySettingLabel(string $id): string
         'PLAYER_FACTION_CUSTOM_NAME' => 'Player Faction Custom Name',
         'PLAYER_FACTION_PROMPT' => 'Player Faction Prompt',
         'ALWAYS_INSERT_RACE' => 'Always Insert Race Knowledge',
+        'ALWAYS_INSERT_LOCATION' => 'Always Insert Location Knowledge',
+        'ALWAYS_INSERT_PEOPLE' => 'Always Insert Character Knowledge',
         'BRACKET_ORIGINAL_NAME' => 'Bracket Original Name',
         'RECHAT_MODE' => 'Rechat Mode',
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
@@ -343,12 +371,72 @@ function stobePrettySettingLabel(string $id): string
         'HTTP_TIMEOUT' => 'HTTP Timeout',
         'CONTEXT_HISTORY' => 'Context History',
         'TXTAI_URL' => 'MiniMe / TXT2VEC URL',
+        'DYNAMIC_PROFILE_INTERVAL_HOURS' => 'Dynamic Profile Update Interval',
     ];
     if (isset($customLabels[$idUpper])) {
         return $customLabels[$idUpper];
     }
 
     return ucwords(str_replace('_', ' ', strtolower($idUpper)));
+}
+
+function stobeIconForSetting(string $id): string
+{
+    $idUpper = strtoupper(trim($id));
+    $icons = [
+        'PROMPT_HEAD' => '🔝',
+        'EMOTEMOODS' => '🎭',
+        'RECHAT_MODE' => '🔁',
+        'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
+        'SPEAKER_RECHAT' => '🗣️',
+        'MEMORY_ENABLED' => '🧠',
+        'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
+        'TXTAI_URL' => '🔗',
+        'BRACKET_ORIGINAL_NAME' => '🏷️',
+        'RELATIONSHIP_SYSTEM' => '💞',
+        'RELATIONSHIP_SYSTEM_ENABLED' => '💞',
+        'RELATION_SYSTEM_ENABLED' => '💞',
+        'PLAYER_FACTION_CUSTOM_NAME' => '🏴',
+        'PLAYER_FACTION_PROMPT' => '📜',
+        'AUTO_LOCK_PROFILE' => '🔒',
+        'HTTP_TIMEOUT' => '⌛',
+        'WORLD_KNOWLEDGE_ENABLED' => '📚',
+        'ALWAYS_INSERT_RACE' => '🧬',
+        'ALWAYS_INSERT_LOCATION' => '📍',
+        'ALWAYS_INSERT_PEOPLE' => '👥',
+        'WORLD_KNOWLEDGE_AMOUNT' => '🔢',
+        'WORLD_KNOWLEDGE_CONTEXT_HISTORY' => '🕰️',
+        'WORLD_KNOWLEDGE_CONTEXT_KEYWORDS' => '🔑',
+        'WORLD_KNOWLEDGE_MIN_RANK' => '🎖️',
+        'PLAYTHROUGH_AUTOLOAD_ENABLED' => '💾',
+        'PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED' => '🧹',
+        'AUTO_CREATE_SUMMARY_MIN_EVENTS' => '📝',
+        'DYNAMIC_PROFILE_LOAD_GRACE_SECONDS' => '⏳',
+        'PLAYTHROUGH_AUTOLOAD_COOLDOWN_SECONDS' => '⏱️',
+        'PLAYTHROUGH_AUTOLOAD_FRESH_SQUAD_MAX_AGE_SECONDS' => '👥',
+        'PLAYTHROUGH_AUTOLOAD_MAX_GAMETS_DELTA' => '🕒',
+        'PLAYTHROUGH_AUTOLOAD_MIN_SCORE' => '🎯',
+        'PLAYTHROUGH_AUTOLOAD_MIN_SQUAD_OVERLAP' => '🤝',
+    ];
+    if (isset($icons[$idUpper])) {
+        return $icons[$idUpper];
+    }
+    if (str_starts_with($idUpper, 'CORE_CONNECTOR_')) {
+        return '🔌';
+    }
+    if (str_contains($idUpper, 'API_KEY') || str_contains($idUpper, 'SECRET') || str_contains($idUpper, 'TOKEN')) {
+        return '🔑';
+    }
+    if (str_contains($idUpper, 'MEMORY')) {
+        return '🧠';
+    }
+    if (str_contains($idUpper, 'WORLD_KNOWLEDGE')) {
+        return '📚';
+    }
+    if (str_contains($idUpper, 'COOLDOWN') || str_contains($idUpper, 'INTERVAL') || str_ends_with($idUpper, '_SECONDS')) {
+        return '⏱️';
+    }
+    return '🧩';
 }
 
 function stobeRenderPromptContextSection(
@@ -358,7 +446,14 @@ function stobeRenderPromptContextSection(
 ): string {
     ob_start();
     ?>
-    <section class="content-section" data-group="context-selections">
+    <section
+        class="content-section"
+        data-group="context-selections"
+        data-settings-panel="context-knowledge"
+        role="tabpanel"
+        aria-labelledby="settings-tab-context-knowledge"
+        hidden
+    >
         <h2><?= h($promptContextSectionTitle) ?></h2>
         <div class="prompt-context-wrap">
             <div class="prompt-context-intro">
@@ -478,19 +573,25 @@ foreach ($grouped as $groupName => $rows) {
         $priorityMap = [
             'PROMPT_HEAD' => 0,
             'EMOTEMOODS' => 1,
+            'ROLEPLAY_INSTRUCTIONS' => 2,
+            'GENERAL_INSTRUCTIONS' => 3,
+            'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
-            'RECHAT_MODE' => 0,
-            'ENFORCE_STRICT_RECHAT_RESPONSE' => 1,
-            'SPEAKER_RECHAT' => 2,
+            'RECHAT_MODE' => 20,
+            'ENFORCE_STRICT_RECHAT_RESPONSE' => 21,
+            'SPEAKER_RECHAT' => 22,
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
             'PLAYER_FACTION_CUSTOM_NAME' => 3,
             'PLAYER_FACTION_PROMPT' => 4,
+            'DYNAMIC_PROFILE_INTERVAL_HOURS' => 5,
             'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
             'ALWAYS_INSERT_RACE' => 1,
+            'ALWAYS_INSERT_LOCATION' => 2,
+            'ALWAYS_INSERT_PEOPLE' => 3,
             'PLAYTHROUGH_AUTOLOAD_ENABLED' => 0,
             'PLAYTHROUGH_PRUNE_ON_ROLLBACK_ENABLED' => 1,
         ];
@@ -512,6 +613,34 @@ uksort($grouped, function ($a, $b) {
     }
     return $wa <=> $wb;
 });
+
+$settingsTabs = [
+    'prompt-rechat' => '💬 Prompt & Rechat',
+    'ai-memory' => '🧠 Memory & Others',
+];
+$settingsTabs['context-knowledge'] = '📚 Context & Knowledge';
+if (isset($grouped['LLM & API'])) {
+    $settingsTabs['global-connectors'] = '🔌 Global Connectors';
+}
+
+$groupTabs = [
+    'Prompt & Rechat' => 'prompt-rechat',
+    'Memory' => 'ai-memory',
+    'Core' => 'ai-memory',
+    'Bored Event' => 'ai-memory',
+    'Other' => 'ai-memory',
+    'World Knowledge' => 'context-knowledge',
+    'LLM & API' => 'global-connectors',
+];
+
+$tabControlPanels = [
+    'prompt-rechat' => 'settings-panel-prompt-rechat-prompt-rechat',
+    'ai-memory' => 'settings-panel-ai-memory-memory',
+    'context-knowledge' => 'settings-panel-context-knowledge-world-knowledge',
+];
+if (isset($grouped['LLM & API'])) {
+    $tabControlPanels['global-connectors'] = 'settings-panel-global-connectors-llm-api';
+}
 
 ?>
 <!DOCTYPE html>
@@ -538,10 +667,12 @@ uksort($grouped, function ($a, $b) {
             color: #f8f9fa;
         }
         main.page-wrap {
-            padding-top: 30px;
-            padding-bottom: 24px;
-            padding-left: 5px;
-            padding-right: 5px;
+            padding-top: 40px;
+            padding-bottom: 40px;
+            padding-left: 10%;
+            padding-right: 10%;
+            width: 100%;
+            margin: 0;
         }
         .page-header {
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -608,6 +739,43 @@ uksort($grouped, function ($a, $b) {
             border: 1px solid rgba(72, 187, 120, 0.22);
             font-weight: 700;
         }
+        .settings-tabs {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px;
+            margin-bottom: 14px;
+            padding: 8px;
+            border: 1px solid #3a3a3a;
+            border-radius: 10px;
+            background: rgba(30, 30, 30, 0.92);
+        }
+        .settings-tab {
+            position: relative;
+            min-height: 40px;
+            padding: 8px 12px;
+            border: 1px solid #444;
+            border-radius: 7px;
+            background: #303030;
+            color: #ddd;
+            font-weight: 700;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        }
+        .settings-tab:hover {
+            border-color: rgba(230, 183, 108, 0.55);
+            background: #383838;
+        }
+        body .settings-tabs .settings-tab.is-active {
+            border-color: #e6b76c !important;
+            color: #fff !important;
+            background: rgba(82, 67, 42, 0.95) !important;
+            box-shadow: inset 0 0 0 1px rgba(230, 183, 108, 0.28), 0 0 12px rgba(230, 183, 108, 0.24) !important;
+            transform: translateY(-1px) !important;
+        }
+        .settings-tab:focus-visible {
+            outline: 2px solid #e6b76c;
+            outline-offset: 2px;
+        }
         .content-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -647,6 +815,20 @@ uksort($grouped, function ($a, $b) {
             gap: 12px 16px;
             align-items: center;
         }
+        .connector-section .provider-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .connector-section .provider-card {
+            grid-template-columns: 1fr;
+            align-content: start;
+            align-items: start;
+        }
+        .connector-section .provider-body {
+            width: 100%;
+        }
+        .connector-section .provider-help {
+            margin-top: 0;
+        }
         .provider-head {
             display: flex;
             align-items: center;
@@ -659,7 +841,21 @@ uksort($grouped, function ($a, $b) {
             gap: 10px;
             color: #e0e0e0;
             min-width: 0;
-            flex-wrap: wrap;
+            width: 100%;
+            flex-wrap: nowrap;
+        }
+        .provider-icon {
+            width: 30px;
+            height: 30px;
+            flex: 0 0 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #4a4a4a;
+            border-radius: 7px;
+            background: rgba(20, 20, 20, 0.7);
+            font-size: 17px;
+            line-height: 1;
         }
         .provider-body {
             display: flex;
@@ -696,9 +892,10 @@ uksort($grouped, function ($a, $b) {
             line-height: 1.4;
         }
         .provider-toggle {
-            margin-left: 10px;
+            margin-left: auto;
             display: flex;
             align-items: center;
+            flex: 0 0 auto;
         }
         .provider-toggle input[type="checkbox"] {
             accent-color: #176529;
@@ -783,6 +980,16 @@ uksort($grouped, function ($a, $b) {
             }
         }
         @media (max-width: 900px) {
+            .settings-tabs,
+            .connector-section .provider-grid {
+                grid-template-columns: 1fr;
+            }
+
+            main.page-wrap {
+                padding-left: 5%;
+                padding-right: 5%;
+            }
+
             .page-header-row {
                 align-items: flex-start;
             }
@@ -818,11 +1025,39 @@ uksort($grouped, function ($a, $b) {
         <div class="status-banner"><?= h($statusMessage) ?></div>
     <?php endif; ?>
 
+    <div class="settings-tabs" role="tablist" aria-label="Global settings categories">
+        <?php foreach ($settingsTabs as $tabId => $tabLabel): ?>
+            <button
+                type="button"
+                class="settings-tab<?= $tabId === 'prompt-rechat' ? ' is-active' : '' ?>"
+                id="settings-tab-<?= h($tabId) ?>"
+                role="tab"
+                aria-selected="<?= $tabId === 'prompt-rechat' ? 'true' : 'false' ?>"
+                aria-controls="<?= h($tabControlPanels[$tabId]) ?>"
+                data-settings-tab="<?= h($tabId) ?>"
+            ><?= h($tabLabel) ?></button>
+        <?php endforeach; ?>
+    </div>
+
     <form method="post" action="<?= h($selfPage) ?>" id="stobeSettingsForm">
         <div class="content-grid" id="settingsGrid">
             <?php $promptContextSectionRendered = false; ?>
             <?php foreach ($grouped as $groupName => $rows): ?>
-                <section class="content-section" data-group="<?= h(strtolower($groupName)) ?>">
+                <?php
+                    $groupTab = $groupTabs[$groupName] ?? 'general';
+                    $isInitialTab = $groupTab === 'prompt-rechat';
+                    $groupSlug = trim(preg_replace('/[^a-z0-9]+/i', '-', strtolower($groupName)), '-');
+                    $sectionClasses = 'content-section' . ($groupName === 'LLM & API' ? ' connector-section' : '');
+                ?>
+                <section
+                    class="<?= h($sectionClasses) ?>"
+                    id="settings-panel-<?= h($groupTab) ?>-<?= h($groupSlug) ?>"
+                    data-group="<?= h(strtolower($groupName)) ?>"
+                    data-settings-panel="<?= h($groupTab) ?>"
+                    role="tabpanel"
+                    aria-labelledby="settings-tab-<?= h($groupTab) ?>"
+                    <?= $isInitialTab ? '' : 'hidden' ?>
+                >
                     <h2><?= h($groupName) ?></h2>
                     <div class="provider-grid">
                         <?php foreach ($rows as $row): ?>
@@ -835,6 +1070,7 @@ uksort($grouped, function ($a, $b) {
                                 $inputId = 'setting_' . preg_replace('/[^a-zA-Z0-9_]+/', '_', $id);
                                 $label = stobePrettySettingLabel($id);
                                 $checked = in_array(strtolower(trim($value)), ['true', '1', 'yes', 'on'], true);
+                                $isDynamicProfileInterval = strtoupper(trim($id)) === 'DYNAMIC_PROFILE_INTERVAL_HOURS';
                             ?>
                             <div
                                 class="provider-card"
@@ -844,6 +1080,7 @@ uksort($grouped, function ($a, $b) {
                             >
                                 <div class="provider-head">
                                     <div class="provider-title">
+                                        <div class="provider-icon" aria-hidden="true"><?= h(stobeIconForSetting($id)) ?></div>
                                         <div><?= h($label) ?></div>
                                         <?php if ($type === 'bool'): ?>
                                             <div class="provider-toggle">
@@ -873,7 +1110,14 @@ uksort($grouped, function ($a, $b) {
                                     <?php elseif ($type === 'textarea'): ?>
                                         <textarea id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]"><?= h($value) ?></textarea>
                                     <?php elseif ($type === 'int'): ?>
-                                        <input type="number" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>" step="1">
+                                        <input
+                                            type="number"
+                                            id="<?= h($inputId) ?>"
+                                            name="settings[<?= h($id) ?>]"
+                                            value="<?= h($value) ?>"
+                                            step="1"
+                                            <?= $isDynamicProfileInterval ? 'min="1" max="720"' : '' ?>
+                                        >
                                     <?php elseif ($type === 'float'): ?>
                                         <input type="number" id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]" value="<?= h($value) ?>" step="0.01">
                                     <?php elseif ($type === 'password'): ?>
@@ -906,6 +1150,78 @@ uksort($grouped, function ($a, $b) {
             <?php endif; ?>
         </div>
     </form>
+
+    <script>
+    (() => {
+        const storageKey = 'stobe-global-settings-tab';
+        const tabs = Array.from(document.querySelectorAll('[data-settings-tab]'));
+        const panels = Array.from(document.querySelectorAll('[data-settings-panel]'));
+        const form = document.getElementById('stobeSettingsForm');
+        const validTabs = new Set(tabs.map((tab) => tab.dataset.settingsTab));
+
+        function activateTab(tabId, focusTab = false) {
+            if (!validTabs.has(tabId)) {
+                tabId = 'prompt-rechat';
+            }
+
+            tabs.forEach((tab) => {
+                const active = tab.dataset.settingsTab === tabId;
+                tab.classList.toggle('is-active', active);
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
+                tab.tabIndex = active ? 0 : -1;
+                if (active && focusTab) {
+                    tab.focus();
+                }
+            });
+
+            panels.forEach((panel) => {
+                panel.hidden = panel.dataset.settingsPanel !== tabId;
+            });
+
+            try {
+                sessionStorage.setItem(storageKey, tabId);
+            } catch (error) {
+                // Storage can be unavailable in privacy-restricted browsers.
+            }
+        }
+
+        tabs.forEach((tab, index) => {
+            tab.addEventListener('click', () => activateTab(tab.dataset.settingsTab));
+            tab.addEventListener('keydown', (event) => {
+                let nextIndex = null;
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                    nextIndex = (index + 1) % tabs.length;
+                } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                    nextIndex = (index - 1 + tabs.length) % tabs.length;
+                } else if (event.key === 'Home') {
+                    nextIndex = 0;
+                } else if (event.key === 'End') {
+                    nextIndex = tabs.length - 1;
+                }
+
+                if (nextIndex !== null) {
+                    event.preventDefault();
+                    activateTab(tabs[nextIndex].dataset.settingsTab, true);
+                }
+            });
+        });
+
+        form?.addEventListener('invalid', (event) => {
+            const panel = event.target.closest('[data-settings-panel]');
+            if (panel) {
+                activateTab(panel.dataset.settingsPanel);
+            }
+        }, true);
+
+        let initialTab = 'prompt-rechat';
+        try {
+            initialTab = sessionStorage.getItem(storageKey) || initialTab;
+        } catch (error) {
+            // Keep the default tab when storage is unavailable.
+        }
+        activateTab(initialTab);
+    })();
+    </script>
 </main>
 </body>
 </html>

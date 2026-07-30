@@ -79,6 +79,19 @@ try {
     startupAssert(function_exists('gamets2str_format_gregorian_date'), 'bootstrap should register gregorian date formatter');
     startupAssert(gamets2str_format_gregorian_date(86400, 'Y-m-d') !== '', 'gregorian date formatter should return a string');
 
+    setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', '1000');
+    $healthyProcessor = stobeBackgroundProcessorStatus(0.1, true, 1050);
+    startupAssert(boolval($healthyProcessor['healthy'] ?? false), 'fresh manager tick and socket should be healthy');
+    startupAssert(strval($healthyProcessor['state'] ?? '') === 'running', 'healthy processor should report running');
+
+    $stalledProcessor = stobeBackgroundProcessorStatus(0.1, true, 1401);
+    startupAssert(!boolval($stalledProcessor['healthy'] ?? true), 'stale manager tick should be unhealthy');
+    startupAssert(strval($stalledProcessor['state'] ?? '') === 'stalled', 'stale manager tick should report stalled');
+
+    $offlineProcessor = stobeBackgroundProcessorStatus(0.1, false, 1050);
+    startupAssert(!boolval($offlineProcessor['healthy'] ?? true), 'missing socket should be unhealthy');
+    startupAssert(strval($offlineProcessor['state'] ?? '') === 'offline', 'missing socket should report offline');
+
     $healthOutput = [];
     $healthExitCode = 0;
     exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../health.php') . ' 2>&1', $healthOutput, $healthExitCode);

@@ -122,4 +122,72 @@ $expectedData = 'Ruka: Hello there (talking to: UT_BEEP_TARGET)';
 chatFlowAssertSame($expectedData, strval($rows[0]['data'] ?? ''), 'inputtext row should preserve normalized target payload');
 chatFlowAssertSame($expectedData, strval($rows[1]['data'] ?? ''), 'mirrored chat row should preserve normalized target payload');
 
+$inlineParts = stobeExtractInlineNarrationParts(
+    '*Ruka studies the gate.* *Dust rolls across the road.* We leave now.'
+);
+chatFlowAssertSameInt(
+    2,
+    count(is_array($inlineParts['narrations'] ?? null) ? $inlineParts['narrations'] : []),
+    'inline narration parser should extract multiple leading narration blocks'
+);
+chatFlowAssertSame(
+    'We leave now.',
+    strval($inlineParts['dialogue'] ?? ''),
+    'inline narration parser should preserve spoken dialogue'
+);
+
+$db = $GLOBALS['db'];
+$originalProfileModel = $db->fetchOne(
+    "SELECT value FROM conf_opts WHERE id = 'stobe_profile_model' LIMIT 1"
+);
+$setProfileModel = static function (string $slot) use ($db): void {
+    $db->exec(
+        "INSERT INTO conf_opts (id, value, updated_at)
+         VALUES ('stobe_profile_model', $1, NOW())
+         ON CONFLICT (id) DO UPDATE
+         SET value = EXCLUDED.value,
+             updated_at = NOW()",
+        [$slot]
+    );
+};
+
+$setProfileModel('3');
+chatFlowAssertSameInt(
+    303,
+    stobeResolveProfileResponseConnectorId([
+        'llm_primary_id' => 101,
+        'llm_tertiary_id' => 303,
+        'response_connector' => 101,
+    ]),
+    'global response slot should resolve before Standard'
+);
+$setProfileModel('2');
+chatFlowAssertSameInt(
+    101,
+    stobeResolveProfileResponseConnectorId([
+        'llm_primary_id' => 101,
+        'llm_secondary_id' => null,
+        'response_connector' => 101,
+    ]),
+    'an unavailable response tier should fall back to Standard'
+);
+$setProfileModel('invalid');
+chatFlowAssertSameInt(
+    1,
+    stobeGetGlobalProfileLlmSlot(),
+    'an invalid global response slot should fall back to Standard'
+);
+chatFlowAssertSameInt(
+    404,
+    stobeResolveProfileResponseConnectorId([
+        'response_connector' => 404,
+    ]),
+    'legacy response connector should remain a valid fallback'
+);
+if ($originalProfileModel) {
+    $setProfileModel(strval($originalProfileModel['value'] ?? '1'));
+} else {
+    $db->exec("DELETE FROM conf_opts WHERE id = 'stobe_profile_model'");
+}
+
 echo "All chat flow regression tests passed.\n";
