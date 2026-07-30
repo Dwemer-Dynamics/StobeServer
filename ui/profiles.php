@@ -243,7 +243,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
         'is_player_faction_profile' => $isPlayerFactionProfilePost,
         'prompt_head' => strval($_POST['prompt_head'] ?? ''),
         'profile_prompt' => strval($_POST['profile_prompt'] ?? ''),
-        'response_connector' => post_int_or_null('response_connector'),
+        'llm_primary_id' => post_int_or_null('llm_primary_id'),
+        'llm_secondary_id' => post_int_or_null('llm_secondary_id'),
+        'llm_tertiary_id' => post_int_or_null('llm_tertiary_id'),
+        'llm_quaternary_id' => post_int_or_null('llm_quaternary_id'),
         'diary_connector' => post_int_or_null('diary_connector'),
         'autochat_connector' => post_int_or_null('autochat_connector'),
         'middleterm_connector' => post_int_or_null('middleterm_connector'),
@@ -274,7 +277,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
             'is_player_faction_profile' => false,
             'prompt_head' => strval($source['prompt_head'] ?? ''),
             'profile_prompt' => strval($source['profile_prompt'] ?? ''),
-            'response_connector' => $source['response_connector'] ?? null,
+            'llm_primary_id' => $source['llm_primary_id'] ?? ($source['response_connector'] ?? null),
+            'llm_secondary_id' => $source['llm_secondary_id'] ?? null,
+            'llm_tertiary_id' => $source['llm_tertiary_id'] ?? null,
+            'llm_quaternary_id' => $source['llm_quaternary_id'] ?? null,
             'diary_connector' => $source['diary_connector'] ?? null,
             'autochat_connector' => $source['autochat_connector'] ?? null,
             'middleterm_connector' => $source['middleterm_connector'] ?? null,
@@ -346,7 +352,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
         'is_player_faction_profile' => $makePlayerFactionProfile,
         'prompt_head' => strval($profileData['prompt_head'] ?? ''),
         'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
-        'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
+        'llm_primary_id' => normalize_imported_fk_id(
+            'core_llm_connector',
+            $profileData['llm_primary_id'] ?? ($profileData['response_connector'] ?? null)
+        ),
+        'llm_secondary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_secondary_id'] ?? null),
+        'llm_tertiary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_tertiary_id'] ?? null),
+        'llm_quaternary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_quaternary_id'] ?? null),
         'diary_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['diary_connector'] ?? null),
         'autochat_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['autochat_connector'] ?? null),
         'middleterm_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['middleterm_connector'] ?? null),
@@ -870,7 +882,10 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 
                         <?php
                             $connectorIcons = [
-                                'response_connector' => '&#x1F3AD;',
+                                'llm_primary_id' => '&#x1F3AD;',
+                                'llm_secondary_id' => '&#x26A1;',
+                                'llm_tertiary_id' => '&#x1F9E0;',
+                                'llm_quaternary_id' => '&#x1F9EA;',
                                 'diary_connector' => '&#x1F4D4;',
                                 'autochat_connector' => '&#x1F4AC;',
                                 'middleterm_connector' => '&#x1F9E0;',
@@ -879,7 +894,10 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 'relationship_connector' => '&#x1F91D;',
                             ];
                             $connectorDescriptions = [
-                                'response_connector' => 'General purpose LLM for standard in-character roleplay dialogue.',
+                                'llm_primary_id' => 'Reliable default LLM for normal in-character dialogue.',
+                                'llm_secondary_id' => 'Faster LLM for responses where lower latency is preferred.',
+                                'llm_tertiary_id' => 'Higher-capability LLM for complex or important responses.',
+                                'llm_quaternary_id' => 'Optional model slot for testing new or specialized LLMs.',
                                 'diary_connector' => 'LLM for writing diary entries in the character voice.',
                                 'autochat_connector' => 'LLM used by Autochat to convert player intent into roleplayed speech.',
                                 'middleterm_connector' => 'LLM used for memory summaries and middle-term context refresh.',
@@ -889,19 +907,22 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             ];
                             $connectorGroups = [
                                 [
-                                    'title' => 'Response Connectors',
-                                    'description' => 'Connectors that directly generate dialogue and player-facing responses.',
+                                    'title' => 'Response LLM Modes',
+                                    'description' => 'Assign the connector used by each global response mode.',
                                     'rows' => [
-                                        ['field' => 'response_connector', 'label' => 'Response Connector', 'options' => 'llm'],
-                                        ['field' => 'autochat_connector', 'label' => 'Autochat Connector', 'options' => 'llm'],
-                                        ['field' => 'backgroundlife_connector', 'label' => 'Background Life Connector', 'options' => 'llm'],
+                                        ['field' => 'llm_primary_id', 'label' => 'Standard LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_secondary_id', 'label' => 'Fast LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_tertiary_id', 'label' => 'Powerful LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_quaternary_id', 'label' => 'Experimental LLM', 'options' => 'llm'],
                                     ],
                                 ],
                                 [
-                                    'title' => 'Other Connectors',
-                                    'description' => 'Voice, memory, diary, profile, and relationship processing services.',
+                                    'title' => 'Task Connectors',
+                                    'description' => 'Dedicated connectors for voice and background profile tasks.',
                                     'rows' => [
                                         ['field' => 'tts_connector_id', 'label' => 'TTS Connector', 'options' => 'tts'],
+                                        ['field' => 'autochat_connector', 'label' => 'Autochat Connector', 'options' => 'llm'],
+                                        ['field' => 'backgroundlife_connector', 'label' => 'Background Life Connector', 'options' => 'llm'],
                                         ['field' => 'diary_connector', 'label' => 'Diary Connector', 'options' => 'llm'],
                                         ['field' => 'middleterm_connector', 'label' => 'Memory Connector', 'options' => 'llm'],
                                         ['field' => 'dynamic_connector', 'label' => 'Dynamic Connector', 'options' => 'llm'],

@@ -2448,6 +2448,63 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('core_profiles', 202607290301, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE core_profiles
+                    ADD COLUMN IF NOT EXISTS llm_primary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_secondary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_tertiary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_quaternary_id INT"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+                     response_connector = COALESCE(response_connector, llm_primary_id)"
+            );
+            $foreignKeys = [
+                'core_profiles_llm_primary_fk' => 'llm_primary_id',
+                'core_profiles_llm_secondary_fk' => 'llm_secondary_id',
+                'core_profiles_llm_tertiary_fk' => 'llm_tertiary_id',
+                'core_profiles_llm_quaternary_fk' => 'llm_quaternary_id',
+            ];
+            foreach ($foreignKeys as $constraintName => $columnName) {
+                $db->exec(
+                    "DO $$
+                     BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint WHERE conname = '{$constraintName}'
+                        ) THEN
+                            ALTER TABLE core_profiles
+                            ADD CONSTRAINT {$constraintName}
+                            FOREIGN KEY ({$columnName}) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+                        END IF;
+                     END $$"
+                );
+            }
+        });
+
+        $applyPatch('core_profiles', 202607290302, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO conf_opts (id, value, updated_at)
+                 VALUES ('stobe_profile_model', '1', NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+            $db->exec(
+                "UPDATE conf_opts
+                 SET value = '1',
+                     updated_at = NOW()
+                 WHERE id = 'stobe_profile_model'
+                   AND (value IS NULL OR value NOT IN ('1', '2', '3', '4'))"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = metadata - 'LLM_RESPONSE_MODE',
+                     updated_at = NOW()
+                 WHERE jsonb_typeof(metadata) = 'object'
+                   AND metadata ? 'LLM_RESPONSE_MODE'"
+            );
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);

@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS conf_opts (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+INSERT INTO conf_opts (id, value, updated_at)
+VALUES ('stobe_profile_model', '1', NOW())
+ON CONFLICT (id) DO NOTHING;
+
 -- ----------------------------------------------------------
 -- PROMPTS - Default + custom prompt templates
 -- ----------------------------------------------------------
@@ -835,6 +839,10 @@ CREATE TABLE IF NOT EXISTS core_profiles (
     is_player_faction_profile BOOLEAN DEFAULT FALSE,
     prompt_head TEXT DEFAULT '',
     profile_prompt TEXT DEFAULT '',
+    llm_primary_id INT,
+    llm_secondary_id INT,
+    llm_tertiary_id INT,
+    llm_quaternary_id INT,
     response_connector INT,
     diary_connector INT,
     autochat_connector INT,
@@ -1783,28 +1791,11 @@ BEGIN
     END IF;
 END $$;
 
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'core_profiles'
-          AND column_name = 'llm_primary_id'
-    ) THEN
-        UPDATE core_profiles
-        SET response_connector = CASE
-            WHEN response_connector IS NULL THEN llm_primary_id
-            ELSE response_connector
-        END
-        WHERE llm_primary_id IS NOT NULL;
-
-        ALTER TABLE core_profiles DROP CONSTRAINT IF EXISTS core_profiles_llm_primary_fk;
-        ALTER TABLE core_profiles DROP COLUMN IF EXISTS llm_primary_id;
-    END IF;
-END $$;
-
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS response_connector INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_primary_id INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_secondary_id INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_tertiary_id INT;
+ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS llm_quaternary_id INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS diary_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS autochat_connector INT;
 ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS middleterm_connector INT;
@@ -1835,6 +1826,10 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
     "BORED_EVENT_CHANCE": 50
 }$$::jsonb;
+
+UPDATE core_profiles
+SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+    response_connector = COALESCE(response_connector, llm_primary_id);
 ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     "DYNAMIC_PROFILE_ENABLED": false,
     "MIDDLE_TERM_MEMORY_ENABLED": false,
@@ -1914,6 +1909,50 @@ BEGIN
         ALTER TABLE core_profiles
         ADD CONSTRAINT core_profiles_tts_connector_fk
         FOREIGN KEY (tts_connector_id) REFERENCES core_tts_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_primary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_primary_fk
+        FOREIGN KEY (llm_primary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_secondary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_secondary_fk
+        FOREIGN KEY (llm_secondary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_tertiary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_tertiary_fk
+        FOREIGN KEY (llm_tertiary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'core_profiles_llm_quaternary_fk'
+    ) THEN
+        ALTER TABLE core_profiles
+        ADD CONSTRAINT core_profiles_llm_quaternary_fk
+        FOREIGN KEY (llm_quaternary_id) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -4012,6 +4051,15 @@ WHERE COALESCE(
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ) IS NOT NULL;
+
+UPDATE core_profiles
+SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+    response_connector = COALESCE(response_connector, llm_primary_id);
+
+UPDATE core_profiles
+SET metadata = metadata - 'LLM_RESPONSE_MODE'
+WHERE jsonb_typeof(metadata) = 'object'
+  AND metadata ? 'LLM_RESPONSE_MODE';
 
 CREATE TABLE IF NOT EXISTS core_narrator (
     id TEXT PRIMARY KEY,
