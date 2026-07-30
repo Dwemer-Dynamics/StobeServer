@@ -241,6 +241,57 @@ try {
         'forced location knowledge should include matching location articles and reject non-location categories'
     );
 
+    $duplicateTopicA = 'UT Duplicate Lore A ' . $seed;
+    $duplicateTopicB = 'UT Duplicate Lore B ' . $seed;
+    $duplicateDescription = "Identical lore with\n variable whitespace.";
+    $db->exec(
+        "INSERT INTO world_knowledge (topic, topic_desc, topic_desc_basic, aliases, tags)
+         VALUES
+            ($1, $3, $3, '', 'Test'),
+            ($2, '  Identical lore with variable   whitespace. ', 'Identical lore with variable whitespace.', '', 'Test')",
+        [$duplicateTopicA, $duplicateTopicB, $duplicateDescription]
+    );
+    $duplicateRows = $db->fetchAll(
+        "SELECT id, topic, topic_desc, topic_desc_basic, knowledge_class, knowledge_class_basic, aliases, tags
+         FROM world_knowledge
+         WHERE topic IN ($1, $2)
+         ORDER BY topic",
+        [$duplicateTopicA, $duplicateTopicB]
+    );
+    $duplicateHints = [];
+    $duplicateSeen = [];
+    foreach ($duplicateRows as $duplicateRow) {
+        $duplicatePayload = stobeWorldKnowledgeSelectKnowledgePayload($duplicateRow, ['knowall'], true);
+        stobeWorldKnowledgeAppendUniqueHints(
+            $duplicateHints,
+            [stobeWorldKnowledgeBuildHintLine(
+                strval($duplicatePayload['topic'] ?? ''),
+                strval($duplicatePayload['desc'] ?? '')
+            )],
+            $duplicateSeen
+        );
+    }
+    worldKnowledgeAliasAssert(
+        count($duplicateHints) === 1,
+        'different topics with whitespace-equivalent final lore should be inserted once'
+    );
+    $rankedDuplicateHints = queryWorldKnowledgeForNpc(
+        'UT Duplicate Tester ' . $seed,
+        'Tell me about ' . $duplicateTopicB,
+        1,
+        [
+            'name' => 'UT Duplicate Tester ' . $seed,
+            'world_knowledge_tags' => 'knowall',
+            'extended_data' => [],
+        ],
+        'chat',
+        $duplicateSeen
+    );
+    worldKnowledgeAliasAssert(
+        $rankedDuplicateHints === [],
+        'ranked retrieval should skip lore already inserted by forced retrieval'
+    );
+
     $db->exec("UPDATE general_settings SET value = 'false' WHERE id = 'ALWAYS_INSERT_PEOPLE'");
     worldKnowledgeAliasAssert(
         stobeWorldKnowledgeCollectForcedPeopleSignals($personTopic, $contextNpcData, '') === [],
