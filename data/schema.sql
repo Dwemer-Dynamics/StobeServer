@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS player_bases (
     members_inside INT NOT NULL DEFAULT 0,
     has_gates BOOLEAN NOT NULL DEFAULT FALSE,
     gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
     game_ts BIGINT NOT NULL DEFAULT 0,
     last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

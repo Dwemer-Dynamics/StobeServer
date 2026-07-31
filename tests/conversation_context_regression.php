@@ -403,4 +403,69 @@ contextFlowAssertSameInt(
     'enabled compact chat history should remove the role-separated recent history'
 );
 
+$baseSnapshot = stobeNormalizePlayerBaseSnapshot([
+    'inside' => true,
+    'base_id' => 'test-base',
+    'name' => 'Test Base',
+    'battery_drain' => 4.5,
+    'battery_charging' => 8.25,
+    'details' => [
+        'available' => true,
+        'security' => [
+            'alarm_state' => 'attack',
+            'hostiles_inside' => 3,
+            'turrets_total' => 8,
+            'turrets_manned' => 6,
+        ],
+        'infrastructure' => [
+            'total' => 42,
+            'damaged' => 2,
+        ],
+        'supplies' => [
+            'food' => 120,
+            'medicine' => 18,
+        ],
+        'production' => [
+            'total' => 7,
+            'active' => 4,
+            'input_blocked' => 2,
+        ],
+        'farms' => [
+            'total' => 5,
+            'active' => 3,
+            'needs_water' => 1,
+        ],
+    ],
+], true);
+contextFlowAssertSame(
+    'attack',
+    strval($baseSnapshot['details']['security']['alarm_state'] ?? ''),
+    'player-base normalization should preserve supported alarm states'
+);
+contextFlowAssertSameInt(
+    120,
+    intval($baseSnapshot['details']['supplies']['food'] ?? 0),
+    'player-base normalization should preserve bounded supply counts'
+);
+
+$baseContextBlock = buildPlayerBaseStateBlock([
+    'extended_data' => ['player_base' => $baseSnapshot],
+]);
+contextFlowAssert(
+    strpos($baseContextBlock, '<alarm_state>attack</alarm_state>') !== false,
+    'player-base prompt context should include security state'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<food>120</food>') !== false,
+    'player-base prompt context should include supply levels'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<input_blocked>2</input_blocked>') !== false,
+    'player-base prompt context should include production blockers'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<needs_water>1</needs_water>') !== false,
+    'player-base prompt context should include farm status'
+);
+
 echo "All conversation context regression tests passed.\n";

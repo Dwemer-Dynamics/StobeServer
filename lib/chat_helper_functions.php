@@ -7350,10 +7350,47 @@ function buildPlayerBaseStateBlock(array $npcData): string
     $lines[] = '  <has_spare_power>' . (!empty($base['has_spare_power']) ? 'true' : 'false') . '</has_spare_power>';
     $lines[] = '  <battery_charge>' . stobePromptXmlEscape(strval($base['battery_charge'] ?? 0)) . '</battery_charge>';
     $lines[] = '  <battery_capacity>' . stobePromptXmlEscape(strval($base['battery_capacity'] ?? 0)) . '</battery_capacity>';
+    $lines[] = '  <battery_drain>' . stobePromptXmlEscape(strval($base['battery_drain'] ?? 0)) . '</battery_drain>';
+    $lines[] = '  <battery_charging>' . stobePromptXmlEscape(strval($base['battery_charging'] ?? 0)) . '</battery_charging>';
     $lines[] = '  <battery_mode>' . (!empty($base['battery_mode']) ? 'true' : 'false') . '</battery_mode>';
     $lines[] = '  <squad_members_inside>' . intval($base['members_inside'] ?? 0) . '</squad_members_inside>';
     if (!empty($base['has_gates'])) {
         $lines[] = '  <gates>' . (!empty($base['gates_closed']) ? 'closed' : 'open') . '</gates>';
+    }
+    $details = is_array($base['details'] ?? null) ? $base['details'] : [];
+    if (coerceBoolean($details['available'] ?? false)) {
+        $detailGroups = [
+            'security' => [
+                'alarm_state', 'hostiles_inside', 'gates_total', 'damaged_defenses',
+                'destroyed_defenses', 'turrets_total', 'turrets_manned', 'turrets_unpowered',
+            ],
+            'infrastructure' => [
+                'total', 'storage', 'production', 'farms', 'research', 'generators',
+                'batteries', 'beds', 'cages', 'damaged', 'destroyed', 'broken', 'unpowered',
+            ],
+            'supplies' => [
+                'food', 'medicine', 'building_materials', 'iron_plates', 'fuel', 'water', 'ammunition',
+            ],
+            'production' => [
+                'total', 'active', 'input_blocked', 'output_blocked', 'unpowered', 'staffed',
+            ],
+            'farms' => [
+                'total', 'active', 'needs_water', 'output_full', 'unpowered', 'staffed',
+            ],
+        ];
+        foreach ($detailGroups as $groupName => $fieldNames) {
+            $group = is_array($details[$groupName] ?? null) ? $details[$groupName] : [];
+            $lines[] = '  <' . $groupName . '>';
+            foreach ($fieldNames as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $lines[] = '  </' . $groupName . '>';
+        }
+        if (coerceBoolean($details['scan_truncated'] ?? false)) {
+            $lines[] = '  <scan_truncated>true</scan_truncated>';
+        }
     }
     $lines[] = '  <context>This character is currently inside this player-owned base perimeter.</context>';
     $lines[] = '</player_base>';

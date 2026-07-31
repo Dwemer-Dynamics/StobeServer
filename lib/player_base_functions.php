@@ -1,5 +1,82 @@
 <?php
 
+function stobeNormalizePlayerBaseDetails(mixed $value): array
+{
+    if (is_string($value)) {
+        $decoded = json_decode($value, true);
+        $value = is_array($decoded) ? $decoded : [];
+    }
+    if (!is_array($value)) {
+        $value = [];
+    }
+
+    $clipInt = static fn (mixed $candidate): int => max(0, min(1000000000, intval($candidate)));
+    $securityInput = is_array($value['security'] ?? null) ? $value['security'] : [];
+    $infrastructureInput = is_array($value['infrastructure'] ?? null) ? $value['infrastructure'] : [];
+    $suppliesInput = is_array($value['supplies'] ?? null) ? $value['supplies'] : [];
+    $productionInput = is_array($value['production'] ?? null) ? $value['production'] : [];
+    $farmsInput = is_array($value['farms'] ?? null) ? $value['farms'] : [];
+    $alarmState = strtolower(trim(strval($securityInput['alarm_state'] ?? 'none')));
+    if (!in_array($alarmState, ['none', 'intruder', 'escape', 'attack'], true)) {
+        $alarmState = 'none';
+    }
+
+    return [
+        'available' => coerceBoolean($value['available'] ?? false),
+        'scan_truncated' => coerceBoolean($value['scan_truncated'] ?? false),
+        'security' => [
+            'alarm_state' => $alarmState,
+            'hostiles_inside' => $clipInt($securityInput['hostiles_inside'] ?? 0),
+            'gates_total' => $clipInt($securityInput['gates_total'] ?? 0),
+            'damaged_defenses' => $clipInt($securityInput['damaged_defenses'] ?? 0),
+            'destroyed_defenses' => $clipInt($securityInput['destroyed_defenses'] ?? 0),
+            'turrets_total' => $clipInt($securityInput['turrets_total'] ?? 0),
+            'turrets_manned' => $clipInt($securityInput['turrets_manned'] ?? 0),
+            'turrets_unpowered' => $clipInt($securityInput['turrets_unpowered'] ?? 0),
+        ],
+        'infrastructure' => [
+            'total' => $clipInt($infrastructureInput['total'] ?? 0),
+            'storage' => $clipInt($infrastructureInput['storage'] ?? 0),
+            'production' => $clipInt($infrastructureInput['production'] ?? 0),
+            'farms' => $clipInt($infrastructureInput['farms'] ?? 0),
+            'research' => $clipInt($infrastructureInput['research'] ?? 0),
+            'generators' => $clipInt($infrastructureInput['generators'] ?? 0),
+            'batteries' => $clipInt($infrastructureInput['batteries'] ?? 0),
+            'beds' => $clipInt($infrastructureInput['beds'] ?? 0),
+            'cages' => $clipInt($infrastructureInput['cages'] ?? 0),
+            'damaged' => $clipInt($infrastructureInput['damaged'] ?? 0),
+            'destroyed' => $clipInt($infrastructureInput['destroyed'] ?? 0),
+            'broken' => $clipInt($infrastructureInput['broken'] ?? 0),
+            'unpowered' => $clipInt($infrastructureInput['unpowered'] ?? 0),
+        ],
+        'supplies' => [
+            'food' => $clipInt($suppliesInput['food'] ?? 0),
+            'medicine' => $clipInt($suppliesInput['medicine'] ?? 0),
+            'building_materials' => $clipInt($suppliesInput['building_materials'] ?? 0),
+            'iron_plates' => $clipInt($suppliesInput['iron_plates'] ?? 0),
+            'fuel' => $clipInt($suppliesInput['fuel'] ?? 0),
+            'water' => $clipInt($suppliesInput['water'] ?? 0),
+            'ammunition' => $clipInt($suppliesInput['ammunition'] ?? 0),
+        ],
+        'production' => [
+            'total' => $clipInt($productionInput['total'] ?? 0),
+            'active' => $clipInt($productionInput['active'] ?? 0),
+            'input_blocked' => $clipInt($productionInput['input_blocked'] ?? 0),
+            'output_blocked' => $clipInt($productionInput['output_blocked'] ?? 0),
+            'unpowered' => $clipInt($productionInput['unpowered'] ?? 0),
+            'staffed' => $clipInt($productionInput['staffed'] ?? 0),
+        ],
+        'farms' => [
+            'total' => $clipInt($farmsInput['total'] ?? 0),
+            'active' => $clipInt($farmsInput['active'] ?? 0),
+            'needs_water' => $clipInt($farmsInput['needs_water'] ?? 0),
+            'output_full' => $clipInt($farmsInput['output_full'] ?? 0),
+            'unpowered' => $clipInt($farmsInput['unpowered'] ?? 0),
+            'staffed' => $clipInt($farmsInput['staffed'] ?? 0),
+        ],
+    ];
+}
+
 /**
  * Normalizes player-base telemetry shared by NPC context and presence ingest.
  */
@@ -65,6 +142,7 @@ function stobeNormalizePlayerBaseSnapshot(mixed $value, bool $stampObservation =
         'members_inside' => max(0, min(1000, intval($value['members_inside'] ?? 0))),
         'has_gates' => coerceBoolean($value['has_gates'] ?? false),
         'gates_closed' => coerceBoolean($value['gates_closed'] ?? false),
+        'details' => stobeNormalizePlayerBaseDetails($value['details'] ?? []),
     ];
     if ($normalized['name'] === '') {
         $normalized['name'] = 'Player Base';
@@ -108,11 +186,11 @@ function stobeStorePlayerBaseState(array $payload): array
                     base_id, name, power_generated, power_required,
                     battery_charge, battery_capacity, battery_drain, battery_charging,
                     battery_mode, has_spare_power, members_inside,
-                    has_gates, gates_closed, game_ts, last_seen_at
+                    has_gates, gates_closed, details, game_ts, last_seen_at
                  ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
                     $9::boolean, $10::boolean, $11,
-                    $12::boolean, $13::boolean, $14, NOW()
+                    $12::boolean, $13::boolean, $14::jsonb, $15, NOW()
                  )
                  ON CONFLICT (base_id) DO UPDATE SET
                     name = EXCLUDED.name,
@@ -127,6 +205,7 @@ function stobeStorePlayerBaseState(array $payload): array
                     members_inside = EXCLUDED.members_inside,
                     has_gates = EXCLUDED.has_gates,
                     gates_closed = EXCLUDED.gates_closed,
+                    details = EXCLUDED.details,
                     game_ts = EXCLUDED.game_ts,
                     last_seen_at = NOW()",
                 [
@@ -143,6 +222,7 @@ function stobeStorePlayerBaseState(array $payload): array
                     intval($base['members_inside']),
                     boolval($base['has_gates']) ? 'true' : 'false',
                     boolval($base['gates_closed']) ? 'true' : 'false',
+                    json_encode($base['details'], JSON_UNESCAPED_SLASHES),
                     $gameTs,
                 ]
             );
@@ -199,7 +279,7 @@ function stobeGetCurrentPlayerBaseState(int $maxAgeSeconds = 30): array
             b.base_id, b.name, b.power_generated, b.power_required,
             b.battery_charge, b.battery_capacity, b.battery_drain, b.battery_charging,
             b.battery_mode, b.has_spare_power, b.members_inside,
-            b.has_gates, b.gates_closed
+            b.has_gates, b.gates_closed, b.details
          FROM player_base_presence p
          INNER JOIN player_bases b ON b.base_id = p.base_id
          WHERE p.scope_key = 'selected_player'

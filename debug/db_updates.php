@@ -2560,6 +2560,13 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('player_bases', 202607300102, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
+            );
+        });
+
         $applyPatch('general_settings', 202607300102, static function () use ($db): void {
             $row = $db->fetchOne(
                 "SELECT value
