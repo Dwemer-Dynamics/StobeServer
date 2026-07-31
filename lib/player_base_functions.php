@@ -11,9 +11,51 @@ function stobeNormalizePlayerBaseDetails(mixed $value): array
     }
 
     $clipInt = static fn (mixed $candidate): int => max(0, min(1000000000, intval($candidate)));
+    $clipMetric = static function (mixed $candidate, float $maximum): float {
+        if (!is_numeric($candidate)) {
+            return 0.0;
+        }
+        $number = floatval($candidate);
+        return is_finite($number) ? max(0.0, min($maximum, $number)) : 0.0;
+    };
+    $normalizeGroups = static function (
+        mixed $candidate,
+        array $integerFields,
+        array $metricFields = []
+    ) use ($clipInt, $clipMetric): array {
+        if (!is_array($candidate)) {
+            return [];
+        }
+
+        $groups = [];
+        foreach (array_slice(array_values($candidate), 0, 24) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $name = trim(strval($row['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $group = [
+                'name' => strlen($name) > 128 ? substr($name, 0, 128) : $name,
+            ];
+            foreach ($integerFields as $field) {
+                $group[$field] = $clipInt($row[$field] ?? 0);
+            }
+            foreach ($metricFields as $field => $maximum) {
+                $group[$field] = $clipMetric($row[$field] ?? 0, $maximum);
+            }
+            $groups[] = $group;
+        }
+        return $groups;
+    };
+
     $securityInput = is_array($value['security'] ?? null) ? $value['security'] : [];
     $infrastructureInput = is_array($value['infrastructure'] ?? null) ? $value['infrastructure'] : [];
+    $constructionInput = is_array($value['construction'] ?? null) ? $value['construction'] : [];
+    $powerInput = is_array($value['power'] ?? null) ? $value['power'] : [];
     $suppliesInput = is_array($value['supplies'] ?? null) ? $value['supplies'] : [];
+    $storageInput = is_array($value['storage'] ?? null) ? $value['storage'] : [];
     $productionInput = is_array($value['production'] ?? null) ? $value['production'] : [];
     $farmsInput = is_array($value['farms'] ?? null) ? $value['farms'] : [];
     $alarmState = strtolower(trim(strval($securityInput['alarm_state'] ?? 'none')));
@@ -35,19 +77,32 @@ function stobeNormalizePlayerBaseDetails(mixed $value): array
             'turrets_unpowered' => $clipInt($securityInput['turrets_unpowered'] ?? 0),
         ],
         'infrastructure' => [
-            'total' => $clipInt($infrastructureInput['total'] ?? 0),
-            'storage' => $clipInt($infrastructureInput['storage'] ?? 0),
-            'production' => $clipInt($infrastructureInput['production'] ?? 0),
-            'farms' => $clipInt($infrastructureInput['farms'] ?? 0),
-            'research' => $clipInt($infrastructureInput['research'] ?? 0),
-            'generators' => $clipInt($infrastructureInput['generators'] ?? 0),
-            'batteries' => $clipInt($infrastructureInput['batteries'] ?? 0),
-            'beds' => $clipInt($infrastructureInput['beds'] ?? 0),
-            'cages' => $clipInt($infrastructureInput['cages'] ?? 0),
             'damaged' => $clipInt($infrastructureInput['damaged'] ?? 0),
             'destroyed' => $clipInt($infrastructureInput['destroyed'] ?? 0),
             'broken' => $clipInt($infrastructureInput['broken'] ?? 0),
             'unpowered' => $clipInt($infrastructureInput['unpowered'] ?? 0),
+            'issues' => $normalizeGroups(
+                $infrastructureInput['issues'] ?? [],
+                ['count', 'damaged', 'destroyed', 'broken', 'unpowered']
+            ),
+        ],
+        'construction' => [
+            'total' => $clipInt($constructionInput['total'] ?? 0),
+            'paused' => $clipInt($constructionInput['paused'] ?? 0),
+            'missing_materials' => $clipInt($constructionInput['missing_materials'] ?? 0),
+            'average_progress' => $clipMetric($constructionInput['average_progress'] ?? 0, 100.0),
+            'groups' => $normalizeGroups(
+                $constructionInput['groups'] ?? [],
+                ['count', 'paused', 'missing_materials'],
+                ['average_progress' => 100.0]
+            ),
+        ],
+        'power' => [
+            'consumers' => $clipInt($powerInput['consumers'] ?? 0),
+            'unpowered' => $clipInt($powerInput['unpowered'] ?? 0),
+            'switched_off' => $clipInt($powerInput['switched_off'] ?? 0),
+            'generators_total' => $clipInt($powerInput['generators_total'] ?? 0),
+            'generators_active' => $clipInt($powerInput['generators_active'] ?? 0),
         ],
         'supplies' => [
             'food' => $clipInt($suppliesInput['food'] ?? 0),
@@ -58,6 +113,16 @@ function stobeNormalizePlayerBaseDetails(mixed $value): array
             'water' => $clipInt($suppliesInput['water'] ?? 0),
             'ammunition' => $clipInt($suppliesInput['ammunition'] ?? 0),
         ],
+        'storage' => [
+            'total' => $clipInt($storageInput['total'] ?? 0),
+            'empty' => $clipInt($storageInput['empty'] ?? 0),
+            'full' => $clipInt($storageInput['full'] ?? 0),
+            'item_units' => $clipInt($storageInput['item_units'] ?? 0),
+            'groups' => $normalizeGroups(
+                $storageInput['groups'] ?? [],
+                ['total', 'empty', 'full', 'item_units']
+            ),
+        ],
         'production' => [
             'total' => $clipInt($productionInput['total'] ?? 0),
             'active' => $clipInt($productionInput['active'] ?? 0),
@@ -65,6 +130,12 @@ function stobeNormalizePlayerBaseDetails(mixed $value): array
             'output_blocked' => $clipInt($productionInput['output_blocked'] ?? 0),
             'unpowered' => $clipInt($productionInput['unpowered'] ?? 0),
             'staffed' => $clipInt($productionInput['staffed'] ?? 0),
+            'average_efficiency' => $clipMetric($productionInput['average_efficiency'] ?? 0, 1000.0),
+            'groups' => $normalizeGroups(
+                $productionInput['groups'] ?? [],
+                ['total', 'active', 'input_blocked', 'output_blocked', 'unpowered', 'staffed'],
+                ['average_efficiency' => 1000.0]
+            ),
         ],
         'farms' => [
             'total' => $clipInt($farmsInput['total'] ?? 0),
@@ -73,6 +144,13 @@ function stobeNormalizePlayerBaseDetails(mixed $value): array
             'output_full' => $clipInt($farmsInput['output_full'] ?? 0),
             'unpowered' => $clipInt($farmsInput['unpowered'] ?? 0),
             'staffed' => $clipInt($farmsInput['staffed'] ?? 0),
+            'hydroponic' => $clipInt($farmsInput['hydroponic'] ?? 0),
+            'average_yield' => $clipMetric($farmsInput['average_yield'] ?? 0, 100.0),
+            'groups' => $normalizeGroups(
+                $farmsInput['groups'] ?? [],
+                ['total', 'active', 'needs_water', 'output_full', 'unpowered', 'staffed', 'hydroponic'],
+                ['average_yield' => 100.0]
+            ),
         ],
     ];
 }

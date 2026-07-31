@@ -418,22 +418,87 @@ $baseSnapshot = stobeNormalizePlayerBaseSnapshot([
             'turrets_manned' => 6,
         ],
         'infrastructure' => [
-            'total' => 42,
             'damaged' => 2,
+            'issues' => [
+                [
+                    'name' => 'Storm House',
+                    'count' => 2,
+                    'damaged' => 2,
+                ],
+            ],
+        ],
+        'construction' => [
+            'total' => 12,
+            'paused' => 1,
+            'missing_materials' => 3,
+            'average_progress' => 45.5,
+            'groups' => [
+                [
+                    'name' => 'Defensive Wall IV',
+                    'count' => 12,
+                    'paused' => 1,
+                    'missing_materials' => 3,
+                    'average_progress' => 45.5,
+                ],
+            ],
+        ],
+        'power' => [
+            'consumers' => 16,
+            'unpowered' => 2,
+            'switched_off' => 1,
+            'generators_total' => 4,
+            'generators_active' => 3,
         ],
         'supplies' => [
             'food' => 120,
             'medicine' => 18,
         ],
+        'storage' => [
+            'total' => 6,
+            'empty' => 1,
+            'full' => 2,
+            'item_units' => 94,
+            'groups' => [
+                [
+                    'name' => 'Storage: Building Materials',
+                    'total' => 3,
+                    'empty' => 0,
+                    'full' => 2,
+                    'item_units' => 72,
+                ],
+            ],
+        ],
         'production' => [
             'total' => 7,
             'active' => 4,
             'input_blocked' => 2,
+            'average_efficiency' => 67.5,
+            'groups' => [
+                [
+                    'name' => 'Iron Refinery III',
+                    'total' => 3,
+                    'active' => 1,
+                    'input_blocked' => 2,
+                    'average_efficiency' => 52.5,
+                ],
+            ],
         ],
         'farms' => [
             'total' => 5,
             'active' => 3,
             'needs_water' => 1,
+            'hydroponic' => 2,
+            'average_yield' => 81.25,
+            'groups' => [
+                [
+                    'name' => 'Hydroponic Hemp',
+                    'total' => 2,
+                    'active' => 1,
+                    'needs_water' => 1,
+                    'hydroponic' => 2,
+                    'average_yield' => 81.25,
+                ],
+            ],
         ],
     ],
 ], true);
@@ -446,6 +511,16 @@ contextFlowAssertSameInt(
     120,
     intval($baseSnapshot['details']['supplies']['food'] ?? 0),
     'player-base normalization should preserve bounded supply counts'
+);
+contextFlowAssertSameInt(
+    12,
+    intval($baseSnapshot['details']['construction']['groups'][0]['count'] ?? 0),
+    'player-base normalization should preserve grouped construction counts'
+);
+contextFlowAssertSameInt(
+    2,
+    intval($baseSnapshot['details']['storage']['groups'][0]['full'] ?? 0),
+    'player-base normalization should preserve grouped storage status'
 );
 
 $baseContextBlock = buildPlayerBaseStateBlock([
@@ -460,11 +535,27 @@ contextFlowAssert(
     'player-base prompt context should include supply levels'
 );
 contextFlowAssert(
+    strpos($baseContextBlock, '<name>Defensive Wall IV</name>') !== false
+        && strpos($baseContextBlock, '<count>12</count>') !== false,
+    'player-base prompt context should include grouped construction'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<power_resilience>') !== false
+        && strpos($baseContextBlock, '<unpowered>2</unpowered>') !== false,
+    'player-base prompt context should include power resilience'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<name>Storage: Building Materials</name>') !== false
+        && strpos($baseContextBlock, '<full>2</full>') !== false,
+    'player-base prompt context should include grouped storage'
+);
+contextFlowAssert(
     strpos($baseContextBlock, '<input_blocked>2</input_blocked>') !== false,
     'player-base prompt context should include production blockers'
 );
 contextFlowAssert(
-    strpos($baseContextBlock, '<needs_water>1</needs_water>') !== false,
+    strpos($baseContextBlock, '<needs_water>1</needs_water>') !== false
+        && strpos($baseContextBlock, '<average_yield>81.25</average_yield>') !== false,
     'player-base prompt context should include farm status'
 );
 
