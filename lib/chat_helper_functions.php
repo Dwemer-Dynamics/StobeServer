@@ -7317,6 +7317,49 @@ function buildWorldStateBlock(array $npcData): string {
     return implode("\n", $xml);
 }
 
+function buildPlayerBaseStateBlock(array $npcData): string
+{
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'player_base')) {
+        return '';
+    }
+
+    $extended = $npcData['extended_data'] ?? [];
+    if (is_string($extended)) {
+        $decoded = json_decode($extended, true);
+        $extended = is_array($decoded) ? $decoded : [];
+    }
+    if (!is_array($extended)) {
+        return '';
+    }
+
+    $base = function_exists('stobeNormalizePlayerBaseSnapshot')
+        ? stobeNormalizePlayerBaseSnapshot($extended['player_base'] ?? [], false)
+        : [];
+    if (!boolval($base['inside'] ?? false)) {
+        return '';
+    }
+    $serverObservedAt = intval($base['server_observed_at'] ?? 0);
+    if ($serverObservedAt > 0 && (time() - $serverObservedAt) > 90) {
+        return '';
+    }
+
+    $lines = ['<player_base>'];
+    $lines[] = '  <name>' . stobePromptXmlEscape(strval($base['name'] ?? 'Player Base')) . '</name>';
+    $lines[] = '  <power_generated>' . stobePromptXmlEscape(strval($base['power_generated'] ?? 0)) . '</power_generated>';
+    $lines[] = '  <power_required>' . stobePromptXmlEscape(strval($base['power_required'] ?? 0)) . '</power_required>';
+    $lines[] = '  <has_spare_power>' . (!empty($base['has_spare_power']) ? 'true' : 'false') . '</has_spare_power>';
+    $lines[] = '  <battery_charge>' . stobePromptXmlEscape(strval($base['battery_charge'] ?? 0)) . '</battery_charge>';
+    $lines[] = '  <battery_capacity>' . stobePromptXmlEscape(strval($base['battery_capacity'] ?? 0)) . '</battery_capacity>';
+    $lines[] = '  <battery_mode>' . (!empty($base['battery_mode']) ? 'true' : 'false') . '</battery_mode>';
+    $lines[] = '  <squad_members_inside>' . intval($base['members_inside'] ?? 0) . '</squad_members_inside>';
+    if (!empty($base['has_gates'])) {
+        $lines[] = '  <gates>' . (!empty($base['gates_closed']) ? 'closed' : 'open') . '</gates>';
+    }
+    $lines[] = '  <context>This character is currently inside this player-owned base perimeter.</context>';
+    $lines[] = '</player_base>';
+    return implode("\n", $lines);
+}
+
 function parseFactionIdentityToken(string $rawFaction): array {
     $raw = trim($rawFaction);
     if ($raw === '') {
@@ -10681,6 +10724,7 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
     $speakerSkillsBlock = '';
     $speakerBountyBlock = '';
     $speakerWorldStateBlock = '';
+    $speakerPlayerBaseBlock = '';
     $nearbyActorsBlock = '';
     $nearbyItemsBlock = '';
     $pointsOfInterestBlock = '';
@@ -10720,6 +10764,7 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
         $speakerSkillsBlock = stobeBuildNpcSkillsText($speakerData);
         $speakerBountyBlock = stobeBuildNpcBountyPromptBlock($speakerData);
         $speakerWorldStateBlock = buildWorldStateBlock($speakerData);
+        $speakerPlayerBaseBlock = buildPlayerBaseStateBlock($speakerData);
         $nearbyActorsBlock = stobeBuildNarratorNearbyActorsContextBlock($speakerData, $safeSpeaker);
         $nearbyItemsBlock = stobeBuildNarratorNearbyItemsContextBlock($speakerData);
         $pointsOfInterestBlock = stobeBuildNarratorPointsOfInterestContextBlock($speakerData);
@@ -10802,6 +10847,12 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
         $worldStateIndented = stobeIndentPromptBlock($speakerWorldStateBlock, 2);
         if ($worldStateIndented !== '') {
             $lines[] = $worldStateIndented;
+        }
+    }
+    if ($speakerPlayerBaseBlock !== '') {
+        $playerBaseIndented = stobeIndentPromptBlock($speakerPlayerBaseBlock, 2);
+        if ($playerBaseIndented !== '') {
+            $lines[] = $playerBaseIndented;
         }
     }
 
@@ -11081,6 +11132,10 @@ function buildSystemPrompt(
         $prompt = str_replace('#NPC_CHARACTER_STATE#', $worldStateBlock, $prompt);
     } elseif ($worldStateBlock !== '') {
         $prompt .= "\n\n" . $worldStateBlock;
+    }
+    $playerBaseBlock = buildPlayerBaseStateBlock($npcData);
+    if ($playerBaseBlock !== '') {
+        $prompt .= "\n\n" . $playerBaseBlock;
     }
     $prompt = stobePromptCleanupBaseTemplateBlocks($prompt);
 

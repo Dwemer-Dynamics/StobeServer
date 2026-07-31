@@ -2518,6 +2518,82 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('player_bases', 202607300101, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_bases (
+                    base_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+                    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+                    members_inside INT NOT NULL DEFAULT 0,
+                    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+                    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_bases_last_seen
+                 ON player_bases (last_seen_at DESC)'
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_base_presence (
+                    scope_key TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    observer_serial BIGINT NOT NULL DEFAULT 0,
+                    observer_name TEXT NOT NULL DEFAULT '',
+                    inside BOOLEAN NOT NULL DEFAULT FALSE,
+                    base_id TEXT REFERENCES player_bases(base_id) ON DELETE SET NULL,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    observed_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_base_presence_observed
+                 ON player_base_presence (inside, observed_at DESC)'
+            );
+        });
+
+        $applyPatch('general_settings', 202607300102, static function () use ($db): void {
+            $row = $db->fetchOne(
+                "SELECT value
+                 FROM general_settings
+                 WHERE id = 'PROMPT_CONTEXT_OPTIONS'
+                 LIMIT 1"
+            );
+            $options = json_decode(strval($row['value'] ?? ''), true);
+            if (!is_array($options)) {
+                $options = stobeGetDefaultPromptContextOptions();
+            }
+            if (!isset($options['enabled_sections']) || !is_array($options['enabled_sections'])) {
+                $defaults = stobeGetDefaultPromptContextOptions();
+                $options['enabled_sections'] = $defaults['enabled_sections'] ?? [];
+            }
+            if (!in_array('player_base', $options['enabled_sections'], true)) {
+                $options['enabled_sections'][] = 'player_base';
+            }
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'PROMPT_CONTEXT_OPTIONS',
+                    $1,
+                    'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [json_encode($options, JSON_UNESCAPED_SLASHES)]
+            );
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);

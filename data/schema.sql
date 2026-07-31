@@ -208,6 +208,43 @@ CREATE TABLE IF NOT EXISTS location_zones (
 CREATE INDEX IF NOT EXISTS idx_location_zones_zone_name_lower ON location_zones (LOWER(zone_name));
 CREATE INDEX IF NOT EXISTS idx_location_zones_first_game_ts ON location_zones (first_game_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_location_zones_last_seen_ts ON location_zones (last_seen_ts DESC);
+
+-- ----------------------------------------------------------
+-- PLAYER BASES - known settlements plus current selected-player presence
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS player_bases (
+    base_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+    members_inside INT NOT NULL DEFAULT 0,
+    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_player_bases_last_seen
+    ON player_bases (last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS player_base_presence (
+    scope_key TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    observer_serial BIGINT NOT NULL DEFAULT 0,
+    observer_name TEXT NOT NULL DEFAULT '',
+    inside BOOLEAN NOT NULL DEFAULT FALSE,
+    base_id TEXT REFERENCES player_bases(base_id) ON DELETE SET NULL,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    observed_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_player_base_presence_observed
+    ON player_base_presence (inside, observed_at DESC);
+
 -- ----------------------------------------------------------
 -- WORLD_STATE - Row-level WorldEventStateQuery entries
 -- ----------------------------------------------------------
