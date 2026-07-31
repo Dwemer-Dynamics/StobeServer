@@ -258,17 +258,23 @@ function stobeStorePlayerBaseState(array $payload): array
         $baseId = null;
         if ($inside) {
             $baseId = strval($base['base_id']);
+            $detailsJson = json_encode($base['details'], JSON_UNESCAPED_SLASHES);
+            if (!is_string($detailsJson)) {
+                $detailsJson = '{}';
+            }
             stobePlayerBaseExecOrThrow(
                 $db,
                 "INSERT INTO player_bases (
                     base_id, name, power_generated, power_required,
                     battery_charge, battery_capacity, battery_drain, battery_charging,
                     battery_mode, has_spare_power, members_inside,
-                    has_gates, gates_closed, details, game_ts, last_seen_at
+                    has_gates, gates_closed, details, game_ts,
+                    first_game_ts, last_game_ts, last_seen_at
                  ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
                     $9::boolean, $10::boolean, $11,
-                    $12::boolean, $13::boolean, $14::jsonb, $15, NOW()
+                    $12::boolean, $13::boolean, $14::jsonb, $15,
+                    $15, $15, NOW()
                  )
                  ON CONFLICT (base_id) DO UPDATE SET
                     name = EXCLUDED.name,
@@ -285,6 +291,12 @@ function stobeStorePlayerBaseState(array $payload): array
                     gates_closed = EXCLUDED.gates_closed,
                     details = EXCLUDED.details,
                     game_ts = EXCLUDED.game_ts,
+                    first_game_ts = CASE
+                        WHEN player_bases.first_game_ts = 0 THEN 0
+                        WHEN EXCLUDED.first_game_ts <= 0 THEN player_bases.first_game_ts
+                        ELSE LEAST(player_bases.first_game_ts, EXCLUDED.first_game_ts)
+                    END,
+                    last_game_ts = EXCLUDED.last_game_ts,
                     last_seen_at = NOW()",
                 [
                     $baseId,
@@ -300,10 +312,88 @@ function stobeStorePlayerBaseState(array $payload): array
                     intval($base['members_inside']),
                     boolval($base['has_gates']) ? 'true' : 'false',
                     boolval($base['gates_closed']) ? 'true' : 'false',
-                    json_encode($base['details'], JSON_UNESCAPED_SLASHES),
+                    $detailsJson,
                     $gameTs,
                 ]
             );
+
+            $latestHistory = $db->fetchOne(
+                'SELECT
+                    name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details, game_ts
+                 FROM player_base_history
+                 WHERE base_id = $1
+                 ORDER BY game_ts DESC, id DESC
+                 LIMIT 1',
+                [$baseId]
+            );
+            $latestGameTs = intval($latestHistory['game_ts'] ?? -1);
+            $historyChanged = !is_array($latestHistory)
+                || strval($latestHistory['name'] ?? '') !== strval($base['name'])
+                || floatval($latestHistory['power_generated'] ?? 0) !== floatval($base['power_generated'])
+                || floatval($latestHistory['power_required'] ?? 0) !== floatval($base['power_required'])
+                || floatval($latestHistory['battery_charge'] ?? 0) !== floatval($base['battery_charge'])
+                || floatval($latestHistory['battery_capacity'] ?? 0) !== floatval($base['battery_capacity'])
+                || floatval($latestHistory['battery_drain'] ?? 0) !== floatval($base['battery_drain'])
+                || floatval($latestHistory['battery_charging'] ?? 0) !== floatval($base['battery_charging'])
+                || coerceBoolean($latestHistory['battery_mode'] ?? false) !== boolval($base['battery_mode'])
+                || coerceBoolean($latestHistory['has_spare_power'] ?? false) !== boolval($base['has_spare_power'])
+                || intval($latestHistory['members_inside'] ?? 0) !== intval($base['members_inside'])
+                || coerceBoolean($latestHistory['has_gates'] ?? false) !== boolval($base['has_gates'])
+                || coerceBoolean($latestHistory['gates_closed'] ?? false) !== boolval($base['gates_closed'])
+                || stobeNormalizePlayerBaseDetails($latestHistory['details'] ?? []) !== $base['details'];
+            $historyIntervalReached = $latestGameTs < 0
+                || $gameTs <= $latestGameTs
+                || ($gameTs - $latestGameTs) >= 300;
+            if ($historyChanged && $historyIntervalReached) {
+                stobePlayerBaseExecOrThrow(
+                    $db,
+                    "INSERT INTO player_base_history (
+                        base_id, name, power_generated, power_required,
+                        battery_charge, battery_capacity, battery_drain, battery_charging,
+                        battery_mode, has_spare_power, members_inside,
+                        has_gates, gates_closed, details, game_ts, observed_at
+                     ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8,
+                        $9::boolean, $10::boolean, $11,
+                        $12::boolean, $13::boolean, $14::jsonb, $15, NOW()
+                     )
+                     ON CONFLICT (base_id, game_ts) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        power_generated = EXCLUDED.power_generated,
+                        power_required = EXCLUDED.power_required,
+                        battery_charge = EXCLUDED.battery_charge,
+                        battery_capacity = EXCLUDED.battery_capacity,
+                        battery_drain = EXCLUDED.battery_drain,
+                        battery_charging = EXCLUDED.battery_charging,
+                        battery_mode = EXCLUDED.battery_mode,
+                        has_spare_power = EXCLUDED.has_spare_power,
+                        members_inside = EXCLUDED.members_inside,
+                        has_gates = EXCLUDED.has_gates,
+                        gates_closed = EXCLUDED.gates_closed,
+                        details = EXCLUDED.details,
+                        observed_at = NOW()",
+                    [
+                        $baseId,
+                        strval($base['name']),
+                        strval($base['power_generated']),
+                        strval($base['power_required']),
+                        strval($base['battery_charge']),
+                        strval($base['battery_capacity']),
+                        strval($base['battery_drain']),
+                        strval($base['battery_charging']),
+                        boolval($base['battery_mode']) ? 'true' : 'false',
+                        boolval($base['has_spare_power']) ? 'true' : 'false',
+                        intval($base['members_inside']),
+                        boolval($base['has_gates']) ? 'true' : 'false',
+                        boolval($base['gates_closed']) ? 'true' : 'false',
+                        $detailsJson,
+                        $gameTs,
+                    ]
+                );
+            }
         }
 
         stobePlayerBaseExecOrThrow(
