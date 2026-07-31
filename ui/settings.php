@@ -53,6 +53,11 @@ try {
                 'description' => 'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.',
             ],
             [
+                'id' => 'COMPACT_CHAT_HISTORY_ENABLED',
+                'value' => 'false',
+                'description' => 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
+            ],
+            [
                 'id' => 'ALWAYS_INSERT_RACE',
                 'value' => 'true',
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
@@ -299,7 +304,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -363,6 +368,7 @@ function stobePrettySettingLabel(string $id): string
         'RECHAT_MODE' => 'Rechat Mode',
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
         'SPEAKER_RECHAT' => 'Speaker Rechat',
+        'COMPACT_CHAT_HISTORY_ENABLED' => 'Compact Chat History',
         'PROMPT_HEAD' => 'Prompt Head',
         'EMOTEMOODS' => 'Emote Moods',
         'ROLEPLAY_INSTRUCTIONS' => 'Roleplay Instructions',
@@ -389,6 +395,7 @@ function stobeIconForSetting(string $id): string
         'RECHAT_MODE' => '🔁',
         'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
         'SPEAKER_RECHAT' => '🗣️',
+        'COMPACT_CHAT_HISTORY_ENABLED' => '📝',
         'MEMORY_ENABLED' => '🧠',
         'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
         'TXTAI_URL' => '🔗',
@@ -577,6 +584,7 @@ foreach ($grouped as $groupName => $rows) {
             'GENERAL_INSTRUCTIONS' => 3,
             'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
+            'COMPACT_CHAT_HISTORY_ENABLED' => 19,
             'RECHAT_MODE' => 20,
             'ENFORCE_STRICT_RECHAT_RESPONSE' => 21,
             'SPEAKER_RECHAT' => 22,
