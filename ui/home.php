@@ -295,6 +295,10 @@ if (count($currentPlayerBase) > 0) {
             . h(number_format(floatval($currentPlayerBase['battery_charge'] ?? 0), 1)
                 . ' / ' . number_format($batteryCapacity, 1))
             . '</td></tr>';
+        $playerBaseRows .= '<tr><td>Battery Flow</td><td>'
+            . h('Charging ' . number_format(floatval($currentPlayerBase['battery_charging'] ?? 0), 1)
+                . ' | Drain ' . number_format(floatval($currentPlayerBase['battery_drain'] ?? 0), 1))
+            . '</td></tr>';
     }
     $playerBaseRows .= '<tr><td>Squadmates At Base</td><td>'
         . h(intval($currentPlayerBase['members_inside'] ?? 0)) . '</td></tr>';
@@ -302,6 +306,168 @@ if (count($currentPlayerBase) > 0) {
         $playerBaseRows .= '<tr><td>Base Gates</td><td>'
             . (coerceBoolean($currentPlayerBase['gates_closed'] ?? false) ? 'Closed' : 'Open')
             . '</td></tr>';
+    }
+    $baseDetails = $currentPlayerBase['details'] ?? [];
+    if (is_string($baseDetails)) {
+        $decodedBaseDetails = json_decode($baseDetails, true);
+        $baseDetails = is_array($decodedBaseDetails) ? $decodedBaseDetails : [];
+    }
+    if (is_array($baseDetails) && coerceBoolean($baseDetails['available'] ?? false)) {
+        $security = is_array($baseDetails['security'] ?? null) ? $baseDetails['security'] : [];
+        $infrastructure = is_array($baseDetails['infrastructure'] ?? null)
+            ? $baseDetails['infrastructure']
+            : [];
+        $construction = is_array($baseDetails['construction'] ?? null)
+            ? $baseDetails['construction']
+            : [];
+        $power = is_array($baseDetails['power'] ?? null) ? $baseDetails['power'] : [];
+        $supplies = is_array($baseDetails['supplies'] ?? null) ? $baseDetails['supplies'] : [];
+        $storage = is_array($baseDetails['storage'] ?? null) ? $baseDetails['storage'] : [];
+        $production = is_array($baseDetails['production'] ?? null) ? $baseDetails['production'] : [];
+        $farms = is_array($baseDetails['farms'] ?? null) ? $baseDetails['farms'] : [];
+        $formatGroups = static function (mixed $candidate, callable $formatter): string {
+            if (!is_array($candidate)) {
+                return '';
+            }
+            $parts = [];
+            foreach (array_slice($candidate, 0, 6) as $group) {
+                if (is_array($group)) {
+                    $summary = trim(strval($formatter($group)));
+                    if ($summary !== '') {
+                        $parts[] = $summary;
+                    }
+                }
+            }
+            if (count($candidate) > 6) {
+                $parts[] = '+' . (count($candidate) - 6) . ' more';
+            }
+            return implode('; ', $parts);
+        };
+
+        $playerBaseRows .= '<tr><td>Base Security</td><td>'
+            . h(
+                'Alarm ' . ucfirst(strval($security['alarm_state'] ?? 'none'))
+                . ' | Hostiles ' . intval($security['hostiles_inside'] ?? 0)
+                . ' | Defenses damaged ' . intval($security['damaged_defenses'] ?? 0)
+                . ', destroyed ' . intval($security['destroyed_defenses'] ?? 0)
+                . ' | Turrets ' . intval($security['turrets_manned'] ?? 0)
+                . '/' . intval($security['turrets_total'] ?? 0) . ' manned'
+                . ', ' . intval($security['turrets_unpowered'] ?? 0) . ' unpowered'
+            )
+            . '</td></tr>';
+        $infrastructureProblemCount = intval($infrastructure['damaged'] ?? 0)
+            + intval($infrastructure['destroyed'] ?? 0)
+            + intval($infrastructure['broken'] ?? 0)
+            + intval($infrastructure['unpowered'] ?? 0);
+        if ($infrastructureProblemCount > 0) {
+            $issueGroups = $formatGroups(
+                $infrastructure['issues'] ?? [],
+                static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                    . ' x' . intval($group['count'] ?? 0)
+            );
+            $playerBaseRows .= '<tr><td>Infrastructure Problems</td><td>'
+                . h(
+                    'Damaged ' . intval($infrastructure['damaged'] ?? 0)
+                    . ' | Destroyed ' . intval($infrastructure['destroyed'] ?? 0)
+                    . ' | Broken ' . intval($infrastructure['broken'] ?? 0)
+                    . ' | Unpowered ' . intval($infrastructure['unpowered'] ?? 0)
+                    . ($issueGroups !== '' ? ' | ' . $issueGroups : '')
+                )
+                . '</td></tr>';
+        }
+        if (intval($construction['total'] ?? 0) > 0) {
+            $constructionGroups = $formatGroups(
+                $construction['groups'] ?? [],
+                static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                    . ' x' . intval($group['count'] ?? 0)
+                    . ' (' . number_format(floatval($group['average_progress'] ?? 0), 0) . '%)'
+            );
+            $playerBaseRows .= '<tr><td>Construction</td><td>'
+                . h(
+                    intval($construction['total'] ?? 0) . ' building'
+                    . (intval($construction['total'] ?? 0) === 1 ? '' : 's')
+                    . ' | Average ' . number_format(floatval($construction['average_progress'] ?? 0), 0) . '%'
+                    . ' | Paused ' . intval($construction['paused'] ?? 0)
+                    . ' | Need materials ' . intval($construction['missing_materials'] ?? 0)
+                    . ($constructionGroups !== '' ? ' | ' . $constructionGroups : '')
+                )
+                . '</td></tr>';
+        }
+        $playerBaseRows .= '<tr><td>Power Resilience</td><td>'
+            . h(
+                'Generators ' . intval($power['generators_active'] ?? 0)
+                . '/' . intval($power['generators_total'] ?? 0) . ' active'
+                . ' | Consumers ' . intval($power['consumers'] ?? 0)
+                . ' | Unpowered ' . intval($power['unpowered'] ?? 0)
+                . ' | Switched off ' . intval($power['switched_off'] ?? 0)
+            )
+            . '</td></tr>';
+        $playerBaseRows .= '<tr><td>Base Supplies</td><td>'
+            . h(
+                'Food ' . intval($supplies['food'] ?? 0)
+                . ' | Medicine ' . intval($supplies['medicine'] ?? 0)
+                . ' | Building materials ' . intval($supplies['building_materials'] ?? 0)
+                . ' | Iron plates ' . intval($supplies['iron_plates'] ?? 0)
+                . ' | Fuel ' . intval($supplies['fuel'] ?? 0)
+                . ' | Water ' . intval($supplies['water'] ?? 0)
+                . ' | Ammunition ' . intval($supplies['ammunition'] ?? 0)
+            )
+            . '</td></tr>';
+        $storageGroups = $formatGroups(
+            $storage['groups'] ?? [],
+            static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                . ' x' . intval($group['total'] ?? 0)
+                . (intval($group['full'] ?? 0) > 0 ? ', ' . intval($group['full']) . ' full' : '')
+        );
+        $playerBaseRows .= '<tr><td>Storage</td><td>'
+            . h(
+                intval($storage['total'] ?? 0) . ' containers'
+                . ' | Empty ' . intval($storage['empty'] ?? 0)
+                . ' | Full ' . intval($storage['full'] ?? 0)
+                . ' | Stored units ' . intval($storage['item_units'] ?? 0)
+                . ($storageGroups !== '' ? ' | ' . $storageGroups : '')
+            )
+            . '</td></tr>';
+        $productionGroups = $formatGroups(
+            $production['groups'] ?? [],
+            static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                . ' ' . intval($group['active'] ?? 0) . '/' . intval($group['total'] ?? 0)
+                . ' active'
+        );
+        $playerBaseRows .= '<tr><td>Production Health</td><td>'
+            . h(
+                intval($production['active'] ?? 0) . '/' . intval($production['total'] ?? 0)
+                . ' active'
+                . ' | Missing inputs ' . intval($production['input_blocked'] ?? 0)
+                . ' | Output full ' . intval($production['output_blocked'] ?? 0)
+                . ' | Unpowered ' . intval($production['unpowered'] ?? 0)
+                . ' | Staffed ' . intval($production['staffed'] ?? 0)
+                . ' | Efficiency ' . number_format(floatval($production['average_efficiency'] ?? 0), 0) . '%'
+                . ($productionGroups !== '' ? ' | ' . $productionGroups : '')
+            )
+            . '</td></tr>';
+        $farmGroups = $formatGroups(
+            $farms['groups'] ?? [],
+            static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                . ' ' . intval($group['active'] ?? 0) . '/' . intval($group['total'] ?? 0)
+                . ' active'
+        );
+        $playerBaseRows .= '<tr><td>Farm Status</td><td>'
+            . h(
+                intval($farms['active'] ?? 0) . '/' . intval($farms['total'] ?? 0)
+                . ' active'
+                . ' | Need water ' . intval($farms['needs_water'] ?? 0)
+                . ' | Output full ' . intval($farms['output_full'] ?? 0)
+                . ' | Unpowered ' . intval($farms['unpowered'] ?? 0)
+                . ' | Staffed ' . intval($farms['staffed'] ?? 0)
+                . ' | Hydroponic ' . intval($farms['hydroponic'] ?? 0)
+                . ' | Average yield ' . number_format(floatval($farms['average_yield'] ?? 0), 0) . '%'
+                . ($farmGroups !== '' ? ' | ' . $farmGroups : '')
+            )
+            . '</td></tr>';
+        if (coerceBoolean($baseDetails['scan_truncated'] ?? false)) {
+            $playerBaseRows .= '<tr><td>Base Scan</td><td>Limited by safety cap</td></tr>';
+        }
     }
 }
 

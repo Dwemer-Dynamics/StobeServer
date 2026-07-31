@@ -7350,10 +7350,130 @@ function buildPlayerBaseStateBlock(array $npcData): string
     $lines[] = '  <has_spare_power>' . (!empty($base['has_spare_power']) ? 'true' : 'false') . '</has_spare_power>';
     $lines[] = '  <battery_charge>' . stobePromptXmlEscape(strval($base['battery_charge'] ?? 0)) . '</battery_charge>';
     $lines[] = '  <battery_capacity>' . stobePromptXmlEscape(strval($base['battery_capacity'] ?? 0)) . '</battery_capacity>';
+    $lines[] = '  <battery_drain>' . stobePromptXmlEscape(strval($base['battery_drain'] ?? 0)) . '</battery_drain>';
+    $lines[] = '  <battery_charging>' . stobePromptXmlEscape(strval($base['battery_charging'] ?? 0)) . '</battery_charging>';
     $lines[] = '  <battery_mode>' . (!empty($base['battery_mode']) ? 'true' : 'false') . '</battery_mode>';
     $lines[] = '  <squad_members_inside>' . intval($base['members_inside'] ?? 0) . '</squad_members_inside>';
     if (!empty($base['has_gates'])) {
         $lines[] = '  <gates>' . (!empty($base['gates_closed']) ? 'closed' : 'open') . '</gates>';
+    }
+    $details = is_array($base['details'] ?? null) ? $base['details'] : [];
+    if (coerceBoolean($details['available'] ?? false)) {
+        $appendFields = static function (
+            array &$output,
+            string $groupName,
+            array $group,
+            array $fieldNames
+        ): void {
+            $output[] = '  <' . $groupName . '>';
+            foreach ($fieldNames as $fieldName) {
+                $output[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $output[] = '  </' . $groupName . '>';
+        };
+        $appendGroups = static function (
+            array &$output,
+            string $containerName,
+            array $groups,
+            array $fieldNames
+        ): void {
+            if (count($groups) === 0) {
+                return;
+            }
+            $output[] = '    <' . $containerName . '>';
+            foreach (array_slice($groups, 0, 12) as $group) {
+                if (!is_array($group)) {
+                    continue;
+                }
+                $output[] = '      <group>';
+                $output[] = '        <name>'
+                    . stobePromptXmlEscape(strval($group['name'] ?? 'Unknown'))
+                    . '</name>';
+                foreach ($fieldNames as $fieldName) {
+                    $output[] = '        <' . $fieldName . '>'
+                        . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                        . '</' . $fieldName . '>';
+                }
+                $output[] = '      </group>';
+            }
+            $output[] = '    </' . $containerName . '>';
+        };
+
+        $appendFields($lines, 'security', $details['security'] ?? [], [
+            'alarm_state', 'hostiles_inside', 'gates_total', 'damaged_defenses',
+            'destroyed_defenses', 'turrets_total', 'turrets_manned', 'turrets_unpowered',
+        ]);
+
+        $infrastructure = is_array($details['infrastructure'] ?? null)
+            ? $details['infrastructure']
+            : [];
+        $infrastructureProblemCount = intval($infrastructure['damaged'] ?? 0)
+            + intval($infrastructure['destroyed'] ?? 0)
+            + intval($infrastructure['broken'] ?? 0)
+            + intval($infrastructure['unpowered'] ?? 0);
+        if ($infrastructureProblemCount > 0) {
+            $lines[] = '  <infrastructure_problems>';
+            foreach (['damaged', 'destroyed', 'broken', 'unpowered'] as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . intval($infrastructure[$fieldName] ?? 0)
+                    . '</' . $fieldName . '>';
+            }
+            $appendGroups($lines, 'affected_buildings', $infrastructure['issues'] ?? [], [
+                'count', 'damaged', 'destroyed', 'broken', 'unpowered',
+            ]);
+            $lines[] = '  </infrastructure_problems>';
+        }
+
+        $construction = is_array($details['construction'] ?? null) ? $details['construction'] : [];
+        if (intval($construction['total'] ?? 0) > 0) {
+            $lines[] = '  <construction>';
+            foreach (['total', 'paused', 'missing_materials', 'average_progress'] as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($construction[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $appendGroups($lines, 'building_groups', $construction['groups'] ?? [], [
+                'count', 'paused', 'missing_materials', 'average_progress',
+            ]);
+            $lines[] = '  </construction>';
+        }
+
+        $appendFields($lines, 'power_resilience', $details['power'] ?? [], [
+            'consumers', 'unpowered', 'switched_off', 'generators_total', 'generators_active',
+        ]);
+        $appendFields($lines, 'supplies', $details['supplies'] ?? [], [
+            'food', 'medicine', 'building_materials', 'iron_plates', 'fuel', 'water', 'ammunition',
+        ]);
+
+        foreach ([
+            'storage' => [
+                ['total', 'empty', 'full', 'item_units'],
+                ['total', 'empty', 'full', 'item_units'],
+            ],
+            'production' => [
+                ['total', 'active', 'input_blocked', 'output_blocked', 'unpowered', 'staffed', 'average_efficiency'],
+                ['total', 'active', 'input_blocked', 'output_blocked', 'unpowered', 'staffed', 'average_efficiency'],
+            ],
+            'farms' => [
+                ['total', 'active', 'needs_water', 'output_full', 'unpowered', 'staffed', 'hydroponic', 'average_yield'],
+                ['total', 'active', 'needs_water', 'output_full', 'unpowered', 'staffed', 'hydroponic', 'average_yield'],
+            ],
+        ] as $groupName => [$fieldNames, $groupFieldNames]) {
+            $group = is_array($details[$groupName] ?? null) ? $details[$groupName] : [];
+            $lines[] = '  <' . $groupName . '>';
+            foreach ($fieldNames as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $appendGroups($lines, 'building_groups', $group['groups'] ?? [], $groupFieldNames);
+            $lines[] = '  </' . $groupName . '>';
+        }
+        if (coerceBoolean($details['scan_truncated'] ?? false)) {
+            $lines[] = '  <scan_truncated>true</scan_truncated>';
+        }
     }
     $lines[] = '  <context>This character is currently inside this player-owned base perimeter.</context>';
     $lines[] = '</player_base>';

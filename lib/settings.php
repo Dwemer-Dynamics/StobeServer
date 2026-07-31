@@ -144,7 +144,7 @@ function stobeGetPromptContextOptionCatalog(): array {
             ],
             'player_base' => [
                 'label' => '<player_base>',
-                'description' => 'Current player-base power, battery, gates, and squad presence while this actor is inside its perimeter.',
+                'description' => 'Current player-base power, security, infrastructure, supplies, production, farms, and squad presence while this actor is inside its perimeter.',
             ],
             'available_actions_list' => [
                 'label' => '<available_actions_list>',

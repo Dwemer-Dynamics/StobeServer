@@ -131,6 +131,10 @@ function stobePlaythroughPruneFutureTimeline(int $cutoffGamets): array
         'npc_history' => 0,
         'location_zones_deleted' => 0,
         'location_zones_rewound' => 0,
+        'player_base_history_deleted' => 0,
+        'player_bases_deleted' => 0,
+        'player_bases_restored' => 0,
+        'player_base_presence_cleared' => 0,
     ];
 
     if (stobePlaythroughTableExists('eventlog')) {
@@ -221,6 +225,83 @@ function stobePlaythroughPruneFutureTimeline(int $cutoffGamets): array
                 WHERE COALESCE(last_game_ts, 0) > $1
                 RETURNING 1
              ) SELECT COUNT(*)::int AS c FROM updated',
+            [$cutoff]
+        );
+    }
+
+    if (stobePlaythroughTableExists('player_base_history')) {
+        $counts['player_base_history_deleted'] = stobePlaythroughDeleteCount(
+            'WITH deleted AS (
+                DELETE FROM player_base_history
+                WHERE game_ts > $1
+                RETURNING 1
+             ) SELECT COUNT(*)::int AS c FROM deleted',
+            [$cutoff]
+        );
+    }
+
+    if (stobePlaythroughTableExists('player_bases')) {
+        $counts['player_bases_deleted'] = stobePlaythroughDeleteCount(
+            'WITH deleted AS (
+                DELETE FROM player_bases
+                WHERE first_game_ts > $1
+                RETURNING 1
+             ) SELECT COUNT(*)::int AS c FROM deleted',
+            [$cutoff]
+        );
+
+        if (stobePlaythroughTableExists('player_base_history')) {
+            $counts['player_bases_restored'] = stobePlaythroughDeleteCount(
+                'WITH latest AS (
+                    SELECT DISTINCT ON (base_id)
+                        base_id, name, power_generated, power_required,
+                        battery_charge, battery_capacity, battery_drain, battery_charging,
+                        battery_mode, has_spare_power, members_inside,
+                        has_gates, gates_closed, details, game_ts, observed_at
+                    FROM player_base_history
+                    WHERE game_ts <= $1
+                    ORDER BY base_id, game_ts DESC, id DESC
+                 ),
+                 updated AS (
+                    UPDATE player_bases b
+                    SET name = latest.name,
+                        power_generated = latest.power_generated,
+                        power_required = latest.power_required,
+                        battery_charge = latest.battery_charge,
+                        battery_capacity = latest.battery_capacity,
+                        battery_drain = latest.battery_drain,
+                        battery_charging = latest.battery_charging,
+                        battery_mode = latest.battery_mode,
+                        has_spare_power = latest.has_spare_power,
+                        members_inside = latest.members_inside,
+                        has_gates = latest.has_gates,
+                        gates_closed = latest.gates_closed,
+                        details = latest.details,
+                        game_ts = latest.game_ts,
+                        last_game_ts = latest.game_ts,
+                        last_seen_at = latest.observed_at
+                    FROM latest
+                    WHERE b.base_id = latest.base_id
+                    RETURNING 1
+                 )
+                 SELECT COUNT(*)::int AS c FROM updated',
+                [$cutoff]
+            );
+        }
+    }
+
+    if (stobePlaythroughTableExists('player_base_presence')) {
+        $counts['player_base_presence_cleared'] = stobePlaythroughDeleteCount(
+            "WITH updated AS (
+                UPDATE player_base_presence
+                SET inside = FALSE,
+                    base_id = NULL,
+                    game_ts = $1,
+                    observed_at = NOW()
+                WHERE scope_key = 'selected_player'
+                  AND (inside = TRUE OR base_id IS NOT NULL)
+                RETURNING 1
+             ) SELECT COUNT(*)::int AS c FROM updated",
             [$cutoff]
         );
     }
@@ -938,6 +1019,10 @@ function stobePlaythroughZeroPruneCounts(): array
         'npc_history' => 0,
         'location_zones_deleted' => 0,
         'location_zones_rewound' => 0,
+        'player_base_history_deleted' => 0,
+        'player_bases_deleted' => 0,
+        'player_bases_restored' => 0,
+        'player_base_presence_cleared' => 0,
     ];
 }
 

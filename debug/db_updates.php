@@ -2560,6 +2560,72 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('player_bases', 202607300102, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
+            );
+        });
+
+        $applyPatch('player_bases', 202607300103, static function () use ($db): void {
+            $db->exec(
+                'ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS first_game_ts BIGINT NOT NULL DEFAULT 0,
+                 ADD COLUMN IF NOT EXISTS last_game_ts BIGINT NOT NULL DEFAULT 0'
+            );
+            $db->exec(
+                'UPDATE player_bases
+                 SET last_game_ts = CASE WHEN last_game_ts <= 0 THEN game_ts ELSE last_game_ts END'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_bases_game_range
+                 ON player_bases (first_game_ts, last_game_ts)'
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_base_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    base_id TEXT NOT NULL REFERENCES player_bases(base_id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+                    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+                    members_inside INT NOT NULL DEFAULT 0,
+                    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+                    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+                    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    game_ts BIGINT NOT NULL,
+                    observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (base_id, game_ts)
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_base_history_rollback
+                 ON player_base_history (game_ts DESC, base_id)'
+            );
+            $db->exec(
+                "INSERT INTO player_base_history (
+                    base_id, name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details, game_ts, observed_at
+                 )
+                 SELECT
+                    base_id, name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details,
+                    CASE WHEN first_game_ts > 0 THEN game_ts ELSE 0 END,
+                    last_seen_at
+                 FROM player_bases
+                 ON CONFLICT (base_id, game_ts) DO NOTHING"
+            );
+        });
+
         $applyPatch('general_settings', 202607300102, static function () use ($db): void {
             $row = $db->fetchOne(
                 "SELECT value

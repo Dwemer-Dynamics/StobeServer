@@ -226,11 +226,16 @@ CREATE TABLE IF NOT EXISTS player_bases (
     members_inside INT NOT NULL DEFAULT 0,
     has_gates BOOLEAN NOT NULL DEFAULT FALSE,
     gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
     game_ts BIGINT NOT NULL DEFAULT 0,
+    first_game_ts BIGINT NOT NULL DEFAULT 0,
+    last_game_ts BIGINT NOT NULL DEFAULT 0,
     last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_player_bases_last_seen
     ON player_bases (last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_bases_game_range
+    ON player_bases (first_game_ts, last_game_ts);
 
 CREATE TABLE IF NOT EXISTS player_base_presence (
     scope_key TEXT PRIMARY KEY,
@@ -244,6 +249,29 @@ CREATE TABLE IF NOT EXISTS player_base_presence (
 );
 CREATE INDEX IF NOT EXISTS idx_player_base_presence_observed
     ON player_base_presence (inside, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS player_base_history (
+    id BIGSERIAL PRIMARY KEY,
+    base_id TEXT NOT NULL REFERENCES player_bases(base_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+    members_inside INT NOT NULL DEFAULT 0,
+    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    game_ts BIGINT NOT NULL,
+    observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (base_id, game_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_player_base_history_rollback
+    ON player_base_history (game_ts DESC, base_id);
 
 -- ----------------------------------------------------------
 -- WORLD_STATE - Row-level WorldEventStateQuery entries
