@@ -737,9 +737,6 @@ $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     $previousMessage,
     intval($gamets)
 );
-if (count($memoryContextMessages) > 0) {
-    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
-}
 
 $rechatSpecialContext = [];
 $hasLimbLossSpecialContext = false;
@@ -788,6 +785,16 @@ if ($nearbyPartyPrompt !== '') {
 }
 $userLine = stobeBuildRechatPromptContent($previousSpeaker, $previousTarget, $previousMessage);
 
+$compactHistory = stobeApplyCompactChatHistory(
+    $systemPrompt,
+    $historyMessages,
+    $respondingNpc,
+    stobeShouldCompactChatHistory($respondingNpc)
+);
+$systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
+$historyMessages = is_array($compactHistory['history_messages'] ?? null)
+    ? $compactHistory['history_messages']
+    : $historyMessages;
 $messages = [
     [
         'role' => 'system',
@@ -796,6 +803,9 @@ $messages = [
 ];
 foreach ($historyMessages as $historyMessage) {
     $messages[] = $historyMessage;
+}
+foreach ($memoryContextMessages as $memoryContextMessage) {
+    $messages[] = $memoryContextMessage;
 }
 $messages[] = [
     'role' => 'user',

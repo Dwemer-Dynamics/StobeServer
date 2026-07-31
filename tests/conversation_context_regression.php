@@ -315,4 +315,92 @@ contextFlowAssertSameInt(
 );
 $GLOBALS['PRESERVE_INLINE_NARRATION_CONTEXT'] = false;
 
+$compactSourceMessages = [
+    [
+        'role' => 'assistant',
+        'content' => json_encode([
+            'character' => 'Doran',
+            'listener' => 'Ruka',
+            'message' => 'Stay close.',
+            'action' => 'Follow',
+            'target' => 'Ruka',
+        ], JSON_UNESCAPED_SLASHES),
+    ],
+    [
+        'role' => 'user',
+        'content' => " (...\nRuka: We move now. (talking to: Doran)\n...)",
+    ],
+    [
+        'role' => 'user',
+        'content' => " (...\n[death] Dust Bandit was killed by Doran\n...)",
+    ],
+];
+$compactBlock = stobeFormatCompactChatHistory($compactSourceMessages, 'Doran');
+contextFlowAssertSame(
+    implode("\n", [
+        '# Doran, speaking to Ruka: Stay close. [Action: Follow, targeting Ruka]',
+        '# Ruka, speaking to Doran: We move now.',
+        '# [death] Dust Bandit was killed by Doran',
+    ]),
+    $compactBlock,
+    'compact chat history should preserve speakers, listeners, actions, and normalized event text as Markdown'
+);
+contextFlowAssert(
+    strpos($compactBlock, '{"character"') === false,
+    'compact chat history should remove assistant JSON wrappers'
+);
+contextFlowAssert(
+    strpos($compactBlock, '(...)') === false,
+    'compact chat history should remove ambient user-message wrappers'
+);
+
+$priorCompactSetting = getSetting('COMPACT_CHAT_HISTORY_ENABLED', 'false');
+try {
+    setSetting('COMPACT_CHAT_HISTORY_ENABLED', 'true');
+    contextFlowAssert(
+        stobeShouldCompactChatHistory('Doran'),
+        'compact chat history should activate for NPC prompts when the global setting is enabled'
+    );
+    contextFlowAssert(
+        !stobeShouldCompactChatHistory(stobeNarratorName()),
+        'compact chat history should remain disabled for narrator prompts'
+    );
+} finally {
+    setSetting('COMPACT_CHAT_HISTORY_ENABLED', $priorCompactSetting);
+}
+
+$unchangedHistory = stobeApplyCompactChatHistory(
+    '<system>Keep existing prompt shape</system>',
+    $compactSourceMessages,
+    'Doran',
+    false
+);
+contextFlowAssertSame(
+    '<system>Keep existing prompt shape</system>',
+    strval($unchangedHistory['system_prompt'] ?? ''),
+    'disabled compact chat history should leave the system prompt unchanged'
+);
+contextFlowAssertSameInt(
+    count($compactSourceMessages),
+    count(is_array($unchangedHistory['history_messages'] ?? null) ? $unchangedHistory['history_messages'] : []),
+    'disabled compact chat history should leave role-separated history unchanged'
+);
+
+$compactedHistory = stobeApplyCompactChatHistory(
+    '<system>Use compact history</system>',
+    $compactSourceMessages,
+    'Doran',
+    true
+);
+contextFlowAssertSame(
+    "<system>Use compact history</system>\n\n" . $compactBlock,
+    strval($compactedHistory['system_prompt'] ?? ''),
+    'enabled compact chat history should append the Markdown block to the system prompt'
+);
+contextFlowAssertSameInt(
+    0,
+    count(is_array($compactedHistory['history_messages'] ?? null) ? $compactedHistory['history_messages'] : []),
+    'enabled compact chat history should remove the role-separated recent history'
+);
+
 echo "All conversation context regression tests passed.\n";
