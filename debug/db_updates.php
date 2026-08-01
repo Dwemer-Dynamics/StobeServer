@@ -2660,6 +2660,19 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('core_voiceid', 202607310001, static function () use ($runSqlSeedFile): void {
+            $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data'
+                . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'stobe_voice_library_upsert.sql';
+            $runSqlSeedFile(
+                $seedPath,
+                'Voice library seed file missing',
+                'Voice library seed file empty',
+                'Voice library seed file normalized to empty SQL',
+                true,
+                true
+            );
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
