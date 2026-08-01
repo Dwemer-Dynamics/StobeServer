@@ -2149,16 +2149,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     $pc = ($curPid !== '' && isset($profilesConnById[$curPid])) ? $profilesConnById[$curPid] : null;
     $m = function($id) use ($llmById){ $k = (string)($id ?? ''); return $k !== '' && isset($llmById[$k]) ? $llmById[$k] : 'N/A'; };
     ?>
-    <div id="profile_llm_summary" style="display:grid; grid-template-columns: 170px 1fr; gap:8px 10px; color:#cfd9ea; border:1px solid #4a4a4a; border-radius:8px; padding:10px; margin-bottom:8px;">
-        <div style="color:#e6b76c; font-weight:700; white-space:nowrap;">Profile LLMs</div>
-        <div style="display:grid; grid-template-columns: 120px 1fr; gap:4px 10px;">
-            <div style="color:#9fb1c9;">&#x1F4AC; Response</div><div><?= htmlspecialchars($pc ? $m($pc['response_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">&#x1F4D9; Diary</div><div><?= htmlspecialchars($pc ? $m($pc['diary_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">&#x1F4AD; Autochat</div><div><?= htmlspecialchars($pc ? $m($pc['autochat_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">&#x1F9E0; Memory</div><div><?= htmlspecialchars($pc ? $m($pc['middleterm_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">&#x1F30D; Background</div><div><?= htmlspecialchars($pc ? $m($pc['backgroundlife_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">&#x267B;&#xFE0F; Dynamic</div><div><?= htmlspecialchars($pc ? $m($pc['dynamic_connector'] ?? '') : 'N/A') ?></div>
-            <div style="color:#9fb1c9;">&#x1F91D; Relationship</div><div><?= htmlspecialchars($pc ? $m($pc['relationship_connector'] ?? '') : 'N/A') ?></div>
+    <div id="profile_llm_summary" style="display:grid; grid-template-columns: 170px 1fr; gap:6px; color:#cfd9ea; border:1px solid #4a4a4a; border-radius:8px; padding:8px; margin-bottom:8px;">
+        <div style="color:#e6b76c; font-weight:700; white-space:nowrap;">LLMs</div>
+        <div>
+            &#x1F4AC; <?= htmlspecialchars($pc ? $m($pc['response_connector'] ?? '') : 'N/A') ?>
+            | &#x1F4D9; <?= htmlspecialchars($pc ? $m($pc['diary_connector'] ?? '') : 'N/A') ?>
+            | &#x1F4AD; <?= htmlspecialchars($pc ? $m($pc['autochat_connector'] ?? '') : 'N/A') ?>
+            | &#x1F9E0; <?= htmlspecialchars($pc ? $m($pc['middleterm_connector'] ?? '') : 'N/A') ?>
+            | &#x1F30D; <?= htmlspecialchars($pc ? $m($pc['backgroundlife_connector'] ?? '') : 'N/A') ?>
+            | &#x267B;&#xFE0F; <?= htmlspecialchars($pc ? $m($pc['dynamic_connector'] ?? '') : 'N/A') ?>
+            | &#x1F91D; <?= htmlspecialchars($pc ? $m($pc['relationship_connector'] ?? '') : 'N/A') ?>
         </div>
     </div>
     <script>
@@ -2169,24 +2169,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         function renderProfileSummary(pid){
             const box = document.getElementById('profile_llm_summary'); if (!box) return;
             const pc = PROFILE_CONN[String(pid||'')] || null;
-            const response = pc ? labelOf(pc.response_connector) : 'N/A';
-            const diary = pc ? labelOf(pc.diary_connector) : 'N/A';
-            const autochat = pc ? labelOf(pc.autochat_connector) : 'N/A';
-            const memory = pc ? labelOf(pc.middleterm_connector) : 'N/A';
-            const background = pc ? labelOf(pc.backgroundlife_connector) : 'N/A';
-            const dynamic = pc ? labelOf(pc.dynamic_connector) : 'N/A';
-            const relationship = pc ? labelOf(pc.relationship_connector) : 'N/A';
-            box.innerHTML = ''
-                + '<div style="color:#e6b76c; font-weight:700; white-space:nowrap;">Profile LLMs</div>'
-                + '<div style="display:grid; grid-template-columns: 120px 1fr; gap:4px 10px;">'
-                + '<div style="color:#9fb1c9;">&#x1F4AC; Response</div><div>' + String(response || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">&#x1F4D9; Diary</div><div>' + String(diary || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">&#x1F4AD; Autochat</div><div>' + String(autochat || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">&#x1F9E0; Memory</div><div>' + String(memory || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">&#x1F30D; Background</div><div>' + String(background || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">&#x267B;&#xFE0F; Dynamic</div><div>' + String(dynamic || 'N/A') + '</div>'
-                + '<div style="color:#9fb1c9;">&#x1F91D; Relationship</div><div>' + String(relationship || 'N/A') + '</div>'
-                + '</div>';
+            const all = [
+                '&#x1F4AC; ' + (pc ? labelOf(pc.response_connector) : 'N/A'),
+                '&#x1F4D9; ' + (pc ? labelOf(pc.diary_connector) : 'N/A'),
+                '&#x1F4AD; ' + (pc ? labelOf(pc.autochat_connector) : 'N/A'),
+                '&#x1F9E0; ' + (pc ? labelOf(pc.middleterm_connector) : 'N/A'),
+                '&#x1F30D; ' + (pc ? labelOf(pc.backgroundlife_connector) : 'N/A'),
+                '&#x267B;&#xFE0F; ' + (pc ? labelOf(pc.dynamic_connector) : 'N/A'),
+                '&#x1F91D; ' + (pc ? labelOf(pc.relationship_connector) : 'N/A')
+            ].join(' | ');
+            box.innerHTML = '<div style="color:#e6b76c; font-weight:700; white-space:nowrap;">LLMs</div><div>' + all + '</div>';
         }
         document.addEventListener('DOMContentLoaded', function(){
             const sel = document.getElementById('profile_id');
