@@ -25,7 +25,6 @@ function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
         'init' => true,
         'gamedata' => true,
         'npc_snapshot' => true,
-        'world_state' => true,
         'player_base_state' => true,
         'chat_json' => true,
         'item_image_upload' => true,
@@ -34,6 +33,33 @@ function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
     ];
 
     return isset($authoritativeEvents[$event]);
+}
+
+function stobePlaythroughNpcSnapshotIsSparse(array $row): bool
+{
+    $placeholderValues = ['', 'unknown', 'none', 'n/a', 'null', '[]', '{}'];
+    foreach (['race', 'faction', 'gender', 'equipment', 'inventory', 'skills'] as $field) {
+        $value = $row[$field] ?? null;
+        if (is_array($value)) {
+            if (count($value) > 0) {
+                return false;
+            }
+            continue;
+        }
+
+        $normalized = strtolower(trim(strval($value)));
+        if (!in_array($normalized, $placeholderValues, true)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function stobePlaythroughShouldSkipSparseNpcRestore(array $currentRow, array $historyRow): bool
+{
+    return !stobePlaythroughNpcSnapshotIsSparse($currentRow)
+        && stobePlaythroughNpcSnapshotIsSparse($historyRow);
 }
 
 function stobePlaythroughRollbackLockKey(): int
@@ -954,6 +980,18 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
         }
 
         $historyRow = $historyByNpcId[$npcId];
+
+        if (stobePlaythroughShouldSkipSparseNpcRestore($row, $historyRow)) {
+            $skipped++;
+            stobeLogWarn('PLAYTHROUGH: skipped sparse NPC rollback downgrade', [
+                'npc_id' => $npcId,
+                'name' => strval($row['name'] ?? ''),
+                'current_gamets' => intval($row['gamets_last_updated'] ?? 0),
+                'history_id' => intval($historyRow['history_id'] ?? 0),
+                'history_gamets' => intval($historyRow['gamets_last_updated'] ?? 0),
+            ]);
+            continue;
+        }
 
         $currentHash = function_exists('stobeBuildNpcHistoryHashFromRow')
             ? stobeBuildNpcHistoryHashFromRow($row)
