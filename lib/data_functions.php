@@ -701,6 +701,56 @@ function stobeVoiceTagMatches(string $rowValue, string $npcValue): bool {
     return strcasecmp($row, $npc) === 0;
 }
 
+// Resolve broad voice families without discarding exact subrace matching.
+function stobeResolveVoiceRaceGroup(string $race, array $profile = []): string {
+    $metadata = normalizeCoreNpcMetadata($profile['metadata'] ?? []);
+    if (coerceBoolean($metadata['race_is_robot'] ?? false)) {
+        return 'skeleton';
+    }
+
+    $normalized = stobeNormalizeVoiceLookupValue($race);
+    if ($normalized === '') {
+        return '';
+    }
+    if (str_contains($normalized, 'hive')) {
+        return 'hive';
+    }
+    if (str_contains($normalized, 'skeleton')) {
+        return 'skeleton';
+    }
+    if (str_contains($normalized, 'cannibal')) {
+        return 'cannibal';
+    }
+
+    $legacyRobotRaces = [
+        'hazards unit',
+        'p2 unit',
+        'p3 unit',
+        'p4 unit',
+        'type 389',
+        'soldierbot',
+        'screamer mk i',
+        'screamer mk ii',
+        'log-head mk i',
+        'log-head mk ii',
+    ];
+    return in_array($normalized, $legacyRobotRaces, true) ? 'skeleton' : '';
+}
+
+function stobeVoiceRaceMatches(string $rowValue, string $npcValue, string $npcRaceGroup = ''): bool {
+    $row = stobeNormalizeVoiceLookupValue($rowValue);
+    if ($row === '' || $row === 'any') {
+        return true;
+    }
+    $npc = stobeNormalizeVoiceLookupValue($npcValue);
+    if ($npc !== '' && strcasecmp($row, $npc) === 0) {
+        return true;
+    }
+    return $npcRaceGroup !== ''
+        && in_array($row, ['skeleton', 'hive', 'cannibal'], true)
+        && $row === $npcRaceGroup;
+}
+
 function stobeSelectVoiceIdForNpc(
     string $name,
     string $race = '',
@@ -735,6 +785,7 @@ function stobeSelectVoiceIdForNpc(
     $normalizedGender = stobeNormalizeVoiceGender($gender);
     $normalizedRace = stobeNormalizeVoiceLookupValue($race);
     $normalizedFaction = stobeNormalizeVoiceFactionValue($faction);
+    $normalizedRaceGroup = stobeResolveVoiceRaceGroup($race, $profile);
 
     $nonUniqueRows = [];
     foreach ($rows as $row) {
@@ -744,12 +795,55 @@ function stobeSelectVoiceIdForNpc(
         $nonUniqueRows[] = $row;
     }
 
+    $exactRaceMatches = [];
+    foreach ($nonUniqueRows as $row) {
+        if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+            continue;
+        }
+        $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+        if ($rowRace === '' || $rowRace === 'any') {
+            continue;
+        }
+        if ($normalizedRace === '' || strcasecmp($rowRace, $normalizedRace) !== 0) {
+            continue;
+        }
+        if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
+            continue;
+        }
+        $exactRaceMatches[] = $row;
+    }
+    $pickedExactRace = stobePickDeterministicVoice($exactRaceMatches, $stableKey, 'exact_race');
+    if ($pickedExactRace !== '') {
+        return $pickedExactRace;
+    }
+
+    $groupRaceMatches = [];
+    if ($normalizedRaceGroup !== '') {
+        foreach ($nonUniqueRows as $row) {
+            if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+                continue;
+            }
+            $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+            if ($rowRace !== $normalizedRaceGroup) {
+                continue;
+            }
+            if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
+                continue;
+            }
+            $groupRaceMatches[] = $row;
+        }
+    }
+    $pickedGroupRace = stobePickDeterministicVoice($groupRaceMatches, $stableKey, 'group_race');
+    if ($pickedGroupRace !== '') {
+        return $pickedGroupRace;
+    }
+
     $strictMatches = [];
     foreach ($nonUniqueRows as $row) {
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
             continue;
         }
-        if (!stobeVoiceTagMatches(strval($row['race'] ?? 'any'), $normalizedRace)) {
+        if (!stobeVoiceRaceMatches(strval($row['race'] ?? 'any'), $normalizedRace, $normalizedRaceGroup)) {
             continue;
         }
         if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
@@ -767,7 +861,7 @@ function stobeSelectVoiceIdForNpc(
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
             continue;
         }
-        if (!stobeVoiceTagMatches(strval($row['race'] ?? 'any'), $normalizedRace)) {
+        if (!stobeVoiceRaceMatches(strval($row['race'] ?? 'any'), $normalizedRace, $normalizedRaceGroup)) {
             continue;
         }
         $genderRaceMatches[] = $row;
@@ -900,7 +994,13 @@ function stobeAssignVoiceIdIfMissing(
 
     $hasUniqueCandidate = stobeHasUniqueVoiceCandidateForNpc($safeName, $effectiveOriginalName);
     $normalizedGender = stobeNormalizeVoiceGender($effectiveGender);
-    if (!$hasUniqueCandidate && $normalizedGender !== 'male' && $normalizedGender !== 'female') {
+    $effectiveRaceGroup = stobeResolveVoiceRaceGroup($effectiveRace, ['metadata' => $effectiveMetadata]);
+    if (
+        !$hasUniqueCandidate
+        && $effectiveRaceGroup !== 'skeleton'
+        && $normalizedGender !== 'male'
+        && $normalizedGender !== 'female'
+    ) {
         return '';
     }
 
