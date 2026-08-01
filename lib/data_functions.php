@@ -795,6 +795,23 @@ function stobeSelectVoiceIdForNpc(
         $nonUniqueRows[] = $row;
     }
 
+    // Unknown races must stay on the legacy gender pools instead of borrowing a racial voice.
+    if (in_array($normalizedRace, ['', 'unknown', 'none', 'null', 'n/a', '-', '(none)', 'any'], true)) {
+        $genericGenderMatches = [];
+        foreach ($nonUniqueRows as $row) {
+            if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+                continue;
+            }
+            $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+            if ($rowRace !== '' && $rowRace !== 'any') {
+                continue;
+            }
+            $genericGenderMatches[] = $row;
+        }
+
+        return stobePickDeterministicVoice($genericGenderMatches, $stableKey, 'unknown_race_gender');
+    }
+
     $exactRaceMatches = [];
     foreach ($nonUniqueRows as $row) {
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
