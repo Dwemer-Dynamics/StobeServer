@@ -84,6 +84,47 @@ $presenceBackup = $db->fetchOne(
 );
 
 try {
+    ptAssert(
+        !stobePlaythroughRollbackEventIsAuthoritative('world_state'),
+        'Delayed world-state scans must not trigger rollback handling'
+    );
+    ptAssert(
+        stobePlaythroughRollbackEventIsAuthoritative('npc_snapshot'),
+        'NPC snapshots should remain authoritative for rollback handling'
+    );
+
+    $richNpc = [
+        'race' => 'Greenlander',
+        'faction' => 'Mercenary Guild',
+        'gender' => 'male',
+        'equipment' => '[]',
+        'inventory' => '[]',
+        'skills' => '{}',
+    ];
+    $sparseNpc = [
+        'race' => 'Unknown',
+        'faction' => '',
+        'gender' => '',
+        'equipment' => '[]',
+        'inventory' => [],
+        'skills' => '{}',
+    ];
+    $richHistory = $richNpc;
+    $richHistory['race'] = 'Shek';
+
+    ptAssert(
+        stobePlaythroughShouldSkipSparseNpcRestore($richNpc, $sparseNpc),
+        'Rollback must not replace a populated NPC with a sparse history row'
+    );
+    ptAssert(
+        !stobePlaythroughShouldSkipSparseNpcRestore($richNpc, $richHistory),
+        'Rollback should allow restoration between populated NPC states'
+    );
+    ptAssert(
+        !stobePlaythroughShouldSkipSparseNpcRestore($sparseNpc, $sparseNpc),
+        'Sparse NPCs should not be treated as populated rollback downgrades'
+    );
+
     // Location zone pruning behavior on fallback rollback:
     // - zones first discovered after cutoff should be removed
     // - previously discovered zones should be kept and rewound to cutoff
