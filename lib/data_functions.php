@@ -10927,7 +10927,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $forceAppearanceUpdate = true;
     }
     if ($isLikelyTraderContext) {
-        $mergeTraderEntry = static function (array &$bucket, array $entry): void {
+        $mergeTraderEntry = static function (array &$bucket, array $entry) use ($resolveEntryWeaponModel): void {
             $entryName = trim(strval($entry['name'] ?? ''));
             if ($entryName === '') {
                 return;
@@ -11011,20 +11011,30 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $traderInventoryByKey = [];
         $traderInventoryItems = [];
         $traderInventoryCount = 0;
-        foreach ($inventoryPromptItems as $entry) {
-            if (!is_array($entry)) {
-                continue;
+        // Prefer the plugin's direct merchant snapshot; older payloads use the legacy reconstruction.
+        if ($snapshotTraderInventoryEntryCount > 0) {
+            foreach ($snapshotTraderInventoryItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            if (coerceBoolean($entry['equipped'] ?? false)) {
-                continue;
+        } else {
+            foreach ($inventoryPromptItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                if (coerceBoolean($entry['equipped'] ?? false)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            $mergeTraderEntry($traderInventoryByKey, $entry);
-        }
-        foreach ($traderShopInventoryCounts as $entry) {
-            if (!is_array($entry)) {
-                continue;
+            foreach ($traderShopInventoryCounts as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            $mergeTraderEntry($traderInventoryByKey, $entry);
         }
 
         foreach ($traderInventoryByKey as $entry) {
