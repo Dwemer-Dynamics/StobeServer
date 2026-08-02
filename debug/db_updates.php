@@ -1125,7 +1125,9 @@ PROMPT;
             $db->exec("CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC)");
         });
 
-        $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile): void {
+        $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile, $runBioUniqueSeedBundle): void {
+            // The generated token seed excludes names already present in bio_unique.
+            $runBioUniqueSeedBundle();
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_characters_rename_token_global_upsert.sql';
             $runSqlSeedFile($seed, 'rename_token_global category characters seed file missing', 'rename_token_global category characters seed file empty', 'rename_token_global category characters seed file normalized to empty SQL');
         });
@@ -1286,6 +1288,17 @@ PROMPT;
                    ON LOWER(b.name) = LOWER(c.name)
                   AND LOWER(b.type) = LOWER(c.type)
                  WHERE c.id IS NULL"
+            );
+        });
+
+        $applyPatch('rename_token_global', 202608020001, static function () use ($db): void {
+            $db->exec(
+                "DELETE FROM rename_token_global token
+                 WHERE EXISTS (
+                    SELECT 1
+                    FROM combined_bio_unique unique_bio
+                    WHERE LOWER(BTRIM(unique_bio.name)) = LOWER(BTRIM(token.token))
+                 )"
             );
         });
 

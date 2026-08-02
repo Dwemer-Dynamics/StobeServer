@@ -6065,9 +6065,34 @@ function loadServerRenameEligibilityTokens(): array {
     return $cache;
 }
 
-function isServerRenameEligibleName(string $name): bool {
-    $tokens = loadServerRenameEligibilityTokens();
+// Biography enablement controls prompt content, not whether a named NPC is unique.
+function loadServerProtectedUniqueNames(): array {
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
 
+    $protected = [];
+    $db = $GLOBALS["db"] ?? null;
+    if ($db) {
+        $rows = $db->fetchAll(
+            "SELECT DISTINCT name
+             FROM combined_bio_unique
+             WHERE BTRIM(COALESCE(name, '')) <> ''"
+        );
+        foreach ($rows as $row) {
+            $normalized = normalizeBioUniqueName(strval($row['name'] ?? ''));
+            if ($normalized !== '') {
+                $protected[$normalized] = true;
+            }
+        }
+    }
+
+    $cache = $protected;
+    return $cache;
+}
+
+function isServerRenameEligibleName(string $name): bool {
     $normalized = normalizeParticipantNameToken($name);
     if ($normalized === '') {
         return false;
@@ -6077,6 +6102,13 @@ function isServerRenameEligibleName(string $name): bool {
         return false;
     }
 
+    $uniqueKey = normalizeBioUniqueName($normalized);
+    $protectedUniqueNames = loadServerProtectedUniqueNames();
+    if ($uniqueKey !== '' && isset($protectedUniqueNames[$uniqueKey])) {
+        return false;
+    }
+
+    $tokens = loadServerRenameEligibilityTokens();
     $lower = strtolower($normalized);
     foreach ($tokens as $token) {
         if ($token === '') {
