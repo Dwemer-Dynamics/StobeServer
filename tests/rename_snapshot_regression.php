@@ -73,6 +73,28 @@ function fetchNpcRowByName(string $name): array|false
 
 $seed = strval(time()) . '_' . strval(random_int(1000, 9999));
 
+runInRollbackTransaction('batch identity rename preserves unique NPC names', function (): void {
+    $uniqueNames = ['Griffin', 'Hobbs', 'Green Finger', 'Cannibal Hunter Robun'];
+    $identities = [];
+    foreach ($uniqueNames as $index => $name) {
+        assertTrue(!isServerRenameEligibleName($name), $name . ' should not be rename eligible');
+        $identities[] = [
+            'serial' => strval(1100000000 + $index),
+            'name' => $name,
+            'gender' => 'male',
+            'race' => 'Greenlander',
+            'faction' => 'Drifters',
+        ];
+    }
+
+    $decisions = batchIdentityRenameDecisions($identities);
+    assertTrue(count($decisions) === count($uniqueNames), 'unique NPC batch should return one decision per identity');
+    foreach ($decisions as $index => $decision) {
+        assertSameText('ok', strval($decision['status'] ?? ''), $uniqueNames[$index] . ' should keep its original name');
+        assertSameText('', strval($decision['new_name'] ?? ''), $uniqueNames[$index] . ' should not receive a generated name');
+    }
+});
+
 runInRollbackTransaction('manual rename resolves source by storage_id', function () use ($seed): void {
     $sourceName = 'UT_SRC_' . $seed . '_Bandit';
     $renamedName = 'UT_RNM_' . $seed . '_Quinn [Nomadic Bandit]';
