@@ -142,6 +142,10 @@ function stobeGetPromptContextOptionCatalog(): array {
                 'label' => '<player_faction_funds>',
                 'description' => 'Shared cats available to player-faction NPCs.',
             ],
+            'player_base' => [
+                'label' => '<player_base>',
+                'description' => 'Current player-base power, security, infrastructure, supplies, production, farms, and squad presence while this actor is inside its perimeter.',
+            ],
             'available_actions_list' => [
                 'label' => '<available_actions_list>',
                 'description' => 'Available in-game actions the actor may choose from.',

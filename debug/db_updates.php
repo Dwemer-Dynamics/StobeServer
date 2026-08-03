@@ -1125,7 +1125,9 @@ PROMPT;
             $db->exec("CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC)");
         });
 
-        $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile): void {
+        $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile, $runBioUniqueSeedBundle): void {
+            // The generated token seed excludes names already present in bio_unique.
+            $runBioUniqueSeedBundle();
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_characters_rename_token_global_upsert.sql';
             $runSqlSeedFile($seed, 'rename_token_global category characters seed file missing', 'rename_token_global category characters seed file empty', 'rename_token_global category characters seed file normalized to empty SQL');
         });
@@ -1286,6 +1288,17 @@ PROMPT;
                    ON LOWER(b.name) = LOWER(c.name)
                   AND LOWER(b.type) = LOWER(c.type)
                  WHERE c.id IS NULL"
+            );
+        });
+
+        $applyPatch('rename_token_global', 202608020001, static function () use ($db): void {
+            $db->exec(
+                "DELETE FROM rename_token_global token
+                 WHERE EXISTS (
+                    SELECT 1
+                    FROM combined_bio_unique unique_bio
+                    WHERE LOWER(BTRIM(unique_bio.name)) = LOWER(BTRIM(token.token))
+                 )"
             );
         });
 
@@ -2448,6 +2461,19 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('general_settings', 202607300101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'COMPACT_CHAT_HISTORY_ENABLED',
+                    'false',
+                    'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
         $applyPatch('core_profiles', 202607290301, static function () use ($db): void {
             $db->exec(
                 "ALTER TABLE core_profiles
@@ -2502,6 +2528,161 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      updated_at = NOW()
                  WHERE jsonb_typeof(metadata) = 'object'
                    AND metadata ? 'LLM_RESPONSE_MODE'"
+            );
+        });
+
+        $applyPatch('player_bases', 202607300101, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_bases (
+                    base_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+                    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+                    members_inside INT NOT NULL DEFAULT 0,
+                    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+                    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_bases_last_seen
+                 ON player_bases (last_seen_at DESC)'
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_base_presence (
+                    scope_key TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    observer_serial BIGINT NOT NULL DEFAULT 0,
+                    observer_name TEXT NOT NULL DEFAULT '',
+                    inside BOOLEAN NOT NULL DEFAULT FALSE,
+                    base_id TEXT REFERENCES player_bases(base_id) ON DELETE SET NULL,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    observed_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_base_presence_observed
+                 ON player_base_presence (inside, observed_at DESC)'
+            );
+        });
+
+        $applyPatch('player_bases', 202607300102, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
+            );
+        });
+
+        $applyPatch('player_bases', 202607300103, static function () use ($db): void {
+            $db->exec(
+                'ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS first_game_ts BIGINT NOT NULL DEFAULT 0,
+                 ADD COLUMN IF NOT EXISTS last_game_ts BIGINT NOT NULL DEFAULT 0'
+            );
+            $db->exec(
+                'UPDATE player_bases
+                 SET last_game_ts = CASE WHEN last_game_ts <= 0 THEN game_ts ELSE last_game_ts END'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_bases_game_range
+                 ON player_bases (first_game_ts, last_game_ts)'
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_base_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    base_id TEXT NOT NULL REFERENCES player_bases(base_id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+                    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+                    members_inside INT NOT NULL DEFAULT 0,
+                    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+                    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+                    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    game_ts BIGINT NOT NULL,
+                    observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (base_id, game_ts)
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_base_history_rollback
+                 ON player_base_history (game_ts DESC, base_id)'
+            );
+            $db->exec(
+                "INSERT INTO player_base_history (
+                    base_id, name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details, game_ts, observed_at
+                 )
+                 SELECT
+                    base_id, name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details,
+                    CASE WHEN first_game_ts > 0 THEN game_ts ELSE 0 END,
+                    last_seen_at
+                 FROM player_bases
+                 ON CONFLICT (base_id, game_ts) DO NOTHING"
+            );
+        });
+
+        $applyPatch('general_settings', 202607300102, static function () use ($db): void {
+            $row = $db->fetchOne(
+                "SELECT value
+                 FROM general_settings
+                 WHERE id = 'PROMPT_CONTEXT_OPTIONS'
+                 LIMIT 1"
+            );
+            $options = json_decode(strval($row['value'] ?? ''), true);
+            if (!is_array($options)) {
+                $options = stobeGetDefaultPromptContextOptions();
+            }
+            if (!isset($options['enabled_sections']) || !is_array($options['enabled_sections'])) {
+                $defaults = stobeGetDefaultPromptContextOptions();
+                $options['enabled_sections'] = $defaults['enabled_sections'] ?? [];
+            }
+            if (!in_array('player_base', $options['enabled_sections'], true)) {
+                $options['enabled_sections'][] = 'player_base';
+            }
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'PROMPT_CONTEXT_OPTIONS',
+                    $1,
+                    'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [json_encode($options, JSON_UNESCAPED_SLASHES)]
+            );
+        });
+
+        $applyPatch('core_voiceid', 202607310001, static function () use ($runSqlSeedFile): void {
+            $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data'
+                . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'stobe_voice_library_upsert.sql';
+            $runSqlSeedFile(
+                $seedPath,
+                'Voice library seed file missing',
+                'Voice library seed file empty',
+                'Voice library seed file normalized to empty SQL',
+                true,
+                true
             );
         });
 

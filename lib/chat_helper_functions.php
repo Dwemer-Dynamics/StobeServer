@@ -7284,6 +7284,7 @@ function buildWorldStateBlock(array $npcData): string {
     ));
     $merchantInventory = truncatePromptValue($merchantInventoryRaw, 3600);
     if ($includeMerchantInventory && $merchantInventory !== '') {
+        $fields['merchant_inventory_rule'] = "This is the character's live stock currently offered for sale. It overrides conflicting biography, occupation, goals, and earlier dialogue. When asked about goods or prices, acknowledge that the character is trading and answer from this inventory.";
         $fields['merchant_inventory'] = $merchantInventory;
     }
 
@@ -7315,6 +7316,169 @@ function buildWorldStateBlock(array $npcData): string {
     }
     $xml[] = '</character_state>';
     return implode("\n", $xml);
+}
+
+function buildPlayerBaseStateBlock(array $npcData): string
+{
+    if (!stobePromptContextOptionEnabled('enabled_sections', 'player_base')) {
+        return '';
+    }
+
+    $extended = $npcData['extended_data'] ?? [];
+    if (is_string($extended)) {
+        $decoded = json_decode($extended, true);
+        $extended = is_array($decoded) ? $decoded : [];
+    }
+    if (!is_array($extended)) {
+        return '';
+    }
+
+    $base = function_exists('stobeNormalizePlayerBaseSnapshot')
+        ? stobeNormalizePlayerBaseSnapshot($extended['player_base'] ?? [], false)
+        : [];
+    if (!boolval($base['inside'] ?? false)) {
+        return '';
+    }
+    $serverObservedAt = intval($base['server_observed_at'] ?? 0);
+    if ($serverObservedAt > 0 && (time() - $serverObservedAt) > 90) {
+        return '';
+    }
+
+    $lines = ['<player_base>'];
+    $lines[] = '  <name>' . stobePromptXmlEscape(strval($base['name'] ?? 'Player Base')) . '</name>';
+    $lines[] = '  <power_generated>' . stobePromptXmlEscape(strval($base['power_generated'] ?? 0)) . '</power_generated>';
+    $lines[] = '  <power_required>' . stobePromptXmlEscape(strval($base['power_required'] ?? 0)) . '</power_required>';
+    $lines[] = '  <has_spare_power>' . (!empty($base['has_spare_power']) ? 'true' : 'false') . '</has_spare_power>';
+    $lines[] = '  <battery_charge>' . stobePromptXmlEscape(strval($base['battery_charge'] ?? 0)) . '</battery_charge>';
+    $lines[] = '  <battery_capacity>' . stobePromptXmlEscape(strval($base['battery_capacity'] ?? 0)) . '</battery_capacity>';
+    $lines[] = '  <battery_drain>' . stobePromptXmlEscape(strval($base['battery_drain'] ?? 0)) . '</battery_drain>';
+    $lines[] = '  <battery_charging>' . stobePromptXmlEscape(strval($base['battery_charging'] ?? 0)) . '</battery_charging>';
+    $lines[] = '  <battery_mode>' . (!empty($base['battery_mode']) ? 'true' : 'false') . '</battery_mode>';
+    $lines[] = '  <squad_members_inside>' . intval($base['members_inside'] ?? 0) . '</squad_members_inside>';
+    if (!empty($base['has_gates'])) {
+        $lines[] = '  <gates>' . (!empty($base['gates_closed']) ? 'closed' : 'open') . '</gates>';
+    }
+    $details = is_array($base['details'] ?? null) ? $base['details'] : [];
+    if (coerceBoolean($details['available'] ?? false)) {
+        $appendFields = static function (
+            array &$output,
+            string $groupName,
+            array $group,
+            array $fieldNames
+        ): void {
+            $output[] = '  <' . $groupName . '>';
+            foreach ($fieldNames as $fieldName) {
+                $output[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $output[] = '  </' . $groupName . '>';
+        };
+        $appendGroups = static function (
+            array &$output,
+            string $containerName,
+            array $groups,
+            array $fieldNames
+        ): void {
+            if (count($groups) === 0) {
+                return;
+            }
+            $output[] = '    <' . $containerName . '>';
+            foreach (array_slice($groups, 0, 12) as $group) {
+                if (!is_array($group)) {
+                    continue;
+                }
+                $output[] = '      <group>';
+                $output[] = '        <name>'
+                    . stobePromptXmlEscape(strval($group['name'] ?? 'Unknown'))
+                    . '</name>';
+                foreach ($fieldNames as $fieldName) {
+                    $output[] = '        <' . $fieldName . '>'
+                        . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                        . '</' . $fieldName . '>';
+                }
+                $output[] = '      </group>';
+            }
+            $output[] = '    </' . $containerName . '>';
+        };
+
+        $appendFields($lines, 'security', $details['security'] ?? [], [
+            'alarm_state', 'hostiles_inside', 'gates_total', 'damaged_defenses',
+            'destroyed_defenses', 'turrets_total', 'turrets_manned', 'turrets_unpowered',
+        ]);
+
+        $infrastructure = is_array($details['infrastructure'] ?? null)
+            ? $details['infrastructure']
+            : [];
+        $infrastructureProblemCount = intval($infrastructure['damaged'] ?? 0)
+            + intval($infrastructure['destroyed'] ?? 0)
+            + intval($infrastructure['broken'] ?? 0)
+            + intval($infrastructure['unpowered'] ?? 0);
+        if ($infrastructureProblemCount > 0) {
+            $lines[] = '  <infrastructure_problems>';
+            foreach (['damaged', 'destroyed', 'broken', 'unpowered'] as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . intval($infrastructure[$fieldName] ?? 0)
+                    . '</' . $fieldName . '>';
+            }
+            $appendGroups($lines, 'affected_buildings', $infrastructure['issues'] ?? [], [
+                'count', 'damaged', 'destroyed', 'broken', 'unpowered',
+            ]);
+            $lines[] = '  </infrastructure_problems>';
+        }
+
+        $construction = is_array($details['construction'] ?? null) ? $details['construction'] : [];
+        if (intval($construction['total'] ?? 0) > 0) {
+            $lines[] = '  <construction>';
+            foreach (['total', 'paused', 'missing_materials', 'average_progress'] as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($construction[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $appendGroups($lines, 'building_groups', $construction['groups'] ?? [], [
+                'count', 'paused', 'missing_materials', 'average_progress',
+            ]);
+            $lines[] = '  </construction>';
+        }
+
+        $appendFields($lines, 'power_resilience', $details['power'] ?? [], [
+            'consumers', 'unpowered', 'switched_off', 'generators_total', 'generators_active',
+        ]);
+        $appendFields($lines, 'supplies', $details['supplies'] ?? [], [
+            'food', 'medicine', 'building_materials', 'iron_plates', 'fuel', 'water', 'ammunition',
+        ]);
+
+        foreach ([
+            'storage' => [
+                ['total', 'empty', 'full', 'item_units'],
+                ['total', 'empty', 'full', 'item_units'],
+            ],
+            'production' => [
+                ['total', 'active', 'input_blocked', 'output_blocked', 'unpowered', 'staffed', 'average_efficiency'],
+                ['total', 'active', 'input_blocked', 'output_blocked', 'unpowered', 'staffed', 'average_efficiency'],
+            ],
+            'farms' => [
+                ['total', 'active', 'needs_water', 'output_full', 'unpowered', 'staffed', 'hydroponic', 'average_yield'],
+                ['total', 'active', 'needs_water', 'output_full', 'unpowered', 'staffed', 'hydroponic', 'average_yield'],
+            ],
+        ] as $groupName => [$fieldNames, $groupFieldNames]) {
+            $group = is_array($details[$groupName] ?? null) ? $details[$groupName] : [];
+            $lines[] = '  <' . $groupName . '>';
+            foreach ($fieldNames as $fieldName) {
+                $lines[] = '    <' . $fieldName . '>'
+                    . stobePromptXmlEscape(strval($group[$fieldName] ?? 0))
+                    . '</' . $fieldName . '>';
+            }
+            $appendGroups($lines, 'building_groups', $group['groups'] ?? [], $groupFieldNames);
+            $lines[] = '  </' . $groupName . '>';
+        }
+        if (coerceBoolean($details['scan_truncated'] ?? false)) {
+            $lines[] = '  <scan_truncated>true</scan_truncated>';
+        }
+    }
+    $lines[] = '  <context>This character is currently inside this player-owned base perimeter.</context>';
+    $lines[] = '</player_base>';
+    return implode("\n", $lines);
 }
 
 function parseFactionIdentityToken(string $rawFaction): array {
@@ -10681,6 +10845,7 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
     $speakerSkillsBlock = '';
     $speakerBountyBlock = '';
     $speakerWorldStateBlock = '';
+    $speakerPlayerBaseBlock = '';
     $nearbyActorsBlock = '';
     $nearbyItemsBlock = '';
     $pointsOfInterestBlock = '';
@@ -10720,6 +10885,7 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
         $speakerSkillsBlock = stobeBuildNpcSkillsText($speakerData);
         $speakerBountyBlock = stobeBuildNpcBountyPromptBlock($speakerData);
         $speakerWorldStateBlock = buildWorldStateBlock($speakerData);
+        $speakerPlayerBaseBlock = buildPlayerBaseStateBlock($speakerData);
         $nearbyActorsBlock = stobeBuildNarratorNearbyActorsContextBlock($speakerData, $safeSpeaker);
         $nearbyItemsBlock = stobeBuildNarratorNearbyItemsContextBlock($speakerData);
         $pointsOfInterestBlock = stobeBuildNarratorPointsOfInterestContextBlock($speakerData);
@@ -10802,6 +10968,12 @@ function stobeBuildNarratorSpeakerContextBlock(string $speakerName): string {
         $worldStateIndented = stobeIndentPromptBlock($speakerWorldStateBlock, 2);
         if ($worldStateIndented !== '') {
             $lines[] = $worldStateIndented;
+        }
+    }
+    if ($speakerPlayerBaseBlock !== '') {
+        $playerBaseIndented = stobeIndentPromptBlock($speakerPlayerBaseBlock, 2);
+        if ($playerBaseIndented !== '') {
+            $lines[] = $playerBaseIndented;
         }
     }
 
@@ -11081,6 +11253,10 @@ function buildSystemPrompt(
         $prompt = str_replace('#NPC_CHARACTER_STATE#', $worldStateBlock, $prompt);
     } elseif ($worldStateBlock !== '') {
         $prompt .= "\n\n" . $worldStateBlock;
+    }
+    $playerBaseBlock = buildPlayerBaseStateBlock($npcData);
+    if ($playerBaseBlock !== '') {
+        $prompt .= "\n\n" . $playerBaseBlock;
     }
     $prompt = stobePromptCleanupBaseTemplateBlocks($prompt);
 

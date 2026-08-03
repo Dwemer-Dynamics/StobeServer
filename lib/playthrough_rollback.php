@@ -25,7 +25,7 @@ function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
         'init' => true,
         'gamedata' => true,
         'npc_snapshot' => true,
-        'world_state' => true,
+        'player_base_state' => true,
         'chat_json' => true,
         'item_image_upload' => true,
         'portrait_upload' => true,
@@ -33,6 +33,33 @@ function stobePlaythroughRollbackEventIsAuthoritative(string $eventType): bool
     ];
 
     return isset($authoritativeEvents[$event]);
+}
+
+function stobePlaythroughNpcSnapshotIsSparse(array $row): bool
+{
+    $placeholderValues = ['', 'unknown', 'none', 'n/a', 'null', '[]', '{}'];
+    foreach (['race', 'faction', 'gender', 'equipment', 'inventory', 'skills'] as $field) {
+        $value = $row[$field] ?? null;
+        if (is_array($value)) {
+            if (count($value) > 0) {
+                return false;
+            }
+            continue;
+        }
+
+        $normalized = strtolower(trim(strval($value)));
+        if (!in_array($normalized, $placeholderValues, true)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function stobePlaythroughShouldSkipSparseNpcRestore(array $currentRow, array $historyRow): bool
+{
+    return !stobePlaythroughNpcSnapshotIsSparse($currentRow)
+        && stobePlaythroughNpcSnapshotIsSparse($historyRow);
 }
 
 function stobePlaythroughRollbackLockKey(): int
@@ -130,6 +157,10 @@ function stobePlaythroughPruneFutureTimeline(int $cutoffGamets): array
         'npc_history' => 0,
         'location_zones_deleted' => 0,
         'location_zones_rewound' => 0,
+        'player_base_history_deleted' => 0,
+        'player_bases_deleted' => 0,
+        'player_bases_restored' => 0,
+        'player_base_presence_cleared' => 0,
     ];
 
     if (stobePlaythroughTableExists('eventlog')) {
@@ -220,6 +251,83 @@ function stobePlaythroughPruneFutureTimeline(int $cutoffGamets): array
                 WHERE COALESCE(last_game_ts, 0) > $1
                 RETURNING 1
              ) SELECT COUNT(*)::int AS c FROM updated',
+            [$cutoff]
+        );
+    }
+
+    if (stobePlaythroughTableExists('player_base_history')) {
+        $counts['player_base_history_deleted'] = stobePlaythroughDeleteCount(
+            'WITH deleted AS (
+                DELETE FROM player_base_history
+                WHERE game_ts > $1
+                RETURNING 1
+             ) SELECT COUNT(*)::int AS c FROM deleted',
+            [$cutoff]
+        );
+    }
+
+    if (stobePlaythroughTableExists('player_bases')) {
+        $counts['player_bases_deleted'] = stobePlaythroughDeleteCount(
+            'WITH deleted AS (
+                DELETE FROM player_bases
+                WHERE first_game_ts > $1
+                RETURNING 1
+             ) SELECT COUNT(*)::int AS c FROM deleted',
+            [$cutoff]
+        );
+
+        if (stobePlaythroughTableExists('player_base_history')) {
+            $counts['player_bases_restored'] = stobePlaythroughDeleteCount(
+                'WITH latest AS (
+                    SELECT DISTINCT ON (base_id)
+                        base_id, name, power_generated, power_required,
+                        battery_charge, battery_capacity, battery_drain, battery_charging,
+                        battery_mode, has_spare_power, members_inside,
+                        has_gates, gates_closed, details, game_ts, observed_at
+                    FROM player_base_history
+                    WHERE game_ts <= $1
+                    ORDER BY base_id, game_ts DESC, id DESC
+                 ),
+                 updated AS (
+                    UPDATE player_bases b
+                    SET name = latest.name,
+                        power_generated = latest.power_generated,
+                        power_required = latest.power_required,
+                        battery_charge = latest.battery_charge,
+                        battery_capacity = latest.battery_capacity,
+                        battery_drain = latest.battery_drain,
+                        battery_charging = latest.battery_charging,
+                        battery_mode = latest.battery_mode,
+                        has_spare_power = latest.has_spare_power,
+                        members_inside = latest.members_inside,
+                        has_gates = latest.has_gates,
+                        gates_closed = latest.gates_closed,
+                        details = latest.details,
+                        game_ts = latest.game_ts,
+                        last_game_ts = latest.game_ts,
+                        last_seen_at = latest.observed_at
+                    FROM latest
+                    WHERE b.base_id = latest.base_id
+                    RETURNING 1
+                 )
+                 SELECT COUNT(*)::int AS c FROM updated',
+                [$cutoff]
+            );
+        }
+    }
+
+    if (stobePlaythroughTableExists('player_base_presence')) {
+        $counts['player_base_presence_cleared'] = stobePlaythroughDeleteCount(
+            "WITH updated AS (
+                UPDATE player_base_presence
+                SET inside = FALSE,
+                    base_id = NULL,
+                    game_ts = $1,
+                    observed_at = NOW()
+                WHERE scope_key = 'selected_player'
+                  AND (inside = TRUE OR base_id IS NOT NULL)
+                RETURNING 1
+             ) SELECT COUNT(*)::int AS c FROM updated",
             [$cutoff]
         );
     }
@@ -873,6 +981,18 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
 
         $historyRow = $historyByNpcId[$npcId];
 
+        if (stobePlaythroughShouldSkipSparseNpcRestore($row, $historyRow)) {
+            $skipped++;
+            stobeLogWarn('PLAYTHROUGH: skipped sparse NPC rollback downgrade', [
+                'npc_id' => $npcId,
+                'name' => strval($row['name'] ?? ''),
+                'current_gamets' => intval($row['gamets_last_updated'] ?? 0),
+                'history_id' => intval($historyRow['history_id'] ?? 0),
+                'history_gamets' => intval($historyRow['gamets_last_updated'] ?? 0),
+            ]);
+            continue;
+        }
+
         $currentHash = function_exists('stobeBuildNpcHistoryHashFromRow')
             ? stobeBuildNpcHistoryHashFromRow($row)
             : '';
@@ -937,6 +1057,10 @@ function stobePlaythroughZeroPruneCounts(): array
         'npc_history' => 0,
         'location_zones_deleted' => 0,
         'location_zones_rewound' => 0,
+        'player_base_history_deleted' => 0,
+        'player_bases_deleted' => 0,
+        'player_bases_restored' => 0,
+        'player_base_presence_cleared' => 0,
     ];
 }
 

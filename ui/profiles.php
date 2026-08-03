@@ -130,6 +130,12 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
 
     return $base;
 }
+
+function profile_setting_sync_button(string $key, string $label): string {
+    return '<button type="button" class="profile-setting-sync-btn" data-setting-key="'
+        . h($key) . '" data-setting-label="' . h($label)
+        . '" title="Copy this setting to every profile">Copy to all</button>';
+}
 function unique_profile_label(string $base, int $excludeId = 0): string {
     $db = $GLOBALS['db'];
     $candidate = trim($base) !== '' ? trim($base) : 'Profile';
@@ -184,6 +190,13 @@ function unique_imported_profile_label(string $label): string {
 $db = $GLOBALS['db'];
 $isEmbed = is_embed();
 $webRoot = web_root();
+$profileSyncableMetadataKeys = [
+    'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
+    'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE',
+    'CONTEXT_HISTORY', 'CONTEXT_HISTORY_DIARY', 'CONTEXT_HISTORY_DYNAMIC_PROFILE',
+    'DIARY_DAYS', 'AUTO_DIARY_MIN_EVENTS', 'AUTO_DIARY_HOUR', 'DIARY_COOLDOWN',
+    'DYNAMIC_PROFILE_FIELDS',
+];
 if ($isEmbed && !isset($_GET['embed'])) {
     $_GET['embed'] = '1';
 }
@@ -202,10 +215,28 @@ if (isset($_GET['create_blank']) && $_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
+    $isAjax = isset($_SERVER['HTTP_X_REQUESTED_WITH'])
+        && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
     $id = intval($_POST['id'] ?? 0);
     $label = trim(strval($_POST['label'] ?? ''));
     if ($label === '') {
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'Label is required']);
+            exit;
+        }
         header('Location: ' . page_url(['edit' => $id, 'error' => 'Label is required']));
+        exit;
+    }
+    $requestedSyncSetting = $_POST['sync_profile_setting'] ?? null;
+    $syncSettingKey = is_string($requestedSyncSetting) ? trim($requestedSyncSetting) : null;
+    if ($syncSettingKey !== null && !in_array($syncSettingKey, $profileSyncableMetadataKeys, true)) {
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'This profile setting cannot be copied to all profiles.']);
+            exit;
+        }
+        header('Location: ' . page_url(['edit' => $id, 'error' => 'This profile setting cannot be copied to all profiles.']));
         exit;
     }
     $metadata = normalize_json_obj($_POST['metadata'] ?? '', getDefaultCoreProfileMetadataJson());
@@ -256,6 +287,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
         'tts_connector_id' => post_int_or_null('tts_connector_id'),
         'metadata' => $metadata,
     ]);
+    $syncedProfiles = null;
+    $syncError = null;
+    if ($savedId > 0 && $syncSettingKey !== null) {
+        if (array_key_exists($syncSettingKey, $metadata)) {
+            $encodedValue = json_encode($metadata[$syncSettingKey], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $syncResult = $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$1]::text[], $2::jsonb, true),
+                     updated_at = NOW()",
+                [$syncSettingKey, $encodedValue]
+            );
+        } else {
+            $syncResult = $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = COALESCE(metadata, '{}'::jsonb) - $1,
+                     updated_at = NOW()",
+                [$syncSettingKey]
+            );
+        }
+        if ($syncResult === false) {
+            $syncError = 'The profile was saved, but the selected setting could not be copied to all profiles.';
+        } else {
+            $countRow = $db->fetchOne('SELECT COUNT(*) AS total FROM core_profiles');
+            $syncedProfiles = intval($countRow['total'] ?? 0);
+        }
+    }
+    if ($isAjax) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'ok' => $savedId > 0 && $syncError === null,
+            'id' => $savedId,
+            'synced_profiles' => $syncedProfiles,
+            'synced_setting' => $syncSettingKey,
+            'error' => $savedId <= 0 ? 'Profile could not be saved.' : $syncError,
+        ]);
+        exit;
+    }
     header('Location: ' . page_url(['edit' => $savedId, 'notice' => 'Saved Profile']));
     exit;
 }
@@ -623,7 +691,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .setting-row { display:grid; grid-template-columns: minmax(260px, 1fr) minmax(240px, 340px); gap:10px 14px; align-items:center; padding:7px 0; border-top:1px solid rgba(255,255,255,0.04); }
 .setting-row:first-child { border-top: 0; }
 @media (max-width: 980px) { .setting-row { grid-template-columns: 1fr; } }
-.setting-key { font-size: 12px; color:#f0f5ff; font-weight:700; margin-bottom: 2px; }
+.setting-key { font-size: 12px; color:#f0f5ff; font-weight:700; margin-bottom: 2px; display:flex; align-items:center; gap:8px; }
 .setting-desc { font-size: 12px; color:#9fb1c9; line-height:1.35; }
 .range-pair { display:flex; align-items:center; gap:8px; }
 .range-pair input[type='range'] { flex:1; accent-color: #e6b76c; }
@@ -635,6 +703,23 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card input[type='checkbox'] { transform: scale(1.08); accent-color:#176529; }
 .toggle-card .toggle-title { color:#dfe6f4; font-weight:700; font-size:12px; }
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
+.toggle-card-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+body .profile-setting-sync-btn {
+    display:inline-flex;
+    flex:0 0 auto;
+    min-height:18px !important;
+    margin:0 !important;
+    padding:2px 5px !important;
+    border:1px solid #4b4b4b !important;
+    border-radius:4px !important;
+    background:#303030 !important;
+    color:#f3f3f3 !important;
+    font-size:9px !important;
+    font-weight:600;
+    line-height:1.1;
+    cursor:pointer;
+}
+body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; background:#383838 !important; }
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
 .top-toggle-groups { display:grid; gap:9px; }
 .top-toggle-group { padding:9px; border:1px solid #3f3f3f; border-radius:8px; background:#202020; }
@@ -839,19 +924,19 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                     <div class="top-toggle-title">Profiles &amp; Memories</div>
                                     <div class="toggle-grid">
                                         <div class="toggle-card">
-                                            <label>
+                                            <div class="toggle-card-title-row"><label>
                                                 <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
                                                 <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
                                                 <span class="toggle-title">Dynamic Profile</span>
-                                            </label>
+                                            </label><?= profile_setting_sync_button('DYNAMIC_PROFILE_ENABLED', 'Dynamic Profile') ?></div>
                                             <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
                                         </div>
                                         <div class="toggle-card">
-                                            <label>
+                                            <div class="toggle-card-title-row"><label>
                                                 <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
                                                 <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
                                                 <span class="toggle-title">Middle Term Memory</span>
-                                            </label>
+                                            </label><?= profile_setting_sync_button('MIDDLE_TERM_MEMORY_ENABLED', 'Middle Term Memory') ?></div>
                                             <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
                                         </div>
                                     </div>
@@ -860,19 +945,19 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                     <div class="top-toggle-title">Diary</div>
                                     <div class="toggle-grid">
                                         <div class="toggle-card">
-                                            <label>
+                                            <div class="toggle-card-title-row"><label>
                                                 <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
                                                 <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
                                                 <span class="toggle-title">Auto Diary</span>
-                                            </label>
+                                            </label><?= profile_setting_sync_button('AUTO_DIARY_ENABLED', 'Auto Diary') ?></div>
                                             <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
                                         </div>
                                         <div class="toggle-card">
-                                            <label>
+                                            <div class="toggle-card-title-row"><label>
                                                 <input type="hidden" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="">
                                                 <input type="checkbox" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="1" <?= $metaBool('LATEST_DIARY_CONTEXT_ENABLED') ? 'checked' : '' ?>>
                                                 <span class="toggle-title">Include Latest Diary Entry</span>
-                                            </label>
+                                            </label><?= profile_setting_sync_button('LATEST_DIARY_CONTEXT_ENABLED', 'Include Latest Diary Entry') ?></div>
                                             <div class="toggle-desc">Adds the NPC's latest diary entry to the character section of every response prompt.</div>
                                         </div>
                                     </div>
@@ -976,7 +1061,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                         <textarea id="profile_prompt" name="profile_prompt"><?= h($editItem['profile_prompt'] ?? '') ?></textarea>
                     </div>
                     <div class="profile-prompt-field">
-                        <label for="meta_diary_prompt">Diary Prompt</label>
+                        <div class="setting-key"><label for="meta_diary_prompt" style="margin:0;">Diary Prompt</label><?= profile_setting_sync_button('DIARY_PROMPT', 'Diary Prompt') ?></div>
                         <div class="setting-desc" style="margin-bottom:6px;">Template used when generating diary entries for this profile.</div>
                         <textarea id="meta_diary_prompt" name="meta_vis[DIARY_PROMPT]" style="min-height:88px;"><?= h(strval($metaData['DIARY_PROMPT'] ?? ($metaDefaults['DIARY_PROMPT'] ?? ''))) ?></textarea>
                     </div>
@@ -1002,7 +1087,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <div class="provider-body">
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">RECHAT_RESPONSES</div>
+                                        <div class="setting-key"><span>RECHAT_RESPONSES</span><?= profile_setting_sync_button('RECHAT_RESPONSES', 'Rechat Responses') ?></div>
                                         <div class="setting-desc">Maximum number of follow-up responses allowed per conversation chain.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1012,7 +1097,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">RECHAT_PROBABILITY</div>
+                                        <div class="setting-key"><span>RECHAT_PROBABILITY</span><?= profile_setting_sync_button('RECHAT_PROBABILITY', 'Rechat Probability') ?></div>
                                         <div class="setting-desc">Primary rechat probability used by current flow (0-100).</div>
                                     </div>
                                     <div class="range-pair">
@@ -1022,7 +1107,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">BORED_EVENT_CHANCE</div>
+                                        <div class="setting-key"><span>BORED_EVENT_CHANCE</span><?= profile_setting_sync_button('BORED_EVENT_CHANCE', 'Bored Event Chance') ?></div>
                                         <div class="setting-desc">Chance for bored/board event generated dialogue in idle cycles (0-100).</div>
                                     </div>
                                     <div class="range-pair">
@@ -1043,7 +1128,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <div class="provider-body">
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">CONTEXT_HISTORY</div>
+                                        <div class="setting-key"><span>CONTEXT_HISTORY</span><?= profile_setting_sync_button('CONTEXT_HISTORY', 'Context History') ?></div>
                                         <div class="setting-desc">Recent context lines included in normal response prompts.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1053,7 +1138,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">CONTEXT_HISTORY_DIARY</div>
+                                        <div class="setting-key"><span>CONTEXT_HISTORY_DIARY</span><?= profile_setting_sync_button('CONTEXT_HISTORY_DIARY', 'Diary Context History') ?></div>
                                         <div class="setting-desc">Recent lines passed to diary-generation prompts.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1063,7 +1148,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">CONTEXT_HISTORY_DYNAMIC_PROFILE</div>
+                                        <div class="setting-key"><span>CONTEXT_HISTORY_DYNAMIC_PROFILE</span><?= profile_setting_sync_button('CONTEXT_HISTORY_DYNAMIC_PROFILE', 'Dynamic Profile Context History') ?></div>
                                         <div class="setting-desc">History window used when computing dynamic profile updates.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1084,7 +1169,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <div class="provider-body">
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">DIARY_DAYS</div>
+                                        <div class="setting-key"><span>DIARY_DAYS</span><?= profile_setting_sync_button('DIARY_DAYS', 'Diary Days') ?></div>
                                         <div class="setting-desc">Auto Diary timer in in-game days. Auto diary only writes when this many days have passed since the NPC's last diary entry.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1094,7 +1179,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">AUTO_DIARY_MIN_EVENTS</div>
+                                        <div class="setting-key"><span>AUTO_DIARY_MIN_EVENTS</span><?= profile_setting_sync_button('AUTO_DIARY_MIN_EVENTS', 'Auto Diary Minimum Events') ?></div>
                                         <div class="setting-desc">Minimum number of relevant events required in the diary window before auto diary writes an entry.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1104,7 +1189,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">AUTO_DIARY_HOUR</div>
+                                        <div class="setting-key"><span>AUTO_DIARY_HOUR</span><?= profile_setting_sync_button('AUTO_DIARY_HOUR', 'Auto Diary Hour') ?></div>
                                         <div class="setting-desc">In-game 24-hour time when auto diary becomes eligible to write for the previous completed day.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1114,7 +1199,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">DIARY_COOLDOWN</div>
+                                        <div class="setting-key"><span>DIARY_COOLDOWN</span><?= profile_setting_sync_button('DIARY_COOLDOWN', 'Diary Cooldown') ?></div>
                                         <div class="setting-desc">Real-time cooldown in seconds between diary writes for the same NPC.</div>
                                     </div>
                                     <div class="range-pair">
@@ -1130,6 +1215,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 <div class="provider-title">
                                     <div class="provider-icon">&#x1F6E0;&#xFE0F;</div>
                                     <div>Dynamic Profile Fields</div>
+                                    <?= profile_setting_sync_button('DYNAMIC_PROFILE_FIELDS', 'Dynamic Profile Fields') ?>
                                 </div>
                             </div>
                             <div class="provider-body">
@@ -1627,6 +1713,49 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                 ev.preventDefault();
                 alert('Metadata must be valid JSON.');
             }
+        });
+
+        document.querySelectorAll('.profile-setting-sync-btn').forEach(function (button) {
+            button.addEventListener('click', async function () {
+                const settingKey = button.dataset.settingKey || '';
+                const settingLabel = button.dataset.settingLabel || 'this setting';
+                if (!settingKey || !window.confirm('Copy "' + settingLabel + '" from this profile to all profiles? Other profile settings will not change.')) {
+                    return;
+                }
+
+                const metadataInput = document.getElementById('metadata');
+                if (metadataInput) {
+                    try {
+                        metadataInput.value = JSON.stringify(JSON.parse(metadataInput.value || '{}'), null, 2);
+                    } catch (_error) {
+                        notify('Metadata must be valid JSON.', true);
+                        return;
+                    }
+                }
+
+                const formData = new FormData(form);
+                formData.append('sync_profile_setting', settingKey);
+                appendEmbed(formData);
+                button.disabled = true;
+                notify('Copying ' + settingLabel + '...', false);
+                try {
+                    const response = await fetch(buildPageUrl(), {
+                        method: 'POST',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        body: formData
+                    });
+                    const payload = await response.json();
+                    if (!payload || payload.ok !== true) {
+                        throw new Error(payload && payload.error ? String(payload.error) : 'Request failed');
+                    }
+                    const count = Number(payload.synced_profiles || 0);
+                    notify(count > 0 ? (settingLabel + ' copied to ' + count + ' profiles') : 'Profile saved', false);
+                } catch (error) {
+                    notify(error && error.message ? String(error.message) : 'Failed to copy profile setting', true);
+                } finally {
+                    button.disabled = false;
+                }
+            });
         });
     }
 

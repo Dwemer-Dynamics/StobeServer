@@ -208,6 +208,71 @@ CREATE TABLE IF NOT EXISTS location_zones (
 CREATE INDEX IF NOT EXISTS idx_location_zones_zone_name_lower ON location_zones (LOWER(zone_name));
 CREATE INDEX IF NOT EXISTS idx_location_zones_first_game_ts ON location_zones (first_game_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_location_zones_last_seen_ts ON location_zones (last_seen_ts DESC);
+
+-- ----------------------------------------------------------
+-- PLAYER BASES - known settlements plus current selected-player presence
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS player_bases (
+    base_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+    members_inside INT NOT NULL DEFAULT 0,
+    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    first_game_ts BIGINT NOT NULL DEFAULT 0,
+    last_game_ts BIGINT NOT NULL DEFAULT 0,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_player_bases_last_seen
+    ON player_bases (last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_bases_game_range
+    ON player_bases (first_game_ts, last_game_ts);
+
+CREATE TABLE IF NOT EXISTS player_base_presence (
+    scope_key TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    observer_serial BIGINT NOT NULL DEFAULT 0,
+    observer_name TEXT NOT NULL DEFAULT '',
+    inside BOOLEAN NOT NULL DEFAULT FALSE,
+    base_id TEXT REFERENCES player_bases(base_id) ON DELETE SET NULL,
+    game_ts BIGINT NOT NULL DEFAULT 0,
+    observed_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_player_base_presence_observed
+    ON player_base_presence (inside, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS player_base_history (
+    id BIGSERIAL PRIMARY KEY,
+    base_id TEXT NOT NULL REFERENCES player_bases(base_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+    members_inside INT NOT NULL DEFAULT 0,
+    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    game_ts BIGINT NOT NULL,
+    observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (base_id, game_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_player_base_history_rollback
+    ON player_base_history (game_ts DESC, base_id);
+
 -- ----------------------------------------------------------
 -- WORLD_STATE - Row-level WorldEventStateQuery entries
 -- ----------------------------------------------------------
@@ -3597,6 +3662,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('RECHAT_MODE', 'random',                'Controls how Stobe chooses the next rechat responder: tight, conversational, group, or random.'),
 ('ENFORCE_STRICT_RECHAT_RESPONSE', 'false', 'When true, rechat replies must target the actor who just spoke.'),
 ('SPEAKER_RECHAT', 'false',              'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.'),
+('COMPACT_CHAT_HISTORY_ENABLED', 'false', 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.'),
 ('PROMPT_CONTEXT_OPTIONS', '{"enabled_sections":["world","knowledge","player_faction_funds","available_actions_list","nearby_actors","nearby_player_allies","nearby_items","points_of_interest","combat_priority","nearby_context_json","detailed_context_json"],"enabled_character_subsections":["basic_summary","personality","appearance","relationships","occupation","bounty","skills","speech_style","goals","middle_term_memory"],"enabled_state_subsections":["current_condition","activity_state","equipment","personal_inventory","merchant_inventory"],"enabled_knowledge_subsections":["world_knowledge","player_faction_prompt"]}', 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;

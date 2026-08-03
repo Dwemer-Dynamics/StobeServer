@@ -701,6 +701,56 @@ function stobeVoiceTagMatches(string $rowValue, string $npcValue): bool {
     return strcasecmp($row, $npc) === 0;
 }
 
+// Resolve broad voice families without discarding exact subrace matching.
+function stobeResolveVoiceRaceGroup(string $race, array $profile = []): string {
+    $metadata = normalizeCoreNpcMetadata($profile['metadata'] ?? []);
+    if (coerceBoolean($metadata['race_is_robot'] ?? false)) {
+        return 'skeleton';
+    }
+
+    $normalized = stobeNormalizeVoiceLookupValue($race);
+    if ($normalized === '') {
+        return '';
+    }
+    if (str_contains($normalized, 'hive')) {
+        return 'hive';
+    }
+    if (str_contains($normalized, 'skeleton')) {
+        return 'skeleton';
+    }
+    if (str_contains($normalized, 'cannibal')) {
+        return 'cannibal';
+    }
+
+    $legacyRobotRaces = [
+        'hazards unit',
+        'p2 unit',
+        'p3 unit',
+        'p4 unit',
+        'type 389',
+        'soldierbot',
+        'screamer mk i',
+        'screamer mk ii',
+        'log-head mk i',
+        'log-head mk ii',
+    ];
+    return in_array($normalized, $legacyRobotRaces, true) ? 'skeleton' : '';
+}
+
+function stobeVoiceRaceMatches(string $rowValue, string $npcValue, string $npcRaceGroup = ''): bool {
+    $row = stobeNormalizeVoiceLookupValue($rowValue);
+    if ($row === '' || $row === 'any') {
+        return true;
+    }
+    $npc = stobeNormalizeVoiceLookupValue($npcValue);
+    if ($npc !== '' && strcasecmp($row, $npc) === 0) {
+        return true;
+    }
+    return $npcRaceGroup !== ''
+        && in_array($row, ['skeleton', 'hive', 'cannibal'], true)
+        && $row === $npcRaceGroup;
+}
+
 function stobeSelectVoiceIdForNpc(
     string $name,
     string $race = '',
@@ -735,6 +785,7 @@ function stobeSelectVoiceIdForNpc(
     $normalizedGender = stobeNormalizeVoiceGender($gender);
     $normalizedRace = stobeNormalizeVoiceLookupValue($race);
     $normalizedFaction = stobeNormalizeVoiceFactionValue($faction);
+    $normalizedRaceGroup = stobeResolveVoiceRaceGroup($race, $profile);
 
     $nonUniqueRows = [];
     foreach ($rows as $row) {
@@ -744,12 +795,72 @@ function stobeSelectVoiceIdForNpc(
         $nonUniqueRows[] = $row;
     }
 
+    // Unknown races must stay on the legacy gender pools instead of borrowing a racial voice.
+    if (in_array($normalizedRace, ['', 'unknown', 'none', 'null', 'n/a', '-', '(none)', 'any'], true)) {
+        $genericGenderMatches = [];
+        foreach ($nonUniqueRows as $row) {
+            if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+                continue;
+            }
+            $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+            if ($rowRace !== '' && $rowRace !== 'any') {
+                continue;
+            }
+            $genericGenderMatches[] = $row;
+        }
+
+        return stobePickDeterministicVoice($genericGenderMatches, $stableKey, 'unknown_race_gender');
+    }
+
+    $exactRaceMatches = [];
+    foreach ($nonUniqueRows as $row) {
+        if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+            continue;
+        }
+        $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+        if ($rowRace === '' || $rowRace === 'any') {
+            continue;
+        }
+        if ($normalizedRace === '' || strcasecmp($rowRace, $normalizedRace) !== 0) {
+            continue;
+        }
+        if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
+            continue;
+        }
+        $exactRaceMatches[] = $row;
+    }
+    $pickedExactRace = stobePickDeterministicVoice($exactRaceMatches, $stableKey, 'exact_race');
+    if ($pickedExactRace !== '') {
+        return $pickedExactRace;
+    }
+
+    $groupRaceMatches = [];
+    if ($normalizedRaceGroup !== '') {
+        foreach ($nonUniqueRows as $row) {
+            if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+                continue;
+            }
+            $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+            if ($rowRace !== $normalizedRaceGroup) {
+                continue;
+            }
+            if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
+                continue;
+            }
+            $groupRaceMatches[] = $row;
+        }
+    }
+    $pickedGroupRace = stobePickDeterministicVoice($groupRaceMatches, $stableKey, 'group_race');
+    if ($pickedGroupRace !== '') {
+        return $pickedGroupRace;
+    }
+
     $strictMatches = [];
     foreach ($nonUniqueRows as $row) {
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
             continue;
         }
-        if (!stobeVoiceTagMatches(strval($row['race'] ?? 'any'), $normalizedRace)) {
+        if (!stobeVoiceRaceMatches(strval($row['race'] ?? 'any'), $normalizedRace, $normalizedRaceGroup)) {
             continue;
         }
         if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
@@ -767,7 +878,7 @@ function stobeSelectVoiceIdForNpc(
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
             continue;
         }
-        if (!stobeVoiceTagMatches(strval($row['race'] ?? 'any'), $normalizedRace)) {
+        if (!stobeVoiceRaceMatches(strval($row['race'] ?? 'any'), $normalizedRace, $normalizedRaceGroup)) {
             continue;
         }
         $genderRaceMatches[] = $row;
@@ -900,7 +1011,13 @@ function stobeAssignVoiceIdIfMissing(
 
     $hasUniqueCandidate = stobeHasUniqueVoiceCandidateForNpc($safeName, $effectiveOriginalName);
     $normalizedGender = stobeNormalizeVoiceGender($effectiveGender);
-    if (!$hasUniqueCandidate && $normalizedGender !== 'male' && $normalizedGender !== 'female') {
+    $effectiveRaceGroup = stobeResolveVoiceRaceGroup($effectiveRace, ['metadata' => $effectiveMetadata]);
+    if (
+        !$hasUniqueCandidate
+        && $effectiveRaceGroup !== 'skeleton'
+        && $normalizedGender !== 'male'
+        && $normalizedGender !== 'female'
+    ) {
         return '';
     }
 
@@ -5948,9 +6065,34 @@ function loadServerRenameEligibilityTokens(): array {
     return $cache;
 }
 
-function isServerRenameEligibleName(string $name): bool {
-    $tokens = loadServerRenameEligibilityTokens();
+// Biography enablement controls prompt content, not whether a named NPC is unique.
+function loadServerProtectedUniqueNames(): array {
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
 
+    $protected = [];
+    $db = $GLOBALS["db"] ?? null;
+    if ($db) {
+        $rows = $db->fetchAll(
+            "SELECT DISTINCT name
+             FROM combined_bio_unique
+             WHERE BTRIM(COALESCE(name, '')) <> ''"
+        );
+        foreach ($rows as $row) {
+            $normalized = normalizeBioUniqueName(strval($row['name'] ?? ''));
+            if ($normalized !== '') {
+                $protected[$normalized] = true;
+            }
+        }
+    }
+
+    $cache = $protected;
+    return $cache;
+}
+
+function isServerRenameEligibleName(string $name): bool {
     $normalized = normalizeParticipantNameToken($name);
     if ($normalized === '') {
         return false;
@@ -5960,6 +6102,13 @@ function isServerRenameEligibleName(string $name): bool {
         return false;
     }
 
+    $uniqueKey = normalizeBioUniqueName($normalized);
+    $protectedUniqueNames = loadServerProtectedUniqueNames();
+    if ($uniqueKey !== '' && isset($protectedUniqueNames[$uniqueKey])) {
+        return false;
+    }
+
+    $tokens = loadServerRenameEligibilityTokens();
     $lower = strtolower($normalized);
     foreach ($tokens as $token) {
         if ($token === '') {
@@ -10618,6 +10767,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         'trader_shop_sources' => $traderShopSourceSummaries,
         'trader_shop_source_count' => $traderShopSourceCount,
         'trader_shop_item_count' => $traderShopItemCount,
+        'player_base' => function_exists('stobeNormalizePlayerBaseSnapshot')
+            ? stobeNormalizePlayerBaseSnapshot($snapshot['player_base'] ?? [], true)
+            : [],
     ]);
 
     if ($storageId !== '') {
@@ -10775,7 +10927,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $forceAppearanceUpdate = true;
     }
     if ($isLikelyTraderContext) {
-        $mergeTraderEntry = static function (array &$bucket, array $entry): void {
+        $mergeTraderEntry = static function (array &$bucket, array $entry) use ($resolveEntryWeaponModel): void {
             $entryName = trim(strval($entry['name'] ?? ''));
             if ($entryName === '') {
                 return;
@@ -10859,20 +11011,30 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $traderInventoryByKey = [];
         $traderInventoryItems = [];
         $traderInventoryCount = 0;
-        foreach ($inventoryPromptItems as $entry) {
-            if (!is_array($entry)) {
-                continue;
+        // Prefer the plugin's direct merchant snapshot; older payloads use the legacy reconstruction.
+        if ($snapshotTraderInventoryEntryCount > 0) {
+            foreach ($snapshotTraderInventoryItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            if (coerceBoolean($entry['equipped'] ?? false)) {
-                continue;
+        } else {
+            foreach ($inventoryPromptItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                if (coerceBoolean($entry['equipped'] ?? false)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            $mergeTraderEntry($traderInventoryByKey, $entry);
-        }
-        foreach ($traderShopInventoryCounts as $entry) {
-            if (!is_array($entry)) {
-                continue;
+            foreach ($traderShopInventoryCounts as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            $mergeTraderEntry($traderInventoryByKey, $entry);
         }
 
         foreach ($traderInventoryByKey as $entry) {
@@ -13534,6 +13696,9 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
             $traderShopItemCount += $sourceItemCount;
         }
     }
+    $playerBase = function_exists('stobeNormalizePlayerBaseSnapshot')
+        ? stobeNormalizePlayerBaseSnapshot($extended['player_base'] ?? [], false)
+        : [];
 
     $redundantTopLevel = [
         'stats',
@@ -13589,6 +13754,12 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
                 unset($extended[$key]);
             }
         }
+    }
+
+    if (count($playerBase) > 0) {
+        $extended['player_base'] = $playerBase;
+    } elseif (array_key_exists('player_base', $extended)) {
+        unset($extended['player_base']);
     }
 
     return $extended;
