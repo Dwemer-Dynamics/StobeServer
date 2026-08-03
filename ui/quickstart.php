@@ -638,45 +638,65 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
     if ($profileId <= 0) {
         return;
     }
-    $responseDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash');
-    if ($responseDefault <= 0) {
-        $responseDefault = stobeQuickstartConnectorIdByName($db, 'OpenRouter Default');
+    $standardDefault = stobeQuickstartConnectorIdByName($db, 'GLM 4.7');
+    if ($standardDefault <= 0) {
+        $standardDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash');
     }
-    if ($responseDefault <= 0) {
+    if ($standardDefault <= 0) {
+        $standardDefault = stobeQuickstartConnectorIdByName($db, 'OpenRouter Default');
+    }
+    if ($standardDefault <= 0) {
         return;
     }
-    $diaryDefault = $responseDefault;
+
+    $fastDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash Lite');
+    if ($fastDefault <= 0) {
+        $fastDefault = $standardDefault;
+    }
+    $powerfulDefault = stobeQuickstartConnectorIdByName($db, 'GLM 5.2');
+    if ($powerfulDefault <= 0) {
+        $powerfulDefault = $standardDefault;
+    }
+    $experimentalDefault = stobeQuickstartConnectorIdByName($db, 'DeepSeek V4 Pro');
+    if ($experimentalDefault <= 0) {
+        $experimentalDefault = $standardDefault;
+    }
+
+    $diaryDefault = $standardDefault;
 
     $autochatDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash Lite');
     if ($autochatDefault <= 0) {
-        $autochatDefault = $responseDefault;
+        $autochatDefault = $standardDefault;
     }
 
     $memoryDefault = stobeQuickstartConnectorIdByName($db, 'Mistral Small 3.2 24B');
     if ($memoryDefault <= 0) {
-        $memoryDefault = $responseDefault;
+        $memoryDefault = $standardDefault;
     }
     $backgroundlifeDefault = $memoryDefault;
-    $dynamicDefault = $responseDefault;
-    $relationshipDefault = $responseDefault;
+    $dynamicDefault = $standardDefault;
+    $relationshipDefault = $standardDefault;
 
     $db->exec(
         "UPDATE core_profiles
           SET llm_primary_id = $1,
-              llm_secondary_id = NULL,
-              llm_tertiary_id = NULL,
-              llm_quaternary_id = NULL,
+              llm_secondary_id = $2,
+              llm_tertiary_id = $3,
+              llm_quaternary_id = $4,
               response_connector = $1,
-             diary_connector = $2,
-             autochat_connector = $3,
-             middleterm_connector = $4,
-             backgroundlife_connector = $5,
-             dynamic_connector = $6,
-             relationship_connector = $7,
+             diary_connector = $5,
+             autochat_connector = $6,
+             middleterm_connector = $7,
+             backgroundlife_connector = $8,
+             dynamic_connector = $9,
+             relationship_connector = $10,
              updated_at = NOW()
-         WHERE id = $8",
+         WHERE id = $11",
         [
-            $responseDefault,
+            $standardDefault,
+            $fastDefault,
+            $powerfulDefault,
+            $experimentalDefault,
             $diaryDefault,
             $autochatDefault,
             $memoryDefault,

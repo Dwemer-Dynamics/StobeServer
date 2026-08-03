@@ -35,6 +35,28 @@ admin() {
     PGPASSWORD="$admin_password" "$1" -h "$host" -p "$port" -U "$admin_user" "${@:2}"
 }
 
+assert_profile_llm_defaults() {
+    local target_database="$1"
+    local actual
+    local expected
+    actual="$(PGPASSWORD="$app_password" psql -h "$host" -p "$port" -U "$owner" -d "$target_database" \
+        -X -AtF '|' -c "SELECT p.label, lp.name, ls.name, lt.name, lq.name
+                       FROM core_profiles p
+                       LEFT JOIN core_llm_connector lp ON lp.id = p.llm_primary_id
+                       LEFT JOIN core_llm_connector ls ON ls.id = p.llm_secondary_id
+                       LEFT JOIN core_llm_connector lt ON lt.id = p.llm_tertiary_id
+                       LEFT JOIN core_llm_connector lq ON lq.id = p.llm_quaternary_id
+                       WHERE COALESCE(p.is_default_npc, FALSE) = TRUE
+                          OR COALESCE(p.is_player_faction_profile, FALSE) = TRUE
+                       ORDER BY p.label")"
+    expected=$'Default Profile|GLM 4.7|Gemini 2.5 Flash Lite|GLM 5.2|DeepSeek V4 Pro\nPlayer Faction|GLM 4.7|Gemini 2.5 Flash Lite|GLM 5.2|DeepSeek V4 Pro'
+    [[ "$actual" == "$expected" ]] || {
+        echo "Default profile LLM tiers did not match HerikaServer defaults." >&2
+        printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual" >&2
+        exit 1
+    }
+}
+
 database_exists() {
     admin psql -d postgres -X -Atqc "SELECT 1 FROM pg_database WHERE datname = '$1'" | grep -qx 1
 }
@@ -73,6 +95,7 @@ echo "Creating UTF8 seed database."
 admin createdb --owner="$owner" --encoding=UTF8 --locale=C --template=template0 "$seed_database"
 PGPASSWORD="$app_password" psql -h "$host" -p "$port" -U "$owner" -d "$seed_database" \
     -v ON_ERROR_STOP=1 -f "$repo_root/data/schema.sql" >/dev/null
+assert_profile_llm_defaults "$seed_database"
 
 PGPASSWORD="$app_password" psql -h "$host" -p "$port" -U "$owner" -d "$seed_database" \
     -v ON_ERROR_STOP=1 <<'SQL'
@@ -118,6 +141,12 @@ WHERE c.id IS NULL;
 INSERT INTO conf_opts (id, value)
 VALUES ('ascii_upgrade_marker', U&'Cr\00E8me br\00FBl\00E9e - UTF8 marker')
 ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value;
+UPDATE core_profiles
+SET llm_secondary_id = NULL,
+    llm_tertiary_id = NULL,
+    llm_quaternary_id = NULL
+WHERE COALESCE(is_default_npc, FALSE) = TRUE
+   OR COALESCE(is_player_faction_profile, FALSE) = TRUE;
 SQL
 
 admin pg_dump --format=custom --file="$seed_dump" "$seed_database"
@@ -191,6 +220,7 @@ STOBE_DB_ADMIN_HOST="$host" \
 STOBE_DB_ADMIN_PORT="$port" \
 STOBE_BACKUP_DIR="$backup_dir" \
 php "$repo_root/debug/run_db_updates.php"
+assert_profile_llm_defaults "$database"
 
 encoding_after="$(admin psql -d postgres -X -Atqc \
     "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$database'")"
