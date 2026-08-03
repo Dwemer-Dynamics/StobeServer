@@ -3771,6 +3771,18 @@ INSERT INTO core_llm_connector (
     config
 ) VALUES
 (
+    'GLM 4.7',
+    'openrouterjson',
+    (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
+    '',
+    'https://openrouter.ai/api/v1/chat/completions',
+    'z-ai/glm-4.7',
+    750,
+    1.0,
+    FALSE,
+    '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
+),
+(
     'Gemini 2.5 Flash',
     'openrouterjson',
     (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
@@ -3791,6 +3803,30 @@ INSERT INTO core_llm_connector (
     'google/gemini-2.5-flash-lite',
     750,
     1.0,
+    FALSE,
+    '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
+),
+(
+    'GLM 5.2',
+    'openrouterjson',
+    (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
+    '',
+    'https://openrouter.ai/api/v1/chat/completions',
+    'z-ai/glm-5.2',
+    750,
+    1.0,
+    FALSE,
+    '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
+),
+(
+    'DeepSeek V4 Pro',
+    'openrouterjson',
+    (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
+    '',
+    'https://openrouter.ai/api/v1/chat/completions',
+    'deepseek/deepseek-v4-pro',
+    750,
+    0.6,
     FALSE,
     '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
 ),
@@ -3902,6 +3938,10 @@ WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'carte
 INSERT INTO core_profiles (
     label,
     is_default_npc,
+    llm_primary_id,
+    llm_secondary_id,
+    llm_tertiary_id,
+    llm_quaternary_id,
     response_connector,
     diary_connector,
     autochat_connector,
@@ -3915,6 +3955,27 @@ INSERT INTO core_profiles (
     'Default Profile',
     TRUE,
     COALESCE(
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
+    ),
+    COALESCE(
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash lite' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
+    ),
+    COALESCE(
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 5.2' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
+    ),
+    COALESCE(
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 pro' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
+    ),
+    COALESCE(
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
@@ -3969,6 +4030,10 @@ INSERT INTO core_profiles (
 )
 ON CONFLICT (label) DO UPDATE SET
     is_default_npc = EXCLUDED.is_default_npc,
+    llm_primary_id = COALESCE(core_profiles.llm_primary_id, EXCLUDED.llm_primary_id),
+    llm_secondary_id = COALESCE(core_profiles.llm_secondary_id, EXCLUDED.llm_secondary_id),
+    llm_tertiary_id = COALESCE(core_profiles.llm_tertiary_id, EXCLUDED.llm_tertiary_id),
+    llm_quaternary_id = COALESCE(core_profiles.llm_quaternary_id, EXCLUDED.llm_quaternary_id),
     response_connector = COALESCE(EXCLUDED.response_connector, core_profiles.response_connector),
     diary_connector = COALESCE(EXCLUDED.diary_connector, core_profiles.diary_connector),
     autochat_connector = COALESCE(EXCLUDED.autochat_connector, core_profiles.autochat_connector),
@@ -3990,6 +4055,10 @@ INSERT INTO core_profiles (
     label,
     is_default_npc,
     is_player_faction_profile,
+    llm_primary_id,
+    llm_secondary_id,
+    llm_tertiary_id,
+    llm_quaternary_id,
     response_connector,
     diary_connector,
     autochat_connector,
@@ -4004,6 +4073,10 @@ SELECT
     'Player Faction',
     FALSE,
     TRUE,
+    src.llm_primary_id,
+    src.llm_secondary_id,
+    src.llm_tertiary_id,
+    src.llm_quaternary_id,
     src.response_connector,
     src.diary_connector,
     src.autochat_connector,
@@ -4037,6 +4110,10 @@ LIMIT 1
 ON CONFLICT (label) DO UPDATE SET
     is_default_npc = FALSE,
     is_player_faction_profile = TRUE,
+    llm_primary_id = COALESCE(core_profiles.llm_primary_id, EXCLUDED.llm_primary_id),
+    llm_secondary_id = COALESCE(core_profiles.llm_secondary_id, EXCLUDED.llm_secondary_id),
+    llm_tertiary_id = COALESCE(core_profiles.llm_tertiary_id, EXCLUDED.llm_tertiary_id),
+    llm_quaternary_id = COALESCE(core_profiles.llm_quaternary_id, EXCLUDED.llm_quaternary_id),
     response_connector = COALESCE(EXCLUDED.response_connector, core_profiles.response_connector),
     diary_connector = COALESCE(EXCLUDED.diary_connector, core_profiles.diary_connector),
     autochat_connector = COALESCE(EXCLUDED.autochat_connector, core_profiles.autochat_connector),
@@ -4083,6 +4160,7 @@ WHERE LOWER(COALESCE(label, '')) = 'player faction';
 
 UPDATE core_profiles
 SET response_connector = COALESCE(
+    (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ),
@@ -4119,8 +4197,36 @@ WHERE COALESCE(
 ) IS NOT NULL;
 
 UPDATE core_profiles
-SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
-    response_connector = COALESCE(response_connector, llm_primary_id);
+SET llm_primary_id = COALESCE(
+        llm_primary_id,
+        response_connector,
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+    ),
+    llm_secondary_id = COALESCE(
+        llm_secondary_id,
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash lite' LIMIT 1),
+        llm_primary_id,
+        response_connector
+    ),
+    llm_tertiary_id = COALESCE(
+        llm_tertiary_id,
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 5.2' LIMIT 1),
+        llm_primary_id,
+        response_connector
+    ),
+    llm_quaternary_id = COALESCE(
+        llm_quaternary_id,
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 pro' LIMIT 1),
+        llm_primary_id,
+        response_connector
+    ),
+    response_connector = COALESCE(
+        response_connector,
+        llm_primary_id,
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+    )
+WHERE COALESCE(is_default_npc, FALSE) = TRUE
+   OR COALESCE(is_player_faction_profile, FALSE) = TRUE;
 
 UPDATE core_profiles
 SET metadata = metadata - 'LLM_RESPONSE_MODE'

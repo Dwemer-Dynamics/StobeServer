@@ -2531,6 +2531,72 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('core_profiles', 202608020101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO core_llm_connector (
+                    name, connector_type, api_badge_id, api_key, base_url,
+                    model, max_tokens, temperature, is_default, config
+                 ) VALUES
+                 (
+                    'GLM 4.7', 'openrouterjson',
+                    (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
+                    '', 'https://openrouter.ai/api/v1/chat/completions', 'z-ai/glm-4.7',
+                    750, 1.0, FALSE,
+                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
+                 ),
+                 (
+                    'GLM 5.2', 'openrouterjson',
+                    (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
+                    '', 'https://openrouter.ai/api/v1/chat/completions', 'z-ai/glm-5.2',
+                    750, 1.0, FALSE,
+                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
+                 ),
+                 (
+                    'DeepSeek V4 Pro', 'openrouterjson',
+                    (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
+                    '', 'https://openrouter.ai/api/v1/chat/completions', 'deepseek/deepseek-v4-pro',
+                    750, 0.6, FALSE,
+                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
+                 )
+                 ON CONFLICT (name) DO NOTHING"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET llm_primary_id = COALESCE(
+                        llm_primary_id,
+                        response_connector,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
+                     ),
+                     llm_secondary_id = COALESCE(
+                        llm_secondary_id,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash lite' LIMIT 1),
+                        llm_primary_id,
+                        response_connector
+                     ),
+                     llm_tertiary_id = COALESCE(
+                        llm_tertiary_id,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 5.2' LIMIT 1),
+                        llm_primary_id,
+                        response_connector
+                     ),
+                     llm_quaternary_id = COALESCE(
+                        llm_quaternary_id,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 pro' LIMIT 1),
+                        llm_primary_id,
+                        response_connector
+                     ),
+                     response_connector = COALESCE(
+                        response_connector,
+                        llm_primary_id,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+                     ),
+                     updated_at = NOW()
+                 WHERE COALESCE(is_default_npc, FALSE) = TRUE
+                    OR COALESCE(is_player_faction_profile, FALSE) = TRUE"
+            );
+        });
+
         $applyPatch('player_bases', 202607300101, static function () use ($db): void {
             $db->exec(
                 "CREATE TABLE IF NOT EXISTS player_bases (
