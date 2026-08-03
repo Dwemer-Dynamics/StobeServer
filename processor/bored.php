@@ -174,9 +174,6 @@ $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     $cue,
     intval($gamets)
 );
-if (count($memoryContextMessages) > 0) {
-    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
-}
 
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($speakerData) ? $speakerData : [])
     . "\n\n"
@@ -185,6 +182,16 @@ $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($speakerData, $spe
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
+$compactHistory = stobeApplyCompactChatHistory(
+    $systemPrompt,
+    $historyMessages,
+    $speakerNpc,
+    stobeShouldCompactChatHistory($speakerNpc)
+);
+$systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
+$historyMessages = is_array($compactHistory['history_messages'] ?? null)
+    ? $compactHistory['history_messages']
+    : $historyMessages;
 $messages = [
     [
         'role' => 'system',
@@ -193,6 +200,9 @@ $messages = [
 ];
 foreach ($historyMessages as $historyMessage) {
     $messages[] = $historyMessage;
+}
+foreach ($memoryContextMessages as $memoryContextMessage) {
+    $messages[] = $memoryContextMessage;
 }
 $messages[] = [
     'role' => 'user',
@@ -270,9 +280,10 @@ $relationshipEval = stobeEvaluateRelationshipsForTurn(
     $speakerData,
     'bored'
 );
-$responseText = stobeStripParentheticalDialogueText(
-    sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)))
-);
+$responseText = sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)));
+if (!stobeInlineNarrationApplies($speakerNpc, 'bored')) {
+    $responseText = stobeStripParentheticalDialogueText($responseText);
+}
 
 if ($responseText === '' && count($responseActions) === 0) {
     echo "ok";
@@ -300,5 +311,13 @@ if ($alreadyStreamed) {
         streamResponse($speakerNpc, 'ScriptQueue', '', $speakerData, $responseActions, 'bored', $listener, $gamets);
     }
 } else {
-    streamResponse($speakerNpc, 'ScriptQueue', $responseText, $speakerData, $responseActions, 'bored', $listener, $gamets);
+    stobeStreamDialogueResponse(
+        $speakerNpc,
+        $speakerData,
+        $responseText,
+        $responseActions,
+        'bored',
+        $listener,
+        intval($gamets)
+    );
 }

@@ -6,6 +6,7 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+$isEmbed = isset($_GET['embed']) && (string)$_GET['embed'] === '1';
 
 function h(mixed $value): string
 {
@@ -443,12 +444,14 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
     <title>AI Responses</title>
     <link rel="icon" type="image/x-icon" href="/StobeServer/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/main.css?v=<?= (int) @filemtime(__DIR__ . '/css/main.css') ?>">
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         body {
             padding-top: 80px;
         }
+        body.embed-page { padding-top: 0; }
+        body.embed-page main { padding-top: 10px; }
 
         main {
             padding-top: 20px;
@@ -585,9 +588,9 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
         }
 
         .view-contents-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
+            background: #e6b76c;
+            border: 1px solid #c9984f;
+            color: #ffffff;
             padding: 8px 16px;
             text-align: center;
             text-decoration: none;
@@ -596,14 +599,15 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
             margin: 2px;
             cursor: pointer;
             border-radius: 6px;
-            transition: all 0.3s ease;
+            transition: background-color 0.15s ease, border-color 0.15s ease;
             font-weight: 600;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: none;
         }
 
         .view-contents-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+            background: #c9984f;
+            border-color: #b48644;
+            color: #ffffff;
         }
 
         .modal {
@@ -684,8 +688,10 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
         }
     </style>
 </head>
-<body>
+<body class="<?= $isEmbed ? 'embed-page' : '' ?>">
+<?php if (!$isEmbed): ?>
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
+<?php endif; ?>
 
 <div id="contentModal" class="modal">
     <div class="modal-content">
@@ -702,11 +708,13 @@ if (isset($_GET["export"]) && $_GET["export"] === "1") {
 
 <main class="container-fluid">
     <div class="tab-container">
+        <?php if (!$isEmbed): ?>
         <div class="tab-buttons">
             <a class="tab-button" href="events.php">&#x1F4DD; Events</a>
             <a class="tab-button active" href="ai-response.php">&#x1F916; AI Responses</a>
             <a class="tab-button" href="memories.php">&#x1F9E0; Memories</a>
         </div>
+        <?php endif; ?>
 
         <div id="responselog-tab" class="tab-content">
             <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 12px 15px; border-radius: 5px; margin: 15px 0; font-size: 0.9em;">

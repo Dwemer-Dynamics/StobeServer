@@ -11,6 +11,10 @@ if ($useLegacy) {
     return;
 }
 
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php';
+
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
     {
@@ -22,6 +26,13 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
         $db = $GLOBALS['db'] ?? null;
         if (!$db) {
             stobeLogWarn('DB updates skipped: database handle is missing');
+            return;
+        }
+        if (function_exists('stobeDatabaseEncodingIsSupported') && !stobeDatabaseEncodingIsSupported($db)) {
+            $message = function_exists('stobeDatabaseEncodingError')
+                ? stobeDatabaseEncodingError($db)
+                : 'Stobe database updates require UTF8.';
+            stobeLogError('DB updates skipped: unsupported database encoding', ['error' => $message]);
             return;
         }
 
@@ -152,7 +163,11 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 $runSqlSeedFile($seedPath, $spec['missing'], $spec['empty'], $spec['normalized']);
             }
         };
-        $importWorldKnowledgeCsv = static function (string $seedPath) use ($db): void {
+        $importWorldKnowledgeCsv = static function (
+            string $seedPath,
+            ?array $allowedTopics = null,
+            bool $updateExisting = true
+        ) use ($db): void {
             if (!is_file($seedPath)) {
                 stobeLogWarn('world_knowledge import skipped: seed file missing', ['path' => $seedPath]);
                 return;
@@ -174,18 +189,31 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 return;
             }
             $map = [];
+            $normalizeHeader = static function ($value): string {
+                $key = preg_replace('/^\xEF\xBB\xBF/', '', strval($value));
+                $key = strtolower(trim(strval($key)));
+                $key = preg_replace('/[^a-z0-9]+/', '_', $key);
+                return trim(strval($key), '_');
+            };
             foreach ($header as $i => $nameRaw) {
-                $name = trim(strval($nameRaw ?? ''));
-                if ($i === 0) {
-                    $name = preg_replace('/^\xEF\xBB\xBF/', '', $name) ?? $name;
-                }
+                $name = $normalizeHeader($nameRaw ?? '');
                 if ($name !== '') {
-                    $map[strtolower($name)] = intval($i);
+                    $map[$name] = intval($i);
                 }
             }
-            $pick = static function (array $row, array $columnMap, array $aliases, int $fallback = -1): string {
+            $allowedTopicKeys = null;
+            if (is_array($allowedTopics)) {
+                $allowedTopicKeys = [];
+                foreach ($allowedTopics as $allowedTopic) {
+                    $key = strtolower(trim(strval($allowedTopic)));
+                    if ($key !== '') {
+                        $allowedTopicKeys[$key] = true;
+                    }
+                }
+            }
+            $pick = static function (array $row, array $columnMap, array $aliases, int $fallback = -1) use ($normalizeHeader): string {
                 foreach ($aliases as $alias) {
-                    $k = strtolower(trim(strval($alias)));
+                    $k = $normalizeHeader($alias);
                     if ($k !== '' && array_key_exists($k, $columnMap)) {
                         return trim(strval($row[intval($columnMap[$k])] ?? ''));
                     }
@@ -194,6 +222,11 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
             };
             while (($row = fgetcsv($h)) !== false) {
                 if (!is_array($row)) {
+                    continue;
+                }
+                if (count(array_filter($row, static function ($value): bool {
+                    return trim(strval($value)) !== '';
+                })) === 0) {
                     continue;
                 }
                 $topic = $pick($row, $map, ['topic', 'stringid', 'baseid'], 0);
@@ -206,9 +239,15 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 if ($topic === '' || ($desc === '' && $descBasic === '')) {
                     continue;
                 }
+                if (is_array($allowedTopicKeys) && !isset($allowedTopicKeys[strtolower($topic)])) {
+                    continue;
+                }
                 $existing = $db->fetchOne("SELECT id FROM world_knowledge WHERE LOWER(topic)=LOWER($1) LIMIT 1", [$topic]);
                 $id = intval($existing['id'] ?? 0);
                 if ($id > 0) {
+                    if (!$updateExisting) {
+                        continue;
+                    }
                     $db->exec(
                         "UPDATE world_knowledge
                          SET topic=$1, topic_desc=$2, topic_desc_basic=$3,
@@ -230,15 +269,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     $id = intval($rowId['id'] ?? 0);
                 }
                 if ($id > 0) {
-                    $db->exec(
-                        "UPDATE world_knowledge
-                         SET native_vector =
-                             setweight(to_tsvector('simple', COALESCE(topic, '')), 'A')
-                             || setweight(to_tsvector('simple', COALESCE(topic_desc, '')), 'B')
-                             || setweight(to_tsvector('simple', COALESCE(topic_desc_basic, '')), 'C')
-                         WHERE id = $1",
-                        [$id]
-                    );
+                    stobeWorldKnowledgeUpdateNativeVector($db, $id);
                 }
             }
             fclose($h);
@@ -546,6 +577,33 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                     [$newVoiceId]
                 );
             }
+        });
+        $applyPatch('core_narrator', 202607280001, static function () use ($db): void {
+            $defaults = [
+                'roleplay_name' => 'The Narrator',
+                'diary_enabled' => '0',
+                'auto_diary_enabled' => '0',
+                'only_diary_access' => '0',
+                'inline_narration_mode' => 'disabled',
+                'preserve_inline_narration_context' => '0',
+            ];
+            foreach ($defaults as $key => $value) {
+                $db->exec(
+                    "INSERT INTO core_narrator (id, value)
+                     VALUES ($1, $2)
+                     ON CONFLICT (id) DO NOTHING",
+                    [$key, $value]
+                );
+            }
+
+            $oldCore = "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Tamriel. Provide unique insight and descriptions of what is going on in the world.";
+            $newCore = "The Narrator is a male voice within the player's mind. His job is to help the player as they navigate the world of Kenshi. Provide unique insight and descriptions of what is going on in the world.";
+            $db->exec(
+                "UPDATE core_narrator
+                 SET value = $1
+                 WHERE id = 'core' AND value = $2",
+                [$newCore, $oldCore]
+            );
         });
         $applyPatch('prompts', 202603130214, static function () use ($db): void {
             $analysisPrompt = <<<'PROMPT'
@@ -857,11 +915,11 @@ PROMPT;
         });
 
         $applyPatch('core_profiles', 202603130210, static function () use ($db, $defaultMetadata): void {
-            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','STOBE') ON CONFLICT (label) DO NOTHING");
+            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Player2','019cf504-1461-74e7-b4da-045b14e9019d') ON CONFLICT (label) DO NOTHING");
             $badge = $db->fetchOne("SELECT id FROM core_api_badge WHERE LOWER(label) IN ('player2','stobe') ORDER BY CASE WHEN LOWER(label)='player2' THEN 0 ELSE 1 END, id ASC LIMIT 1");
             $badgeId = intval($badge['id'] ?? 0);
             $db->exec("INSERT INTO core_llm_connector (name, connector_type, api_badge_id, api_key, base_url, model, max_tokens, temperature, is_default, config)
-                VALUES ('Player2 Local','player2json',$1,'','http://127.0.0.1:4315/v1/chat/completions','player2-app-selected',750,1.0,FALSE,'{\"player2_game_key\":\"STOBE\"}'::jsonb)
+                VALUES ('Player2 Local','player2json',$1,'','http://127.0.0.1:4315/v1/chat/completions','player2-app-selected',750,1.0,FALSE,'{\"player2_game_key\":\"019cf504-1461-74e7-b4da-045b14e9019d\"}'::jsonb)
                 ON CONFLICT (name) DO UPDATE SET connector_type=EXCLUDED.connector_type, api_badge_id=COALESCE(core_llm_connector.api_badge_id,EXCLUDED.api_badge_id)", [$badgeId > 0 ? $badgeId : null]);
             $std = $db->fetchOne("SELECT id FROM core_llm_connector WHERE LOWER(name)='gemini 2.5 flash' LIMIT 1");
             $stdId = intval($std['id'] ?? 0);
@@ -966,7 +1024,7 @@ PROMPT;
                            ),
                            true
                        )
-                       WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'cartesia', 'inworld')");
+                       WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'cartesia', 'inworld')");
         });
         $applyPatch('core_tts_connector', 202605101610, static function () use ($db): void {
             $db->exec("UPDATE core_tts_connector
@@ -988,9 +1046,29 @@ PROMPT;
                            'pocket tts default',
                            'xtts default',
                            'chatterbox default',
+                           'omnivoice default',
                            'cartesia default',
                            'inworld default'
                        )");
+        });
+        $applyPatch('core_tts_connector', 202607071200, static function () use ($db): void {
+            $db->exec("INSERT INTO core_tts_connector (
+                           name,
+                           connector_type,
+                           base_url,
+                           is_default,
+                           config
+                       ) VALUES (
+                           'OmniVoice Default',
+                           'omnivoice',
+                           'http://127.0.0.1:8021',
+                           FALSE,
+                           '{\"language\":\"\",\"fallback_male\":\"default_male\",\"fallback_female\":\"default_female\",\"stream_chunk_size\":20,\"temperature\":0.9,\"speed\":1.0,\"length_penalty\":1.0,\"repetition_penalty\":5.0,\"top_p\":0.85,\"top_k\":50,\"enable_text_splitting\":true}'::jsonb
+                       )
+                       ON CONFLICT (name) DO UPDATE SET
+                           connector_type = EXCLUDED.connector_type,
+                           base_url = EXCLUDED.base_url,
+                           config = EXCLUDED.config");
         });
         $applyPatch('core_npc_master', 202603130215, static function () use ($db): void {
             $db->exec("
@@ -1047,7 +1125,9 @@ PROMPT;
             $db->exec("CREATE INDEX IF NOT EXISTS idx_memory_summary_scope_gamets ON memory_summary (LOWER(COALESCE(scope, '')), gamets_end DESC, id DESC)");
         });
 
-        $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile): void {
+        $applyPatch('rename_token_global', 202603130206, static function () use ($runSqlSeedFile, $runBioUniqueSeedBundle): void {
+            // The generated token seed excludes names already present in bio_unique.
+            $runBioUniqueSeedBundle();
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_characters_rename_token_global_upsert.sql';
             $runSqlSeedFile($seed, 'rename_token_global category characters seed file missing', 'rename_token_global category characters seed file empty', 'rename_token_global category characters seed file normalized to empty SQL');
         });
@@ -1102,6 +1182,74 @@ PROMPT;
                 true
             );
         });
+        $applyPatch('bio_random', 202606150001, static function () use ($db): void {
+            $db->exec("ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("UPDATE bio_random SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("UPDATE bio_random_custom SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("DROP VIEW IF EXISTS combined_bio_random");
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_bio_random AS
+                 SELECT
+                    c.id,
+                    c.type,
+                    c.description,
+                    c.name,
+                    c.race,
+                    c.gender,
+                    c.faction,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled
+                 FROM bio_random_custom c
+                 UNION ALL
+                 SELECT
+                    b.id,
+                    b.type,
+                    b.description,
+                    b.name,
+                    b.race,
+                    b.gender,
+                    b.faction,
+                    b.created_at,
+                    b.updated_at,
+                    b.is_enabled
+                 FROM bio_random b
+                 LEFT JOIN bio_random_custom c
+                   ON LOWER(b.type) = LOWER(c.type)
+                  AND LOWER(b.description) = LOWER(c.description)
+                  AND LOWER(COALESCE(b.name, '')) = LOWER(COALESCE(c.name, ''))
+                 WHERE c.id IS NULL"
+            );
+        });
+
+        $applyPatch('rename_token_global', 202606150001, static function () use ($db): void {
+            $db->exec("ALTER TABLE rename_token_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("ALTER TABLE rename_token_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("UPDATE rename_token_global SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("UPDATE rename_token_global_custom SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("DROP VIEW IF EXISTS combined_rename_token_global");
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_rename_token_global AS
+                 SELECT
+                    c.id,
+                    c.token,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled
+                 FROM rename_token_global_custom c
+                 UNION ALL
+                 SELECT
+                    g.id,
+                    g.token,
+                    g.created_at,
+                    g.updated_at,
+                    g.is_enabled
+                 FROM rename_token_global g
+                 LEFT JOIN rename_token_global_custom c ON LOWER(g.token) = LOWER(c.token)
+                 WHERE c.token IS NULL"
+            );
+        });
 
         $applyPatch('bio_unique', 202603130208, static function () use ($db, $runBioUniqueSeedBundle): void {
             $runBioUniqueSeedBundle();
@@ -1109,9 +1257,77 @@ PROMPT;
             $db->exec("DELETE FROM bio_unique_custom WHERE LOWER(name) IN ('amateur recruit','ameteur recruit','cpu of cat-lon','cpu of general hat-12','cpu of general jang','cpu of rhinobot','cpu of the head of agriculture')");
         });
 
+        $applyPatch('bio_unique', 202606150001, static function () use ($db): void {
+            $db->exec("ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+            $db->exec("UPDATE bio_unique SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("UPDATE bio_unique_custom SET is_enabled = TRUE WHERE is_enabled IS NULL");
+            $db->exec("DROP VIEW IF EXISTS combined_bio_unique");
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_bio_unique AS
+                 SELECT
+                    c.id,
+                    c.name,
+                    c.type,
+                    c.description,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled
+                 FROM bio_unique_custom c
+                 UNION ALL
+                 SELECT
+                    b.id,
+                    b.name,
+                    b.type,
+                    b.description,
+                    b.created_at,
+                    b.updated_at,
+                    b.is_enabled
+                 FROM bio_unique b
+                 LEFT JOIN bio_unique_custom c
+                   ON LOWER(b.name) = LOWER(c.name)
+                  AND LOWER(b.type) = LOWER(c.type)
+                 WHERE c.id IS NULL"
+            );
+        });
+
+        $applyPatch('rename_token_global', 202608020001, static function () use ($db): void {
+            $db->exec(
+                "DELETE FROM rename_token_global token
+                 WHERE EXISTS (
+                    SELECT 1
+                    FROM combined_bio_unique unique_bio
+                    WHERE LOWER(BTRIM(unique_bio.name)) = LOWER(BTRIM(token.token))
+                 )"
+            );
+        });
+
         $applyPatch('world_knowledge_seed', 202603130209, static function () use ($importWorldKnowledgeCsv): void {
             $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
             $importWorldKnowledgeCsv($seed);
+        });
+
+        $applyPatch('world_knowledge_aliases', 202607220002, static function () use ($db): void {
+            $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
+            $stats = stobeWorldKnowledgeApplyAliasSeed($db, $seed);
+            stobeLogInfo('World knowledge aliases merged and indexed', $stats);
+        });
+
+        $applyPatch('world_knowledge_world_state_topics', 202607290100, static function () use ($importWorldKnowledgeCsv): void {
+            $seed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'world_knowledge_v1.csv';
+            $topics = [
+                'Ghost',
+                'Gutterhead',
+                'Beep',
+                'Agnu',
+                'Shek Kingdom',
+                'Flotsam Ninjas',
+                'Grey',
+                'Jaegar',
+                'Elder',
+                'Spider Foreman',
+            ];
+            $importWorldKnowledgeCsv($seed, $topics, false);
         });
 
         $applyPatch('world_state', 202603150001, static function () use ($db): void {
@@ -1708,6 +1924,30 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 [$prompt, $description]
             );
         });
+        $applyPatch('prompts', 202607280001, static function () use ($db): void {
+            $prompt = 'If useful, begin the reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, custom_prompt, description, updated_at)
+                 VALUES ('inline_narration_prompt', $1, '', 'Formatting instruction used when narrator inline narration mode is enabled.', NOW())
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
+        $applyPatch('prompts', 202607290001, static function () use ($db): void {
+            $prompt = 'Begin each reply with one brief third-person scene description in single asterisks, followed by spoken dialogue outside the asterisks. Example: *She glances toward the gate.* We should leave. Never wrap the entire reply in asterisks.';
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, custom_prompt, description, updated_at)
+                 VALUES ('inline_narration_prompt', $1, '', 'Formatting instruction used when narrator inline narration mode is enabled.', NOW())
+                 ON CONFLICT (prompt_key) DO UPDATE
+                 SET default_prompt = EXCLUDED.default_prompt,
+                     description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [$prompt]
+            );
+        });
         $applyPatch('core_profiles', 202604110102, static function () use ($db): void {
             $db->exec(
                 "UPDATE core_profiles
@@ -1845,6 +2085,613 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_utterance_id ON eventlog (utterance_id)");
             $db->exec("CREATE INDEX IF NOT EXISTS idx_eventlog_delivery_state ON eventlog (delivery_state)");
         });
+
+        $applyPatch('autonomy_control_plane', 202607140101, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
+        $applyPatch('autonomy_phase2_decision_ledger', 202607140102, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
+        $applyPatch('autonomy_phase2_heartbeat_epoch', 202607140103, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
+        $applyPatch('autonomy_phase3_supervised_planner', 202607150101, static function (): void {
+            stobeAutonomyEnsureSchema();
+        });
+
+        $applyPatch('autonomy_phase3_planner_controls', 202607150102, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $db->exec(
+                "UPDATE autonomy_session
+                 SET policy = jsonb_set(
+                     jsonb_set(policy, '{minimum_interval_seconds}', '30'::jsonb, TRUE),
+                     '{max_decisions_per_hour}',
+                     COALESCE(policy->'max_decisions_per_hour', '30'::jsonb),
+                     TRUE
+                 )
+                 WHERE NOT (policy ? 'minimum_interval_seconds')
+                    OR CASE
+                        WHEN COALESCE(policy->>'minimum_interval_seconds', '') ~ '^[0-9]+$'
+                            THEN (policy->>'minimum_interval_seconds')::INT
+                        ELSE 12
+                    END = 12"
+            );
+        });
+
+        $applyPatch('autonomy_phase4_survival_actions', 202607150201, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $actions = [
+                ['MOVE_NEARBY', 'MoveNearby', 'Move a short distance in a compass direction. Direction must be N, NE, E, SE, S, SW, W, or NW and distance is limited to 10-80 metres.'],
+                ['FLEE', 'Flee', 'Run at maximum speed away from currently observed hostile characters.'],
+                ['FIRST_AID', 'FirstAid', 'Apply first aid or robotic repair to yourself or an injured nearby player-faction character.'],
+                ['REST', 'Rest', 'Rest until recovered when no immediate threat or untreated wound is present.'],
+            ];
+            foreach ($actions as [$command, $name, $description]) {
+                $db->exec(
+                    "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                     VALUES ($1, $2, $3, TRUE, NOW())
+                     ON CONFLICT (command) DO UPDATE SET
+                         action_name = EXCLUDED.action_name,
+                         description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [$command, $name, $description]
+                );
+            }
+        });
+
+        $applyPatch('autonomy_phase4_rest_bed_contract', 202607150202, static function () use ($db): void {
+            $db->exec(
+                "UPDATE core_action
+                 SET description = 'Use an available nearby bed and rest until recovered when no immediate threat or untreated wound is present.',
+                     updated_at = NOW()
+                 WHERE UPPER(command) = 'REST'"
+            );
+        });
+
+        $applyPatch('autonomy_phase4_pilot_commands', 202607150203, static function () use ($db): void {
+            $db->exec('ALTER TABLE autonomy_pilot_step DROP CONSTRAINT IF EXISTS autonomy_pilot_step_command_check');
+            $db->exec(
+                "ALTER TABLE autonomy_pilot_step
+                 ADD CONSTRAINT autonomy_pilot_step_command_check
+                 CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
+                                    'FLEE', 'FIRST_AID', 'REST'))"
+            );
+        });
+
+        $applyPatch('autonomy_phase5_equipment_loot_combat', 202607160301, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $actions = [
+                ['EQUIP_ITEM', 'EquipItem', 'Equip one specific item currently carried by the autonomous NPC. The item must be named explicitly and accepted by a Kenshi equipment slot.'],
+                ['TAKE_ITEM', 'TakeItem', 'Take a named item from a nearby helpless actor. Target and item are required, amount is limited, and broad equipment or all-inventory looting is not allowed for autonomy.'],
+            ];
+            foreach ($actions as [$command, $name, $description]) {
+                $db->exec(
+                    "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                     VALUES ($1, $2, $3, TRUE, NOW())
+                     ON CONFLICT (command) DO UPDATE SET
+                         action_name = EXCLUDED.action_name,
+                         description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [$command, $name, $description]
+                );
+            }
+            $db->exec('ALTER TABLE autonomy_pilot_step DROP CONSTRAINT IF EXISTS autonomy_pilot_step_command_check');
+            $db->exec(
+                "ALTER TABLE autonomy_pilot_step
+                 ADD CONSTRAINT autonomy_pilot_step_command_check
+                 CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
+                                    'FLEE', 'FIRST_AID', 'REST', 'ATTACK',
+                                    'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT',
+                                    'KILL', 'REMOVE_LIMB', 'CUT_HORNS'))"
+            );
+        });
+
+        $applyPatch('autonomy_phase6_economy_work', 202607160401, static function () use ($db): void {
+            stobeAutonomyEnsureSchema();
+            $actions = [
+                ['BUY_ITEM', 'BuyItem', 'Buy one exact observed item from a nearby trader using a real Kenshi transaction. The purchase must remain within the configured cats limit.'],
+                ['SELL_ITEM', 'SellItem', 'Sell one exact carried item to a nearby trader using a real Kenshi transaction. The sale must meet the configured minimum price.'],
+                ['WORK_RESOURCE', 'WorkResource', 'Operate one exact observed nearby mine or natural resource for a bounded work cycle.'],
+                ['PROSPECT', 'Prospect', 'Perform a bounded prospecting scan at one exact observed nearby resource.'],
+            ];
+            foreach ($actions as [$command, $name, $description]) {
+                $db->exec(
+                    "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                     VALUES ($1, $2, $3, TRUE, NOW())
+                     ON CONFLICT (command) DO UPDATE SET
+                         action_name = EXCLUDED.action_name,
+                         description = EXCLUDED.description,
+                         updated_at = NOW()",
+                    [$command, $name, $description]
+                );
+            }
+            $db->exec('ALTER TABLE autonomy_decision DROP CONSTRAINT IF EXISTS autonomy_decision_command_check');
+            $db->exec('ALTER TABLE autonomy_pilot_step DROP CONSTRAINT IF EXISTS autonomy_pilot_step_command_check');
+            $db->exec(
+                "ALTER TABLE autonomy_pilot_step
+                 ADD CONSTRAINT autonomy_pilot_step_command_check
+                 CHECK (command IN ('IDLE', 'TRAVEL_LOCATION', 'MOVE_NEARBY',
+                                    'FLEE', 'FIRST_AID', 'REST', 'ATTACK',
+                                    'TAKE_ITEM', 'EQUIP_ITEM', 'KNOCKOUT',
+                                    'KILL', 'REMOVE_LIMB', 'CUT_HORNS',
+                                    'BUY_ITEM', 'SELL_ITEM', 'WORK_RESOURCE',
+                                    'PROSPECT'))"
+            );
+        });
+
+        $applyPatch('rename_name_pool_manager', 202607190101, static function () use ($db): void {
+            $db->exec('ALTER TABLE rename_global ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE');
+            $db->exec('ALTER TABLE rename_global_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE');
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_rename_global AS
+                 SELECT c.id, c.name, c.gender, c.faction, c.race, c.created_at, c.updated_at, c.is_enabled
+                 FROM rename_global_custom c
+                 UNION ALL
+                 SELECT g.id, g.name, g.gender, g.faction, g.race, g.created_at, g.updated_at, g.is_enabled
+                 FROM rename_global g
+                 LEFT JOIN rename_global_custom c ON LOWER(g.name) = LOWER(c.name)
+                 WHERE c.name IS NULL"
+            );
+        });
+
+        $applyPatch('rename_name_pool_expansion', 202607190102, static function () use ($db): void {
+            $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'rename_names_seed.csv';
+            stobeRenameNameImportBaseSeed($db, $seedPath);
+        });
+
+        $applyPatch('minime_remote_service_url', 202607220101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('TXTAI_URL', 'http://127.0.0.1:8082',
+                         'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
+                         NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
+        $applyPatch('player2_game_client_id', 202607270101, static function () use ($db): void {
+            $gameClientId = '019cf504-1461-74e7-b4da-045b14e9019d';
+            $db->exec(
+                "UPDATE core_api_badge
+                 SET api_key = $1
+                 WHERE LOWER(label) IN ('player2', 'stobe')
+                   AND (
+                       BTRIM(COALESCE(api_key, '')) = ''
+                       OR UPPER(BTRIM(api_key)) = 'STOBE'
+                   )",
+                [$gameClientId]
+            );
+            $db->exec(
+                "UPDATE core_llm_connector
+                 SET config = jsonb_set(
+                     CASE
+                         WHEN config IS NULL OR jsonb_typeof(config) <> 'object' THEN '{}'::jsonb
+                         ELSE config
+                     END,
+                     '{player2_game_key}',
+                     to_jsonb($1::text),
+                     TRUE
+                 )
+                 WHERE LOWER(COALESCE(connector_type, '')) = 'player2json'
+                   AND (
+                       config IS NULL
+                       OR jsonb_typeof(config) <> 'object'
+                       OR BTRIM(COALESCE(config->>'player2_game_key', '')) = ''
+                       OR UPPER(BTRIM(config->>'player2_game_key')) = 'STOBE'
+                   )",
+                [$gameClientId]
+            );
+        });
+
+        $applyPatch('latest_diary_context', 202607270201, static function () use ($db): void {
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_diarylog_people_gamets
+                 ON diarylog (LOWER(TRIM(people)), gamets DESC, localts DESC, rowid DESC)'
+            );
+        });
+
+        $applyPatch('general_settings', 202607280101, static function () use ($db): void {
+            $intervalHours = 24;
+            $legacyHoursRow = $db->fetchOne(
+                "SELECT value FROM conf_opts WHERE id = 'DYNAMIC_PROFILE_INTERVAL_HOURS' LIMIT 1"
+            );
+            $legacyHours = trim(strval($legacyHoursRow['value'] ?? ''));
+            if (preg_match('/^-?\d+$/', $legacyHours) === 1) {
+                $intervalHours = intval($legacyHours);
+            } else {
+                $legacyMinutesRow = $db->fetchOne(
+                    "SELECT value FROM conf_opts WHERE id = 'DYNAMIC_PROFILE_INTERVAL_MINUTES' LIMIT 1"
+                );
+                $legacyMinutes = trim(strval($legacyMinutesRow['value'] ?? ''));
+                if (preg_match('/^-?\d+$/', $legacyMinutes) === 1) {
+                    $intervalHours = intval(ceil(intval($legacyMinutes) / 60));
+                }
+            }
+            $intervalHours = max(1, min(720, $intervalHours));
+
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('DYNAMIC_PROFILE_INTERVAL_HOURS', $1,
+                         'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.',
+                         NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()",
+                [strval($intervalHours)]
+            );
+        });
+
+        $applyPatch('world_state_query_result', 202607290101, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_query_result (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    is_true BOOLEAN NOT NULL,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    catalog_sha256 TEXT NOT NULL DEFAULT '',
+                    first_observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_evaluated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    changed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_query_result_value
+                 ON world_state_query_result (is_true, query_name)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_query_result_evaluated
+                 ON world_state_query_result (last_evaluated_at DESC)'
+            );
+        });
+
+        $applyPatch('world_state_addendum', 202607290102, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_addendum (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    source_mod TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL DEFAULT 'vanilla',
+                    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    when_true TEXT NOT NULL DEFAULT '',
+                    when_false TEXT NOT NULL DEFAULT '',
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    catalog_sha256 TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_addendum_custom (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    source_mod TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL DEFAULT 'custom',
+                    matched_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    when_true TEXT NOT NULL DEFAULT '',
+                    when_false TEXT NOT NULL DEFAULT '',
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_addendum_enabled
+                 ON world_state_addendum (enabled, query_id)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_addendum_origin
+                 ON world_state_addendum (origin, source_mod)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_addendum_custom_enabled
+                 ON world_state_addendum_custom (enabled, query_id)'
+            );
+            $db->exec(
+                "CREATE OR REPLACE VIEW combined_world_state_addendum AS
+                 SELECT
+                    c.query_id, c.query_name, c.source_mod, c.origin,
+                    c.matched_topics, c.when_true, c.when_false, c.enabled,
+                    ''::TEXT AS catalog_sha256, c.created_at, c.updated_at,
+                    TRUE AS is_custom
+                 FROM world_state_addendum_custom c
+                 UNION ALL
+                 SELECT
+                    b.query_id, b.query_name, b.source_mod, b.origin,
+                    b.matched_topics, b.when_true, b.when_false, b.enabled,
+                    b.catalog_sha256, b.created_at, b.updated_at,
+                    FALSE AS is_custom
+                 FROM world_state_addendum b
+                 LEFT JOIN world_state_addendum_custom c ON c.query_id = b.query_id
+                 WHERE c.query_id IS NULL"
+            );
+        });
+
+        $applyPatch('world_state_definition', 202607290103, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS world_state_definition (
+                    query_id TEXT PRIMARY KEY,
+                    query_name TEXT NOT NULL DEFAULT '',
+                    source_mod TEXT NOT NULL DEFAULT '',
+                    player_involvement BOOLEAN NOT NULL DEFAULT FALSE,
+                    rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    runtime_catalog_id TEXT NOT NULL DEFAULT '',
+                    is_vanilla BOOLEAN NOT NULL DEFAULT FALSE,
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    first_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_definition_active
+                 ON world_state_definition (active, query_name)'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_world_state_definition_source
+                 ON world_state_definition (source_mod, active)'
+            );
+        });
+
+        $applyPatch('general_settings', 202607290201, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES
+                    ('ALWAYS_INSERT_LOCATION', 'true',
+                     'When true, always inject matching World Knowledge for locations shown in the current prompt context.',
+                     NOW()),
+                    ('ALWAYS_INSERT_PEOPLE', 'true',
+                     'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
+                     NOW())
+                 ON CONFLICT (id) DO UPDATE
+                 SET description = EXCLUDED.description,
+                     updated_at = NOW()"
+            );
+        });
+
+        $applyPatch('general_settings', 202607290202, static function () use ($db): void {
+            $db->exec(
+                "UPDATE general_settings
+                 SET description = 'When true, always inject matching World Knowledge for characters shown in the current prompt context.',
+                     updated_at = NOW()
+                 WHERE id = 'ALWAYS_INSERT_PEOPLE'"
+            );
+        });
+
+        $applyPatch('general_settings', 202607300101, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'COMPACT_CHAT_HISTORY_ENABLED',
+                    'false',
+                    'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
+        $applyPatch('core_profiles', 202607290301, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE core_profiles
+                    ADD COLUMN IF NOT EXISTS llm_primary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_secondary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_tertiary_id INT,
+                    ADD COLUMN IF NOT EXISTS llm_quaternary_id INT"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET llm_primary_id = COALESCE(llm_primary_id, response_connector),
+                     response_connector = COALESCE(response_connector, llm_primary_id)"
+            );
+            $foreignKeys = [
+                'core_profiles_llm_primary_fk' => 'llm_primary_id',
+                'core_profiles_llm_secondary_fk' => 'llm_secondary_id',
+                'core_profiles_llm_tertiary_fk' => 'llm_tertiary_id',
+                'core_profiles_llm_quaternary_fk' => 'llm_quaternary_id',
+            ];
+            foreach ($foreignKeys as $constraintName => $columnName) {
+                $db->exec(
+                    "DO $$
+                     BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint WHERE conname = '{$constraintName}'
+                        ) THEN
+                            ALTER TABLE core_profiles
+                            ADD CONSTRAINT {$constraintName}
+                            FOREIGN KEY ({$columnName}) REFERENCES core_llm_connector(id) ON DELETE SET NULL;
+                        END IF;
+                     END $$"
+                );
+            }
+        });
+
+        $applyPatch('core_profiles', 202607290302, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO conf_opts (id, value, updated_at)
+                 VALUES ('stobe_profile_model', '1', NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+            $db->exec(
+                "UPDATE conf_opts
+                 SET value = '1',
+                     updated_at = NOW()
+                 WHERE id = 'stobe_profile_model'
+                   AND (value IS NULL OR value NOT IN ('1', '2', '3', '4'))"
+            );
+            $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = metadata - 'LLM_RESPONSE_MODE',
+                     updated_at = NOW()
+                 WHERE jsonb_typeof(metadata) = 'object'
+                   AND metadata ? 'LLM_RESPONSE_MODE'"
+            );
+        });
+
+        $applyPatch('player_bases', 202607300101, static function () use ($db): void {
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_bases (
+                    base_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+                    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+                    members_inside INT NOT NULL DEFAULT 0,
+                    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+                    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_bases_last_seen
+                 ON player_bases (last_seen_at DESC)'
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_base_presence (
+                    scope_key TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    observer_serial BIGINT NOT NULL DEFAULT 0,
+                    observer_name TEXT NOT NULL DEFAULT '',
+                    inside BOOLEAN NOT NULL DEFAULT FALSE,
+                    base_id TEXT REFERENCES player_bases(base_id) ON DELETE SET NULL,
+                    game_ts BIGINT NOT NULL DEFAULT 0,
+                    observed_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_base_presence_observed
+                 ON player_base_presence (inside, observed_at DESC)'
+            );
+        });
+
+        $applyPatch('player_bases', 202607300102, static function () use ($db): void {
+            $db->exec(
+                "ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"
+            );
+        });
+
+        $applyPatch('player_bases', 202607300103, static function () use ($db): void {
+            $db->exec(
+                'ALTER TABLE player_bases
+                 ADD COLUMN IF NOT EXISTS first_game_ts BIGINT NOT NULL DEFAULT 0,
+                 ADD COLUMN IF NOT EXISTS last_game_ts BIGINT NOT NULL DEFAULT 0'
+            );
+            $db->exec(
+                'UPDATE player_bases
+                 SET last_game_ts = CASE WHEN last_game_ts <= 0 THEN game_ts ELSE last_game_ts END'
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_bases_game_range
+                 ON player_bases (first_game_ts, last_game_ts)'
+            );
+            $db->exec(
+                "CREATE TABLE IF NOT EXISTS player_base_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    base_id TEXT NOT NULL REFERENCES player_bases(base_id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    power_generated DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    power_required DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_capacity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_drain DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_charging DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    battery_mode BOOLEAN NOT NULL DEFAULT FALSE,
+                    has_spare_power BOOLEAN NOT NULL DEFAULT FALSE,
+                    members_inside INT NOT NULL DEFAULT 0,
+                    has_gates BOOLEAN NOT NULL DEFAULT FALSE,
+                    gates_closed BOOLEAN NOT NULL DEFAULT FALSE,
+                    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    game_ts BIGINT NOT NULL,
+                    observed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (base_id, game_ts)
+                )"
+            );
+            $db->exec(
+                'CREATE INDEX IF NOT EXISTS idx_player_base_history_rollback
+                 ON player_base_history (game_ts DESC, base_id)'
+            );
+            $db->exec(
+                "INSERT INTO player_base_history (
+                    base_id, name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details, game_ts, observed_at
+                 )
+                 SELECT
+                    base_id, name, power_generated, power_required,
+                    battery_charge, battery_capacity, battery_drain, battery_charging,
+                    battery_mode, has_spare_power, members_inside,
+                    has_gates, gates_closed, details,
+                    CASE WHEN first_game_ts > 0 THEN game_ts ELSE 0 END,
+                    last_seen_at
+                 FROM player_bases
+                 ON CONFLICT (base_id, game_ts) DO NOTHING"
+            );
+        });
+
+        $applyPatch('general_settings', 202607300102, static function () use ($db): void {
+            $row = $db->fetchOne(
+                "SELECT value
+                 FROM general_settings
+                 WHERE id = 'PROMPT_CONTEXT_OPTIONS'
+                 LIMIT 1"
+            );
+            $options = json_decode(strval($row['value'] ?? ''), true);
+            if (!is_array($options)) {
+                $options = stobeGetDefaultPromptContextOptions();
+            }
+            if (!isset($options['enabled_sections']) || !is_array($options['enabled_sections'])) {
+                $defaults = stobeGetDefaultPromptContextOptions();
+                $options['enabled_sections'] = $defaults['enabled_sections'] ?? [];
+            }
+            if (!in_array('player_base', $options['enabled_sections'], true)) {
+                $options['enabled_sections'][] = 'player_base';
+            }
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'PROMPT_CONTEXT_OPTIONS',
+                    $1,
+                    'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [json_encode($options, JSON_UNESCAPED_SLASHES)]
+            );
+        });
+
+        $applyPatch('core_voiceid', 202607310001, static function () use ($runSqlSeedFile): void {
+            $seedPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data'
+                . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'stobe_voice_library_upsert.sql';
+            $runSqlSeedFile(
+                $seedPath,
+                'Voice library seed file missing',
+                'Voice library seed file empty',
+                'Voice library seed file normalized to empty SQL',
+                true,
+                true
+            );
+        });
+
+        try {
+            $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
+            stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
+        } catch (Throwable $exception) {
+            stobeLogException($exception, 'World-state addendum seed failed');
+        }
 
         stobeLogInfo('DB updates completed (release consolidator)');
     }

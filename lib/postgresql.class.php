@@ -51,6 +51,13 @@ class sql {
         return $result;
     }
 
+    public function affectedRows(mixed $result): int {
+        if ($result === false) {
+            return 0;
+        }
+        return intval(@pg_affected_rows($result));
+    }
+
     private function normalizeParams(array $params): array {
         $normalized = [];
         foreach ($params as $value) {

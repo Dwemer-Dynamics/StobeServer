@@ -21,12 +21,27 @@ $webRoot = rtrim($webRoot, '/');
 
 $isEmbed = isset($_GET['embed']) && $_GET['embed'] === '1';
 $narrator = new Narrator();
+$saveError = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_narrator'])) {
+    try {
+        $roleplayName = Narrator::normalizeRoleplayName($_POST['roleplay_name'] ?? Narrator::DEFAULT_ROLEPLAY_NAME);
+    } catch (InvalidArgumentException $exception) {
+        $roleplayName = $narrator->getRoleplayName();
+        $saveError = $exception->getMessage();
+    }
     $enabled = isset($_POST['enabled']) && $_POST['enabled'] === '1' ? '1' : '0';
     $welcomeEnabled = isset($_POST['welcome_enabled']) && $_POST['welcome_enabled'] === '1' ? '1' : '0';
     $randomEnabled = isset($_POST['random_enabled']) && $_POST['random_enabled'] === '1' ? '1' : '0';
+    $diaryEnabled = isset($_POST['diary_enabled']) && $_POST['diary_enabled'] === '1' ? '1' : '0';
+    $autoDiaryEnabled = isset($_POST['auto_diary_enabled']) && $_POST['auto_diary_enabled'] === '1' ? '1' : '0';
+    $onlyDiaryAccess = isset($_POST['only_diary_access']) && $_POST['only_diary_access'] === '1' ? '1' : '0';
+    $preserveInlineNarrationContext = isset($_POST['preserve_inline_narration_context']) && $_POST['preserve_inline_narration_context'] === '1' ? '1' : '0';
     $dynamicProfile = isset($_POST['dynamic_profile']) && $_POST['dynamic_profile'] === '1' ? '1' : '0';
+    $inlineNarrationMode = strtolower(trim(strval($_POST['inline_narration_mode'] ?? 'disabled')));
+    if (!in_array($inlineNarrationMode, ['disabled', 'narrator', 'npc', 'text_only'], true)) {
+        $inlineNarrationMode = 'disabled';
+    }
 
     $randomChance = max(1, min(100, intval($_POST['random_chance'] ?? 15)));
     $randomCooldown = max(0, min(30, intval($_POST['random_cooldown'] ?? 10)));
@@ -48,12 +63,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_narrator'])) {
     }
 
     $payload = [
+        'roleplay_name' => $roleplayName,
         'enabled' => $enabled,
         'welcome_enabled' => $welcomeEnabled,
         'random_enabled' => $randomEnabled,
         'random_chance' => strval($randomChance),
         'random_cooldown' => strval($randomCooldown),
         'welcome_cooldown' => strval($welcomeCooldown),
+        'diary_enabled' => $diaryEnabled,
+        'auto_diary_enabled' => $autoDiaryEnabled,
+        'only_diary_access' => $onlyDiaryAccess,
+        'inline_narration_mode' => $inlineNarrationMode,
+        'preserve_inline_narration_context' => $preserveInlineNarrationContext,
         'dynamic_profile' => $dynamicProfile,
         'profile_id' => strval($profileId),
         'voiceid' => trim(strval($_POST['voiceid'] ?? '')),
@@ -66,18 +87,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_narrator'])) {
         'prompt_head' => trim(strval($_POST['prompt_head'] ?? '')),
     ];
 
-    $narrator->setMultiple($payload);
-    $narrator->setDynamicProfileFields($dynamicProfileFields);
-    header('Location: ' . $_SERVER['REQUEST_URI']);
-    exit;
+    if ($saveError === '') {
+        $narrator->setMultiple($payload);
+        $narrator->setDynamicProfileFields($dynamicProfileFields);
+        header('Location: ' . $_SERVER['REQUEST_URI']);
+        exit;
+    }
 }
 
+$roleplayName = $narrator->getRoleplayName();
 $enabled = $narrator->getBool('enabled', true);
 $welcomeEnabled = $narrator->getBool('welcome_enabled', false);
 $randomEnabled = $narrator->getBool('random_enabled', false);
 $randomChance = $narrator->getInt('random_chance', 15);
 $randomCooldown = max(0, min(30, $narrator->getInt('random_cooldown', 10)));
 $welcomeCooldown = $narrator->getInt('welcome_cooldown', 10);
+$diaryEnabled = $narrator->getBool('diary_enabled', false);
+$autoDiaryEnabled = $narrator->getBool('auto_diary_enabled', false);
+$onlyDiaryAccess = $narrator->getBool('only_diary_access', false);
+$inlineNarrationMode = strtolower(trim(strval($narrator->get('inline_narration_mode') ?? 'disabled')));
+if (!in_array($inlineNarrationMode, ['disabled', 'narrator', 'npc', 'text_only'], true)) {
+    $inlineNarrationMode = 'disabled';
+}
+$preserveInlineNarrationContext = $narrator->getBool('preserve_inline_narration_context', false);
 $dynamicProfile = $narrator->getBool('dynamic_profile', false);
 $dynamicProfileFields = $narrator->getDynamicProfileFields();
 $profileId = $narrator->getInt('profile_id', 1);
@@ -448,6 +480,7 @@ if (!$isEmbed) {
 </style>
 
 <?php if ($isEmbed): ?>
+<link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/stobe-theme.css?v=<?php echo filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'stobe-theme.css'); ?>">
 <style>
     main { padding-top: 20px; }
 </style>
@@ -462,10 +495,19 @@ if (!$isEmbed) {
 
         <form method="post" action="">
             <button type="submit" class="btn-save" name="save_narrator" value="1">Save Narrator Settings</button>
+            <?php if ($saveError !== ''): ?>
+                <div class="content-section" style="border-color:#b94a48; margin-bottom:16px;">
+                    <?= htmlspecialchars($saveError, ENT_QUOTES, 'UTF-8') ?>
+                </div>
+            <?php endif; ?>
 
             <div class="content-grid">
                 <div class="content-section">
                     <h2>Core Settings</h2>
+
+                    <label for="roleplay_name">Narrator Name</label>
+                    <input type="text" id="roleplay_name" name="roleplay_name" maxlength="64" value="<?= htmlspecialchars($roleplayName, ENT_QUOTES, 'UTF-8') ?>" placeholder="The Narrator">
+                    <span class="hint">Changes the narrator name in prompts, popups, history, and diaries. Internal routing remains The Narrator.</span>
 
                     <label class="toggle-row">
                         <div class="toggle-switch">
@@ -493,10 +535,55 @@ if (!$isEmbed) {
                         <span class="toggle-label">Enable Random Narration</span>
                     </label>
                     <span class="hint">Narrator can add occasional scene interjections.</span>
+
+                    <label class="toggle-row">
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="diary_enabled" name="diary_enabled" value="1" <?= $diaryEnabled ? 'checked' : '' ?>>
+                            <span class="toggle-slider"></span>
+                        </div>
+                        <span class="toggle-label">Narrator Diary</span>
+                    </label>
+                    <span class="hint">Allow manual narrator diary entries from the in-game diary menu.</span>
+
+                    <label class="toggle-row">
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="auto_diary_enabled" name="auto_diary_enabled" value="1" <?= $autoDiaryEnabled ? 'checked' : '' ?>>
+                            <span class="toggle-slider"></span>
+                        </div>
+                        <span class="toggle-label">Narrator Auto Diary</span>
+                    </label>
+                    <span class="hint">Include the narrator in the daily automatic diary cycle.</span>
+
+                    <label class="toggle-row">
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="only_diary_access" name="only_diary_access" value="1" <?= $onlyDiaryAccess ? 'checked' : '' ?>>
+                            <span class="toggle-slider"></span>
+                        </div>
+                        <span class="toggle-label">Narrator-only Diary Recall</span>
+                    </label>
+                    <span class="hint">When enabled, the narrator recalls only its own diary. Otherwise it may recall relevant diaries from any NPC.</span>
                 </div>
 
                 <div class="content-section">
                     <h2>Narration Rules</h2>
+
+                    <label for="inline_narration_mode">Inline Narration Mode</label>
+                    <select id="inline_narration_mode" name="inline_narration_mode">
+                        <option value="disabled" <?= $inlineNarrationMode === 'disabled' ? 'selected' : '' ?>>Disabled</option>
+                        <option value="narrator" <?= $inlineNarrationMode === 'narrator' ? 'selected' : '' ?>>Narrator Voice</option>
+                        <option value="npc" <?= $inlineNarrationMode === 'npc' ? 'selected' : '' ?>>NPC Voice</option>
+                        <option value="text_only" <?= $inlineNarrationMode === 'text_only' ? 'selected' : '' ?>>Text Only</option>
+                    </select>
+                    <span class="hint">Routes a leading *narration* block to the narrator, the NPC, text-only display, or leaves current behavior unchanged.</span>
+
+                    <label class="toggle-row">
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="preserve_inline_narration_context" name="preserve_inline_narration_context" value="1" <?= $preserveInlineNarrationContext ? 'checked' : '' ?>>
+                            <span class="toggle-slider"></span>
+                        </div>
+                        <span class="toggle-label">Keep Inline Narration in NPC Context</span>
+                    </label>
+                    <span class="hint">Allow later NPC prompts to see narrator-routed scene descriptions.</span>
 
                     <label for="welcome_cooldown">Welcome Cooldown (minutes)</label>
                     <input type="number" min="1" max="1440" id="welcome_cooldown" name="welcome_cooldown" value="<?= htmlspecialchars(strval($welcomeCooldown), ENT_QUOTES, 'UTF-8') ?>">

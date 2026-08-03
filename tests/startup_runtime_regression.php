@@ -61,9 +61,36 @@ foreach ($trackedKeys as $trackedKey) {
 
 try {
     startupAssert($db instanceof sql, 'bootstrap should initialize sql database handle');
+    startupAssert(function_exists('stobeDatabaseEncoding'), 'bootstrap should register database encoding helper');
+    startupAssert(stobeDatabaseEncoding() === 'UTF8', 'test database should use UTF8');
+    startupAssert(stobeDatabaseEncodingIsSupported(), 'UTF8 database should be supported');
+    $unsupportedEncodingDb = new class {
+        public function fetchOne(string $query): array
+        {
+            return ['server_encoding' => 'SQL_ASCII'];
+        }
+    };
+    startupAssert(!stobeDatabaseEncodingIsSupported($unsupportedEncodingDb), 'SQL_ASCII database should be rejected');
+    startupAssert(
+        str_contains(stobeDatabaseEncodingError($unsupportedEncodingDb), 'run_db_updates.php'),
+        'unsupported encoding error should identify the automatic update command'
+    );
     startupAssert(function_exists('convert_gamets2skyrim_long_date2'), 'bootstrap should register compatibility date helper');
     startupAssert(function_exists('gamets2str_format_gregorian_date'), 'bootstrap should register gregorian date formatter');
     startupAssert(gamets2str_format_gregorian_date(86400, 'Y-m-d') !== '', 'gregorian date formatter should return a string');
+
+    setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', '1000');
+    $healthyProcessor = stobeBackgroundProcessorStatus(0.1, true, 1050);
+    startupAssert(boolval($healthyProcessor['healthy'] ?? false), 'fresh manager tick and socket should be healthy');
+    startupAssert(strval($healthyProcessor['state'] ?? '') === 'running', 'healthy processor should report running');
+
+    $stalledProcessor = stobeBackgroundProcessorStatus(0.1, true, 1401);
+    startupAssert(!boolval($stalledProcessor['healthy'] ?? true), 'stale manager tick should be unhealthy');
+    startupAssert(strval($stalledProcessor['state'] ?? '') === 'stalled', 'stale manager tick should report stalled');
+
+    $offlineProcessor = stobeBackgroundProcessorStatus(0.1, false, 1050);
+    startupAssert(!boolval($offlineProcessor['healthy'] ?? true), 'missing socket should be unhealthy');
+    startupAssert(strval($offlineProcessor['state'] ?? '') === 'offline', 'missing socket should report offline');
 
     $healthOutput = [];
     $healthExitCode = 0;
@@ -72,7 +99,20 @@ try {
     $healthPayload = json_decode(implode("\n", $healthOutput), true);
     startupAssert(is_array($healthPayload), 'health endpoint should emit valid JSON');
     startupAssert(boolval($healthPayload['ok'] ?? false) === true, 'health endpoint should report ok=true');
+    startupAssert(strval($healthPayload['status'] ?? '') === 'ok', 'health endpoint should report status=ok');
     startupAssert(strval($healthPayload['service'] ?? '') === 'StobeServer', 'health endpoint should report StobeServer service name');
+    startupAssert(boolval($healthPayload['database'] ?? false), 'health endpoint should report database connectivity');
+    startupAssert(strval($healthPayload['database_encoding'] ?? '') === 'UTF8', 'health endpoint should report UTF8');
+    startupAssert(boolval($healthPayload['database_encoding_supported'] ?? false), 'health endpoint should accept UTF8');
+    startupAssert(boolval($healthPayload['database_schema_ready'] ?? false), 'health endpoint should report schema readiness');
+    startupAssert(
+        boolval($healthPayload['database_upgrade_required'] ?? true) === false,
+        'health endpoint should not request an upgrade for the ready test database'
+    );
+    startupAssert(
+        str_contains(strval($healthPayload['database_repair_command'] ?? ''), 'run_db_updates.php'),
+        'health endpoint should expose the automatic repair command'
+    );
     startupAssert(intval($healthPayload['timestamp'] ?? 0) > 0, 'health endpoint should emit a positive timestamp');
 
     foreach ($trackedKeys as $trackedKey) {

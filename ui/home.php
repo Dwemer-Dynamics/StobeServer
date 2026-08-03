@@ -188,7 +188,7 @@ $stats = [
     'limbs_lost_total' => safeCount($db, "SELECT COUNT(*) AS total FROM eventlog WHERE LOWER(type) = 'limb_loss'"),
     'diaries_total' => safeCount($db, "SELECT COUNT(*) AS total FROM diarylog"),
     'npcs_total' => safeCount($db, "SELECT COUNT(*) AS total FROM core_npc"),
-    'zones_total' => safeCount($db, "SELECT COUNT(*) AS total FROM location_zones"),
+    'zones_total' => safeCount($db, "SELECT COUNT(*) AS total FROM location_zones WHERE metadata->>'knowledge_only' IS DISTINCT FROM 'true'"),
 ];
 
 $latestDiaryRows = safeRows(
@@ -225,11 +225,11 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '0.9.1';
+    $serverVersionDisplay = '1.0.0';
 }
 $serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
 if ($serverReleaseDate === '') {
-    $serverReleaseDate = '2026-06-11';
+    $serverReleaseDate = '2026-08-01';
 }
 
 $pluginVersionDisplay = 'N/A';
@@ -245,6 +245,232 @@ try {
     // Keep default N/A.
 }
 
+$activeModelSlot = '1';
+try {
+    $activeModelRow = $db->fetchOne(
+        "SELECT value FROM conf_opts WHERE id='stobe_profile_model' LIMIT 1"
+    );
+    $candidate = trim(strval(is_array($activeModelRow) ? ($activeModelRow['value'] ?? '') : ''));
+    if (in_array($candidate, ['1', '2', '3', '4'], true)) {
+        $activeModelSlot = $candidate;
+    }
+} catch (Throwable $exception) {
+    // Keep the standard model fallback.
+}
+$activeModelLabels = [
+    '1' => 'Standard',
+    '2' => 'Fast',
+    '3' => 'Powerful',
+    '4' => 'Experimental',
+];
+$activeModelDisplay = $activeModelLabels[$activeModelSlot];
+
+$playerFactionSquadmateCount = safeCount(
+    $db,
+    "SELECT COUNT(*) AS total
+     FROM core_npc_master n
+     INNER JOIN core_profiles p ON p.id = n.profile_id
+     WHERE COALESCE(p.is_player_faction_profile, FALSE) = TRUE"
+);
+
+$currentPlayerBase = function_exists('stobeGetCurrentPlayerBaseState')
+    ? stobeGetCurrentPlayerBaseState(30)
+    : [];
+$playerBaseRows = '';
+if (count($currentPlayerBase) > 0) {
+    $generated = floatval($currentPlayerBase['power_generated'] ?? 0);
+    $required = floatval($currentPlayerBase['power_required'] ?? 0);
+    $surplus = $generated - $required;
+    $powerStatus = $surplus >= 0
+        ? ('surplus ' . number_format($surplus, 1))
+        : ('deficit ' . number_format(abs($surplus), 1));
+    $playerBaseRows .= '<tr><td>Current Player Base</td><td>'
+        . h($currentPlayerBase['name'] ?? 'Player Base') . '</td></tr>';
+    $playerBaseRows .= '<tr><td>Base Power</td><td>'
+        . h(number_format($generated, 1) . ' / ' . number_format($required, 1) . ' (' . $powerStatus . ')')
+        . '</td></tr>';
+    $batteryCapacity = floatval($currentPlayerBase['battery_capacity'] ?? 0);
+    if ($batteryCapacity > 0) {
+        $playerBaseRows .= '<tr><td>Base Battery</td><td>'
+            . h(number_format(floatval($currentPlayerBase['battery_charge'] ?? 0), 1)
+                . ' / ' . number_format($batteryCapacity, 1))
+            . '</td></tr>';
+        $playerBaseRows .= '<tr><td>Battery Flow</td><td>'
+            . h('Charging ' . number_format(floatval($currentPlayerBase['battery_charging'] ?? 0), 1)
+                . ' | Drain ' . number_format(floatval($currentPlayerBase['battery_drain'] ?? 0), 1))
+            . '</td></tr>';
+    }
+    $playerBaseRows .= '<tr><td>Squadmates At Base</td><td>'
+        . h(intval($currentPlayerBase['members_inside'] ?? 0)) . '</td></tr>';
+    if (coerceBoolean($currentPlayerBase['has_gates'] ?? false)) {
+        $playerBaseRows .= '<tr><td>Base Gates</td><td>'
+            . (coerceBoolean($currentPlayerBase['gates_closed'] ?? false) ? 'Closed' : 'Open')
+            . '</td></tr>';
+    }
+    $baseDetails = $currentPlayerBase['details'] ?? [];
+    if (is_string($baseDetails)) {
+        $decodedBaseDetails = json_decode($baseDetails, true);
+        $baseDetails = is_array($decodedBaseDetails) ? $decodedBaseDetails : [];
+    }
+    if (is_array($baseDetails) && coerceBoolean($baseDetails['available'] ?? false)) {
+        $security = is_array($baseDetails['security'] ?? null) ? $baseDetails['security'] : [];
+        $infrastructure = is_array($baseDetails['infrastructure'] ?? null)
+            ? $baseDetails['infrastructure']
+            : [];
+        $construction = is_array($baseDetails['construction'] ?? null)
+            ? $baseDetails['construction']
+            : [];
+        $power = is_array($baseDetails['power'] ?? null) ? $baseDetails['power'] : [];
+        $supplies = is_array($baseDetails['supplies'] ?? null) ? $baseDetails['supplies'] : [];
+        $storage = is_array($baseDetails['storage'] ?? null) ? $baseDetails['storage'] : [];
+        $production = is_array($baseDetails['production'] ?? null) ? $baseDetails['production'] : [];
+        $farms = is_array($baseDetails['farms'] ?? null) ? $baseDetails['farms'] : [];
+        $formatGroups = static function (mixed $candidate, callable $formatter): string {
+            if (!is_array($candidate)) {
+                return '';
+            }
+            $parts = [];
+            foreach (array_slice($candidate, 0, 6) as $group) {
+                if (is_array($group)) {
+                    $summary = trim(strval($formatter($group)));
+                    if ($summary !== '') {
+                        $parts[] = $summary;
+                    }
+                }
+            }
+            if (count($candidate) > 6) {
+                $parts[] = '+' . (count($candidate) - 6) . ' more';
+            }
+            return implode('; ', $parts);
+        };
+
+        $playerBaseRows .= '<tr><td>Base Security</td><td>'
+            . h(
+                'Alarm ' . ucfirst(strval($security['alarm_state'] ?? 'none'))
+                . ' | Hostiles ' . intval($security['hostiles_inside'] ?? 0)
+                . ' | Defenses damaged ' . intval($security['damaged_defenses'] ?? 0)
+                . ', destroyed ' . intval($security['destroyed_defenses'] ?? 0)
+                . ' | Turrets ' . intval($security['turrets_manned'] ?? 0)
+                . '/' . intval($security['turrets_total'] ?? 0) . ' manned'
+                . ', ' . intval($security['turrets_unpowered'] ?? 0) . ' unpowered'
+            )
+            . '</td></tr>';
+        $infrastructureProblemCount = intval($infrastructure['damaged'] ?? 0)
+            + intval($infrastructure['destroyed'] ?? 0)
+            + intval($infrastructure['broken'] ?? 0)
+            + intval($infrastructure['unpowered'] ?? 0);
+        if ($infrastructureProblemCount > 0) {
+            $issueGroups = $formatGroups(
+                $infrastructure['issues'] ?? [],
+                static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                    . ' x' . intval($group['count'] ?? 0)
+            );
+            $playerBaseRows .= '<tr><td>Infrastructure Problems</td><td>'
+                . h(
+                    'Damaged ' . intval($infrastructure['damaged'] ?? 0)
+                    . ' | Destroyed ' . intval($infrastructure['destroyed'] ?? 0)
+                    . ' | Broken ' . intval($infrastructure['broken'] ?? 0)
+                    . ' | Unpowered ' . intval($infrastructure['unpowered'] ?? 0)
+                    . ($issueGroups !== '' ? ' | ' . $issueGroups : '')
+                )
+                . '</td></tr>';
+        }
+        if (intval($construction['total'] ?? 0) > 0) {
+            $constructionGroups = $formatGroups(
+                $construction['groups'] ?? [],
+                static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                    . ' x' . intval($group['count'] ?? 0)
+                    . ' (' . number_format(floatval($group['average_progress'] ?? 0), 0) . '%)'
+            );
+            $playerBaseRows .= '<tr><td>Construction</td><td>'
+                . h(
+                    intval($construction['total'] ?? 0) . ' building'
+                    . (intval($construction['total'] ?? 0) === 1 ? '' : 's')
+                    . ' | Average ' . number_format(floatval($construction['average_progress'] ?? 0), 0) . '%'
+                    . ' | Paused ' . intval($construction['paused'] ?? 0)
+                    . ' | Need materials ' . intval($construction['missing_materials'] ?? 0)
+                    . ($constructionGroups !== '' ? ' | ' . $constructionGroups : '')
+                )
+                . '</td></tr>';
+        }
+        $playerBaseRows .= '<tr><td>Power Resilience</td><td>'
+            . h(
+                'Generators ' . intval($power['generators_active'] ?? 0)
+                . '/' . intval($power['generators_total'] ?? 0) . ' active'
+                . ' | Consumers ' . intval($power['consumers'] ?? 0)
+                . ' | Unpowered ' . intval($power['unpowered'] ?? 0)
+                . ' | Switched off ' . intval($power['switched_off'] ?? 0)
+            )
+            . '</td></tr>';
+        $playerBaseRows .= '<tr><td>Base Supplies</td><td>'
+            . h(
+                'Food ' . intval($supplies['food'] ?? 0)
+                . ' | Medicine ' . intval($supplies['medicine'] ?? 0)
+                . ' | Building materials ' . intval($supplies['building_materials'] ?? 0)
+                . ' | Iron plates ' . intval($supplies['iron_plates'] ?? 0)
+                . ' | Fuel ' . intval($supplies['fuel'] ?? 0)
+                . ' | Water ' . intval($supplies['water'] ?? 0)
+                . ' | Ammunition ' . intval($supplies['ammunition'] ?? 0)
+            )
+            . '</td></tr>';
+        $storageGroups = $formatGroups(
+            $storage['groups'] ?? [],
+            static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                . ' x' . intval($group['total'] ?? 0)
+                . (intval($group['full'] ?? 0) > 0 ? ', ' . intval($group['full']) . ' full' : '')
+        );
+        $playerBaseRows .= '<tr><td>Storage</td><td>'
+            . h(
+                intval($storage['total'] ?? 0) . ' containers'
+                . ' | Empty ' . intval($storage['empty'] ?? 0)
+                . ' | Full ' . intval($storage['full'] ?? 0)
+                . ' | Stored units ' . intval($storage['item_units'] ?? 0)
+                . ($storageGroups !== '' ? ' | ' . $storageGroups : '')
+            )
+            . '</td></tr>';
+        $productionGroups = $formatGroups(
+            $production['groups'] ?? [],
+            static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                . ' ' . intval($group['active'] ?? 0) . '/' . intval($group['total'] ?? 0)
+                . ' active'
+        );
+        $playerBaseRows .= '<tr><td>Production Health</td><td>'
+            . h(
+                intval($production['active'] ?? 0) . '/' . intval($production['total'] ?? 0)
+                . ' active'
+                . ' | Missing inputs ' . intval($production['input_blocked'] ?? 0)
+                . ' | Output full ' . intval($production['output_blocked'] ?? 0)
+                . ' | Unpowered ' . intval($production['unpowered'] ?? 0)
+                . ' | Staffed ' . intval($production['staffed'] ?? 0)
+                . ' | Efficiency ' . number_format(floatval($production['average_efficiency'] ?? 0), 0) . '%'
+                . ($productionGroups !== '' ? ' | ' . $productionGroups : '')
+            )
+            . '</td></tr>';
+        $farmGroups = $formatGroups(
+            $farms['groups'] ?? [],
+            static fn (array $group): string => strval($group['name'] ?? 'Unknown')
+                . ' ' . intval($group['active'] ?? 0) . '/' . intval($group['total'] ?? 0)
+                . ' active'
+        );
+        $playerBaseRows .= '<tr><td>Farm Status</td><td>'
+            . h(
+                intval($farms['active'] ?? 0) . '/' . intval($farms['total'] ?? 0)
+                . ' active'
+                . ' | Need water ' . intval($farms['needs_water'] ?? 0)
+                . ' | Output full ' . intval($farms['output_full'] ?? 0)
+                . ' | Unpowered ' . intval($farms['unpowered'] ?? 0)
+                . ' | Staffed ' . intval($farms['staffed'] ?? 0)
+                . ' | Hydroponic ' . intval($farms['hydroponic'] ?? 0)
+                . ' | Average yield ' . number_format(floatval($farms['average_yield'] ?? 0), 0) . '%'
+                . ($farmGroups !== '' ? ' | ' . $farmGroups : '')
+            )
+            . '</td></tr>';
+        if (coerceBoolean($baseDetails['scan_truncated'] ?? false)) {
+            $playerBaseRows .= '<tr><td>Base Scan</td><td>Limited by safety cap</td></tr>';
+        }
+    }
+}
+
 $latestTimelineRow = $db->fetchOne(
     "SELECT COALESCE(MAX(localts), 0) AS last_localts, COALESCE(MAX(gamets), 0) AS last_gamets
      FROM eventlog"
@@ -255,14 +481,28 @@ if (trim($currentInGameTime) === '') {
     $currentInGameTime = 'N/A';
 }
 
-$backgroundProcessorRunning = false;
+$backgroundProcessorStatus = [
+    'healthy' => false,
+    'state' => 'unknown',
+    'last_tick_age_seconds' => null,
+];
 try {
-    if (function_exists('stobeBackgroundProcessorIsRunning')) {
-        $backgroundProcessorRunning = stobeBackgroundProcessorIsRunning();
+    if (function_exists('stobeBackgroundProcessorStatus')) {
+        $backgroundProcessorStatus = stobeBackgroundProcessorStatus();
     }
 } catch (Throwable $exception) {
-    $backgroundProcessorRunning = false;
+    $backgroundProcessorStatus['state'] = 'unknown';
 }
+$backgroundProcessorState = strval($backgroundProcessorStatus['state'] ?? 'unknown');
+$backgroundProcessorAge = $backgroundProcessorStatus['last_tick_age_seconds'] ?? null;
+$backgroundProcessorDisplay = match ($backgroundProcessorState) {
+    'running' => 'Running',
+    'starting' => 'Starting (waiting for manager tick)',
+    'stalled' => 'Stalled'
+        . (is_int($backgroundProcessorAge) ? ' (last tick ' . $backgroundProcessorAge . 's ago)' : ''),
+    'offline' => 'Not running',
+    default => 'Unknown',
+};
 
 $currentPlaythroughContent = "
 <div class='quest-list'>
@@ -271,7 +511,10 @@ $currentPlaythroughContent = "
         <tr><th>Stats</th><th>Value</th></tr>
         <tr><td>Last Played (UTC)</td><td>" . h($lastPlayedUtc) . "</td></tr>
         <tr><td>Current In-Game Time</td><td>" . h($currentInGameTime) . "</td></tr>
-        <tr><td>Background Processor</td><td>" . ($backgroundProcessorRunning ? "Running" : "Not running") . "</td></tr>
+        <tr><td>STOBE Active Model</td><td>" . h($activeModelDisplay) . "</td></tr>
+        <tr><td>Player Faction Squadmates</td><td>" . h($playerFactionSquadmateCount) . "</td></tr>
+        {$playerBaseRows}
+        <tr><td>Background Processor</td><td>" . h($backgroundProcessorDisplay) . "</td></tr>
     </table>
 </div>";
 
@@ -357,6 +600,7 @@ $locationsRows = safeRows(
         last_game_ts,
         last_seen_ts
      FROM location_zones
+     WHERE metadata->>'knowledge_only' IS DISTINCT FROM 'true'
      ORDER BY first_game_ts DESC, last_seen_ts DESC, zone_name ASC
      LIMIT 500"
 );

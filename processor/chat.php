@@ -350,10 +350,12 @@ if (strlen($messagePreview) > 180) {
 
 $dialogueModeRaw = $_GET["mode"] ?? '';
 $dialogueMode = strtolower(trim((string)$dialogueModeRaw));
-$allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat', 'narrator'];
+$allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat', 'narrator', 'inject', 'inject_chat'];
 if (!in_array($dialogueMode, $allowedDialogueModes, true)) {
     $dialogueMode = 'talk';
 }
+$injectionMode = ($dialogueMode === 'inject' || $dialogueMode === 'inject_chat');
+$injectionChatMode = ($dialogueMode === 'inject_chat');
 
 if (!function_exists('stobeParseNearbyRosterNamesFromEventData')) {
     function stobeParseNearbyRosterNamesFromEventData(string $eventData): array
@@ -478,7 +480,7 @@ if ($targetNpc === '') {
 }
 
 $speakerProfileName = normalizeParticipantNameToken(strval($speaker));
-if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
+if (!$narratorMode && !$injectionMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
     $speakerNpcData = getNpcData($speakerProfileName);
     if (is_array($speakerNpcData) && stobeNpcCannotRespondInDirectChat($speakerNpcData)) {
         $speakerState = function_exists('stobeResolveNpcAwarenessState')
@@ -500,10 +502,11 @@ if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCan
 if ($manualActionTarget === '') {
     $manualActionTarget = $targetNpc;
 }
-if ($narratorMode && $manualActionActive) {
-    stobeLogWarn('Manual action ignored: narrator mode does not support manual actions', [
+if (($narratorMode || $injectionMode) && $manualActionActive) {
+    stobeLogWarn('Manual action ignored: selected mode does not support manual actions', [
         'manual_action' => $manualActionKey,
         'speaker' => $speaker,
+        'mode' => $dialogueMode,
     ]);
     $manualActionKey = '';
     $manualActionActive = false;
@@ -576,6 +579,28 @@ $manualActionLimbToken = stobeManualChatActionLimbToken($manualActionKey);
 $manualActionLimbLabel = stobeManualChatActionLimbLabel($manualActionKey);
 $manualActionType = stobeManualChatActionType($manualActionKey);
 
+$formatInjectedEventData = static function (string $eventSpeaker, string $eventTarget, string $eventMessage): string {
+    $eventText = trim($eventMessage);
+    if (!(str_starts_with($eventText, '(') && str_ends_with($eventText, ')'))) {
+        $eventText = '(' . $eventText . ')';
+    }
+    return $eventSpeaker . ': ' . $eventText . ' (talking to: ' . $eventTarget . ')';
+};
+
+if ($injectionMode && !$injectionChatMode) {
+    $message = $sanitizeChatMessage($message);
+    $eventData = $formatInjectedEventData($speaker, $targetNpc, $message);
+    storeEvent('injection', $timestamp, $gamets, $eventData);
+    stobeLogInfo('Injection event stored without response', [
+        'speaker' => $speaker,
+        'target_npc' => $targetNpc,
+        'gamets' => intval($gamets),
+        'message_length' => strlen($message),
+    ]);
+    echo "ok";
+    return;
+}
+
 $npcData = stobeRefreshNpcDataForTraderInventory($targetNpc, is_array($npcData) ? $npcData : [], $message);
 $traderInventoryEntryCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
 if ($traderInventoryEntryCount > 0 || stobeMessageLooksTradeIntent($message)) {
@@ -619,9 +644,6 @@ $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     $message,
     intval($gamets)
 );
-if (count($memoryContextMessages) > 0) {
-    $historyMessages = array_merge($historyMessages, $memoryContextMessages);
-}
 
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/llm_dispatcher.php');
@@ -665,9 +687,11 @@ if ($dialogueMode === 'autochat') {
 }
 
 $message = $sanitizeChatMessage($message);
-$eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
-storeEvent($eventType, $timestamp, $gamets, $eventData);
-if (!$narratorMode) {
+$eventData = $injectionMode
+    ? $formatInjectedEventData($speaker, $targetNpc, $message)
+    : $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
+storeEvent($injectionMode ? 'injection' : $eventType, $timestamp, $gamets, $eventData);
+if (!$narratorMode && !$injectionMode) {
     // Mirror player input as chat immediately so timeline order is stable even
     // when game-emitted chat events arrive later.
     storeEvent('chat', intval($timestamp) + 1, $gamets, $eventData, 'inputtext_chat_mirror');
@@ -704,7 +728,7 @@ if ($dialogueMode === 'autochat' && trim($message) !== '') {
     streamResponse($speaker, 'ScriptQueue', $message, false, [], 'chat', $targetNpc, $gamets);
 }
 
-if (!$narratorMode) {
+if (!$narratorMode && !$injectionMode) {
     stobeTryTriggerRandomNarration(
         intval($gamets),
         $speaker,
@@ -793,7 +817,9 @@ if ($dialogueMode === 'whisper') {
 } elseif ($dialogueMode === 'autochat') {
     $deliveryStyleInstruction = 'The player triggered a bored-event automatic chat. Keep responses brief and natural for overheard conversation.';
 } elseif ($dialogueMode === 'narrator') {
-    $deliveryStyleInstruction = 'You are The Narrator in a private one-on-one conversation. Reply directly to the speaker as conversation. Never narrate scenes, atmosphere, or actions in this mode. Never emit action tags.';
+    $deliveryStyleInstruction = 'You are ' . stobeNarratorRoleplayName() . ' in a private one-on-one conversation. Reply directly to the speaker as conversation. Never narrate scenes, atmosphere, or actions in this mode. Never emit action tags.';
+} elseif ($injectionChatMode) {
+    $deliveryStyleInstruction = 'The player supplied an established in-world event, not spoken dialogue. Accept the event as true and give one immediate in-character response from the target NPC without claiming the player said the event aloud.';
 }
 if ($deliveryStyleInstruction !== '') {
     $systemPrompt .= "\n\n<speech_mode>\n"
@@ -830,7 +856,15 @@ if ($manualActionActive) {
     }
     $systemPrompt .= "</manual_action_context>";
 }
-$userContent = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
+$userContent = $injectionChatMode
+    ? "<injected_event>\n"
+        . "  <source>player-authored world event</source>\n"
+        . "  <observer>" . stobePromptXmlEscape($speaker) . "</observer>\n"
+        . "  <target>" . stobePromptXmlEscape($targetNpc) . "</target>\n"
+        . "  <event>" . stobePromptXmlEscape($message) . "</event>\n"
+        . "  <instruction>Treat this as an established event that just happened. It is not dialogue spoken by the observer.</instruction>\n"
+        . "</injected_event>"
+    : stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
 if ($manualActionActive) {
     $userContent .= "\n<manual_action_event>\n"
         . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
@@ -855,6 +889,16 @@ if ($dialogueMode === 'cheat') {
         . "  <request>" . stobePromptXmlEscape($message) . "</request>\n"
         . "</cheat_request>";
 }
+$compactHistory = stobeApplyCompactChatHistory(
+    $systemPrompt,
+    $historyMessages,
+    $targetNpc,
+    stobeShouldCompactChatHistory($targetNpc)
+);
+$systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
+$historyMessages = is_array($compactHistory['history_messages'] ?? null)
+    ? $compactHistory['history_messages']
+    : $historyMessages;
 $messages = [
     [
         'role' => 'system',
@@ -864,6 +908,9 @@ $messages = [
 foreach ($historyMessages as $historyMessage) {
     $messages[] = $historyMessage;
 }
+foreach ($memoryContextMessages as $memoryContextMessage) {
+    $messages[] = $memoryContextMessage;
+}
 $messages[] = [
     'role' => 'user',
     'content' => $userContent,
@@ -872,13 +919,15 @@ $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
         ? stobeBuildNarratorDirectReplyGuidanceUserPrompt($speaker, $message)
-        : stobeBuildTurnGuidanceUserPrompt(
+        : ($injectionChatMode
+            ? 'React once to the established injected event from the target NPC perspective. Do not reinterpret it as something the observer said.'
+            : stobeBuildTurnGuidanceUserPrompt(
             $targetNpc,
             $speaker,
             false,
             $dialogueMode === 'cheat',
             $dialogueMode === 'cheat' ? $message : ''
-        ),
+        )),
 ];
 $messages[] = [
     'role' => 'user',
@@ -1000,19 +1049,25 @@ if ($responseListener !== '' && strcasecmp($responseListener, $replyTarget) !== 
 }
 
 if (!$manualActionForcedEmoteOnly && !$narratorMode) {
+    $relationshipInput = $injectionMode
+        ? 'Injected event: ' . $message
+        : $speaker . ': ' . $message;
     $relationshipEval = stobeEvaluateRelationshipsForTurn(
         $targetNpc,
         $replyTarget,
-        $speaker . ': ' . $message,
+        $relationshipInput,
         $responseText,
         $npcData,
         'chat'
     );
-    $responseText = stobeStripParentheticalDialogueText(
-        sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)))
-    );
+    $responseText = sanitizeForKenshi(trim(strval($relationshipEval['clean_response'] ?? $responseText)));
+    if (!stobeInlineNarrationApplies($targetNpc, 'chat')) {
+        $responseText = stobeStripParentheticalDialogueText($responseText);
+    }
 }
-$responseText = stobeStripParentheticalDialogueText($responseText);
+if (!stobeInlineNarrationApplies($targetNpc, 'chat')) {
+    $responseText = stobeStripParentheticalDialogueText($responseText);
+}
 if ($responseText === '' && count($responseActions) === 0) {
     $responseText = '...';
 }
@@ -1024,5 +1079,13 @@ if ($alreadyStreamed) {
         streamResponse($targetNpc, 'ScriptQueue', '', $npcData, $responseActions, 'chat', $replyTarget, $gamets);
     }
 } else {
-    streamResponse($targetNpc, 'ScriptQueue', $responseText, $npcData, $responseActions, 'chat', $replyTarget, $gamets);
+    stobeStreamDialogueResponse(
+        $targetNpc,
+        $npcData,
+        $responseText,
+        $responseActions,
+        'chat',
+        $replyTarget,
+        intval($gamets)
+    );
 }

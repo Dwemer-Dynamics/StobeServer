@@ -72,6 +72,17 @@ function fetchNpcTraits(string $name): array|false
 
 $seed = strval(time()) . '_' . strval(random_int(1000, 9999));
 
+$unknownMaleVoice = stobeSelectVoiceIdForNpc('UT_UNKNOWN_MALE_' . $seed, 'Unknown', 'male');
+$unknownFemaleVoice = stobeSelectVoiceIdForNpc('UT_UNKNOWN_FEMALE_' . $seed, '', 'female');
+assertTrue(
+    preg_match('/^male(?:[1-9]|1[0-9]|20)$/', $unknownMaleVoice) === 1,
+    'unknown male race should use the legacy male voice pool'
+);
+assertTrue(
+    preg_match('/^female(?:[1-9]|1[0-9]|20)$/', $unknownFemaleVoice) === 1,
+    'unknown female race should use the legacy female voice pool'
+);
+
 runInRollbackTransaction('bio_unique precedence and bracket fallback in selector', function () use ($seed): void {
     $db = $GLOBALS['db'];
     $baseName = 'UT_BIO_UNIQUE_' . $seed . '_Kuir';

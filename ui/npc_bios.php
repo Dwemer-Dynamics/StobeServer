@@ -34,6 +34,108 @@ function npc_bios_build_url(array $params, bool $isEmbed): string
     return $base . ($qs !== "" ? ("?" . $qs) : "");
 }
 
+function npc_bios_render_pagination(
+    int $page,
+    int $totalRows,
+    int $pageSize,
+    string $pageKey,
+    array $params,
+    bool $isEmbed
+): void {
+    $totalPages = max(1, intval(ceil($totalRows / max(1, $pageSize))));
+    if ($totalPages <= 1) {
+        echo '<div class="pagination-bar"><span>' . intval($totalRows) . ' entries</span></div>';
+        return;
+    }
+
+    echo '<div class="pagination-bar">';
+    if ($page > 1) {
+        $previous = $params;
+        $previous[$pageKey] = $page - 1;
+        echo '<a class="action-button" href="' . h(npc_bios_build_url($previous, $isEmbed)) . '">Previous</a>';
+    } else {
+        echo '<span class="pagination-placeholder"></span>';
+    }
+    echo '<span>Page ' . intval($page) . ' of ' . intval($totalPages)
+        . ' (' . intval($totalRows) . ' entries)</span>';
+    if ($page < $totalPages) {
+        $next = $params;
+        $next[$pageKey] = $page + 1;
+        echo '<a class="action-button" href="' . h(npc_bios_build_url($next, $isEmbed)) . '">Next</a>';
+    } else {
+        echo '<span class="pagination-placeholder"></span>';
+    }
+    echo '</div>';
+}
+
+function npc_bios_wants_json(): bool
+{
+    $requestedWith = strtolower(strval($_SERVER["HTTP_X_REQUESTED_WITH"] ?? ""));
+    $accept = strtolower(strval($_SERVER["HTTP_ACCEPT"] ?? ""));
+    return $requestedWith === "xmlhttprequest" || strpos($accept, "application/json") !== false;
+}
+
+function npc_bios_json_response(array $payload, int $statusCode = 200): void
+{
+    http_response_code($statusCode);
+    header("Content-Type: application/json; charset=utf-8");
+    echo json_encode($payload);
+    exit;
+}
+
+function npc_bios_toggle_enabled(sql $db, string $baseTable, string $customTable, string $label, string $tab, string $noticeKey, array $redirectParams, bool $isEmbed): void
+{
+    $rowId = intval($_POST["row_id"] ?? 0);
+    $source = strtolower(npc_bios_trim($_POST["source"] ?? ""));
+    $targetEnabled = npc_bios_is_true($_POST["target_enabled"] ?? "0");
+    $table = $source === "custom" ? $customTable : ($source === "base" ? $baseTable : "");
+    $okToggle = false;
+    if ($rowId > 0 && $table !== "") {
+        $result = $db->exec(
+            "UPDATE {$table}
+             SET is_enabled = $1,
+                  updated_at = NOW()
+             WHERE id = $2",
+            [$targetEnabled ? "1" : "0", $rowId]
+        );
+        if ($result === false) {
+            stobeLogError('NPC biography state update failed', [
+                'table' => $table,
+                'row_id' => $rowId,
+                'source' => $source,
+                'db_error' => $db->GetLastError(),
+            ]);
+        } else {
+            $affectedRows = $db->affectedRows($result);
+            $okToggle = $affectedRows === 1;
+            if (!$okToggle) {
+                stobeLogWarn('NPC biography state update matched no row', [
+                    'table' => $table,
+                    'row_id' => $rowId,
+                    'source' => $source,
+                    'affected_rows' => $affectedRows,
+                ]);
+            }
+        }
+    }
+    if (npc_bios_wants_json()) {
+        if (!$okToggle) {
+            npc_bios_json_response(["ok" => false, "message" => "Could not update {$label} entry state."], 400);
+        }
+        npc_bios_json_response([
+            "ok" => true,
+            "enabled" => $targetEnabled,
+            "row_id" => $rowId,
+            "source" => $source,
+            "message" => "Updated {$label} entry state.",
+        ]);
+    }
+    $redirectParams["tab"] = $tab;
+    $redirectParams["notice"] = $okToggle ? "toggled_" . $noticeKey : "toggle_failed_" . $noticeKey;
+    header("Location: " . npc_bios_build_url($redirectParams, $isEmbed));
+    exit;
+}
+
 function npc_bios_pick_csv(array $row, array $map, array $aliases, int $fallback = -1): string
 {
     foreach ($aliases as $alias) {
@@ -91,7 +193,7 @@ function npc_bios_read_uploaded_csv(string $tmpPath): array
 
 $db = $GLOBALS["db"];
 $validTypes = ["personality", "backstory", "speechstyle", "occupation", "appearance", "goals"];
-$maxBrowseRows = 5000;
+$browsePageSize = 100;
 $isEmbed = isset($_GET["embed"]) && strval($_GET["embed"]) === "1";
 
 $activeTab = strtolower(npc_bios_trim($_GET["tab"] ?? "bio_random"));
@@ -102,6 +204,21 @@ if (!in_array($activeTab, ["bio_random", "bio_unique", "rename_token"], true)) {
 $qRandom = npc_bios_trim($_GET["q_random"] ?? "");
 $qUnique = npc_bios_trim($_GET["q_unique"] ?? "");
 $qToken = npc_bios_trim($_GET["q_token"] ?? "");
+$pageRandom = max(1, intval($_GET["page_random"] ?? 1));
+$pageUnique = max(1, intval($_GET["page_unique"] ?? 1));
+$pageToken = max(1, intval($_GET["page_token"] ?? 1));
+$enabledRandom = strtolower(npc_bios_trim($_GET["enabled_random"] ?? "all"));
+if (!in_array($enabledRandom, ["all", "enabled", "disabled"], true)) {
+    $enabledRandom = "all";
+}
+$enabledUnique = strtolower(npc_bios_trim($_GET["enabled_unique"] ?? "all"));
+if (!in_array($enabledUnique, ["all", "enabled", "disabled"], true)) {
+    $enabledUnique = "all";
+}
+$enabledToken = strtolower(npc_bios_trim($_GET["enabled_token"] ?? "all"));
+if (!in_array($enabledToken, ["all", "enabled", "disabled"], true)) {
+    $enabledToken = "all";
+}
 $letterRandom = strtoupper(npc_bios_trim($_GET["letter_random"] ?? ""));
 $letterUnique = strtoupper(npc_bios_trim($_GET["letter_unique"] ?? ""));
 $letterToken = strtoupper(npc_bios_trim($_GET["letter_token"] ?? ""));
@@ -354,7 +471,31 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     } else {
         $action = strtolower(npc_bios_trim($_POST["action"] ?? ""));
 
-        if ($action === "save_random") {
+        if ($action === "toggle_random_enabled") {
+            $activeTab = "bio_random";
+            npc_bios_toggle_enabled($db, "bio_random", "bio_random_custom", "bio_random", "bio_random", "random", [
+                "q_random" => npc_bios_trim($_POST["q_random"] ?? ""),
+                "letter_random" => npc_bios_trim($_POST["letter_random"] ?? ""),
+                "enabled_random" => npc_bios_trim($_POST["enabled_random"] ?? "all"),
+                "page_random" => max(1, intval($_POST["page_random"] ?? 1)),
+            ], $isEmbed);
+        } elseif ($action === "toggle_unique_enabled") {
+            $activeTab = "bio_unique";
+            npc_bios_toggle_enabled($db, "bio_unique", "bio_unique_custom", "bio_unique", "bio_unique", "unique", [
+                "q_unique" => npc_bios_trim($_POST["q_unique"] ?? ""),
+                "letter_unique" => npc_bios_trim($_POST["letter_unique"] ?? ""),
+                "enabled_unique" => npc_bios_trim($_POST["enabled_unique"] ?? "all"),
+                "page_unique" => max(1, intval($_POST["page_unique"] ?? 1)),
+            ], $isEmbed);
+        } elseif ($action === "toggle_token_enabled") {
+            $activeTab = "rename_token";
+            npc_bios_toggle_enabled($db, "rename_token_global", "rename_token_global_custom", "rename token", "rename_token", "token", [
+                "q_token" => npc_bios_trim($_POST["q_token"] ?? ""),
+                "letter_token" => npc_bios_trim($_POST["letter_token"] ?? ""),
+                "enabled_token" => npc_bios_trim($_POST["enabled_token"] ?? "all"),
+                "page_token" => max(1, intval($_POST["page_token"] ?? 1)),
+            ], $isEmbed);
+        } elseif ($action === "save_random") {
         $activeTab = "bio_random";
         $rowId = intval($_POST["row_id"] ?? 0);
         $type = strtolower(npc_bios_trim($_POST["type"] ?? ""));
@@ -524,14 +665,29 @@ if (isset($_GET["notice"])) {
         $message = "Saved bio_random entry.";
     } elseif ($notice === "deleted_random") {
         $message = "Deleted custom bio_random entry.";
+    } elseif ($notice === "toggled_random") {
+        $message = "Updated bio_random entry state.";
+    } elseif ($notice === "toggle_failed_random") {
+        $message = "Could not update bio_random entry state.";
+        $messageType = "err";
     } elseif ($notice === "saved_unique") {
         $message = "Saved bio_unique entry.";
     } elseif ($notice === "deleted_unique") {
         $message = "Deleted custom bio_unique entry.";
+    } elseif ($notice === "toggled_unique") {
+        $message = "Updated bio_unique entry state.";
+    } elseif ($notice === "toggle_failed_unique") {
+        $message = "Could not update bio_unique entry state.";
+        $messageType = "err";
     } elseif ($notice === "saved_token") {
         $message = "Saved rename token.";
     } elseif ($notice === "deleted_token") {
         $message = "Deleted custom rename token.";
+    } elseif ($notice === "toggled_token") {
+        $message = "Updated rename token state.";
+    } elseif ($notice === "toggle_failed_token") {
+        $message = "Could not update rename token state.";
+        $messageType = "err";
     }
 }
 
@@ -589,7 +745,20 @@ if ($letterRandom !== "") {
     $p = "$" . count($randomParams);
     $randomWhereParts[] = "LOWER(COALESCE(v.name, '')) LIKE LOWER($p)";
 }
+if ($enabledRandom === "enabled") {
+    $randomWhereParts[] = "COALESCE(v.is_enabled, TRUE) = TRUE";
+} elseif ($enabledRandom === "disabled") {
+    $randomWhereParts[] = "COALESCE(v.is_enabled, TRUE) = FALSE";
+}
 $randomWhere = count($randomWhereParts) > 0 ? ("WHERE " . implode(" AND ", $randomWhereParts)) : "";
+$randomCountRow = $db->fetchOne(
+    "SELECT COUNT(*) AS total FROM combined_bio_random v $randomWhere",
+    $randomParams
+);
+$randomTotalRows = intval(is_array($randomCountRow) ? ($randomCountRow["total"] ?? 0) : 0);
+$randomTotalPages = max(1, intval(ceil($randomTotalRows / $browsePageSize)));
+$pageRandom = min($pageRandom, $randomTotalPages);
+$randomOffset = ($pageRandom - 1) * $browsePageSize;
 $randomRows = $db->fetchAll(
     "SELECT
         v.*,
@@ -603,7 +772,7 @@ $randomRows = $db->fetchAll(
      FROM combined_bio_random v
      $randomWhere
      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(COALESCE(v.type, '')), v.id DESC
-     LIMIT " . intval($maxBrowseRows),
+     LIMIT " . intval($browsePageSize) . " OFFSET " . intval($randomOffset),
     $randomParams
 );
 
@@ -621,7 +790,20 @@ if ($letterUnique !== "") {
     $p = "$" . count($uniqueParams);
     $uniqueWhereParts[] = "LOWER(COALESCE(v.name, '')) LIKE LOWER($p)";
 }
+if ($enabledUnique === "enabled") {
+    $uniqueWhereParts[] = "COALESCE(v.is_enabled, TRUE) = TRUE";
+} elseif ($enabledUnique === "disabled") {
+    $uniqueWhereParts[] = "COALESCE(v.is_enabled, TRUE) = FALSE";
+}
 $uniqueWhere = count($uniqueWhereParts) > 0 ? ("WHERE " . implode(" AND ", $uniqueWhereParts)) : "";
+$uniqueCountRow = $db->fetchOne(
+    "SELECT COUNT(*) AS total FROM combined_bio_unique v $uniqueWhere",
+    $uniqueParams
+);
+$uniqueTotalRows = intval(is_array($uniqueCountRow) ? ($uniqueCountRow["total"] ?? 0) : 0);
+$uniqueTotalPages = max(1, intval(ceil($uniqueTotalRows / $browsePageSize)));
+$pageUnique = min($pageUnique, $uniqueTotalPages);
+$uniqueOffset = ($pageUnique - 1) * $browsePageSize;
 $uniqueRows = $db->fetchAll(
     "SELECT
         v.*,
@@ -634,7 +816,7 @@ $uniqueRows = $db->fetchAll(
      FROM combined_bio_unique v
      $uniqueWhere
      ORDER BY LOWER(COALESCE(v.name, '')), LOWER(COALESCE(v.type, '')), v.id DESC
-     LIMIT " . intval($maxBrowseRows),
+     LIMIT " . intval($browsePageSize) . " OFFSET " . intval($uniqueOffset),
     $uniqueParams
 );
 
@@ -650,7 +832,20 @@ if ($letterToken !== "") {
     $p = "$" . count($tokenParams);
     $tokenWhereParts[] = "LOWER(COALESCE(v.token, '')) LIKE LOWER($p)";
 }
+if ($enabledToken === "enabled") {
+    $tokenWhereParts[] = "COALESCE(v.is_enabled, TRUE) = TRUE";
+} elseif ($enabledToken === "disabled") {
+    $tokenWhereParts[] = "COALESCE(v.is_enabled, TRUE) = FALSE";
+}
 $tokenWhere = count($tokenWhereParts) > 0 ? ("WHERE " . implode(" AND ", $tokenWhereParts)) : "";
+$tokenCountRow = $db->fetchOne(
+    "SELECT COUNT(*) AS total FROM combined_rename_token_global v $tokenWhere",
+    $tokenParams
+);
+$tokenTotalRows = intval(is_array($tokenCountRow) ? ($tokenCountRow["total"] ?? 0) : 0);
+$tokenTotalPages = max(1, intval(ceil($tokenTotalRows / $browsePageSize)));
+$pageToken = min($pageToken, $tokenTotalPages);
+$tokenOffset = ($pageToken - 1) * $browsePageSize;
 $tokenRows = $db->fetchAll(
     "SELECT
         v.*,
@@ -662,7 +857,7 @@ $tokenRows = $db->fetchAll(
      FROM combined_rename_token_global v
      $tokenWhere
      ORDER BY LOWER(COALESCE(v.token, '')), v.id DESC
-     LIMIT " . intval($maxBrowseRows),
+     LIMIT " . intval($browsePageSize) . " OFFSET " . intval($tokenOffset),
     $tokenParams
 );
 
@@ -929,10 +1124,57 @@ $tokenRows = $db->fetchAll(
             border-color: rgba(170, 170, 170, 0.35);
             background: rgba(80, 80, 80, 0.25);
         }
+        .filter-buttons .active {
+            border-color: rgba(234, 238, 5, 0.65);
+            box-shadow: 0 0 0 2px rgba(234, 238, 5, 0.12);
+        }
+        .inline-status {
+            display: none;
+            margin: 0 0 12px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(47, 125, 83, 0.8);
+            background: rgba(47, 125, 83, 0.16);
+            color: #dff6e9;
+        }
+        .inline-status.err {
+            border-color: rgba(187, 68, 68, 0.8);
+            background: rgba(187, 68, 68, 0.16);
+        }
+        .pagination-bar {
+            display: grid;
+            grid-template-columns: 120px 1fr 120px;
+            align-items: center;
+            gap: 12px;
+            margin-top: 14px;
+            text-align: center;
+            color: #c9d3e5;
+        }
+        .pagination-bar .action-button:last-child {
+            justify-self: end;
+        }
+        .pagination-placeholder {
+            min-width: 1px;
+        }
         @media (max-width: 1000px) {
             main { padding-left: 4%; padding-right: 4%; }
             .grid-two { grid-template-columns: 1fr; }
             .content-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 600px) {
+            .pagination-bar {
+                grid-template-columns: 1fr 1fr;
+            }
+            .pagination-bar > span:not(.pagination-placeholder) {
+                grid-column: 1 / -1;
+                grid-row: 1;
+            }
+            .pagination-bar .action-button:first-child {
+                justify-self: start;
+            }
+            .pagination-placeholder {
+                display: none;
+            }
         }
         .modal-content {
             background: #2a2a2a;
@@ -996,12 +1238,14 @@ $tokenRows = $db->fetchAll(
             </div>
 
             <div class="content-section full-width-section">
+            <div id="randomToggleStatus" class="inline-status" role="status" aria-live="polite"></div>
             <div class="action-container">
                 <button type="button" class="action-button add-new" data-bs-toggle="modal" data-bs-target="#bioRandomModal">Add Custom bio_random Entry</button>
                 <form class="search-container" method="get" action="">
                     <input type="hidden" name="tab" value="bio_random">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <?php if ($letterRandom !== ""): ?><input type="hidden" name="letter_random" value="<?= h($letterRandom) ?>"><?php endif; ?>
+                    <input type="hidden" name="enabled_random" value="<?= h($enabledRandom) ?>">
                     <input type="text" name="q_random" value="<?= h($qRandom) ?>" placeholder="Search type, description, name, race, gender, or faction">
                     <button type="submit" class="action-button edit">Search</button>
                     <a class="action-button" href="<?= h(npc_bios_build_url(["tab" => "bio_random"], $isEmbed)) ?>">Clear</a>
@@ -1009,11 +1253,20 @@ $tokenRows = $db->fetchAll(
             </div>
 
             <div class="filter-section">
+                <strong>Filter by State:</strong>
+                <div class="filter-buttons">
+                    <a class="alphabet-button <?= $enabledRandom === "all" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom, "letter_random" => $letterRandom, "enabled_random" => "all"], $isEmbed)) ?>">All</a>
+                    <a class="alphabet-button <?= $enabledRandom === "enabled" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom, "letter_random" => $letterRandom, "enabled_random" => "enabled"], $isEmbed)) ?>">Enabled</a>
+                    <a class="alphabet-button <?= $enabledRandom === "disabled" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom, "letter_random" => $letterRandom, "enabled_random" => "disabled"], $isEmbed)) ?>">Disabled</a>
+                </div>
+            </div>
+
+            <div class="filter-section">
                 <strong>Filter by Name:</strong>
                 <div class="filter-buttons">
-                    <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom], $isEmbed)) ?>">All</a>
+                    <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom, "enabled_random" => $enabledRandom], $isEmbed)) ?>">All</a>
                     <?php foreach (range("A", "Z") as $char): ?>
-                        <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom, "letter_random" => $char], $isEmbed)) ?>"><?= h($char) ?></a>
+                        <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_random", "q_random" => $qRandom, "letter_random" => $char, "enabled_random" => $enabledRandom], $isEmbed)) ?>"><?= h($char) ?></a>
                     <?php endforeach; ?>
                 </div>
             </div>
@@ -1029,16 +1282,19 @@ $tokenRows = $db->fetchAll(
                             <th>Faction</th>
                             <th>Description</th>
                             <th>Source</th>
+                            <th>State</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (count($randomRows) === 0): ?>
-                            <tr><td colspan="8">No rows found.</td></tr>
+                            <tr><td colspan="9">No rows found.</td></tr>
                         <?php endif; ?>
                         <?php foreach ($randomRows as $row): ?>
                             <?php $isCustom = npc_bios_is_true($row["is_custom"] ?? false); ?>
-                            <tr>
+                            <?php $isEnabled = npc_bios_is_true($row["is_enabled"] ?? true); ?>
+                            <?php $source = $isCustom ? "custom" : "base"; ?>
+                            <tr data-random-bio-row="1" data-enabled="<?= $isEnabled ? "1" : "0" ?>">
                                 <td><?= h($row["type"] ?? "") ?></td>
                                 <td><?= h($row["name"] ?? "") ?></td>
                                 <td><?= h($row["race"] ?? "") ?></td>
@@ -1047,17 +1303,34 @@ $tokenRows = $db->fetchAll(
                                 <td><?= nl2br(h($row["description"] ?? "")) ?></td>
                                 <td><span class="pill <?= $isCustom ? "custom" : "base" ?>"><?= $isCustom ? "custom" : "base" ?></span></td>
                                 <td>
+                                    <span class="random-state-label" style="color:<?= $isEnabled ? "#4caf50" : "#f44336" ?>;">
+                                        <?= $isEnabled ? "Enabled" : "Disabled" ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <form method="post" action="" class="enabled-toggle-form" data-enabled-filter="<?= h($enabledRandom) ?>" style="display:inline;">
+                                        <input type="hidden" name="action" value="toggle_random_enabled">
+                                        <input type="hidden" name="row_id" value="<?= h($row["id"] ?? "") ?>">
+                                        <input type="hidden" name="source" value="<?= h($source) ?>">
+                                        <input type="hidden" name="target_enabled" value="<?= $isEnabled ? "0" : "1" ?>">
+                                        <input type="hidden" name="q_random" value="<?= h($qRandom) ?>">
+                                        <input type="hidden" name="letter_random" value="<?= h($letterRandom) ?>">
+                                        <input type="hidden" name="enabled_random" value="<?= h($enabledRandom) ?>">
+                                        <input type="hidden" name="page_random" value="<?= intval($pageRandom) ?>">
+                                        <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
+                                        <button class="<?= $isEnabled ? "btn-danger" : "btn-save" ?>" type="submit">
+                                            <?= $isEnabled ? "Disable" : "Enable" ?>
+                                        </button>
+                                    </form>
                                     <?php if ($isCustom): ?>
                                         <a class="action-button edit"
-                                           href="<?= h(npc_bios_build_url(["tab" => "bio_random", "edit_random" => intval($row["id"] ?? 0), "q_random" => $qRandom, "letter_random" => $letterRandom], $isEmbed)) ?>">Edit</a>
+                                           href="<?= h(npc_bios_build_url(["tab" => "bio_random", "edit_random" => intval($row["id"] ?? 0), "q_random" => $qRandom, "letter_random" => $letterRandom, "enabled_random" => $enabledRandom], $isEmbed)) ?>">Edit</a>
                                         <form method="post" action="" style="display:inline;">
                                             <input type="hidden" name="action" value="delete_random">
                                             <input type="hidden" name="row_id" value="<?= h($row["id"] ?? "") ?>">
                                             <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                                             <button class="btn-danger" type="submit" onclick="return confirm('Delete this custom bio_random entry?');">Delete</button>
                                         </form>
-                                    <?php else: ?>
-                                        <span style="color:#999;">Built-in</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -1065,6 +1338,19 @@ $tokenRows = $db->fetchAll(
                 </tbody>
             </table>
             </div>
+            <?php npc_bios_render_pagination(
+                $pageRandom,
+                $randomTotalRows,
+                $browsePageSize,
+                "page_random",
+                [
+                    "tab" => "bio_random",
+                    "q_random" => $qRandom,
+                    "letter_random" => $letterRandom,
+                    "enabled_random" => $enabledRandom,
+                ],
+                $isEmbed
+            ); ?>
             </div>
 
             <div class="modal fade" id="bioRandomModal" tabindex="-1" aria-hidden="true">
@@ -1140,12 +1426,14 @@ $tokenRows = $db->fetchAll(
             </div>
 
             <div class="content-section full-width-section">
+            <div id="randomToggleStatus" class="inline-status" role="status" aria-live="polite"></div>
             <div class="action-container">
                 <button type="button" class="action-button add-new" data-bs-toggle="modal" data-bs-target="#bioUniqueModal">Add Custom bio_unique Entry</button>
                 <form class="search-container" method="get" action="">
                     <input type="hidden" name="tab" value="bio_unique">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <?php if ($letterUnique !== ""): ?><input type="hidden" name="letter_unique" value="<?= h($letterUnique) ?>"><?php endif; ?>
+                    <input type="hidden" name="enabled_unique" value="<?= h($enabledUnique) ?>">
                     <input type="text" name="q_unique" value="<?= h($qUnique) ?>" placeholder="Search name, type, or description">
                     <button type="submit" class="action-button edit">Search</button>
                     <a class="action-button" href="<?= h(npc_bios_build_url(["tab" => "bio_unique"], $isEmbed)) ?>">Clear</a>
@@ -1153,11 +1441,20 @@ $tokenRows = $db->fetchAll(
             </div>
 
             <div class="filter-section">
+                <strong>Filter by State:</strong>
+                <div class="filter-buttons">
+                    <a class="alphabet-button <?= $enabledUnique === "all" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique, "letter_unique" => $letterUnique, "enabled_unique" => "all"], $isEmbed)) ?>">All</a>
+                    <a class="alphabet-button <?= $enabledUnique === "enabled" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique, "letter_unique" => $letterUnique, "enabled_unique" => "enabled"], $isEmbed)) ?>">Enabled</a>
+                    <a class="alphabet-button <?= $enabledUnique === "disabled" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique, "letter_unique" => $letterUnique, "enabled_unique" => "disabled"], $isEmbed)) ?>">Disabled</a>
+                </div>
+            </div>
+
+            <div class="filter-section">
                 <strong>Filter by Name:</strong>
                 <div class="filter-buttons">
-                    <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique], $isEmbed)) ?>">All</a>
+                    <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique, "enabled_unique" => $enabledUnique], $isEmbed)) ?>">All</a>
                     <?php foreach (range("A", "Z") as $char): ?>
-                        <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique, "letter_unique" => $char], $isEmbed)) ?>"><?= h($char) ?></a>
+                        <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "q_unique" => $qUnique, "letter_unique" => $char, "enabled_unique" => $enabledUnique], $isEmbed)) ?>"><?= h($char) ?></a>
                     <?php endforeach; ?>
                 </div>
             </div>
@@ -1170,32 +1467,52 @@ $tokenRows = $db->fetchAll(
                             <th>Type</th>
                             <th>Description</th>
                             <th>Source</th>
+                            <th>State</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (count($uniqueRows) === 0): ?>
-                            <tr><td colspan="5">No rows found.</td></tr>
+                            <tr><td colspan="6">No rows found.</td></tr>
                         <?php endif; ?>
                         <?php foreach ($uniqueRows as $row): ?>
                             <?php $isCustom = npc_bios_is_true($row["is_custom"] ?? false); ?>
-                            <tr>
+                            <?php $isEnabled = npc_bios_is_true($row["is_enabled"] ?? true); ?>
+                            <?php $source = $isCustom ? "custom" : "base"; ?>
+                            <tr data-enabled-row="1" data-enabled="<?= $isEnabled ? "1" : "0" ?>">
                                 <td><?= h($row["name"] ?? "") ?></td>
                                 <td><?= h($row["type"] ?? "") ?></td>
                                 <td><?= nl2br(h($row["description"] ?? "")) ?></td>
                                 <td><span class="pill <?= $isCustom ? "custom" : "base" ?>"><?= $isCustom ? "custom" : "base" ?></span></td>
                                 <td>
+                                    <span class="enabled-state-label" style="color:<?= $isEnabled ? "#4caf50" : "#f44336" ?>;">
+                                        <?= $isEnabled ? "Enabled" : "Disabled" ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <form method="post" action="" class="enabled-toggle-form" data-enabled-filter="<?= h($enabledUnique) ?>" style="display:inline;">
+                                        <input type="hidden" name="action" value="toggle_unique_enabled">
+                                        <input type="hidden" name="row_id" value="<?= h($row["id"] ?? "") ?>">
+                                        <input type="hidden" name="source" value="<?= h($source) ?>">
+                                        <input type="hidden" name="target_enabled" value="<?= $isEnabled ? "0" : "1" ?>">
+                                        <input type="hidden" name="q_unique" value="<?= h($qUnique) ?>">
+                                        <input type="hidden" name="letter_unique" value="<?= h($letterUnique) ?>">
+                                        <input type="hidden" name="enabled_unique" value="<?= h($enabledUnique) ?>">
+                                        <input type="hidden" name="page_unique" value="<?= intval($pageUnique) ?>">
+                                        <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
+                                        <button class="<?= $isEnabled ? "btn-danger" : "btn-save" ?>" type="submit">
+                                            <?= $isEnabled ? "Disable" : "Enable" ?>
+                                        </button>
+                                    </form>
                                     <?php if ($isCustom): ?>
                                         <a class="action-button edit"
-                                           href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "edit_unique" => intval($row["id"] ?? 0), "q_unique" => $qUnique, "letter_unique" => $letterUnique], $isEmbed)) ?>">Edit</a>
+                                           href="<?= h(npc_bios_build_url(["tab" => "bio_unique", "edit_unique" => intval($row["id"] ?? 0), "q_unique" => $qUnique, "letter_unique" => $letterUnique, "enabled_unique" => $enabledUnique], $isEmbed)) ?>">Edit</a>
                                         <form method="post" action="" style="display:inline;">
                                             <input type="hidden" name="action" value="delete_unique">
                                             <input type="hidden" name="row_id" value="<?= h($row["id"] ?? "") ?>">
                                             <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                                             <button class="btn-danger" type="submit" onclick="return confirm('Delete this custom bio_unique entry?');">Delete</button>
                                         </form>
-                                    <?php else: ?>
-                                        <span style="color:#999;">Built-in</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -1203,6 +1520,19 @@ $tokenRows = $db->fetchAll(
                 </tbody>
             </table>
             </div>
+            <?php npc_bios_render_pagination(
+                $pageUnique,
+                $uniqueTotalRows,
+                $browsePageSize,
+                "page_unique",
+                [
+                    "tab" => "bio_unique",
+                    "q_unique" => $qUnique,
+                    "letter_unique" => $letterUnique,
+                    "enabled_unique" => $enabledUnique,
+                ],
+                $isEmbed
+            ); ?>
             </div>
 
             <div class="modal fade" id="bioUniqueModal" tabindex="-1" aria-hidden="true">
@@ -1266,12 +1596,14 @@ $tokenRows = $db->fetchAll(
             </div>
 
             <div class="content-section full-width-section">
+            <div id="randomToggleStatus" class="inline-status" role="status" aria-live="polite"></div>
             <div class="action-container">
                 <button type="button" class="action-button add-new" data-bs-toggle="modal" data-bs-target="#renameTokenModal">Add Custom Rename Token</button>
                 <form class="search-container" method="get" action="">
                     <input type="hidden" name="tab" value="rename_token">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <?php if ($letterToken !== ""): ?><input type="hidden" name="letter_token" value="<?= h($letterToken) ?>"><?php endif; ?>
+                    <input type="hidden" name="enabled_token" value="<?= h($enabledToken) ?>">
                     <input type="text" name="q_token" value="<?= h($qToken) ?>" placeholder="Search token">
                     <button type="submit" class="action-button edit">Search</button>
                     <a class="action-button" href="<?= h(npc_bios_build_url(["tab" => "rename_token"], $isEmbed)) ?>">Clear</a>
@@ -1279,11 +1611,20 @@ $tokenRows = $db->fetchAll(
             </div>
 
             <div class="filter-section">
+                <strong>Filter by State:</strong>
+                <div class="filter-buttons">
+                    <a class="alphabet-button <?= $enabledToken === "all" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken, "letter_token" => $letterToken, "enabled_token" => "all"], $isEmbed)) ?>">All</a>
+                    <a class="alphabet-button <?= $enabledToken === "enabled" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken, "letter_token" => $letterToken, "enabled_token" => "enabled"], $isEmbed)) ?>">Enabled</a>
+                    <a class="alphabet-button <?= $enabledToken === "disabled" ? "active" : "" ?>" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken, "letter_token" => $letterToken, "enabled_token" => "disabled"], $isEmbed)) ?>">Disabled</a>
+                </div>
+            </div>
+
+            <div class="filter-section">
                 <strong>Filter by Token:</strong>
                 <div class="filter-buttons">
-                    <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken], $isEmbed)) ?>">All</a>
+                    <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken, "enabled_token" => $enabledToken], $isEmbed)) ?>">All</a>
                     <?php foreach (range("A", "Z") as $char): ?>
-                        <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken, "letter_token" => $char], $isEmbed)) ?>"><?= h($char) ?></a>
+                        <a class="alphabet-button" href="<?= h(npc_bios_build_url(["tab" => "rename_token", "q_token" => $qToken, "letter_token" => $char, "enabled_token" => $enabledToken], $isEmbed)) ?>"><?= h($char) ?></a>
                     <?php endforeach; ?>
                 </div>
             </div>
@@ -1294,30 +1635,50 @@ $tokenRows = $db->fetchAll(
                         <tr>
                             <th>Token</th>
                             <th>Source</th>
+                            <th>State</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (count($tokenRows) === 0): ?>
-                            <tr><td colspan="3">No tokens found.</td></tr>
+                            <tr><td colspan="4">No tokens found.</td></tr>
                         <?php endif; ?>
                         <?php foreach ($tokenRows as $row): ?>
                             <?php $isCustom = npc_bios_is_true($row["is_custom"] ?? false); ?>
-                            <tr>
+                            <?php $isEnabled = npc_bios_is_true($row["is_enabled"] ?? true); ?>
+                            <?php $source = $isCustom ? "custom" : "base"; ?>
+                            <tr data-enabled-row="1" data-enabled="<?= $isEnabled ? "1" : "0" ?>">
                                 <td><?= h($row["token"] ?? "") ?></td>
                                 <td><span class="pill <?= $isCustom ? "custom" : "base" ?>"><?= $isCustom ? "custom" : "base" ?></span></td>
                                 <td>
+                                    <span class="enabled-state-label" style="color:<?= $isEnabled ? "#4caf50" : "#f44336" ?>;">
+                                        <?= $isEnabled ? "Enabled" : "Disabled" ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <form method="post" action="" class="enabled-toggle-form" data-enabled-filter="<?= h($enabledToken) ?>" style="display:inline;">
+                                        <input type="hidden" name="action" value="toggle_token_enabled">
+                                        <input type="hidden" name="row_id" value="<?= h($row["id"] ?? "") ?>">
+                                        <input type="hidden" name="source" value="<?= h($source) ?>">
+                                        <input type="hidden" name="target_enabled" value="<?= $isEnabled ? "0" : "1" ?>">
+                                        <input type="hidden" name="q_token" value="<?= h($qToken) ?>">
+                                        <input type="hidden" name="letter_token" value="<?= h($letterToken) ?>">
+                                        <input type="hidden" name="enabled_token" value="<?= h($enabledToken) ?>">
+                                        <input type="hidden" name="page_token" value="<?= intval($pageToken) ?>">
+                                        <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
+                                        <button class="<?= $isEnabled ? "btn-danger" : "btn-save" ?>" type="submit">
+                                            <?= $isEnabled ? "Disable" : "Enable" ?>
+                                        </button>
+                                    </form>
                                     <?php if ($isCustom): ?>
                                         <a class="action-button edit"
-                                           href="<?= h(npc_bios_build_url(["tab" => "rename_token", "edit_token" => intval($row["id"] ?? 0), "q_token" => $qToken, "letter_token" => $letterToken], $isEmbed)) ?>">Edit</a>
+                                           href="<?= h(npc_bios_build_url(["tab" => "rename_token", "edit_token" => intval($row["id"] ?? 0), "q_token" => $qToken, "letter_token" => $letterToken, "enabled_token" => $enabledToken], $isEmbed)) ?>">Edit</a>
                                         <form method="post" action="" style="display:inline;">
                                             <input type="hidden" name="action" value="delete_token">
                                             <input type="hidden" name="row_id" value="<?= h($row["id"] ?? "") ?>">
                                             <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                                             <button class="btn-danger" type="submit" onclick="return confirm('Delete this custom rename token?');">Delete</button>
                                         </form>
-                                    <?php else: ?>
-                                        <span style="color:#999;">Built-in</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -1325,6 +1686,19 @@ $tokenRows = $db->fetchAll(
                     </tbody>
                 </table>
             </div>
+            <?php npc_bios_render_pagination(
+                $pageToken,
+                $tokenTotalRows,
+                $browsePageSize,
+                "page_token",
+                [
+                    "tab" => "rename_token",
+                    "q_token" => $qToken,
+                    "letter_token" => $letterToken,
+                    "enabled_token" => $enabledToken,
+                ],
+                $isEmbed
+            ); ?>
             </div>
 
             <div class="modal fade" id="renameTokenModal" tabindex="-1" aria-hidden="true">
@@ -1361,6 +1735,74 @@ document.addEventListener('DOMContentLoaded', function () {
     const openRandom = <?= $autoOpenRandomModal ? 'true' : 'false' ?>;
     const openUnique = <?= $autoOpenUniqueModal ? 'true' : 'false' ?>;
     const openToken = <?= $autoOpenTokenModal ? 'true' : 'false' ?>;
+    const randomStatus = document.getElementById('randomToggleStatus');
+
+    function showRandomStatus(message, isError) {
+        if (!randomStatus) {
+            return;
+        }
+        randomStatus.textContent = message;
+        randomStatus.classList.toggle('err', Boolean(isError));
+        randomStatus.style.display = 'block';
+        window.setTimeout(function () {
+            randomStatus.style.display = 'none';
+        }, 3000);
+    }
+
+    document.querySelectorAll('.enabled-toggle-form').forEach(function (form) {
+        form.addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const button = form.querySelector('button[type="submit"]');
+            const targetInput = form.querySelector('input[name="target_enabled"]');
+            const row = form.closest('tr[data-random-bio-row="1"], tr[data-enabled-row="1"]');
+            if (!button || !targetInput || !row) {
+                form.submit();
+                return;
+            }
+
+            button.disabled = true;
+            try {
+                const response = await fetch(form.getAttribute('action') || window.location.href, {
+                    method: 'POST',
+                    body: new FormData(form),
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                const data = await response.json();
+                if (!response.ok || !data.ok) {
+                    throw new Error(data.message || 'Could not update bio_random entry state.');
+                }
+
+                const enabled = Boolean(data.enabled);
+                row.dataset.enabled = enabled ? '1' : '0';
+                targetInput.value = enabled ? '0' : '1';
+
+                const label = row.querySelector('.random-state-label, .enabled-state-label');
+                if (label) {
+                    label.textContent = enabled ? 'Enabled' : 'Disabled';
+                    label.style.color = enabled ? '#4caf50' : '#f44336';
+                }
+
+                button.textContent = enabled ? 'Disable' : 'Enable';
+                button.classList.toggle('btn-danger', enabled);
+                button.classList.toggle('btn-save', !enabled);
+
+                const activeEnabledFilter = form.dataset.enabledFilter || 'all';
+                if (activeEnabledFilter !== 'all' && activeEnabledFilter !== (enabled ? 'enabled' : 'disabled')) {
+                    row.style.display = 'none';
+                }
+
+                showRandomStatus(data.message || 'Updated bio_random entry state.', false);
+            } catch (error) {
+                showRandomStatus(error.message || 'Could not update bio_random entry state.', true);
+            } finally {
+                button.disabled = false;
+            }
+        });
+    });
+
     if (openRandom) {
         const el = document.getElementById('bioRandomModal');
         if (el) {

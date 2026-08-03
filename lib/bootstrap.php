@@ -22,7 +22,8 @@ if (!function_exists('stobeBootstrapIsRunningTestScript')) {
     function stobeBootstrapIsRunningTestScript(): bool
     {
         $script = str_replace('\\', '/', strval($_SERVER['SCRIPT_FILENAME'] ?? ''));
-        return strpos($script, '/tests/') !== false;
+        return str_starts_with(ltrim($script, '/'), 'tests/')
+            || strpos($script, '/tests/') !== false;
     }
 }
 
@@ -59,6 +60,10 @@ require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'postgresql.class.php')
 if (!isset($GLOBALS['db']) || !($GLOBALS['db'] instanceof sql)) {
     $GLOBALS['db'] = new sql();
 }
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'database_encoding.php');
+if (empty($GLOBALS['STOBE_DATABASE_UPGRADE_IN_PROGRESS'])) {
+    stobeRequireDatabaseReady($GLOBALS['db']);
+}
 
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'core' . DIRECTORY_SEPARATOR . 'narrator.class.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'settings.php');
@@ -70,19 +75,26 @@ if (function_exists('stobeRegisterErrorHandlers')) {
     stobeRegisterErrorHandlers();
 }
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'background_processor.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'player2_health.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'utils_game_timestamp.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-pockettts.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-xtts.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-chatterbox.php');
+require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-omnivoice.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-cartesia.php');
 require_once($enginePath . 'tts' . DIRECTORY_SEPARATOR . 'tts-inworld.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'player_base_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'data_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'memory_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'chat_helper_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'compact_context_history.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'diary_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'middleterm_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'dynamic_profile_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'narrator_helper_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_planner_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_schema.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_storage.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_snapshot.php');

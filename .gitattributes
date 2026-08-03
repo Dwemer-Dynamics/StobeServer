@@ -1,0 +1,2 @@
+/tools/*.sh text eol=lf
+/service/start.sh text eol=lf

@@ -492,7 +492,7 @@ ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
 ?>
 
-<link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css">
+<link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css?v=<?= (int) @filemtime(__DIR__ . '/css/main.css') ?>">
 <style>
 /* Match World Knowledge page spacing and title styling */
 @font-face {
@@ -1773,7 +1773,11 @@ if (isset($_GET["delete"])) {
         $cntRow = $GLOBALS["db"]->fetchOne(
             "SELECT COUNT(*) AS cnt
              FROM core_profiles
-             WHERE response_connector = $1
+             WHERE llm_primary_id = $1
+                OR llm_secondary_id = $1
+                OR llm_tertiary_id = $1
+                OR llm_quaternary_id = $1
+                OR response_connector = $1
                 OR diary_connector = $1
                 OR autochat_connector = $1
                 OR middleterm_connector = $1
@@ -1820,12 +1824,12 @@ if (isset($_GET["edit"])) {
 
 <div class="llm-layout">
     <div class="llm-left position-sticky">
-        <div style="margin: 6px 0 10px 4px; display:flex; gap:8px; flex-wrap:wrap;">
-            <form method="get" style="display:inline" action="<?= htmlspecialchars($withEmbed('llm_connectors.php')) ?>">
+        <div class="sidebar-action-grid">
+            <form method="get" action="<?= htmlspecialchars($withEmbed('llm_connectors.php')) ?>">
                 <input type="hidden" name="create_blank" value="1">
-                <button type="submit" class="btn-save">New Connector</button>
+                <button type="submit" class="btn-save">New</button>
             </form>
-            <form method="post" style="display:inline" action="<?= htmlspecialchars($withEmbed('llm_connectors.php')) ?>" enctype="multipart/form-data" id="llm_import_form">
+            <form method="post" action="<?= htmlspecialchars($withEmbed('llm_connectors.php')) ?>" enctype="multipart/form-data" id="llm_import_form">
                 <input type="hidden" name="import" value="1">
                 <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                 <input type="file" name="import_file[]" id="llm_import_file" accept=".csv" multiple style="display:none">

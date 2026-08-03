@@ -95,6 +95,48 @@ function stobeProfileConnectorTestsFirstErrorMessage(array $errors): string
     return $message !== '' ? $message : 'Unknown connector error';
 }
 
+function stobeProfileConnectorTestsEnsureOmniVoiceLanguage(string $endpoint, string $language, string $scope, array $voices = []): array
+{
+    $endpoint = rtrim(trim($endpoint), '/');
+    $language = strtolower(trim($language));
+    if ($endpoint === '' || $language === '') {
+        return ['ok' => false, 'status' => 'skipped', 'error' => 'OmniVoice endpoint or language is empty.'];
+    }
+
+    $payload = [
+        'language' => $language,
+        'scope' => $scope,
+        'voices' => array_values(array_filter(array_map('strval', $voices), function ($voice) {
+            return trim($voice) !== '';
+        })),
+        'make_active' => true,
+        'start' => true,
+    ];
+
+    $ch = curl_init($endpoint . '/ensure_language');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Accept: application/json']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $response = curl_exec($ch);
+    $httpCode = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($response === false || $curlError !== '') {
+        return ['ok' => false, 'status' => 'unreachable', 'error' => $curlError ?: 'Unable to reach OmniVoice.'];
+    }
+
+    $decoded = json_decode(strval($response), true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'status' => 'bad_response', 'error' => 'OmniVoice returned a non-JSON response.', 'http_code' => $httpCode];
+    }
+    $decoded['http_code'] = $httpCode;
+    return $decoded;
+}
+
 function stobeProfileConnectorTestsPreview(string $value, int $length = 180): string
 {
     if (function_exists('mb_substr')) {
@@ -120,7 +162,10 @@ function stobeProfileConnectorTestsBuildPlan(): array
 {
     $slotDefinitions = [
         ['field' => 'tts_connector_id', 'type' => 'tts', 'label' => 'TTS Connector', 'required' => false],
-        ['field' => 'response_connector', 'type' => 'llm', 'label' => 'Response LLM', 'required' => true],
+        ['field' => 'llm_primary_id', 'type' => 'llm', 'label' => 'Standard LLM', 'required' => true],
+        ['field' => 'llm_secondary_id', 'type' => 'llm', 'label' => 'Fast LLM', 'required' => false],
+        ['field' => 'llm_tertiary_id', 'type' => 'llm', 'label' => 'Powerful LLM', 'required' => false],
+        ['field' => 'llm_quaternary_id', 'type' => 'llm', 'label' => 'Experimental LLM', 'required' => false],
         ['field' => 'diary_connector', 'type' => 'llm', 'label' => 'Diary LLM', 'required' => false],
         ['field' => 'autochat_connector', 'type' => 'llm', 'label' => 'Autochat LLM', 'required' => false],
         ['field' => 'middleterm_connector', 'type' => 'llm', 'label' => 'Middle-Term Memory LLM', 'required' => false],
@@ -321,6 +366,24 @@ function stobeProfileConnectorTestsTestTts(int $connectorId): array
 
     if ($details['url'] === '') {
         return stobeProfileConnectorTestsProblemResult('tts', $connectorId, 'fail', 'TTS connector has no endpoint URL configured', $details);
+    }
+
+    if ($driver === 'omnivoice') {
+        $language = strtolower(stobeProfileConnectorTestsString($runtime['language'] ?? ''));
+        $details['language'] = $language;
+        $ensure = stobeProfileConnectorTestsEnsureOmniVoiceLanguage($details['url'], $language, 'voice_set', [
+            stobeProfileConnectorTestsString($runtime['fallback_male'] ?? ''),
+            stobeProfileConnectorTestsString($runtime['fallback_female'] ?? ''),
+            stobeProfileConnectorTestsString($runtime['voiceid'] ?? ''),
+        ]);
+        $details['omnivoice_prepare'] = $ensure;
+        $ensureStatus = strtolower(stobeProfileConnectorTestsString($ensure['status'] ?? ''));
+        if (!($ensure['ok'] ?? false)) {
+            return stobeProfileConnectorTestsProblemResult('tts', $connectorId, 'warn', 'OmniVoice language preparation could not be checked: ' . stobeProfileConnectorTestsString($ensure['error'] ?? 'unknown error'), $details);
+        }
+        if ($ensureStatus !== 'ready') {
+            return stobeProfileConnectorTestsProblemResult('tts', $connectorId, 'warn', 'OmniVoice ' . ($language !== '' ? $language : 'language') . ' is preparing; test again after the background job finishes.', $details);
+        }
     }
 
     $run = stobeProfileConnectorTestsRunWithCapturedErrors(function () use ($connector, $runtime) {

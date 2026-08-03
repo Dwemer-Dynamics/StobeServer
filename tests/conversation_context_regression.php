@@ -301,4 +301,262 @@ contextFlowAssertSame(
     'narrator mode context should retain ordinary chat rows alongside narrator rows'
 );
 
+$inlineNarratorRow = [[
+    'type' => 'inline_narration',
+    'data' => stobeNarratorName() . ': Ruka studies the gate.',
+    'people' => '["' . stobeNarratorName() . '","Ruka"]',
+]];
+$GLOBALS['PRESERVE_INLINE_NARRATION_CONTEXT'] = true;
+$preservedInline = stobeFilterNarratorRowsForContext($inlineNarratorRow, 'Beep', 'talk', 'Ruka');
+contextFlowAssertSameInt(
+    1,
+    count($preservedInline),
+    'inline narrator context should be retained when its setting is enabled'
+);
+$GLOBALS['PRESERVE_INLINE_NARRATION_CONTEXT'] = false;
+
+$compactSourceMessages = [
+    [
+        'role' => 'assistant',
+        'content' => json_encode([
+            'character' => 'Doran',
+            'listener' => 'Ruka',
+            'message' => 'Stay close.',
+            'action' => 'Follow',
+            'target' => 'Ruka',
+        ], JSON_UNESCAPED_SLASHES),
+    ],
+    [
+        'role' => 'user',
+        'content' => " (...\nRuka: We move now. (talking to: Doran)\n...)",
+    ],
+    [
+        'role' => 'user',
+        'content' => " (...\n[death] Dust Bandit was killed by Doran\n...)",
+    ],
+];
+$compactBlock = stobeFormatCompactChatHistory($compactSourceMessages, 'Doran');
+contextFlowAssertSame(
+    implode("\n", [
+        '# Doran, speaking to Ruka: Stay close. [Action: Follow, targeting Ruka]',
+        '# Ruka, speaking to Doran: We move now.',
+        '# [death] Dust Bandit was killed by Doran',
+    ]),
+    $compactBlock,
+    'compact chat history should preserve speakers, listeners, actions, and normalized event text as Markdown'
+);
+contextFlowAssert(
+    strpos($compactBlock, '{"character"') === false,
+    'compact chat history should remove assistant JSON wrappers'
+);
+contextFlowAssert(
+    strpos($compactBlock, '(...)') === false,
+    'compact chat history should remove ambient user-message wrappers'
+);
+
+$priorCompactSetting = getSetting('COMPACT_CHAT_HISTORY_ENABLED', 'false');
+try {
+    setSetting('COMPACT_CHAT_HISTORY_ENABLED', 'true');
+    contextFlowAssert(
+        stobeShouldCompactChatHistory('Doran'),
+        'compact chat history should activate for NPC prompts when the global setting is enabled'
+    );
+    contextFlowAssert(
+        !stobeShouldCompactChatHistory(stobeNarratorName()),
+        'compact chat history should remain disabled for narrator prompts'
+    );
+} finally {
+    setSetting('COMPACT_CHAT_HISTORY_ENABLED', $priorCompactSetting);
+}
+
+$unchangedHistory = stobeApplyCompactChatHistory(
+    '<system>Keep existing prompt shape</system>',
+    $compactSourceMessages,
+    'Doran',
+    false
+);
+contextFlowAssertSame(
+    '<system>Keep existing prompt shape</system>',
+    strval($unchangedHistory['system_prompt'] ?? ''),
+    'disabled compact chat history should leave the system prompt unchanged'
+);
+contextFlowAssertSameInt(
+    count($compactSourceMessages),
+    count(is_array($unchangedHistory['history_messages'] ?? null) ? $unchangedHistory['history_messages'] : []),
+    'disabled compact chat history should leave role-separated history unchanged'
+);
+
+$compactedHistory = stobeApplyCompactChatHistory(
+    '<system>Use compact history</system>',
+    $compactSourceMessages,
+    'Doran',
+    true
+);
+contextFlowAssertSame(
+    "<system>Use compact history</system>\n\n" . $compactBlock,
+    strval($compactedHistory['system_prompt'] ?? ''),
+    'enabled compact chat history should append the Markdown block to the system prompt'
+);
+contextFlowAssertSameInt(
+    0,
+    count(is_array($compactedHistory['history_messages'] ?? null) ? $compactedHistory['history_messages'] : []),
+    'enabled compact chat history should remove the role-separated recent history'
+);
+
+$baseSnapshot = stobeNormalizePlayerBaseSnapshot([
+    'inside' => true,
+    'base_id' => 'test-base',
+    'name' => 'Test Base',
+    'battery_drain' => 4.5,
+    'battery_charging' => 8.25,
+    'details' => [
+        'available' => true,
+        'security' => [
+            'alarm_state' => 'attack',
+            'hostiles_inside' => 3,
+            'turrets_total' => 8,
+            'turrets_manned' => 6,
+        ],
+        'infrastructure' => [
+            'damaged' => 2,
+            'issues' => [
+                [
+                    'name' => 'Storm House',
+                    'count' => 2,
+                    'damaged' => 2,
+                ],
+            ],
+        ],
+        'construction' => [
+            'total' => 12,
+            'paused' => 1,
+            'missing_materials' => 3,
+            'average_progress' => 45.5,
+            'groups' => [
+                [
+                    'name' => 'Defensive Wall IV',
+                    'count' => 12,
+                    'paused' => 1,
+                    'missing_materials' => 3,
+                    'average_progress' => 45.5,
+                ],
+            ],
+        ],
+        'power' => [
+            'consumers' => 16,
+            'unpowered' => 2,
+            'switched_off' => 1,
+            'generators_total' => 4,
+            'generators_active' => 3,
+        ],
+        'supplies' => [
+            'food' => 120,
+            'medicine' => 18,
+        ],
+        'storage' => [
+            'total' => 6,
+            'empty' => 1,
+            'full' => 2,
+            'item_units' => 94,
+            'groups' => [
+                [
+                    'name' => 'Storage: Building Materials',
+                    'total' => 3,
+                    'empty' => 0,
+                    'full' => 2,
+                    'item_units' => 72,
+                ],
+            ],
+        ],
+        'production' => [
+            'total' => 7,
+            'active' => 4,
+            'input_blocked' => 2,
+            'average_efficiency' => 67.5,
+            'groups' => [
+                [
+                    'name' => 'Iron Refinery III',
+                    'total' => 3,
+                    'active' => 1,
+                    'input_blocked' => 2,
+                    'average_efficiency' => 52.5,
+                ],
+            ],
+        ],
+        'farms' => [
+            'total' => 5,
+            'active' => 3,
+            'needs_water' => 1,
+            'hydroponic' => 2,
+            'average_yield' => 81.25,
+            'groups' => [
+                [
+                    'name' => 'Hydroponic Hemp',
+                    'total' => 2,
+                    'active' => 1,
+                    'needs_water' => 1,
+                    'hydroponic' => 2,
+                    'average_yield' => 81.25,
+                ],
+            ],
+        ],
+    ],
+], true);
+contextFlowAssertSame(
+    'attack',
+    strval($baseSnapshot['details']['security']['alarm_state'] ?? ''),
+    'player-base normalization should preserve supported alarm states'
+);
+contextFlowAssertSameInt(
+    120,
+    intval($baseSnapshot['details']['supplies']['food'] ?? 0),
+    'player-base normalization should preserve bounded supply counts'
+);
+contextFlowAssertSameInt(
+    12,
+    intval($baseSnapshot['details']['construction']['groups'][0]['count'] ?? 0),
+    'player-base normalization should preserve grouped construction counts'
+);
+contextFlowAssertSameInt(
+    2,
+    intval($baseSnapshot['details']['storage']['groups'][0]['full'] ?? 0),
+    'player-base normalization should preserve grouped storage status'
+);
+
+$baseContextBlock = buildPlayerBaseStateBlock([
+    'extended_data' => ['player_base' => $baseSnapshot],
+]);
+contextFlowAssert(
+    strpos($baseContextBlock, '<alarm_state>attack</alarm_state>') !== false,
+    'player-base prompt context should include security state'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<food>120</food>') !== false,
+    'player-base prompt context should include supply levels'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<name>Defensive Wall IV</name>') !== false
+        && strpos($baseContextBlock, '<count>12</count>') !== false,
+    'player-base prompt context should include grouped construction'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<power_resilience>') !== false
+        && strpos($baseContextBlock, '<unpowered>2</unpowered>') !== false,
+    'player-base prompt context should include power resilience'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<name>Storage: Building Materials</name>') !== false
+        && strpos($baseContextBlock, '<full>2</full>') !== false,
+    'player-base prompt context should include grouped storage'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<input_blocked>2</input_blocked>') !== false,
+    'player-base prompt context should include production blockers'
+);
+contextFlowAssert(
+    strpos($baseContextBlock, '<needs_water>1</needs_water>') !== false
+        && strpos($baseContextBlock, '<average_yield>81.25</average_yield>') !== false,
+    'player-base prompt context should include farm status'
+);
+
 echo "All conversation context regression tests passed.\n";

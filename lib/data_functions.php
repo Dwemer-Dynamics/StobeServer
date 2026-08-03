@@ -701,6 +701,56 @@ function stobeVoiceTagMatches(string $rowValue, string $npcValue): bool {
     return strcasecmp($row, $npc) === 0;
 }
 
+// Resolve broad voice families without discarding exact subrace matching.
+function stobeResolveVoiceRaceGroup(string $race, array $profile = []): string {
+    $metadata = normalizeCoreNpcMetadata($profile['metadata'] ?? []);
+    if (coerceBoolean($metadata['race_is_robot'] ?? false)) {
+        return 'skeleton';
+    }
+
+    $normalized = stobeNormalizeVoiceLookupValue($race);
+    if ($normalized === '') {
+        return '';
+    }
+    if (str_contains($normalized, 'hive')) {
+        return 'hive';
+    }
+    if (str_contains($normalized, 'skeleton')) {
+        return 'skeleton';
+    }
+    if (str_contains($normalized, 'cannibal')) {
+        return 'cannibal';
+    }
+
+    $legacyRobotRaces = [
+        'hazards unit',
+        'p2 unit',
+        'p3 unit',
+        'p4 unit',
+        'type 389',
+        'soldierbot',
+        'screamer mk i',
+        'screamer mk ii',
+        'log-head mk i',
+        'log-head mk ii',
+    ];
+    return in_array($normalized, $legacyRobotRaces, true) ? 'skeleton' : '';
+}
+
+function stobeVoiceRaceMatches(string $rowValue, string $npcValue, string $npcRaceGroup = ''): bool {
+    $row = stobeNormalizeVoiceLookupValue($rowValue);
+    if ($row === '' || $row === 'any') {
+        return true;
+    }
+    $npc = stobeNormalizeVoiceLookupValue($npcValue);
+    if ($npc !== '' && strcasecmp($row, $npc) === 0) {
+        return true;
+    }
+    return $npcRaceGroup !== ''
+        && in_array($row, ['skeleton', 'hive', 'cannibal'], true)
+        && $row === $npcRaceGroup;
+}
+
 function stobeSelectVoiceIdForNpc(
     string $name,
     string $race = '',
@@ -735,6 +785,7 @@ function stobeSelectVoiceIdForNpc(
     $normalizedGender = stobeNormalizeVoiceGender($gender);
     $normalizedRace = stobeNormalizeVoiceLookupValue($race);
     $normalizedFaction = stobeNormalizeVoiceFactionValue($faction);
+    $normalizedRaceGroup = stobeResolveVoiceRaceGroup($race, $profile);
 
     $nonUniqueRows = [];
     foreach ($rows as $row) {
@@ -744,12 +795,72 @@ function stobeSelectVoiceIdForNpc(
         $nonUniqueRows[] = $row;
     }
 
+    // Unknown races must stay on the legacy gender pools instead of borrowing a racial voice.
+    if (in_array($normalizedRace, ['', 'unknown', 'none', 'null', 'n/a', '-', '(none)', 'any'], true)) {
+        $genericGenderMatches = [];
+        foreach ($nonUniqueRows as $row) {
+            if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+                continue;
+            }
+            $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+            if ($rowRace !== '' && $rowRace !== 'any') {
+                continue;
+            }
+            $genericGenderMatches[] = $row;
+        }
+
+        return stobePickDeterministicVoice($genericGenderMatches, $stableKey, 'unknown_race_gender');
+    }
+
+    $exactRaceMatches = [];
+    foreach ($nonUniqueRows as $row) {
+        if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+            continue;
+        }
+        $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+        if ($rowRace === '' || $rowRace === 'any') {
+            continue;
+        }
+        if ($normalizedRace === '' || strcasecmp($rowRace, $normalizedRace) !== 0) {
+            continue;
+        }
+        if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
+            continue;
+        }
+        $exactRaceMatches[] = $row;
+    }
+    $pickedExactRace = stobePickDeterministicVoice($exactRaceMatches, $stableKey, 'exact_race');
+    if ($pickedExactRace !== '') {
+        return $pickedExactRace;
+    }
+
+    $groupRaceMatches = [];
+    if ($normalizedRaceGroup !== '') {
+        foreach ($nonUniqueRows as $row) {
+            if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
+                continue;
+            }
+            $rowRace = stobeNormalizeVoiceLookupValue(strval($row['race'] ?? 'any'));
+            if ($rowRace !== $normalizedRaceGroup) {
+                continue;
+            }
+            if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
+                continue;
+            }
+            $groupRaceMatches[] = $row;
+        }
+    }
+    $pickedGroupRace = stobePickDeterministicVoice($groupRaceMatches, $stableKey, 'group_race');
+    if ($pickedGroupRace !== '') {
+        return $pickedGroupRace;
+    }
+
     $strictMatches = [];
     foreach ($nonUniqueRows as $row) {
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
             continue;
         }
-        if (!stobeVoiceTagMatches(strval($row['race'] ?? 'any'), $normalizedRace)) {
+        if (!stobeVoiceRaceMatches(strval($row['race'] ?? 'any'), $normalizedRace, $normalizedRaceGroup)) {
             continue;
         }
         if (!stobeVoiceTagMatches(strval($row['faction'] ?? 'any'), $normalizedFaction)) {
@@ -767,7 +878,7 @@ function stobeSelectVoiceIdForNpc(
         if (!stobeVoiceTagMatches(strval($row['gender'] ?? 'any'), $normalizedGender)) {
             continue;
         }
-        if (!stobeVoiceTagMatches(strval($row['race'] ?? 'any'), $normalizedRace)) {
+        if (!stobeVoiceRaceMatches(strval($row['race'] ?? 'any'), $normalizedRace, $normalizedRaceGroup)) {
             continue;
         }
         $genderRaceMatches[] = $row;
@@ -900,7 +1011,13 @@ function stobeAssignVoiceIdIfMissing(
 
     $hasUniqueCandidate = stobeHasUniqueVoiceCandidateForNpc($safeName, $effectiveOriginalName);
     $normalizedGender = stobeNormalizeVoiceGender($effectiveGender);
-    if (!$hasUniqueCandidate && $normalizedGender !== 'male' && $normalizedGender !== 'female') {
+    $effectiveRaceGroup = stobeResolveVoiceRaceGroup($effectiveRace, ['metadata' => $effectiveMetadata]);
+    if (
+        !$hasUniqueCandidate
+        && $effectiveRaceGroup !== 'skeleton'
+        && $normalizedGender !== 'male'
+        && $normalizedGender !== 'female'
+    ) {
         return '';
     }
 
@@ -1933,7 +2050,7 @@ function stobeExtractZoneSnapshotContext(array $snapshot): array {
     $z = $pickCoordinate($environment, $snapshot, 'z');
 
     $metadata = [];
-    foreach (['indoors', 'outdoors', 'in_town', 'weather'] as $field) {
+    foreach (['indoors', 'outdoors', 'in_town', 'weather', 'weather_name', 'weather_strength', 'weather_affect_strength', 'wind_speed', 'wind_direction', 'wetness', 'active_environmental_effects'] as $field) {
         if (array_key_exists($field, $environment)) {
             $metadata[$field] = $environment[$field];
         }
@@ -1971,6 +2088,8 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     if ($observerName !== '') {
         $metadata['observer'] = $observerName;
     }
+    $metadata['visited'] = true;
+    $metadata['knowledge_only'] = false;
     $metadataJson = normalizeJsonString($metadata);
 
     $db = $GLOBALS["db"];
@@ -2037,6 +2156,113 @@ function stobeUpsertLocationZoneFromSnapshot(array $snapshot, int $gamets, strin
     }
 
     return true;
+}
+
+function stobeStoreTownKnowledgeSnapshot(array $towns, int $gamets): array {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return ['stored' => 0, 'removed' => 0, 'rejected' => count($towns)];
+    }
+
+    $safeGamets = max(0, $gamets);
+    $nowTs = time();
+    $stored = 0;
+    $rejected = 0;
+    $knownNames = [];
+
+    foreach (array_slice($towns, 0, 512) as $town) {
+        if (!is_array($town) || !coerceBoolean($town['discovered'] ?? false)) {
+            $rejected++;
+            continue;
+        }
+
+        $name = stobeNormalizeZoneLocationToken(strval($town['name'] ?? ''));
+        if ($name === '') {
+            $rejected++;
+            continue;
+        }
+
+        $coordinate = static function (mixed $value): ?float {
+            if (!is_numeric($value)) {
+                return null;
+            }
+            $number = floatval($value);
+            return is_finite($number) ? $number : null;
+        };
+        $x = $coordinate($town['x'] ?? null);
+        $y = $coordinate($town['y'] ?? null);
+        $z = $coordinate($town['z'] ?? null);
+        $explored = coerceBoolean($town['explored'] ?? false);
+        $metadata = [
+            'knowledge_source' => 'town_list',
+            'discovered' => true,
+            'explored' => $explored,
+            'knowledge_only' => !$explored,
+            'town_type' => intval($town['town_type'] ?? 0),
+        ];
+
+        try {
+            $db->exec(
+                "INSERT INTO location_zones (
+                    zone_name, city_name, x, y, z,
+                    first_game_ts, last_game_ts, first_seen_ts, last_seen_ts,
+                    metadata, updated_at
+                ) VALUES ($1, $1, $2, $3, $4, 0, $5, $6, $6, $7::jsonb, NOW())
+                ON CONFLICT (zone_name) DO UPDATE SET
+                    city_name = CASE
+                        WHEN NULLIF(location_zones.city_name, '') IS NULL THEN EXCLUDED.city_name
+                        ELSE location_zones.city_name
+                    END,
+                    x = COALESCE(location_zones.x, EXCLUDED.x),
+                    y = COALESCE(location_zones.y, EXCLUDED.y),
+                    z = COALESCE(location_zones.z, EXCLUDED.z),
+                    last_game_ts = GREATEST(location_zones.last_game_ts, EXCLUDED.last_game_ts),
+                    last_seen_ts = EXCLUDED.last_seen_ts,
+                    metadata = location_zones.metadata || EXCLUDED.metadata ||
+                        CASE
+                            WHEN COALESCE(location_zones.first_game_ts, 0) > 0
+                              OR location_zones.metadata->>'visited' = 'true'
+                            THEN '{\"knowledge_only\":false,\"visited\":true}'::jsonb
+                            ELSE '{}'::jsonb
+                        END,
+                    updated_at = NOW()",
+                [$name, $x, $y, $z, $safeGamets, $nowTs, normalizeJsonString($metadata)]
+            );
+            $knownNames[strtolower($name)] = true;
+            $stored++;
+        } catch (Throwable $exception) {
+            $rejected++;
+            stobeLogException($exception, 'Failed to store discovered town knowledge', [
+                'town' => $name,
+                'gamets' => $safeGamets,
+            ]);
+        }
+    }
+
+    $removed = 0;
+    try {
+        $existing = $db->fetchAll(
+            "SELECT id, zone_name
+             FROM location_zones
+             WHERE metadata->>'knowledge_source' = 'town_list'
+               AND metadata->>'knowledge_only' = 'true'"
+        );
+        foreach ($existing as $row) {
+            $existingName = strtolower(stobeNormalizeZoneLocationToken(strval($row['zone_name'] ?? '')));
+            if ($existingName !== '' && isset($knownNames[$existingName])) {
+                continue;
+            }
+            $id = intval($row['id'] ?? 0);
+            if ($id > 0) {
+                $db->exec('DELETE FROM location_zones WHERE id = $1', [$id]);
+                $removed++;
+            }
+        }
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to prune stale town knowledge');
+    }
+
+    return ['stored' => $stored, 'removed' => $removed, 'rejected' => $rejected];
 }
 
 function stobeEnsureEventlogGeoColumn(): bool {
@@ -5191,6 +5417,7 @@ function loadBioUniqueTraitSelections(string $name): array {
                 "SELECT name, type, description
                  FROM combined_bio_unique
                  WHERE LOWER(name) = $1
+                   AND COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY id ASC",
                 [$lookupKeys[0]]
             );
@@ -5199,6 +5426,7 @@ function loadBioUniqueTraitSelections(string $name): array {
                 "SELECT name, type, description
                  FROM combined_bio_unique
                  WHERE LOWER(name) IN ($1, $2)
+                   AND COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY
                     CASE
                         WHEN LOWER(name) = $1 THEN 0
@@ -5280,6 +5508,7 @@ function loadBioRandomCandidates(
         $rows = $db->fetchAll(
             "SELECT type, description, race, gender, faction, name
              FROM combined_bio_random
+             WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY id ASC"
         );
     } catch (Throwable $exception) {
@@ -5512,6 +5741,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
         $rows = $db->fetchAll(
             "SELECT name, gender, race, faction
              FROM {$viewSource}
+             WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY name ASC"
         );
     } else {
@@ -5527,6 +5757,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
             $tableRows = $db->fetchAll(
                 "SELECT name, gender, race, faction
                  FROM {$tableName}
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY name ASC"
             );
             foreach ($tableRows as $row) {
@@ -5545,6 +5776,7 @@ function loadGlobalNamePool(string $gender = '', string $race = '', string $fact
             $tableRows = $db->fetchAll(
                 "SELECT name, gender, race, faction
                  FROM {$tableName}
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY name ASC"
             );
             foreach ($tableRows as $row) {
@@ -5619,6 +5851,39 @@ function isNpcNameTaken(string $name): bool {
     return $row !== false;
 }
 
+function normalizeGeneratedLoreNameBase(string $name): string {
+    $base = baseNameWithoutBracketSuffix(trim($name));
+    $base = preg_replace('/\s+[0-9]+$/', '', $base) ?? $base;
+    return strtolower(trim($base));
+}
+
+function loadNpcLoreNameReservations(): array {
+    $db = $GLOBALS["db"];
+    $rows = $db->fetchAll("SELECT name FROM core_npc WHERE COALESCE(name, '') <> ''");
+    $exact = [];
+    $bases = [];
+    foreach ($rows as $row) {
+        $name = baseNameWithoutBracketSuffix(trim(strval($row['name'] ?? '')));
+        if ($name === '') {
+            continue;
+        }
+        $exact[strtolower($name)] = true;
+        $base = normalizeGeneratedLoreNameBase($name);
+        if ($base !== '') {
+            $bases[$base] = true;
+        }
+    }
+    return ['exact' => $exact, 'bases' => $bases];
+}
+
+function buildIdentityRenameNameSeed(string $currentName, string $storageId = '', string $serial = ''): string {
+    $identityKey = trim($storageId);
+    if ($identityKey === '') {
+        $identityKey = trim($serial);
+    }
+    return strtolower(trim($currentName)) . '|' . strtolower($identityKey);
+}
+
 function generateUniqueLoreName(string $gender = '', string $seedName = '', string $race = '', string $faction = ''): string {
     $pool = loadGlobalNamePool($gender, $race, $faction);
     if (count($pool) === 0 && ($gender !== '' || $race !== '' || $faction !== '')) {
@@ -5631,17 +5896,21 @@ function generateUniqueLoreName(string $gender = '', string $seedName = '', stri
     $seed = $seedName !== '' ? $seedName : (string)microtime(true);
     $unsignedHash = intval(sprintf('%u', crc32(strtolower($seed))));
     $startIndex = $unsignedHash % count($pool);
+    $reservations = loadNpcLoreNameReservations();
+    $reservedBases = is_array($reservations['bases'] ?? null) ? $reservations['bases'] : [];
+    $reservedExact = is_array($reservations['exact'] ?? null) ? $reservations['exact'] : [];
 
     for ($offset = 0; $offset < count($pool); $offset++) {
         $candidate = $pool[($startIndex + $offset) % count($pool)];
-        if (!isNpcNameTaken($candidate)) {
+        $candidateBase = normalizeGeneratedLoreNameBase($candidate);
+        if ($candidateBase !== '' && !isset($reservedBases[$candidateBase])) {
             return $candidate;
         }
     }
 
     $base = $pool[$startIndex];
     $suffix = 2;
-    while (isNpcNameTaken($base . ' ' . $suffix)) {
+    while (isset($reservedExact[strtolower($base . ' ' . $suffix)])) {
         $suffix++;
     }
     return $base . ' ' . $suffix;
@@ -5759,6 +6028,7 @@ function loadServerRenameEligibilityTokens(): array {
             $rows = $db->fetchAll(
                 "SELECT token
                  FROM combined_rename_token_global
+                 WHERE COALESCE(is_enabled, TRUE) = TRUE
                  ORDER BY token ASC"
             );
             foreach ($rows as $row) {
@@ -5795,9 +6065,34 @@ function loadServerRenameEligibilityTokens(): array {
     return $cache;
 }
 
-function isServerRenameEligibleName(string $name): bool {
-    $tokens = loadServerRenameEligibilityTokens();
+// Biography enablement controls prompt content, not whether a named NPC is unique.
+function loadServerProtectedUniqueNames(): array {
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
 
+    $protected = [];
+    $db = $GLOBALS["db"] ?? null;
+    if ($db) {
+        $rows = $db->fetchAll(
+            "SELECT DISTINCT name
+             FROM combined_bio_unique
+             WHERE BTRIM(COALESCE(name, '')) <> ''"
+        );
+        foreach ($rows as $row) {
+            $normalized = normalizeBioUniqueName(strval($row['name'] ?? ''));
+            if ($normalized !== '') {
+                $protected[$normalized] = true;
+            }
+        }
+    }
+
+    $cache = $protected;
+    return $cache;
+}
+
+function isServerRenameEligibleName(string $name): bool {
     $normalized = normalizeParticipantNameToken($name);
     if ($normalized === '') {
         return false;
@@ -5807,6 +6102,13 @@ function isServerRenameEligibleName(string $name): bool {
         return false;
     }
 
+    $uniqueKey = normalizeBioUniqueName($normalized);
+    $protectedUniqueNames = loadServerProtectedUniqueNames();
+    if ($uniqueKey !== '' && isset($protectedUniqueNames[$uniqueKey])) {
+        return false;
+    }
+
+    $tokens = loadServerRenameEligibilityTokens();
     $lower = strtolower($normalized);
     foreach ($tokens as $token) {
         if ($token === '') {
@@ -5910,7 +6212,8 @@ function batchIdentityRenameDecisions(array $identities): array {
         }
 
         $firstSeenOriginal = ensureOriginalName($currentName, $currentName);
-        $generated = generateUniqueLoreName($gender, $currentName, $race, $faction);
+        $nameSeed = buildIdentityRenameNameSeed($currentName, $storageId, $serial);
+        $generated = generateUniqueLoreName($gender, $nameSeed, $race, $faction);
         $generatedBase = baseNameWithoutBracketSuffix($generated);
         if ($generatedBase === '') {
             $generatedBase = 'Wanderer';
@@ -10464,6 +10767,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         'trader_shop_sources' => $traderShopSourceSummaries,
         'trader_shop_source_count' => $traderShopSourceCount,
         'trader_shop_item_count' => $traderShopItemCount,
+        'player_base' => function_exists('stobeNormalizePlayerBaseSnapshot')
+            ? stobeNormalizePlayerBaseSnapshot($snapshot['player_base'] ?? [], true)
+            : [],
     ]);
 
     if ($storageId !== '') {
@@ -10621,7 +10927,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $forceAppearanceUpdate = true;
     }
     if ($isLikelyTraderContext) {
-        $mergeTraderEntry = static function (array &$bucket, array $entry): void {
+        $mergeTraderEntry = static function (array &$bucket, array $entry) use ($resolveEntryWeaponModel): void {
             $entryName = trim(strval($entry['name'] ?? ''));
             if ($entryName === '') {
                 return;
@@ -10705,20 +11011,30 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $traderInventoryByKey = [];
         $traderInventoryItems = [];
         $traderInventoryCount = 0;
-        foreach ($inventoryPromptItems as $entry) {
-            if (!is_array($entry)) {
-                continue;
+        // Prefer the plugin's direct merchant snapshot; older payloads use the legacy reconstruction.
+        if ($snapshotTraderInventoryEntryCount > 0) {
+            foreach ($snapshotTraderInventoryItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            if (coerceBoolean($entry['equipped'] ?? false)) {
-                continue;
+        } else {
+            foreach ($inventoryPromptItems as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                if (coerceBoolean($entry['equipped'] ?? false)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            $mergeTraderEntry($traderInventoryByKey, $entry);
-        }
-        foreach ($traderShopInventoryCounts as $entry) {
-            if (!is_array($entry)) {
-                continue;
+            foreach ($traderShopInventoryCounts as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $mergeTraderEntry($traderInventoryByKey, $entry);
             }
-            $mergeTraderEntry($traderInventoryByKey, $entry);
         }
 
         foreach ($traderInventoryByKey as $entry) {
@@ -11397,12 +11713,20 @@ function getAllCoreProfiles(): array {
     return $db->fetchAll(
         "SELECT p.*,
                 rc.name AS response_connector_name,
+                lp.name AS llm_primary_name,
+                ls.name AS llm_secondary_name,
+                lt.name AS llm_tertiary_name,
+                lq.name AS llm_quaternary_name,
                 dc.name AS diary_connector_name,
                 ac.name AS autochat_connector_name,
                 mc.name AS middleterm_connector_name,
                 tc.name AS tts_connector_name
          FROM core_profiles p
          LEFT JOIN core_llm_connector rc ON rc.id = p.response_connector
+         LEFT JOIN core_llm_connector lp ON lp.id = p.llm_primary_id
+         LEFT JOIN core_llm_connector ls ON ls.id = p.llm_secondary_id
+         LEFT JOIN core_llm_connector lt ON lt.id = p.llm_tertiary_id
+         LEFT JOIN core_llm_connector lq ON lq.id = p.llm_quaternary_id
          LEFT JOIN core_llm_connector dc ON dc.id = p.diary_connector
          LEFT JOIN core_llm_connector ac ON ac.id = p.autochat_connector
          LEFT JOIN core_llm_connector mc ON mc.id = p.middleterm_connector
@@ -11416,12 +11740,20 @@ function getCoreProfileById(int $id): array|false {
     return $db->fetchOne(
         "SELECT p.*,
                 rc.name AS response_connector_name,
+                lp.name AS llm_primary_name,
+                ls.name AS llm_secondary_name,
+                lt.name AS llm_tertiary_name,
+                lq.name AS llm_quaternary_name,
                 dc.name AS diary_connector_name,
                 ac.name AS autochat_connector_name,
                 mc.name AS middleterm_connector_name,
                 tc.name AS tts_connector_name
          FROM core_profiles p
          LEFT JOIN core_llm_connector rc ON rc.id = p.response_connector
+         LEFT JOIN core_llm_connector lp ON lp.id = p.llm_primary_id
+         LEFT JOIN core_llm_connector ls ON ls.id = p.llm_secondary_id
+         LEFT JOIN core_llm_connector lt ON lt.id = p.llm_tertiary_id
+         LEFT JOIN core_llm_connector lq ON lq.id = p.llm_quaternary_id
          LEFT JOIN core_llm_connector dc ON dc.id = p.diary_connector
          LEFT JOIN core_llm_connector ac ON ac.id = p.autochat_connector
          LEFT JOIN core_llm_connector mc ON mc.id = p.middleterm_connector
@@ -11444,7 +11776,13 @@ function saveCoreProfile(array $fields): int {
     $isPlayerFactionProfile = coerceBoolean($fields['is_player_faction_profile'] ?? false);
     $promptHead = trim(strval($fields['prompt_head'] ?? ''));
     $profilePrompt = trim(strval($fields['profile_prompt'] ?? ''));
-    $responseConnector = ($fields['response_connector'] ?? '') === '' ? null : intval($fields['response_connector']);
+    $legacyResponseConnector = ($fields['response_connector'] ?? '') === '' ? null : intval($fields['response_connector']);
+    $primaryConnector = ($fields['llm_primary_id'] ?? '') === ''
+        ? $legacyResponseConnector
+        : intval($fields['llm_primary_id']);
+    $secondaryConnector = ($fields['llm_secondary_id'] ?? '') === '' ? null : intval($fields['llm_secondary_id']);
+    $tertiaryConnector = ($fields['llm_tertiary_id'] ?? '') === '' ? null : intval($fields['llm_tertiary_id']);
+    $quaternaryConnector = ($fields['llm_quaternary_id'] ?? '') === '' ? null : intval($fields['llm_quaternary_id']);
     $diaryConnector = ($fields['diary_connector'] ?? '') === '' ? null : intval($fields['diary_connector']);
     $autochatConnector = ($fields['autochat_connector'] ?? '') === '' ? null : intval($fields['autochat_connector']);
     $middletermConnector = ($fields['middleterm_connector'] ?? '') === '' ? null : intval($fields['middleterm_connector']);
@@ -11452,7 +11790,16 @@ function saveCoreProfile(array $fields): int {
     $dynamicConnector = ($fields['dynamic_connector'] ?? '') === '' ? null : intval($fields['dynamic_connector']);
     $relationshipConnector = ($fields['relationship_connector'] ?? '') === '' ? null : intval($fields['relationship_connector']);
     $ttsConnector = ($fields['tts_connector_id'] ?? '') === '' ? null : intval($fields['tts_connector_id']);
-    $metadataJson = normalizeJsonString($fields['metadata'] ?? '{}');
+    $metadata = $fields['metadata'] ?? [];
+    if (is_string($metadata)) {
+        $decodedMetadata = json_decode($metadata, true);
+        $metadata = is_array($decodedMetadata) ? $decodedMetadata : [];
+    }
+    if (!is_array($metadata)) {
+        $metadata = [];
+    }
+    unset($metadata['LLM_RESPONSE_MODE']);
+    $metadataJson = normalizeJsonString($metadata);
     $wasPlayerFactionProfile = false;
     if ($id > 0) {
         $existingFlags = $db->fetchOne(
@@ -11494,19 +11841,23 @@ function saveCoreProfile(array $fields): int {
              SET label = $1,
                  is_default_npc = $2,
                  is_player_faction_profile = $3,
-                 prompt_head = $4,
-                 profile_prompt = $5,
-                 response_connector = $6,
-                 diary_connector = $7,
-                 autochat_connector = $8,
-                 middleterm_connector = $9,
-                 backgroundlife_connector = $10,
-                 dynamic_connector = $11,
-                 relationship_connector = $12,
-                 tts_connector_id = $13,
-                 metadata = $14::jsonb,
-                 updated_at = NOW()
-             WHERE id = $15
+                  prompt_head = $4,
+                  profile_prompt = $5,
+                  llm_primary_id = $6,
+                  llm_secondary_id = $7,
+                  llm_tertiary_id = $8,
+                  llm_quaternary_id = $9,
+                  response_connector = $6,
+                  diary_connector = $10,
+                  autochat_connector = $11,
+                  middleterm_connector = $12,
+                  backgroundlife_connector = $13,
+                  dynamic_connector = $14,
+                  relationship_connector = $15,
+                  tts_connector_id = $16,
+                  metadata = $17::jsonb,
+                  updated_at = NOW()
+             WHERE id = $18
              RETURNING id",
             [
                 $label,
@@ -11514,7 +11865,10 @@ function saveCoreProfile(array $fields): int {
                 $isPlayerFactionProfile,
                 $promptHead,
                 $profilePrompt,
-                $responseConnector,
+                $primaryConnector,
+                $secondaryConnector,
+                $tertiaryConnector,
+                $quaternaryConnector,
                 $diaryConnector,
                 $autochatConnector,
                 $middletermConnector,
@@ -11553,6 +11907,10 @@ function saveCoreProfile(array $fields): int {
                 is_player_faction_profile,
                 prompt_head,
                 profile_prompt,
+                llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -11563,7 +11921,7 @@ function saveCoreProfile(array $fields): int {
                 tts_connector_id,
                 metadata
              ) VALUES (
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$6,$10,$11,$12,$13,$14,$15,$16,$17::jsonb
              )
              RETURNING id",
             [
@@ -11572,7 +11930,10 @@ function saveCoreProfile(array $fields): int {
                 $isPlayerFactionProfile,
                 $promptHead,
                 $profilePrompt,
-                $responseConnector,
+                $primaryConnector,
+                $secondaryConnector,
+                $tertiaryConnector,
+                $quaternaryConnector,
                 $diaryConnector,
                 $autochatConnector,
                 $middletermConnector,
@@ -11842,6 +12203,7 @@ function stobeNormalizeTtsConnectorTypeForStorage(string $rawType): string {
         'pockettts', 'pocketts', 'pocket_tts' => 'pocket_tts',
         'xtts', 'xtts_fastapi' => 'xtts',
         'chatterbox' => 'chatterbox',
+        'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
         'cartesia' => 'cartesia',
         'inworld' => 'inworld',
         default => 'pocket_tts',
@@ -11972,6 +12334,7 @@ function getDefaultCoreProfileMetadata(): array {
         'DYNAMIC_PROFILE_ENABLED' => false,
         'MIDDLE_TERM_MEMORY_ENABLED' => false,
         'AUTO_DIARY_ENABLED' => false,
+        'LATEST_DIARY_CONTEXT_ENABLED' => false,
         'DIARY_DAYS' => 1,
         'AUTO_DIARY_MIN_EVENTS' => 50,
         'AUTO_DIARY_HOUR' => 21,
@@ -12076,6 +12439,7 @@ function ensureDefaultCoreProfile(): int {
              SET is_default_npc = TRUE,
                  prompt_head = COALESCE(prompt_head, ''),
                  profile_prompt = COALESCE(profile_prompt, ''),
+                 llm_primary_id = COALESCE($2::INT, llm_primary_id, response_connector),
                  response_connector = COALESCE($2::INT, response_connector),
                  diary_connector = COALESCE($3::INT, diary_connector),
                  autochat_connector = COALESCE($4::INT, autochat_connector),
@@ -12113,6 +12477,7 @@ function ensureDefaultCoreProfile(): int {
                 is_default_npc,
                 prompt_head,
                 profile_prompt,
+                llm_primary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -12122,8 +12487,8 @@ function ensureDefaultCoreProfile(): int {
                 relationship_connector,
                 tts_connector_id,
                 metadata
-            ) VALUES (
-                $1, TRUE, '', '', $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
+             ) VALUES (
+                $1, TRUE, '', '', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
             )
             RETURNING id",
             [
@@ -12799,6 +13164,43 @@ function stobeReadLayeredSettingRaw(
     return false;
 }
 
+function stobeProfileLlmTierDefinitions(): array {
+    return [
+        1 => ['field' => 'llm_primary_id', 'label' => 'Standard'],
+        2 => ['field' => 'llm_secondary_id', 'label' => 'Fast'],
+        3 => ['field' => 'llm_tertiary_id', 'label' => 'Powerful'],
+        4 => ['field' => 'llm_quaternary_id', 'label' => 'Experimental'],
+    ];
+}
+
+function stobeGetGlobalProfileLlmSlot(): int {
+    $slot = intval(getConfOpt('stobe_profile_model', '1'));
+    return $slot >= 1 && $slot <= 4 ? $slot : 1;
+}
+
+/**
+ * Resolves the globally selected response tier while retaining legacy profile fallbacks.
+ */
+function stobeResolveProfileResponseConnectorId(array $profileRow): int {
+    $tiers = stobeProfileLlmTierDefinitions();
+    $slot = stobeGetGlobalProfileLlmSlot();
+    $candidateFields = [
+        $tiers[$slot]['field'],
+        $tiers[1]['field'],
+        'response_connector',
+        $tiers[2]['field'],
+        $tiers[3]['field'],
+        $tiers[4]['field'],
+    ];
+    foreach (array_unique($candidateFields) as $field) {
+        $connectorId = intval($profileRow[$field] ?? 0);
+        if ($connectorId > 0) {
+            return $connectorId;
+        }
+    }
+    return 0;
+}
+
 function stobePurposeToProfileConnectorColumn(string $purposeKey): string {
     if ($purposeKey === 'autochat') {
         return 'autochat_connector';
@@ -12871,8 +13273,6 @@ function getProfileLlmConnectorForNpcByPurpose(array|false $npcData, string $pur
     if ($purposeKey === '') {
         $purposeKey = 'response';
     }
-    $profileColumn = stobePurposeToProfileConnectorColumn($purposeKey);
-
     // NPC override layer (highest precedence)
     $overrideConnectorId = stobeResolveNpcConnectorOverrideId($npcData, $purposeKey);
     if ($overrideConnectorId > 0) {
@@ -12888,6 +13288,26 @@ function getProfileLlmConnectorForNpcByPurpose(array|false $npcData, string $pur
     }
 
     $db = $GLOBALS["db"];
+    if ($purposeKey === 'response') {
+        $profileRow = $db->fetchOne(
+            "SELECT llm_primary_id,
+                    llm_secondary_id,
+                    llm_tertiary_id,
+                    llm_quaternary_id,
+                    response_connector,
+                    metadata
+             FROM core_profiles
+             WHERE id = $1
+             LIMIT 1",
+            [$profileId]
+        );
+        if (!$profileRow) {
+            return false;
+        }
+        return stobeFetchLlmConnectorById(stobeResolveProfileResponseConnectorId($profileRow));
+    }
+
+    $profileColumn = stobePurposeToProfileConnectorColumn($purposeKey);
     $row = $db->fetchOne(
         "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key
          FROM core_profiles p
@@ -12915,8 +13335,7 @@ function getLlmConfigForNpcPurpose(array|false $npcData, string $purpose = 'resp
 }
 
 function getMemoryTxtaiUrl(): string {
-    // Stobe memory config: always use local txtai endpoint.
-    return 'http://127.0.0.1:8082';
+    return stobeGetMiniMeServiceUrl();
 }
 
 function getMemoryUseText2Vec(): bool {
@@ -13277,6 +13696,9 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
             $traderShopItemCount += $sourceItemCount;
         }
     }
+    $playerBase = function_exists('stobeNormalizePlayerBaseSnapshot')
+        ? stobeNormalizePlayerBaseSnapshot($extended['player_base'] ?? [], false)
+        : [];
 
     $redundantTopLevel = [
         'stats',
@@ -13332,6 +13754,12 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
                 unset($extended[$key]);
             }
         }
+    }
+
+    if (count($playerBase) > 0) {
+        $extended['player_base'] = $playerBase;
+    } elseif (array_key_exists('player_base', $extended)) {
+        unset($extended['player_base']);
     }
 
     return $extended;

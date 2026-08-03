@@ -111,12 +111,12 @@ $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets), $speakerData)
     )
     . "\n\n<speech_mode>\n"
     . "  <mode>narrator</mode>\n"
-    . "  <instruction>You are The Narrator delivering a private welcome on game load. Address only the speaker and do not emit action tags.</instruction>\n"
+    . "  <instruction>You are " . stobePromptXmlEscape(stobeNarratorRoleplayName()) . " delivering a private welcome on game load. Address only the speaker and do not emit action tags.</instruction>\n"
     . "</speech_mode>";
 
 $userContent = "<narrator_welcome_event>\n"
     . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
-    . "  <target>" . stobePromptXmlEscape($narratorName) . "</target>\n"
+    . "  <target>" . stobePromptXmlEscape(stobeNarratorRoleplayName()) . "</target>\n"
     . "  <trigger>game_load</trigger>\n"
     . "  <instruction>" . stobePromptXmlEscape($welcomeInstruction) . "</instruction>\n"
     . "</narrator_welcome_event>";

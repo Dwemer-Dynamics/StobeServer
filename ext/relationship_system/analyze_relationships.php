@@ -173,9 +173,9 @@ You are a relationship analyzer for a Kenshi NPC system. Given an NPC's context 
    - neutral: Acquaintance, stranger{$customTypesSection}
 
 3. **Optional Extended Fields** (only include if clearly evident from the events):
-   - relation: 1-2 word specific role (e.g. "son", "ex-wife", "employer", "apprentice")
-   - best: Notable positive memory/event (short phrase, e.g. "opened gate for Ulfric", "saved life")
-   - worst: Notable negative memory/event (short phrase, e.g. "killed brother", "betrayed trust")
+   - relation: Specific relationship detail or role (e.g. "son", "ex-wife", "employer", "apprentice")
+   - best: Notable positive memory/event (e.g. "opened gate for Ulfric", "saved life")
+   - worst: Notable negative memory/event (e.g. "killed brother", "betrayed trust")
 
 Consider the full context:
 - The NPC's background, personality, and occupation inform their relationships
@@ -307,13 +307,13 @@ PROMPT;
 
         // Include optional extended fields if present
         if (!empty($data['relation'])) {
-            $relationships[$target]['relation'] = substr(trim($data['relation']), 0, 20);
+            $relationships[$target]['relation'] = trim($data['relation']);
         }
         if (!empty($data['best'])) {
-            $relationships[$target]['best'] = substr(trim($data['best']), 0, 50);
+            $relationships[$target]['best'] = trim($data['best']);
         }
         if (!empty($data['worst'])) {
-            $relationships[$target]['worst'] = substr(trim($data['worst']), 0, 50);
+            $relationships[$target]['worst'] = trim($data['worst']);
         }
 
         $logExtra = '';

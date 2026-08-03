@@ -52,24 +52,43 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 }
 
 $tabs = [
-    ['id' => 'npcs', 'label' => "\u{2B50} Stobe NPCs", 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'settings', 'label' => "\u{1F310} Global Settings", 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'profiles', 'label' => "\u{1F4C2} Profiles", 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'llm', 'label' => "\u{1F9E0} LLM", 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'tts', 'label' => "\u{1F4E2} TTS", 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'keys', 'label' => "\u{1F511} API Keys", 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'narrator', 'label' => "\u{1F5E3}\u{FE0F} Narrator", 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'world_knowledge', 'label' => "\u{1F4D6} World Knowledge", 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'bio', 'label' => "\u{1FAAA} NPC Biographies", 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'desc', 'label' => "\u{1F4DC} Descriptions", 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'voice', 'label' => "\u{1F399}\u{FE0F} Voice Manager", 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'actions', 'label' => "\u{2694}\u{FE0F} Action Editor", 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'prompts', 'label' => "\u{1F4DD} Prompts Manager", 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'npcs', 'group' => 'characters', 'icon' => '&#x2B50;', 'label' => 'Stobe NPCs', 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'profiles', 'group' => 'characters', 'icon' => '&#x1F4C2;', 'label' => 'Profiles', 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'narrator', 'group' => 'characters', 'icon' => '&#x1F5E3;&#xFE0F;', 'label' => 'Narrator', 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'bio', 'group' => 'characters', 'icon' => '&#x1FAAA;', 'label' => 'NPC Biographies', 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'llm', 'group' => 'ai-voice', 'icon' => '&#x1F9E0;', 'label' => 'LLM', 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'tts', 'group' => 'ai-voice', 'icon' => '&#x1F4E2;', 'label' => 'TTS', 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'voice', 'group' => 'ai-voice', 'icon' => '&#x1F399;&#xFE0F;', 'label' => 'TTS Studio / Voices', 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'keys', 'group' => 'ai-voice', 'icon' => '&#x1F511;', 'label' => 'API Keys', 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'settings', 'group' => 'world-behavior', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'rename_names', 'group' => 'world-behavior', 'icon' => '&#x1F3F7;&#xFE0F;', 'label' => 'Rename Names', 'page' => 'rename_names.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'world', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'desc', 'group' => 'world-behavior', 'icon' => '&#x1F4DC;', 'label' => 'Descriptions', 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'actions', 'group' => 'world-behavior', 'icon' => '&#x2694;&#xFE0F;', 'label' => 'Action Editor', 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'prompts', 'group' => 'world-behavior', 'icon' => '&#x1F4DD;', 'label' => 'Prompts Manager', 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
 ];
 
+$tabGroups = [
+    'characters' => 'Characters',
+    'ai-voice' => 'AI & Voice',
+    'world-behavior' => 'World & Behavior',
+];
+
+$worldViews = [
+    'knowledge' => ['label' => 'World Knowledge', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
+    'state' => ['label' => 'World State', 'page' => 'world_state.php', 'status' => 'wired', 'embed' => true],
+];
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'npcs')));
-if ($activeTab === 'oghma') {
-    $activeTab = 'world_knowledge';
+$worldView = strtolower(trim((string)($_GET['world_view'] ?? 'knowledge')));
+if (in_array($activeTab, ['oghma', 'world_knowledge'], true)) {
+    $activeTab = 'world';
+    $worldView = 'knowledge';
+} elseif ($activeTab === 'world_state') {
+    $activeTab = 'world';
+    $worldView = 'state';
+}
+if (!isset($worldViews[$worldView])) {
+    $worldView = 'knowledge';
 }
 $tabMap = [];
 foreach ($tabs as $tab) {
@@ -89,6 +108,7 @@ if (!isset($tabMap[$activeTab])) {
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/navbar.css">
+    <link rel="stylesheet" href="css/hub-navigation.css?v=<?= filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'hub-navigation.css') ?>">
     <style>
         body {
             padding-top: 80px;
@@ -199,29 +219,53 @@ if (!isset($tabMap[$activeTab])) {
         }
     </style>
 </head>
-<body>
+<body class="hub-page">
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
 
 <main class="container-fluid">
     <div class="tab-container">
-        <div class="tab-buttons">
-            <?php foreach ($tabs as $tab): ?>
-                <button
-                    type="button"
-                    class="tab-button <?= $activeTab === $tab['id'] ? 'active' : '' ?>"
-                    data-tab="<?= h($tab['id']) ?>"
-                ><?= h($tab['label']) ?></button>
-            <?php endforeach; ?>
+        <div class="config-navigation" aria-label="Configuration sections">
+            <div class="tab-groups">
+                <?php foreach ($tabGroups as $groupId => $groupLabel): ?>
+                    <section class="tab-group <?= ($tabMap[$activeTab]['group'] ?? '') === $groupId ? 'active' : '' ?>" data-category="<?= h($groupId) ?>">
+                        <div class="tab-group-label"><?= h($groupLabel) ?></div>
+                        <div class="tab-buttons" role="tablist" aria-label="<?= h($groupLabel) ?> configuration pages">
+                            <?php foreach ($tabs as $tab): ?>
+                                <?php if ($tab['group'] !== $groupId) continue; ?>
+                                <button
+                                    type="button"
+                                    class="tab-button <?= $activeTab === $tab['id'] ? 'active' : '' ?>"
+                                    data-tab="<?= h($tab['id']) ?>"
+                                    data-category="<?= h($groupId) ?>"
+                                ><span class="tab-icon" aria-hidden="true"><?= $tab['icon'] ?></span><span><?= h($tab['label']) ?></span></button>
+                            <?php endforeach; ?>
+                        </div>
+                    </section>
+                <?php endforeach; ?>
+            </div>
         </div>
 
         <?php foreach ($tabs as $tab): ?>
             <?php
                 $isActive = ($activeTab === $tab['id']);
                 $hasPage = ($tab['status'] === 'wired' && !empty($tab['page']));
-                $targetSrc = $hasPage ? buildTabTargetSrc($tab, $webRoot) : '';
+                $targetTab = $tab['id'] === 'world' ? $worldViews[$worldView] : $tab;
+                $targetSrc = $hasPage ? buildTabTargetSrc($targetTab, $webRoot) : '';
             ?>
             <div id="tab-<?= h($tab['id']) ?>" class="tab-content <?= $isActive ? 'active' : '' ?>">
                 <?php if ($hasPage): ?>
+                    <?php if ($tab['id'] === 'world'): ?>
+                        <div class="tab-buttons" role="tablist" aria-label="World pages">
+                            <?php foreach ($worldViews as $viewId => $view): ?>
+                                <a
+                                    class="tab-button <?= $worldView === $viewId ? 'active' : '' ?>"
+                                    role="tab"
+                                    aria-selected="<?= $worldView === $viewId ? 'true' : 'false' ?>"
+                                    href="?tab=world&amp;world_view=<?= h($viewId) ?>"
+                                ><?= h($view['label']) ?></a>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
                     <div class="embed-wrap">
                         <iframe
                             class="embed"
@@ -240,7 +284,8 @@ if (!isset($tabMap[$activeTab])) {
 
 <script>
 (function(){
-    const buttons = document.querySelectorAll('.tab-button');
+    const buttons = document.querySelectorAll('button.tab-button[data-tab]');
+    const groups = document.querySelectorAll('.tab-group');
     const tabs = document.querySelectorAll('.tab-content');
 
     function loadIframeFor(tabPane) {
@@ -253,6 +298,11 @@ if (!isset($tabMap[$activeTab])) {
     }
 
     function activate(tabId) {
+        const selected = Array.from(buttons).find(function(btn){ return btn.dataset.tab === tabId; });
+        const category = selected ? selected.dataset.category : '';
+        groups.forEach(function(group){
+            group.classList.toggle('active', group.dataset.category === category);
+        });
         buttons.forEach(function(btn){
             btn.classList.toggle('active', btn.dataset.tab === tabId);
         });

@@ -48,15 +48,21 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 }
 
 $tabs = [
-    ['id' => 'server_logs', 'label' => 'Server Logs', 'page' => '', 'url' => $distroDebuggerStobeEmbedUrl, 'status' => 'wired', 'embed' => false],
-    ['id' => 'audio_image_cache', 'label' => 'Audio & Image Cache', 'page' => '', 'url' => ($webRoot !== '' ? $webRoot : '') . '/soundcache/', 'status' => 'wired', 'embed' => false],
-    ['id' => 'request_logs', 'label' => 'Request Logs', 'page' => 'request_logs.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'world_knowledge_audit', 'label' => 'World Knowledge Audit', 'page' => 'world_knowledge_audit.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'cost_breakdown', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'response_queue', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'relationship_logs', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'playthrough_manager', 'label' => 'Playthrough Manager', 'page' => 'playthrough_manager.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'database_manager', 'label' => 'Database Manager', 'page' => '', 'url' => $distroDatabaseManagerUrl, 'status' => 'wired', 'embed' => false],
+    ['id' => 'server_logs', 'group' => 'diagnostics', 'icon' => '&#x1F332;', 'label' => 'Server Logs', 'page' => '', 'url' => $distroDebuggerStobeEmbedUrl, 'status' => 'wired', 'embed' => false],
+    ['id' => 'request_logs', 'group' => 'diagnostics', 'icon' => '&#x1F50D;', 'label' => 'Request Logs', 'page' => 'request_logs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'world_knowledge_audit', 'group' => 'diagnostics', 'icon' => '&#x1F4D6;', 'label' => 'World Knowledge Audit', 'page' => 'world_knowledge_audit.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'relationship_logs', 'group' => 'diagnostics', 'icon' => '&#x1F517;', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'cost_breakdown', 'group' => 'monitoring', 'icon' => '&#x1F4CA;', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'response_queue', 'group' => 'monitoring', 'icon' => '&#x1F4AC;', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'audio_image_cache', 'group' => 'data-tools', 'icon' => '&#x1F3BC;', 'label' => 'Audio & Image Cache', 'page' => 'cache_browser.php', 'url' => '', 'status' => 'wired', 'embed' => true],
+    ['id' => 'playthrough_manager', 'group' => 'data-tools', 'icon' => '&#x1F3AE;', 'label' => 'Playthrough Manager', 'page' => 'playthrough_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'database_manager', 'group' => 'data-tools', 'icon' => '&#x1F5C4;&#xFE0F;', 'label' => 'Database Manager', 'page' => '', 'url' => $distroDatabaseManagerUrl, 'status' => 'wired', 'embed' => false],
+];
+
+$tabGroups = [
+    'diagnostics' => 'Diagnostics',
+    'monitoring' => 'Monitoring',
+    'data-tools' => 'Data & Tools',
 ];
 
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'server_logs')));
@@ -81,6 +87,7 @@ if (!isset($tabMap[$activeTab])) {
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/navbar.css">
+    <link rel="stylesheet" href="css/hub-navigation.css?v=<?= filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'hub-navigation.css') ?>">
     <style>
         body {
             padding-top: 80px;
@@ -200,19 +207,30 @@ if (!isset($tabMap[$activeTab])) {
         }
     </style>
 </head>
-<body>
+<body class="hub-page">
 <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "navbar.php"); ?>
 
 <main class="container-fluid">
     <div class="tab-container">
-        <div class="tab-buttons">
-            <?php foreach ($tabs as $tab): ?>
-                <button
-                    type="button"
-                    class="tab-button <?= $activeTab === $tab['id'] ? 'active' : '' ?>"
-                    data-tab="<?= h($tab['id']) ?>"
-                ><?= h($tab['label']) ?></button>
-            <?php endforeach; ?>
+        <div class="config-navigation" aria-label="Control Panel sections">
+            <div class="tab-groups">
+                <?php foreach ($tabGroups as $groupId => $groupLabel): ?>
+                    <section class="tab-group <?= ($tabMap[$activeTab]['group'] ?? '') === $groupId ? 'active' : '' ?>" data-category="<?= h($groupId) ?>">
+                        <div class="tab-group-label"><?= h($groupLabel) ?></div>
+                        <div class="tab-buttons" role="tablist" aria-label="<?= h($groupLabel) ?> pages">
+                            <?php foreach ($tabs as $tab): ?>
+                                <?php if ($tab['group'] !== $groupId) continue; ?>
+                                <button
+                                    type="button"
+                                    class="tab-button <?= $activeTab === $tab['id'] ? 'active' : '' ?>"
+                                    data-tab="<?= h($tab['id']) ?>"
+                                    data-category="<?= h($groupId) ?>"
+                                ><span class="tab-icon" aria-hidden="true"><?= $tab['icon'] ?></span><span><?= h($tab['label']) ?></span></button>
+                            <?php endforeach; ?>
+                        </div>
+                    </section>
+                <?php endforeach; ?>
+            </div>
         </div>
 
         <?php foreach ($tabs as $tab): ?>
@@ -220,13 +238,12 @@ if (!isset($tabMap[$activeTab])) {
                 $isActive = ($activeTab === $tab['id']);
                 $targetSrc = ($tab['status'] === 'wired') ? buildTabTargetSrc($tab, $webRoot) : '';
                 $hasPage = ($targetSrc !== '');
-                $isLightEmbed = ($tab['id'] === 'audio_image_cache');
             ?>
             <div id="tab-<?= h($tab['id']) ?>" class="tab-content <?= $isActive ? 'active' : '' ?>">
                 <?php if ($hasPage): ?>
-                    <div class="embed-wrap<?= $isLightEmbed ? ' embed-wrap-light' : '' ?>">
+                    <div class="embed-wrap">
                         <iframe
-                            class="embed<?= $isLightEmbed ? ' embed-light' : '' ?>"
+                            class="embed"
                             loading="<?= $isActive ? 'eager' : 'lazy' ?>"
                             src="<?= $isActive ? h($targetSrc) : 'about:blank' ?>"
                             data-src="<?= h($targetSrc) ?>"
@@ -243,6 +260,7 @@ if (!isset($tabMap[$activeTab])) {
 <script>
 (function(){
     const buttons = document.querySelectorAll('.tab-button');
+    const groups = document.querySelectorAll('.tab-group');
     const tabs = document.querySelectorAll('.tab-content');
 
     function loadIframeFor(tabPane) {
@@ -255,6 +273,11 @@ if (!isset($tabMap[$activeTab])) {
     }
 
     function activate(tabId) {
+        const selected = Array.from(buttons).find(function(btn){ return btn.dataset.tab === tabId; });
+        const category = selected ? selected.dataset.category : '';
+        groups.forEach(function(group){
+            group.classList.toggle('active', group.dataset.category === category);
+        });
         buttons.forEach(function(btn){
             btn.classList.toggle('active', btn.dataset.tab === tabId);
         });

@@ -32,13 +32,26 @@ function stobeBackgroundLatestGamets(): int
     }
 }
 
+/**
+ * Refresh the manager heartbeat between potentially slow maintenance tasks.
+ */
+function stobeBackgroundRecordTick(int $gamets): void
+{
+    setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', strval(time()), true);
+    setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_GAMETS', strval(max(0, $gamets)), true);
+}
+
 $tickEventType = 'chat';
 $tickTimestamp = time();
 $tickGamets = stobeBackgroundLatestGamets();
 $tickPayload = '[background_processor_tick]';
 
-setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_TS', strval($tickTimestamp), true);
-setConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_GAMETS', strval($tickGamets), true);
+stobeBackgroundRecordTick($tickGamets);
+
+if (function_exists('stobePlayer2HealthTick')) {
+    stobePlayer2HealthTick($tickTimestamp);
+}
+stobeBackgroundRecordTick($tickGamets);
 
 if ($tickGamets <= 0) {
     stobeLogDebug('Background manager skipped: no gamets yet');
@@ -51,17 +64,22 @@ try {
     } elseif (function_exists('stobeMaybeRunMiddleTermCycle')) {
         stobeMaybeRunMiddleTermCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
+    stobeBackgroundRecordTick($tickGamets);
     if (function_exists('stobeMaybeRunRegularMemoryCycle')) {
         stobeMaybeRunRegularMemoryCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
+    stobeBackgroundRecordTick($tickGamets);
     if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
         stobeMaybeRunDynamicProfileCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
+    stobeBackgroundRecordTick($tickGamets);
     if (function_exists('stobeMaybeRunAutoDiaryCycle')) {
         stobeMaybeRunAutoDiaryCycle($tickTimestamp, $tickGamets);
     }
+    stobeBackgroundRecordTick($tickGamets);
     setConfOpt('BACKGROUND_PROCESSOR_LAST_SUCCESS_TS', strval(time()), true);
 } catch (Throwable $exception) {
+    stobeBackgroundRecordTick($tickGamets);
     setConfOpt('BACKGROUND_PROCESSOR_LAST_ERROR_TS', strval(time()), true);
     stobeLogException($exception, 'Background manager tick failed', [
         'gamets' => $tickGamets,

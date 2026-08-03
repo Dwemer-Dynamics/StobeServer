@@ -278,5 +278,3 @@ function pts_get_schema_metadata($conn, string $schemaName): array {
     return $metadata;
 }
 
-?>
-

@@ -6,6 +6,8 @@
  * POST JSON:
  *   {"action":"list"}
  *   {"action":"detail","sid":"<npc_name>"}
+ *   {"action":"entries","sid":"<npc_name>"}
+ *   {"action":"entry","rowid":123}
  */
 
 $path = dirname(__FILE__) . DIRECTORY_SEPARATOR;
@@ -32,6 +34,14 @@ $action = strtolower(trim(strval($payload['action'] ?? 'list')));
 $db = $GLOBALS["db"];
 $jsonFlags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE;
 
+function stobeDiaryListToken(string $value): string {
+    return trim(preg_replace('/[\x00-\x1F,\|]+/u', ' ', $value) ?? '');
+}
+
+function stobeDiaryDisplayName(string $name): string {
+    return stobeIsNarratorName($name) ? stobeNarratorRoleplayName() : $name;
+}
+
 if ($action === 'list') {
     $rows = $db->fetchAll(
         "SELECT
@@ -52,7 +62,7 @@ if ($action === 'list') {
             continue;
         }
         $entryCount = intval($row['entry_count'] ?? 0);
-        $display = $name . ' (' . strval($entryCount) . ')';
+        $display = stobeDiaryDisplayName($name) . ' (' . strval($entryCount) . ')';
         $entries[] = $display . "|" . $name;
     }
 
@@ -61,6 +71,110 @@ if ($action === 'list') {
             'ok' => true,
             'count' => count($entries),
             'names' => $entries,
+        ],
+        $jsonFlags
+    );
+    return;
+}
+
+if ($action === 'entries') {
+    $sid = normalizeParticipantNameToken(strval($payload['sid'] ?? ''));
+    if ($sid === '') {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Missing sid']);
+        return;
+    }
+
+    $rows = $db->fetchAll(
+        "SELECT rowid, topic, content, location, gamets, localts
+         FROM diarylog
+         WHERE LOWER(people) = LOWER($1)
+         ORDER BY gamets DESC, localts DESC, rowid DESC
+         LIMIT 50",
+        [$sid]
+    );
+
+    $entries = [];
+    foreach ($rows as $row) {
+        $rowid = intval($row['rowid'] ?? 0);
+        if ($rowid <= 0) {
+            continue;
+        }
+        $topic = stobeDiaryListToken(trim(strval($row['topic'] ?? '')));
+        if ($topic === '') {
+            $topic = 'Diary Entry';
+        }
+        $dateLabel = stobeDiaryListToken(stobeGametsDateLabel(intval($row['gamets'] ?? 0)));
+        $display = $dateLabel === '' ? $topic : ($dateLabel . ' - ' . $topic);
+        if (strlen($display) > 90) {
+            $display = substr($display, 0, 87) . '...';
+        }
+        $entries[] = $display . '|' . strval($rowid);
+    }
+
+    echo json_encode(
+        [
+            'ok' => true,
+            'count' => count($entries),
+            'entries' => $entries,
+        ],
+        $jsonFlags
+    );
+    return;
+}
+
+if ($action === 'entry') {
+    $rowid = intval($payload['rowid'] ?? 0);
+    if ($rowid <= 0) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Missing rowid']);
+        return;
+    }
+
+    $row = $db->fetchOne(
+        "SELECT rowid, topic, content, tags, people, location, gamets, localts
+         FROM diarylog
+         WHERE rowid = $1
+         LIMIT 1",
+        [$rowid]
+    );
+    if (!$row) {
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Diary entry not found']);
+        return;
+    }
+
+    $topic = trim(strval($row['topic'] ?? ''));
+    if ($topic === '') {
+        $topic = 'Diary Entry';
+    }
+    $content = trim(strval($row['content'] ?? ''));
+    if ($content === '') {
+        $content = '(empty)';
+    }
+
+    $lines = [
+        $topic,
+        'Written by: ' . stobeDiaryDisplayName(
+            normalizeParticipantNameToken(strval($row['people'] ?? ''))
+        ),
+        'Date: ' . stobeGametsDateLabel(intval($row['gamets'] ?? 0)),
+    ];
+    $location = trim(strval($row['location'] ?? ''));
+    if ($location !== '') {
+        $lines[] = 'Location: ' . $location;
+    }
+    $tags = trim(strval($row['tags'] ?? ''));
+    if ($tags !== '') {
+        $lines[] = 'Tags: ' . $tags;
+    }
+    $lines[] = '';
+    $lines[] = $content;
+
+    echo json_encode(
+        [
+            'ok' => true,
+            'text' => implode("\n", $lines),
         ],
         $jsonFlags
     );
@@ -98,7 +212,7 @@ if ($action === 'detail') {
     }
 
     $lines = [];
-    $lines[] = "Name: " . $sid;
+    $lines[] = "Name: " . stobeDiaryDisplayName($sid);
     $lines[] = "Entries: " . strval(count($rows));
     $latestGamets = intval($rows[0]['gamets'] ?? 0);
     $lines[] = "Latest: " . stobeGametsDateLabel($latestGamets);

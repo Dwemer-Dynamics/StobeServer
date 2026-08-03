@@ -65,6 +65,10 @@ function stobeQuickstartFetchDefaultProfile(sql $db): array
                 COALESCE(label, '') AS label,
                 COALESCE(is_default_npc, FALSE) AS is_default_npc,
                 COALESCE(is_player_faction_profile, FALSE) AS is_player_faction_profile,
+                llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -96,6 +100,10 @@ function stobeQuickstartFetchProfileById(sql $db, int $profileId): array
                 COALESCE(label, '') AS label,
                 COALESCE(is_default_npc, FALSE) AS is_default_npc,
                 COALESCE(is_player_faction_profile, FALSE) AS is_player_faction_profile,
+                llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -120,6 +128,10 @@ function stobeQuickstartFetchPlayerFactionProfile(sql $db): array
                 COALESCE(label, '') AS label,
                 COALESCE(is_default_npc, FALSE) AS is_default_npc,
                 COALESCE(is_player_faction_profile, FALSE) AS is_player_faction_profile,
+                llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -172,7 +184,10 @@ function stobeQuickstartEnsurePlayerFactionProfile(sql $db, array $defaultProfil
     $playerProfileId = intval($playerProfile['id'] ?? 0);
     $playerMetadataJson = stobeQuickstartEncodePlayerFactionMetadata($defaultProfile['metadata'] ?? '{}');
 
-    $responseConnector = intval($defaultProfile['response_connector'] ?? 0);
+    $primaryConnector = intval($defaultProfile['llm_primary_id'] ?? ($defaultProfile['response_connector'] ?? 0));
+    $secondaryConnector = intval($defaultProfile['llm_secondary_id'] ?? 0);
+    $tertiaryConnector = intval($defaultProfile['llm_tertiary_id'] ?? 0);
+    $quaternaryConnector = intval($defaultProfile['llm_quaternary_id'] ?? 0);
     $diaryConnector = intval($defaultProfile['diary_connector'] ?? 0);
     $autochatConnector = intval($defaultProfile['autochat_connector'] ?? 0);
     $middletermConnector = intval($defaultProfile['middleterm_connector'] ?? 0);
@@ -187,6 +202,10 @@ function stobeQuickstartEnsurePlayerFactionProfile(sql $db, array $defaultProfil
                 label,
                 is_default_npc,
                 is_player_faction_profile,
+                llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -200,13 +219,17 @@ function stobeQuickstartEnsurePlayerFactionProfile(sql $db, array $defaultProfil
                 'Player Faction',
                 FALSE,
                 TRUE,
-                $1, $2, $3, $4, $5, $6, $7, $8,
-                $9::jsonb
+                $1, $2, $3, $4, $1, $5, $6, $7, $8, $9, $10, $11,
+                $12::jsonb
             )
             ON CONFLICT (label) DO UPDATE SET
                 is_default_npc = FALSE,
                 is_player_faction_profile = TRUE,
-                response_connector = COALESCE(EXCLUDED.response_connector, core_profiles.response_connector),
+                llm_primary_id = COALESCE(EXCLUDED.llm_primary_id, core_profiles.llm_primary_id),
+                llm_secondary_id = COALESCE(EXCLUDED.llm_secondary_id, core_profiles.llm_secondary_id),
+                llm_tertiary_id = COALESCE(EXCLUDED.llm_tertiary_id, core_profiles.llm_tertiary_id),
+                llm_quaternary_id = COALESCE(EXCLUDED.llm_quaternary_id, core_profiles.llm_quaternary_id),
+                response_connector = COALESCE(EXCLUDED.llm_primary_id, core_profiles.response_connector),
                 diary_connector = COALESCE(EXCLUDED.diary_connector, core_profiles.diary_connector),
                 autochat_connector = COALESCE(EXCLUDED.autochat_connector, core_profiles.autochat_connector),
                 middleterm_connector = COALESCE(EXCLUDED.middleterm_connector, core_profiles.middleterm_connector),
@@ -229,7 +252,10 @@ function stobeQuickstartEnsurePlayerFactionProfile(sql $db, array $defaultProfil
                 updated_at = NOW()
             RETURNING id",
             [
-                $responseConnector > 0 ? $responseConnector : null,
+                $primaryConnector > 0 ? $primaryConnector : null,
+                $secondaryConnector > 0 ? $secondaryConnector : null,
+                $tertiaryConnector > 0 ? $tertiaryConnector : null,
+                $quaternaryConnector > 0 ? $quaternaryConnector : null,
                 $diaryConnector > 0 ? $diaryConnector : null,
                 $autochatConnector > 0 ? $autochatConnector : null,
                 $middletermConnector > 0 ? $middletermConnector : null,
@@ -247,21 +273,25 @@ function stobeQuickstartEnsurePlayerFactionProfile(sql $db, array $defaultProfil
         $db->exec(
             "UPDATE core_profiles
              SET label = 'Player Faction',
-                 is_default_npc = FALSE,
-                 is_player_faction_profile = TRUE,
-                 response_connector = COALESCE(response_connector, $1::INT),
-                 diary_connector = COALESCE(diary_connector, $2::INT),
-                 autochat_connector = COALESCE(autochat_connector, $3::INT),
-                 middleterm_connector = COALESCE(middleterm_connector, $4::INT),
-                 backgroundlife_connector = COALESCE(backgroundlife_connector, $5::INT),
-                 dynamic_connector = COALESCE(dynamic_connector, $6::INT),
-                 relationship_connector = COALESCE(relationship_connector, $7::INT),
-                 tts_connector_id = COALESCE(tts_connector_id, $8::INT),
-                 metadata = CASE
+                  is_default_npc = FALSE,
+                  is_player_faction_profile = TRUE,
+                  llm_primary_id = COALESCE(llm_primary_id, $1::INT),
+                  llm_secondary_id = COALESCE(llm_secondary_id, $2::INT),
+                  llm_tertiary_id = COALESCE(llm_tertiary_id, $3::INT),
+                  llm_quaternary_id = COALESCE(llm_quaternary_id, $4::INT),
+                  response_connector = COALESCE(response_connector, $1::INT),
+                  diary_connector = COALESCE(diary_connector, $5::INT),
+                  autochat_connector = COALESCE(autochat_connector, $6::INT),
+                  middleterm_connector = COALESCE(middleterm_connector, $7::INT),
+                  backgroundlife_connector = COALESCE(backgroundlife_connector, $8::INT),
+                  dynamic_connector = COALESCE(dynamic_connector, $9::INT),
+                  relationship_connector = COALESCE(relationship_connector, $10::INT),
+                  tts_connector_id = COALESCE(tts_connector_id, $11::INT),
+                  metadata = CASE
                     WHEN metadata IS NULL
                       OR metadata = '[]'::jsonb
                       OR jsonb_typeof(metadata) <> 'object'
-                    THEN $9::jsonb
+                    THEN $12::jsonb
                     ELSE jsonb_set(
                         jsonb_set(metadata, '{DYNAMIC_PROFILE_ENABLED}', 'true'::jsonb, true),
                         '{MIDDLE_TERM_MEMORY_ENABLED}',
@@ -270,9 +300,12 @@ function stobeQuickstartEnsurePlayerFactionProfile(sql $db, array $defaultProfil
                     )
                  END,
                  updated_at = NOW()
-             WHERE id = $10",
+             WHERE id = $13",
             [
-                $responseConnector > 0 ? $responseConnector : null,
+                $primaryConnector > 0 ? $primaryConnector : null,
+                $secondaryConnector > 0 ? $secondaryConnector : null,
+                $tertiaryConnector > 0 ? $tertiaryConnector : null,
+                $quaternaryConnector > 0 ? $quaternaryConnector : null,
                 $diaryConnector > 0 ? $diaryConnector : null,
                 $autochatConnector > 0 ? $autochatConnector : null,
                 $middletermConnector > 0 ? $middletermConnector : null,
@@ -325,6 +358,7 @@ function stobeQuickstartFilterDefaultTtsConnectors(array $rows): array
         'pocket tts default',
         'xtts default',
         'chatterbox default',
+        'omnivoice default',
         'cartesia default',
         'inworld default',
     ];
@@ -355,6 +389,9 @@ function stobeQuickstartTtsProviderKey(string $connectorName): string
     if (str_contains($name, 'chatterbox')) {
         return 'chatterbox';
     }
+    if (str_contains($name, 'omnivoice')) {
+        return 'omnivoice';
+    }
     if (str_contains($name, 'cartesia')) {
         return 'cartesia';
     }
@@ -366,6 +403,9 @@ function stobeQuickstartTtsProviderKey(string $connectorName): string
 
 function stobeQuickstartLocalTtsDefaultUrl(string $provider): string
 {
+    if ($provider === 'omnivoice') {
+        return 'http://127.0.0.1:8021';
+    }
     if ($provider === 'chatterbox') {
         return 'http://127.0.0.1:8023';
     }
@@ -533,7 +573,7 @@ function stobeQuickstartEnsurePlayer2ConnectorId(sql $db): int
     if ($badgeId <= 0) {
         $db->exec(
             "INSERT INTO core_api_badge (label, api_key)
-             VALUES ('Player2', 'STOBE')
+             VALUES ('Player2', '019cf504-1461-74e7-b4da-045b14e9019d')
              ON CONFLICT (label) DO NOTHING"
         );
         $badgeRow = $db->fetchOne(
@@ -552,7 +592,7 @@ function stobeQuickstartEnsurePlayer2ConnectorId(sql $db): int
             model, max_tokens, temperature, is_default, config
          ) VALUES (
             'Player2 Local', 'player2json', $1, '', 'http://127.0.0.1:4315/v1/chat/completions',
-            'player2-app-selected', 750, 1.0, FALSE, '{\"player2_game_key\":\"STOBE\"}'::jsonb
+            'player2-app-selected', 750, 1.0, FALSE, '{\"player2_game_key\":\"019cf504-1461-74e7-b4da-045b14e9019d\"}'::jsonb
          )
          ON CONFLICT (name) DO NOTHING",
         [$badgeId > 0 ? $badgeId : null]
@@ -576,7 +616,11 @@ function stobeQuickstartSetPlayer2AllLlm(sql $db, int $profileId, int $player2Co
     }
     $db->exec(
         "UPDATE core_profiles
-         SET response_connector = $1,
+          SET llm_primary_id = $1,
+              llm_secondary_id = $1,
+              llm_tertiary_id = $1,
+              llm_quaternary_id = $1,
+              response_connector = $1,
              diary_connector = $1,
              autochat_connector = $1,
              middleterm_connector = $1,
@@ -618,7 +662,11 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
 
     $db->exec(
         "UPDATE core_profiles
-         SET response_connector = $1,
+          SET llm_primary_id = $1,
+              llm_secondary_id = NULL,
+              llm_tertiary_id = NULL,
+              llm_quaternary_id = NULL,
+              response_connector = $1,
              diary_connector = $2,
              autochat_connector = $3,
              middleterm_connector = $4,
@@ -646,6 +694,10 @@ function stobeQuickstartProfileUsesPlayer2(array $profileRow, int $player2Connec
         return false;
     }
     $fields = [
+        'llm_primary_id',
+        'llm_secondary_id',
+        'llm_tertiary_id',
+        'llm_quaternary_id',
         'response_connector',
         'diary_connector',
         'autochat_connector',
@@ -1022,7 +1074,7 @@ foreach ($targetProfileRows as $profileRow) {
 
         <section class="qs-section">
             <h2>TTS Connector</h2>
-            <p class="qs-help">Choose one of the default TTS connectors (Pocket TTS, XTTS, Chatterbox, Cartesia, Inworld). This applies to both Default Profile and Player Faction.</p>
+            <p class="qs-help">Choose one of the default TTS connectors (OmniVoice, Pocket TTS, XTTS, Chatterbox, Cartesia, Inworld). This applies to both Default Profile and Player Faction.</p>
             <div class="qs-field">
                 <label for="tts_connector_id">TTS Connector</label>
                 <select id="tts_connector_id" name="tts_connector_id">
@@ -1079,7 +1131,7 @@ foreach ($targetProfileRows as $profileRow) {
 
             <div id="local-tts-block" class="qs-field" style="display:none;">
                 <div class="qs-callout">
-                    For `Pocket TTS`, `XTTS`, and `Chatterbox`, ensure the service is installed and running in your Dwemer Distro.
+                    For `Pocket TTS`, `XTTS`, `Chatterbox`, and `OmniVoice`, ensure the service is installed and running in your Dwemer Distro.
                 </div>
                 <input id="local_tts_probe_url" type="hidden" value="">
                 <div id="local_tts_probe_status" class="qs-status"></div>
@@ -1162,7 +1214,7 @@ function updateConditionalApiFields() {
     const inworldInput = document.getElementById('inworld_api_key');
     const inworldWorkspaceInput = document.getElementById('inworld_workspace');
 
-    const isLocalTts = provider === 'pocket_tts' || provider === 'xtts' || provider === 'chatterbox';
+    const isLocalTts = provider === 'omnivoice' || provider === 'pocket_tts' || provider === 'xtts' || provider === 'chatterbox';
     const showCartesia = provider === 'cartesia';
     const showInworld = provider === 'inworld';
 

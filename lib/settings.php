@@ -87,6 +87,46 @@ function getSettingFloat(string $id, float $default = 0.0): float {
     return floatval(getSetting($id, strval($default)));
 }
 
+function stobeNormalizeMiniMeServiceUrl(string $configuredUrl): string {
+    $defaultUrl = 'http://127.0.0.1:8082';
+    $configuredUrl = rtrim(trim($configuredUrl), '/');
+    if ($configuredUrl === '' || filter_var($configuredUrl, FILTER_VALIDATE_URL) === false) {
+        return $defaultUrl;
+    }
+
+    $parts = parse_url($configuredUrl);
+    $scheme = strtolower(strval($parts['scheme'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], true) || empty($parts['host'])) {
+        return $defaultUrl;
+    }
+    return $configuredUrl;
+}
+
+function stobeGetMiniMeServiceUrl(): string {
+    return stobeNormalizeMiniMeServiceUrl(getSetting('TXTAI_URL', 'http://127.0.0.1:8082'));
+}
+
+function stobeMiniMeServiceEndpoint(string $path, array $query = [], ?string $baseUrl = null): string {
+    $url = stobeNormalizeMiniMeServiceUrl($baseUrl ?? stobeGetMiniMeServiceUrl())
+        . '/' . ltrim($path, '/');
+    if ($query !== []) {
+        $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    }
+    return $url;
+}
+
+function stobeMiniMeServiceSocket(?string $baseUrl = null): array {
+    $parts = parse_url(stobeNormalizeMiniMeServiceUrl($baseUrl ?? stobeGetMiniMeServiceUrl()));
+    $scheme = strtolower(strval($parts['scheme'] ?? 'http'));
+    $host = strval($parts['host'] ?? '127.0.0.1');
+    $port = intval($parts['port'] ?? ($scheme === 'https' ? 443 : 80));
+    return [
+        'host' => $host,
+        'port' => $port,
+        'socket_host' => ($scheme === 'https' ? 'ssl://' : '') . $host,
+    ];
+}
+
 function stobeGetPromptContextOptionCatalog(): array {
     return [
         'enabled_sections' => [
@@ -101,6 +141,10 @@ function stobeGetPromptContextOptionCatalog(): array {
             'player_faction_funds' => [
                 'label' => '<player_faction_funds>',
                 'description' => 'Shared cats available to player-faction NPCs.',
+            ],
+            'player_base' => [
+                'label' => '<player_base>',
+                'description' => 'Current player-base power, security, infrastructure, supplies, production, farms, and squad presence while this actor is inside its perimeter.',
             ],
             'available_actions_list' => [
                 'label' => '<available_actions_list>',

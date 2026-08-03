@@ -91,7 +91,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
@@ -130,6 +130,12 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
 
     return $base;
 }
+
+function profile_setting_sync_button(string $key, string $label): string {
+    return '<button type="button" class="profile-setting-sync-btn" data-setting-key="'
+        . h($key) . '" data-setting-label="' . h($label)
+        . '" title="Copy this setting to every profile">Copy to all</button>';
+}
 function unique_profile_label(string $base, int $excludeId = 0): string {
     $db = $GLOBALS['db'];
     $candidate = trim($base) !== '' ? trim($base) : 'Profile';
@@ -143,10 +149,54 @@ function unique_profile_label(string $base, int $excludeId = 0): string {
         if ($i > 200) { return trim($base) . ' ' . time(); }
     }
 }
+function normalize_imported_profile_label(string $rawLabel, string $fileName = ''): string {
+    $label = trim($rawLabel);
+    $label = preg_replace('/(?:\s*\(Imported\))+$/i', '', $label);
+    $label = is_string($label) ? trim($label) : '';
+
+    if ($label === '' && trim($fileName) !== '') {
+        $baseName = basename(str_replace('\\', '/', $fileName));
+        $baseName = preg_replace('/\.json$/i', '', $baseName);
+        $baseName = preg_replace('/[_-]+/', ' ', is_string($baseName) ? $baseName : '');
+        $label = is_string($baseName) ? trim($baseName) : '';
+    }
+
+    return $label !== '' ? $label : 'Imported Profile';
+}
+function unique_imported_profile_label(string $label): string {
+    $label = trim($label) !== '' ? trim($label) : 'Imported Profile';
+    $db = $GLOBALS['db'];
+    $row = $db->fetchOne("SELECT id FROM core_profiles WHERE LOWER(label)=LOWER($1) LIMIT 1", [$label]);
+    if (intval($row['id'] ?? 0) <= 0) {
+        return $label;
+    }
+
+    $base = $label . ' (Imported)';
+    $candidate = $base;
+    $i = 2;
+    while (true) {
+        $row = $db->fetchOne("SELECT id FROM core_profiles WHERE LOWER(label)=LOWER($1) LIMIT 1", [$candidate]);
+        if (intval($row['id'] ?? 0) <= 0) {
+            return $candidate;
+        }
+        $candidate = $base . ' ' . $i;
+        $i++;
+        if ($i > 200) {
+            return $base . ' ' . time();
+        }
+    }
+}
 
 $db = $GLOBALS['db'];
 $isEmbed = is_embed();
 $webRoot = web_root();
+$profileSyncableMetadataKeys = [
+    'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
+    'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE',
+    'CONTEXT_HISTORY', 'CONTEXT_HISTORY_DIARY', 'CONTEXT_HISTORY_DYNAMIC_PROFILE',
+    'DIARY_DAYS', 'AUTO_DIARY_MIN_EVENTS', 'AUTO_DIARY_HOUR', 'DIARY_COOLDOWN',
+    'DYNAMIC_PROFILE_FIELDS',
+];
 if ($isEmbed && !isset($_GET['embed'])) {
     $_GET['embed'] = '1';
 }
@@ -165,10 +215,28 @@ if (isset($_GET['create_blank']) && $_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
+    $isAjax = isset($_SERVER['HTTP_X_REQUESTED_WITH'])
+        && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
     $id = intval($_POST['id'] ?? 0);
     $label = trim(strval($_POST['label'] ?? ''));
     if ($label === '') {
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'Label is required']);
+            exit;
+        }
         header('Location: ' . page_url(['edit' => $id, 'error' => 'Label is required']));
+        exit;
+    }
+    $requestedSyncSetting = $_POST['sync_profile_setting'] ?? null;
+    $syncSettingKey = is_string($requestedSyncSetting) ? trim($requestedSyncSetting) : null;
+    if ($syncSettingKey !== null && !in_array($syncSettingKey, $profileSyncableMetadataKeys, true)) {
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'This profile setting cannot be copied to all profiles.']);
+            exit;
+        }
+        header('Location: ' . page_url(['edit' => $id, 'error' => 'This profile setting cannot be copied to all profiles.']));
         exit;
     }
     $metadata = normalize_json_obj($_POST['metadata'] ?? '', getDefaultCoreProfileMetadataJson());
@@ -206,7 +274,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
         'is_player_faction_profile' => $isPlayerFactionProfilePost,
         'prompt_head' => strval($_POST['prompt_head'] ?? ''),
         'profile_prompt' => strval($_POST['profile_prompt'] ?? ''),
-        'response_connector' => post_int_or_null('response_connector'),
+        'llm_primary_id' => post_int_or_null('llm_primary_id'),
+        'llm_secondary_id' => post_int_or_null('llm_secondary_id'),
+        'llm_tertiary_id' => post_int_or_null('llm_tertiary_id'),
+        'llm_quaternary_id' => post_int_or_null('llm_quaternary_id'),
         'diary_connector' => post_int_or_null('diary_connector'),
         'autochat_connector' => post_int_or_null('autochat_connector'),
         'middleterm_connector' => post_int_or_null('middleterm_connector'),
@@ -216,6 +287,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
         'tts_connector_id' => post_int_or_null('tts_connector_id'),
         'metadata' => $metadata,
     ]);
+    $syncedProfiles = null;
+    $syncError = null;
+    if ($savedId > 0 && $syncSettingKey !== null) {
+        if (array_key_exists($syncSettingKey, $metadata)) {
+            $encodedValue = json_encode($metadata[$syncSettingKey], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $syncResult = $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$1]::text[], $2::jsonb, true),
+                     updated_at = NOW()",
+                [$syncSettingKey, $encodedValue]
+            );
+        } else {
+            $syncResult = $db->exec(
+                "UPDATE core_profiles
+                 SET metadata = COALESCE(metadata, '{}'::jsonb) - $1,
+                     updated_at = NOW()",
+                [$syncSettingKey]
+            );
+        }
+        if ($syncResult === false) {
+            $syncError = 'The profile was saved, but the selected setting could not be copied to all profiles.';
+        } else {
+            $countRow = $db->fetchOne('SELECT COUNT(*) AS total FROM core_profiles');
+            $syncedProfiles = intval($countRow['total'] ?? 0);
+        }
+    }
+    if ($isAjax) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'ok' => $savedId > 0 && $syncError === null,
+            'id' => $savedId,
+            'synced_profiles' => $syncedProfiles,
+            'synced_setting' => $syncSettingKey,
+            'error' => $savedId <= 0 ? 'Profile could not be saved.' : $syncError,
+        ]);
+        exit;
+    }
     header('Location: ' . page_url(['edit' => $savedId, 'notice' => 'Saved Profile']));
     exit;
 }
@@ -237,7 +345,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
             'is_player_faction_profile' => false,
             'prompt_head' => strval($source['prompt_head'] ?? ''),
             'profile_prompt' => strval($source['profile_prompt'] ?? ''),
-            'response_connector' => $source['response_connector'] ?? null,
+            'llm_primary_id' => $source['llm_primary_id'] ?? ($source['response_connector'] ?? null),
+            'llm_secondary_id' => $source['llm_secondary_id'] ?? null,
+            'llm_tertiary_id' => $source['llm_tertiary_id'] ?? null,
+            'llm_quaternary_id' => $source['llm_quaternary_id'] ?? null,
             'diary_connector' => $source['diary_connector'] ?? null,
             'autochat_connector' => $source['autochat_connector'] ?? null,
             'middleterm_connector' => $source['middleterm_connector'] ?? null,
@@ -254,8 +365,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['clone_profile'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     $rawJson = '';
+    $importFileName = '';
     if (isset($_FILES['import_file']) && is_array($_FILES['import_file'])) {
         $tmpPath = strval($_FILES['import_file']['tmp_name'] ?? '');
+        $importFileName = strval($_FILES['import_file']['name'] ?? '');
         $err = intval($_FILES['import_file']['error'] ?? UPLOAD_ERR_NO_FILE);
         if ($err === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
             $rawJson = strval(file_get_contents($tmpPath) ?: '');
@@ -281,20 +394,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     }
 
     $labelInput = trim(strval($_POST['import_label'] ?? ''));
-    $baseLabel = $labelInput !== '' ? $labelInput : trim(strval($profileData['label'] ?? ''));
-    if ($baseLabel === '') {
-        $baseLabel = 'Imported Profile';
-    }
+    $baseLabel = $labelInput !== ''
+        ? normalize_imported_profile_label($labelInput, $importFileName)
+        : normalize_imported_profile_label(strval($profileData['label'] ?? ''), $importFileName);
+
+    $makeDefaultNpc = coerceBoolean($_POST['make_default_npc'] ?? false);
+    $migrateOldDefaultNpcs = coerceBoolean($_POST['migrate_old_default_npcs'] ?? false);
+    $makePlayerFactionProfile = coerceBoolean($_POST['make_player_faction_profile'] ?? false);
+    $migratePlayerFactionNpcs = coerceBoolean($_POST['migrate_player_faction_npcs'] ?? false);
+
+    $previousDefaultRow = $db->fetchOne(
+        "SELECT id FROM core_profiles WHERE COALESCE(is_default_npc, FALSE) = TRUE ORDER BY id ASC LIMIT 1"
+    );
+    $previousDefaultProfileId = intval($previousDefaultRow['id'] ?? 0);
+    $previousPlayerFactionRow = $db->fetchOne(
+        "SELECT id FROM core_profiles WHERE COALESCE(is_player_faction_profile, FALSE) = TRUE ORDER BY id ASC LIMIT 1"
+    );
+    $previousPlayerFactionProfileId = intval($previousPlayerFactionRow['id'] ?? 0);
 
     $metadataRaw = $profileData['metadata'] ?? [];
     $metadata = normalize_json_obj($metadataRaw, getDefaultCoreProfileMetadataJson());
     $newId = saveCoreProfile([
-        'label' => unique_profile_label($baseLabel),
-        'is_default_npc' => false,
-        'is_player_faction_profile' => false,
+        'label' => unique_imported_profile_label($baseLabel),
+        'is_default_npc' => $makeDefaultNpc,
+        'is_player_faction_profile' => $makePlayerFactionProfile,
         'prompt_head' => strval($profileData['prompt_head'] ?? ''),
         'profile_prompt' => strval($profileData['profile_prompt'] ?? ''),
-        'response_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['response_connector'] ?? null),
+        'llm_primary_id' => normalize_imported_fk_id(
+            'core_llm_connector',
+            $profileData['llm_primary_id'] ?? ($profileData['response_connector'] ?? null)
+        ),
+        'llm_secondary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_secondary_id'] ?? null),
+        'llm_tertiary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_tertiary_id'] ?? null),
+        'llm_quaternary_id' => normalize_imported_fk_id('core_llm_connector', $profileData['llm_quaternary_id'] ?? null),
         'diary_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['diary_connector'] ?? null),
         'autochat_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['autochat_connector'] ?? null),
         'middleterm_connector' => normalize_imported_fk_id('core_llm_connector', $profileData['middleterm_connector'] ?? null),
@@ -310,7 +442,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
         exit;
     }
 
-    header('Location: ' . page_url(['edit' => $newId, 'notice' => 'profile_imported']));
+    $noticeParts = ['Profile imported'];
+    if ($migrateOldDefaultNpcs) {
+        $where = "profile_id IS NULL";
+        $params = [];
+        if ($previousDefaultProfileId > 0) {
+            $where .= " OR profile_id = $1";
+            $params[] = $previousDefaultProfileId;
+        }
+        $countRow = $db->fetchOne("SELECT COUNT(*) AS c FROM core_npc WHERE {$where}", $params);
+        $migratedDefaultCount = intval($countRow['c'] ?? 0);
+        $db->exec("UPDATE core_npc SET profile_id = " . intval($newId) . ", updated_at = NOW() WHERE {$where}", $params);
+        $noticeParts[] = 'moved ' . $migratedDefaultCount . ' default/unassigned NPCs';
+    }
+
+    if ($migratePlayerFactionNpcs && $previousPlayerFactionProfileId > 0) {
+        $countRow = $db->fetchOne(
+            "SELECT COUNT(*) AS c FROM core_npc WHERE profile_id = $1",
+            [$previousPlayerFactionProfileId]
+        );
+        $migratedPlayerFactionCount = intval($countRow['c'] ?? 0);
+        $db->exec(
+            "UPDATE core_npc SET profile_id = $1, updated_at = NOW() WHERE profile_id = $2",
+            [$newId, $previousPlayerFactionProfileId]
+        );
+        $noticeParts[] = 'moved ' . $migratedPlayerFactionCount . ' player-faction NPCs';
+    }
+
+    header('Location: ' . page_url(['edit' => $newId, 'notice' => implode('; ', $noticeParts)]));
     exit;
 }
 
@@ -532,7 +691,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .setting-row { display:grid; grid-template-columns: minmax(260px, 1fr) minmax(240px, 340px); gap:10px 14px; align-items:center; padding:7px 0; border-top:1px solid rgba(255,255,255,0.04); }
 .setting-row:first-child { border-top: 0; }
 @media (max-width: 980px) { .setting-row { grid-template-columns: 1fr; } }
-.setting-key { font-size: 12px; color:#f0f5ff; font-weight:700; margin-bottom: 2px; }
+.setting-key { font-size: 12px; color:#f0f5ff; font-weight:700; margin-bottom: 2px; display:flex; align-items:center; gap:8px; }
 .setting-desc { font-size: 12px; color:#9fb1c9; line-height:1.35; }
 .range-pair { display:flex; align-items:center; gap:8px; }
 .range-pair input[type='range'] { flex:1; accent-color: #e6b76c; }
@@ -544,9 +703,56 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card input[type='checkbox'] { transform: scale(1.08); accent-color:#176529; }
 .toggle-card .toggle-title { color:#dfe6f4; font-weight:700; font-size:12px; }
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
+.toggle-card-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+body .profile-setting-sync-btn {
+    display:inline-flex;
+    flex:0 0 auto;
+    min-height:18px !important;
+    margin:0 !important;
+    padding:2px 5px !important;
+    border:1px solid #4b4b4b !important;
+    border-radius:4px !important;
+    background:#303030 !important;
+    color:#f3f3f3 !important;
+    font-size:9px !important;
+    font-weight:600;
+    line-height:1.1;
+    cursor:pointer;
+}
+body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; background:#383838 !important; }
 .top-toggle-wrap { grid-column: 1 / -1; margin-top: 2px; margin-bottom: 2px; }
-.top-toggle-wrap .top-toggle-title { color: #e6b76c; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.top-toggle-groups { display:grid; gap:9px; }
+.top-toggle-group { padding:9px; border:1px solid #3f3f3f; border-radius:8px; background:#202020; }
+.top-toggle-wrap .top-toggle-title { color:#e6b76c; font-family:'MagicCards', serif; font-size:1em; font-weight:700; letter-spacing:.4px; word-spacing:4px; margin-bottom:7px; }
 .profile-role-toggle input[type='checkbox'] { transform: scale(1.35); transform-origin: left center; accent-color:#176529; }
+.profile-editor-toolbar { position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; padding:10px 12px; border:1px solid #454545; border-radius:8px; background:rgba(31,31,31,.97); box-shadow:0 4px 14px rgba(0,0,0,.28); }
+.profile-editor-toolbar-label { color:#9fb1c9; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+.profile-editor-toolbar-name { margin-top:2px; color:#f3f5fa; font-size:16px; font-weight:700; }
+.profile-editor-toolbar .btn-row { margin:0; }
+.connector-groups-grid { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; align-items:stretch; }
+.connector-group-card { min-width:0; height:100%; padding:11px; border:1px solid #414141; border-radius:8px; background:#202020; box-sizing:border-box; }
+.connector-group-title { margin:0; color:#e6b76c; font-family:'MagicCards', serif; font-size:1.05em; line-height:1.25; letter-spacing:.4px; word-spacing:5px; }
+.connector-group-subtitle { min-height:30px; margin:4px 0 8px; color:#9fb1c9; font-size:11px; line-height:1.3; }
+.connector-group-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+.connector-option-card { min-width:0; padding:10px; border:1px solid #414141; border-radius:7px; background:#242424; }
+.connector-option-card label { color:#f0f5ff; }
+.profile-prompt-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:12px; }
+.profile-prompt-field { min-width:0; }
+.profile-prompt-field:first-child { grid-column:1 / -1; }
+.profile-prompt-field textarea { min-height:88px; }
+.meta-settings-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; align-items:stretch; }
+.meta-settings-grid > .provider-card { height:100%; margin:0; box-sizing:border-box; }
+.meta-settings-grid .setting-row { grid-template-columns:1fr; gap:7px; }
+@media (max-width: 980px) {
+    .connector-groups-grid,
+    .meta-settings-grid,
+    .profile-prompt-grid { grid-template-columns:1fr; }
+    .profile-prompt-field:first-child { grid-column:auto; }
+}
+@media (max-width: 620px) {
+    .profile-editor-toolbar { position:static; align-items:flex-start; flex-direction:column; }
+    .connector-group-fields { grid-template-columns:1fr; }
+}
 .modal-backdrop { display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,.65); z-index:10050; }
 .modal-backdrop.show { display:block; }
 .modal-container { width:min(920px, 95vw); margin:4vh auto; border:1px solid #3a3a3a; border-radius:10px; overflow:hidden; background:#2a2a2a; box-shadow:0 8px 28px rgba(0,0,0,.4); }
@@ -618,15 +824,15 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 
     <div class="layout">
         <section class="cardx profiles-list-panel">
-            <div class="toolbar">
-                <form method="get" action="profiles.php" style="display:inline;">
+            <div class="toolbar sidebar-action-grid">
+                <form method="get" action="profiles.php">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <input type="hidden" name="create_blank" value="1">
-                    <button type="submit" class="btn-save">New Profile</button>
+                    <button type="submit" class="btn-save">New</button>
                 </form>
-                <button type="button" id="import_profile_btn" class="btn-secondary">Import Profile</button>
-                <button type="button" id="open_import_rules_btn" class="btn-secondary">Profile Rules</button>
-                <button type="button" id="profile_test_all_btn" class="btn-secondary">Test All Profiles</button>
+                <button type="button" id="import_profile_btn" class="btn-secondary">Import</button>
+                <button type="button" id="open_import_rules_btn" class="btn-secondary">Rules</button>
+                <button type="button" id="profile_test_all_btn" class="btn-secondary">Test</button>
             </div>
             <div class="list">
                 <?php foreach ($profiles as $row): ?>
@@ -678,14 +884,20 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             <?php if (!$editItem): ?>
                 <div style="color:#9fb1c9;">No profile selected.</div>
             <?php else: ?>
-                <div class="btn-row" style="margin-top:0; margin-bottom:12px;">
-                    <button type="submit" form="profile_form" class="btn-save">Save Profile</button>
-                    <form method="post" action="profiles.php" onsubmit="return confirm('Delete this profile?');" style="margin:0;">
-                        <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
-                        <input type="hidden" name="id" value="<?= h($editItem['id'] ?? '') ?>">
-                        <input type="hidden" name="delete_profile" value="1">
-                        <button type="submit" class="btn-danger">Delete Profile</button>
-                    </form>
+                <div class="profile-editor-toolbar">
+                    <div>
+                        <div class="profile-editor-toolbar-label">Editing Profile</div>
+                        <div class="profile-editor-toolbar-name"><?= h($editItem['label'] ?? 'Profile') ?></div>
+                    </div>
+                    <div class="btn-row">
+                        <button type="submit" form="profile_form" class="btn-save">Save Profile</button>
+                        <form method="post" action="profiles.php" onsubmit="return confirm('Delete this profile?');" style="margin:0;">
+                            <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
+                            <input type="hidden" name="id" value="<?= h($editItem['id'] ?? '') ?>">
+                            <input type="hidden" name="delete_profile" value="1">
+                            <button type="submit" class="btn-danger">Delete Profile</button>
+                        </form>
+                    </div>
                 </div>
                 <form method="post" action="profiles.php" id="profile_form">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
@@ -707,47 +919,58 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             </label>
                         </div>
                         <div class="top-toggle-wrap">
-                            <div class="top-toggle-title">Profile Runtime Toggles</div>
-                            <div class="toggle-grid">
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">DYNAMIC_PROFILE_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
-                                </div>
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">MIDDLE_TERM_MEMORY_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
-                                </div>
-                                <div class="toggle-card">
-                                    <label>
-                                        <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
-                                        <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
-                                        <span class="toggle-title">AUTO_DIARY_ENABLED</span>
-                                    </label>
-                                    <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
-                                </div>
+                            <div class="top-toggle-groups">
+                                <section class="top-toggle-group">
+                                    <div class="top-toggle-title">Profiles &amp; Memories</div>
+                                    <div class="toggle-grid">
+                                        <div class="toggle-card">
+                                            <div class="toggle-card-title-row"><label>
+                                                <input type="hidden" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[DYNAMIC_PROFILE_ENABLED]" value="1" <?= $metaBool('DYNAMIC_PROFILE_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Dynamic Profile</span>
+                                            </label><?= profile_setting_sync_button('DYNAMIC_PROFILE_ENABLED', 'Dynamic Profile') ?></div>
+                                            <div class="toggle-desc">Enables profile field updates inferred from live conversation context.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <div class="toggle-card-title-row"><label>
+                                                <input type="hidden" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[MIDDLE_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('MIDDLE_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Middle Term Memory</span>
+                                            </label><?= profile_setting_sync_button('MIDDLE_TERM_MEMORY_ENABLED', 'Middle Term Memory') ?></div>
+                                            <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="top-toggle-group">
+                                    <div class="top-toggle-title">Diary</div>
+                                    <div class="toggle-grid">
+                                        <div class="toggle-card">
+                                            <div class="toggle-card-title-row"><label>
+                                                <input type="hidden" name="meta_vis[AUTO_DIARY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[AUTO_DIARY_ENABLED]" value="1" <?= $metaBool('AUTO_DIARY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Auto Diary</span>
+                                            </label><?= profile_setting_sync_button('AUTO_DIARY_ENABLED', 'Auto Diary') ?></div>
+                                            <div class="toggle-desc">Allows NPCs on this profile to write automatic diaries from background day processing.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <div class="toggle-card-title-row"><label>
+                                                <input type="hidden" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[LATEST_DIARY_CONTEXT_ENABLED]" value="1" <?= $metaBool('LATEST_DIARY_CONTEXT_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Include Latest Diary Entry</span>
+                                            </label><?= profile_setting_sync_button('LATEST_DIARY_CONTEXT_ENABLED', 'Include Latest Diary Entry') ?></div>
+                                            <div class="toggle-desc">Adds the NPC's latest diary entry to the character section of every response prompt.</div>
+                                        </div>
+                                    </div>
+                                </section>
                             </div>
                         </div>
 
                         <?php
-                            $llmFields = [
-                                'response_connector' => 'Response Connector',
-                                'diary_connector' => 'Diary Connector',
-                                'autochat_connector' => 'Autochat Connector',
-                                'middleterm_connector' => 'Memory Connector',
-                                'backgroundlife_connector' => 'Backgroundlife Connector',
-                                'dynamic_connector' => 'Dynamic Connector',
-                                'relationship_connector' => 'Relationship Connector',
-                            ];
                             $connectorIcons = [
-                                'response_connector' => '&#x1F3AD;',
+                                'llm_primary_id' => '&#x1F3AD;',
+                                'llm_secondary_id' => '&#x26A1;',
+                                'llm_tertiary_id' => '&#x1F9E0;',
+                                'llm_quaternary_id' => '&#x1F9EA;',
                                 'diary_connector' => '&#x1F4D4;',
                                 'autochat_connector' => '&#x1F4AC;',
                                 'middleterm_connector' => '&#x1F9E0;',
@@ -756,7 +979,10 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 'relationship_connector' => '&#x1F91D;',
                             ];
                             $connectorDescriptions = [
-                                'response_connector' => 'General purpose LLM for standard in-character roleplay dialogue.',
+                                'llm_primary_id' => 'Reliable default LLM for normal in-character dialogue.',
+                                'llm_secondary_id' => 'Faster LLM for responses where lower latency is preferred.',
+                                'llm_tertiary_id' => 'Higher-capability LLM for complex or important responses.',
+                                'llm_quaternary_id' => 'Optional model slot for testing new or specialized LLMs.',
                                 'diary_connector' => 'LLM for writing diary entries in the character voice.',
                                 'autochat_connector' => 'LLM used by Autochat to convert player intent into roleplayed speech.',
                                 'middleterm_connector' => 'LLM used for memory summaries and middle-term context refresh.',
@@ -764,52 +990,86 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 'dynamic_connector' => 'LLM that updates dynamic profile fields from recent context.',
                                 'relationship_connector' => 'LLM used by relationship analysis and affinity updates.',
                             ];
-                            foreach ($llmFields as $field => $label):
+                            $connectorGroups = [
+                                [
+                                    'title' => 'Response LLM Modes',
+                                    'description' => 'Assign the connector used by each global response mode.',
+                                    'rows' => [
+                                        ['field' => 'llm_primary_id', 'label' => 'Standard LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_secondary_id', 'label' => 'Fast LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_tertiary_id', 'label' => 'Powerful LLM', 'options' => 'llm'],
+                                        ['field' => 'llm_quaternary_id', 'label' => 'Experimental LLM', 'options' => 'llm'],
+                                    ],
+                                ],
+                                [
+                                    'title' => 'Task Connectors',
+                                    'description' => 'Dedicated connectors for voice and background profile tasks.',
+                                    'rows' => [
+                                        ['field' => 'tts_connector_id', 'label' => 'TTS Connector', 'options' => 'tts'],
+                                        ['field' => 'autochat_connector', 'label' => 'Autochat Connector', 'options' => 'llm'],
+                                        ['field' => 'backgroundlife_connector', 'label' => 'Background Life Connector', 'options' => 'llm'],
+                                        ['field' => 'diary_connector', 'label' => 'Diary Connector', 'options' => 'llm'],
+                                        ['field' => 'middleterm_connector', 'label' => 'Memory Connector', 'options' => 'llm'],
+                                        ['field' => 'dynamic_connector', 'label' => 'Dynamic Connector', 'options' => 'llm'],
+                                        ['field' => 'relationship_connector', 'label' => 'Relationship Connector', 'options' => 'llm'],
+                                    ],
+                                ],
+                            ];
                         ?>
-                            <div>
-                                <label for="<?= h($field) ?>"><span aria-hidden="true"><?= $connectorIcons[$field] ?? '' ?></span> <?= h($label) ?></label>
-                                <select id="<?= h($field) ?>" name="<?= h($field) ?>">
-                                    <option value="">-- None --</option>
-                                    <?php foreach ($llmRows as $row): ?>
-                                        <?php $selected = intval($editItem[$field] ?? 0) === intval($row['id'] ?? 0); ?>
-                                        <option value="<?= h($row['id'] ?? '') ?>" <?= $selected ? 'selected' : '' ?>><?= h($row['name'] ?? ('LLM #' . strval($row['id'] ?? ''))) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div class="connector-help-inline"><?= h($connectorDescriptions[$field] ?? '') ?></div>
-                            </div>
-                        <?php endforeach; ?>
-
-                        <div>
-                            <label for="tts_connector_id"><span aria-hidden="true">&#x1F50A;</span> TTS Connector</label>
-                            <select id="tts_connector_id" name="tts_connector_id">
-                                <option value="">-- None --</option>
-                                <?php foreach ($ttsRows as $row): ?>
-                                    <?php $selected = intval($editItem['tts_connector_id'] ?? 0) === intval($row['id'] ?? 0); ?>
-                                    <option value="<?= h($row['id'] ?? '') ?>" <?= $selected ? 'selected' : '' ?>><?= h($row['name'] ?? ('TTS #' . strval($row['id'] ?? ''))) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div class="connector-help-inline">TTS provider used for this profile's spoken output and voice playback.</div>
+                        <div class="connector-groups-grid">
+                            <?php foreach ($connectorGroups as $connectorGroup): ?>
+                                <section class="connector-group-card">
+                                    <h3 class="connector-group-title"><?= h($connectorGroup['title']) ?></h3>
+                                    <div class="connector-group-subtitle"><?= h($connectorGroup['description']) ?></div>
+                                    <div class="connector-group-fields">
+                                        <?php foreach ($connectorGroup['rows'] as $connectorRow): ?>
+                                            <?php
+                                                $field = $connectorRow['field'];
+                                                $isTts = ($connectorRow['options'] ?? 'llm') === 'tts';
+                                                $optionRows = $isTts ? $ttsRows : $llmRows;
+                                                $description = $isTts
+                                                    ? "TTS provider used for this profile's spoken output and voice playback."
+                                                    : ($connectorDescriptions[$field] ?? '');
+                                            ?>
+                                            <div class="connector-option-card">
+                                                <label for="<?= h($field) ?>"><span aria-hidden="true"><?= $isTts ? '&#x1F50A;' : ($connectorIcons[$field] ?? '') ?></span> <?= h($connectorRow['label']) ?></label>
+                                                <div class="connector-help-inline"><?= h($description) ?></div>
+                                                <select id="<?= h($field) ?>" name="<?= h($field) ?>">
+                                                    <option value="">-- None --</option>
+                                                    <?php foreach ($optionRows as $row): ?>
+                                                        <?php $selected = intval($editItem[$field] ?? 0) === intval($row['id'] ?? 0); ?>
+                                                        <option value="<?= h($row['id'] ?? '') ?>" <?= $selected ? 'selected' : '' ?>><?= h($row['name'] ?? (($isTts ? 'TTS #' : 'LLM #') . strval($row['id'] ?? ''))) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </section>
+                            <?php endforeach; ?>
                         </div>
                     </div>
 
-                    <div style="margin-top:12px;">
+                    <div class="profile-prompt-grid">
+                    <div class="profile-prompt-field">
                         <label for="prompt_head">Prompt Head</label>
                         <div class="setting-desc" style="margin-bottom:6px;">High-priority instructions injected before the profile prompt for this NPC profile.</div>
                         <textarea id="prompt_head" name="prompt_head"><?= h($editItem['prompt_head'] ?? '') ?></textarea>
                     </div>
-                    <div style="margin-top:10px;">
+                    <div class="profile-prompt-field">
                         <label for="profile_prompt">Profile Prompt</label>
                         <div class="setting-desc" style="margin-bottom:6px;">Main roleplay profile prompt used as the baseline behavior for this profile.</div>
                         <textarea id="profile_prompt" name="profile_prompt"><?= h($editItem['profile_prompt'] ?? '') ?></textarea>
                     </div>
-                    <div style="margin-top:10px;">
-                        <label for="meta_diary_prompt">Diary Prompt</label>
+                    <div class="profile-prompt-field">
+                        <div class="setting-key"><label for="meta_diary_prompt" style="margin:0;">Diary Prompt</label><?= profile_setting_sync_button('DIARY_PROMPT', 'Diary Prompt') ?></div>
                         <div class="setting-desc" style="margin-bottom:6px;">Template used when generating diary entries for this profile.</div>
                         <textarea id="meta_diary_prompt" name="meta_vis[DIARY_PROMPT]" style="min-height:88px;"><?= h(strval($metaData['DIARY_PROMPT'] ?? ($metaDefaults['DIARY_PROMPT'] ?? ''))) ?></textarea>
+                    </div>
                     </div>
                     <div class="meta-box">
                         <h3>Metadata Settings</h3>
 
+                        <div class="meta-settings-grid">
                         <div class="provider-card" id="meta_cat_conversation">
                             <div class="provider-head">
                                 <div class="provider-title">
@@ -827,7 +1087,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <div class="provider-body">
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">RECHAT_RESPONSES</div>
+                                        <div class="setting-key"><span>RECHAT_RESPONSES</span><?= profile_setting_sync_button('RECHAT_RESPONSES', 'Rechat Responses') ?></div>
                                         <div class="setting-desc">Maximum number of follow-up responses allowed per conversation chain.</div>
                                     </div>
                                     <div class="range-pair">
@@ -837,7 +1097,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">RECHAT_PROBABILITY</div>
+                                        <div class="setting-key"><span>RECHAT_PROBABILITY</span><?= profile_setting_sync_button('RECHAT_PROBABILITY', 'Rechat Probability') ?></div>
                                         <div class="setting-desc">Primary rechat probability used by current flow (0-100).</div>
                                     </div>
                                     <div class="range-pair">
@@ -847,7 +1107,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">BORED_EVENT_CHANCE</div>
+                                        <div class="setting-key"><span>BORED_EVENT_CHANCE</span><?= profile_setting_sync_button('BORED_EVENT_CHANCE', 'Bored Event Chance') ?></div>
                                         <div class="setting-desc">Chance for bored/board event generated dialogue in idle cycles (0-100).</div>
                                     </div>
                                     <div class="range-pair">
@@ -868,7 +1128,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <div class="provider-body">
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">CONTEXT_HISTORY</div>
+                                        <div class="setting-key"><span>CONTEXT_HISTORY</span><?= profile_setting_sync_button('CONTEXT_HISTORY', 'Context History') ?></div>
                                         <div class="setting-desc">Recent context lines included in normal response prompts.</div>
                                     </div>
                                     <div class="range-pair">
@@ -878,7 +1138,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">CONTEXT_HISTORY_DIARY</div>
+                                        <div class="setting-key"><span>CONTEXT_HISTORY_DIARY</span><?= profile_setting_sync_button('CONTEXT_HISTORY_DIARY', 'Diary Context History') ?></div>
                                         <div class="setting-desc">Recent lines passed to diary-generation prompts.</div>
                                     </div>
                                     <div class="range-pair">
@@ -888,7 +1148,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">CONTEXT_HISTORY_DYNAMIC_PROFILE</div>
+                                        <div class="setting-key"><span>CONTEXT_HISTORY_DYNAMIC_PROFILE</span><?= profile_setting_sync_button('CONTEXT_HISTORY_DYNAMIC_PROFILE', 'Dynamic Profile Context History') ?></div>
                                         <div class="setting-desc">History window used when computing dynamic profile updates.</div>
                                     </div>
                                     <div class="range-pair">
@@ -909,7 +1169,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                             <div class="provider-body">
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">DIARY_DAYS</div>
+                                        <div class="setting-key"><span>DIARY_DAYS</span><?= profile_setting_sync_button('DIARY_DAYS', 'Diary Days') ?></div>
                                         <div class="setting-desc">Auto Diary timer in in-game days. Auto diary only writes when this many days have passed since the NPC's last diary entry.</div>
                                     </div>
                                     <div class="range-pair">
@@ -919,7 +1179,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">AUTO_DIARY_MIN_EVENTS</div>
+                                        <div class="setting-key"><span>AUTO_DIARY_MIN_EVENTS</span><?= profile_setting_sync_button('AUTO_DIARY_MIN_EVENTS', 'Auto Diary Minimum Events') ?></div>
                                         <div class="setting-desc">Minimum number of relevant events required in the diary window before auto diary writes an entry.</div>
                                     </div>
                                     <div class="range-pair">
@@ -929,7 +1189,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">AUTO_DIARY_HOUR</div>
+                                        <div class="setting-key"><span>AUTO_DIARY_HOUR</span><?= profile_setting_sync_button('AUTO_DIARY_HOUR', 'Auto Diary Hour') ?></div>
                                         <div class="setting-desc">In-game 24-hour time when auto diary becomes eligible to write for the previous completed day.</div>
                                     </div>
                                     <div class="range-pair">
@@ -939,7 +1199,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 </div>
                                 <div class="setting-row">
                                     <div>
-                                        <div class="setting-key">DIARY_COOLDOWN</div>
+                                        <div class="setting-key"><span>DIARY_COOLDOWN</span><?= profile_setting_sync_button('DIARY_COOLDOWN', 'Diary Cooldown') ?></div>
                                         <div class="setting-desc">Real-time cooldown in seconds between diary writes for the same NPC.</div>
                                     </div>
                                     <div class="range-pair">
@@ -955,6 +1215,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                 <div class="provider-title">
                                     <div class="provider-icon">&#x1F6E0;&#xFE0F;</div>
                                     <div>Dynamic Profile Fields</div>
+                                    <?= profile_setting_sync_button('DYNAMIC_PROFILE_FIELDS', 'Dynamic Profile Fields') ?>
                                 </div>
                             </div>
                             <div class="provider-body">
@@ -969,6 +1230,7 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                                     <?php endforeach; ?>
                                 </div>
                             </div>
+                        </div>
                         </div>
 
                         <details class="meta-advanced" id="meta_cat_advanced">
@@ -1018,6 +1280,25 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                     <div>
                         <label for="import_label">Optional New Label Override</label>
                         <input id="import_label" name="import_label" type="text" placeholder="Leave blank to use file profile label">
+                    </div>
+                    <div style="padding:12px; background:#1f1f1f; border:1px solid #3a3a3a; border-radius:8px;">
+                        <div style="font-weight:700; color:#e6b76c; margin-bottom:8px;">Import Assignment Options</div>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="make_default_npc" value="1" style="margin-top:3px;">
+                            <span>Make Default Profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="migrate_old_default_npcs" value="1" style="margin-top:3px;">
+                            <span>Move current default NPCs to this profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" name="make_player_faction_profile" value="1" style="margin-top:3px;">
+                            <span>Make Player Faction Profile</span>
+                        </label>
+                        <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:0; cursor:pointer;">
+                            <input type="checkbox" name="migrate_player_faction_npcs" value="1" style="margin-top:3px;">
+                            <span>Move current player-faction NPCs to this profile</span>
+                        </label>
                     </div>
                     <div class="setting-desc" style="margin-top:2px;">
                         Imports profile prompt head/prompt, metadata, and connector assignments (when matching connector ids exist in Stobe).
@@ -1433,6 +1714,49 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
                 alert('Metadata must be valid JSON.');
             }
         });
+
+        document.querySelectorAll('.profile-setting-sync-btn').forEach(function (button) {
+            button.addEventListener('click', async function () {
+                const settingKey = button.dataset.settingKey || '';
+                const settingLabel = button.dataset.settingLabel || 'this setting';
+                if (!settingKey || !window.confirm('Copy "' + settingLabel + '" from this profile to all profiles? Other profile settings will not change.')) {
+                    return;
+                }
+
+                const metadataInput = document.getElementById('metadata');
+                if (metadataInput) {
+                    try {
+                        metadataInput.value = JSON.stringify(JSON.parse(metadataInput.value || '{}'), null, 2);
+                    } catch (_error) {
+                        notify('Metadata must be valid JSON.', true);
+                        return;
+                    }
+                }
+
+                const formData = new FormData(form);
+                formData.append('sync_profile_setting', settingKey);
+                appendEmbed(formData);
+                button.disabled = true;
+                notify('Copying ' + settingLabel + '...', false);
+                try {
+                    const response = await fetch(buildPageUrl(), {
+                        method: 'POST',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        body: formData
+                    });
+                    const payload = await response.json();
+                    if (!payload || payload.ok !== true) {
+                        throw new Error(payload && payload.error ? String(payload.error) : 'Request failed');
+                    }
+                    const count = Number(payload.synced_profiles || 0);
+                    notify(count > 0 ? (settingLabel + ' copied to ' + count + ' profiles') : 'Profile saved', false);
+                } catch (error) {
+                    notify(error && error.message ? String(error.message) : 'Failed to copy profile setting', true);
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
     }
 
     const profileTestOpenBtn = document.getElementById('profile_test_all_btn');
@@ -1443,13 +1767,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
     }
     if (profileTestCloseBtn) {
         profileTestCloseBtn.addEventListener('click', closeProfileTestModal);
-    }
-    if (profileTestModal) {
-        profileTestModal.addEventListener('click', function (event) {
-            if (event.target === profileTestModal) {
-                closeProfileTestModal();
-            }
-        });
     }
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && profileTestModal && profileTestModal.style.display === 'flex') {
@@ -1474,17 +1791,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             }
         });
     }
-    if (importModal) {
-        importModal.addEventListener('click', function (event) {
-            if (event.target === importModal) {
-                closeModal(importModal);
-                if (importForm) {
-                    importForm.reset();
-                }
-            }
-        });
-    }
-
     const rulesModal = document.getElementById('import_rules_modal');
     const rulesOpenBtn = document.getElementById('open_import_rules_btn');
     const rulesCloseBtn = document.getElementById('close_rules_modal');
@@ -1697,13 +2003,6 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
             }
             if (action === 'delete') {
                 deleteRule(id);
-            }
-        });
-    }
-    if (rulesModal) {
-        rulesModal.addEventListener('click', function (event) {
-            if (event.target === rulesModal) {
-                closeModal(rulesModal);
             }
         });
     }
