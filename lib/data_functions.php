@@ -12395,31 +12395,53 @@ function ensureDefaultCoreProfile(): int {
         return intval($row['id'] ?? 0);
     };
 
-    $responseConnectorId = $connectorIdByName('Gemini 2.5 Flash');
-    if ($responseConnectorId <= 0) {
+    $primaryConnectorId = $connectorIdByName('GLM 4.7');
+    if ($primaryConnectorId <= 0) {
+        $primaryConnectorId = $connectorIdByName('Gemini 2.5 Flash');
+    }
+    if ($primaryConnectorId <= 0) {
         $defaultLlm = getDefaultLlmConnector();
-        $responseConnectorId = intval($defaultLlm['id'] ?? 0);
+        $primaryConnectorId = intval($defaultLlm['id'] ?? 0);
     }
-    if ($responseConnectorId <= 0) {
-        $responseConnectorId = $connectorIdByName('OpenRouter Default');
+    if ($primaryConnectorId <= 0) {
+        $primaryConnectorId = $connectorIdByName('OpenRouter Default');
     }
-    $responseConnectorIdOrNull = $responseConnectorId > 0 ? $responseConnectorId : null;
-    $diaryConnectorIdOrNull = $responseConnectorIdOrNull;
+    $primaryConnectorIdOrNull = $primaryConnectorId > 0 ? $primaryConnectorId : null;
+
+    $secondaryConnectorId = $connectorIdByName('Gemini 2.5 Flash Lite');
+    if ($secondaryConnectorId <= 0) {
+        $secondaryConnectorId = $primaryConnectorId;
+    }
+    $secondaryConnectorIdOrNull = $secondaryConnectorId > 0 ? $secondaryConnectorId : null;
+
+    $tertiaryConnectorId = $connectorIdByName('GLM 5.2');
+    if ($tertiaryConnectorId <= 0) {
+        $tertiaryConnectorId = $primaryConnectorId;
+    }
+    $tertiaryConnectorIdOrNull = $tertiaryConnectorId > 0 ? $tertiaryConnectorId : null;
+
+    $quaternaryConnectorId = $connectorIdByName('DeepSeek V4 Pro');
+    if ($quaternaryConnectorId <= 0) {
+        $quaternaryConnectorId = $primaryConnectorId;
+    }
+    $quaternaryConnectorIdOrNull = $quaternaryConnectorId > 0 ? $quaternaryConnectorId : null;
+
+    $diaryConnectorIdOrNull = $primaryConnectorIdOrNull;
 
     $autochatConnectorId = $connectorIdByName('Gemini 2.5 Flash Lite');
     if ($autochatConnectorId <= 0) {
-        $autochatConnectorId = $responseConnectorId;
+        $autochatConnectorId = $primaryConnectorId;
     }
     $autochatConnectorIdOrNull = $autochatConnectorId > 0 ? $autochatConnectorId : null;
 
     $memoryConnectorId = $connectorIdByName('Mistral Small 3.2 24B');
     if ($memoryConnectorId <= 0) {
-        $memoryConnectorId = $responseConnectorId;
+        $memoryConnectorId = $primaryConnectorId;
     }
     $memoryConnectorIdOrNull = $memoryConnectorId > 0 ? $memoryConnectorId : null;
     $backgroundlifeConnectorIdOrNull = $memoryConnectorIdOrNull;
-    $dynamicConnectorIdOrNull = $responseConnectorIdOrNull;
-    $relationshipConnectorIdOrNull = $responseConnectorIdOrNull;
+    $dynamicConnectorIdOrNull = $primaryConnectorIdOrNull;
+    $relationshipConnectorIdOrNull = $primaryConnectorIdOrNull;
 
     $ttsConnectorId = ensurePocketTtsPlaceholderConnectorId();
     $ttsConnectorIdOrNull = $ttsConnectorId > 0 ? $ttsConnectorId : null;
@@ -12439,27 +12461,33 @@ function ensureDefaultCoreProfile(): int {
              SET is_default_npc = TRUE,
                  prompt_head = COALESCE(prompt_head, ''),
                  profile_prompt = COALESCE(profile_prompt, ''),
-                 llm_primary_id = COALESCE($2::INT, llm_primary_id, response_connector),
-                 response_connector = COALESCE($2::INT, response_connector),
-                 diary_connector = COALESCE($3::INT, diary_connector),
-                 autochat_connector = COALESCE($4::INT, autochat_connector),
-                 middleterm_connector = COALESCE($5::INT, middleterm_connector),
-                 backgroundlife_connector = COALESCE($6::INT, backgroundlife_connector),
-                 dynamic_connector = COALESCE($7::INT, dynamic_connector),
-                 relationship_connector = COALESCE($8::INT, relationship_connector),
-                 tts_connector_id = COALESCE($9::INT, tts_connector_id),
-                 metadata = CASE
+                  llm_primary_id = COALESCE(llm_primary_id, response_connector, $2::INT),
+                  llm_secondary_id = COALESCE(llm_secondary_id, $3::INT),
+                  llm_tertiary_id = COALESCE(llm_tertiary_id, $4::INT),
+                  llm_quaternary_id = COALESCE(llm_quaternary_id, $5::INT),
+                  response_connector = COALESCE(response_connector, llm_primary_id, $2::INT),
+                  diary_connector = COALESCE($6::INT, diary_connector),
+                  autochat_connector = COALESCE($7::INT, autochat_connector),
+                  middleterm_connector = COALESCE($8::INT, middleterm_connector),
+                  backgroundlife_connector = COALESCE($9::INT, backgroundlife_connector),
+                  dynamic_connector = COALESCE($10::INT, dynamic_connector),
+                  relationship_connector = COALESCE($11::INT, relationship_connector),
+                  tts_connector_id = COALESCE($12::INT, tts_connector_id),
+                  metadata = CASE
                     WHEN metadata IS NULL
                       OR metadata = '[]'::jsonb
                       OR jsonb_typeof(metadata) <> 'object'
-                    THEN $10::jsonb
-                    ELSE $10::jsonb || metadata
+                    THEN $13::jsonb
+                    ELSE $13::jsonb || metadata
                  END,
                  updated_at = NOW()
              WHERE id = $1",
             [
                 $profileId,
-                $responseConnectorIdOrNull,
+                $primaryConnectorIdOrNull,
+                $secondaryConnectorIdOrNull,
+                $tertiaryConnectorIdOrNull,
+                $quaternaryConnectorIdOrNull,
                 $diaryConnectorIdOrNull,
                 $autochatConnectorIdOrNull,
                 $memoryConnectorIdOrNull,
@@ -12478,6 +12506,9 @@ function ensureDefaultCoreProfile(): int {
                 prompt_head,
                 profile_prompt,
                 llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -12488,12 +12519,15 @@ function ensureDefaultCoreProfile(): int {
                 tts_connector_id,
                 metadata
              ) VALUES (
-                $1, TRUE, '', '', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
+                $1, TRUE, '', '', $2, $3, $4, $5, $2, $6, $7, $8, $9, $10, $11, $12, $13::jsonb
             )
             RETURNING id",
             [
                 $profileLabel,
-                $responseConnectorIdOrNull,
+                $primaryConnectorIdOrNull,
+                $secondaryConnectorIdOrNull,
+                $tertiaryConnectorIdOrNull,
+                $quaternaryConnectorIdOrNull,
                 $diaryConnectorIdOrNull,
                 $autochatConnectorIdOrNull,
                 $memoryConnectorIdOrNull,
