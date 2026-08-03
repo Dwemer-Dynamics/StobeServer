@@ -7284,6 +7284,7 @@ function buildWorldStateBlock(array $npcData): string {
     ));
     $merchantInventory = truncatePromptValue($merchantInventoryRaw, 3600);
     if ($includeMerchantInventory && $merchantInventory !== '') {
+        $fields['merchant_inventory_rule'] = "This is the character's live stock currently offered for sale. It overrides conflicting biography, occupation, goals, and earlier dialogue. When asked about goods or prices, acknowledge that the character is trading and answer from this inventory.";
         $fields['merchant_inventory'] = $merchantInventory;
     }
 
