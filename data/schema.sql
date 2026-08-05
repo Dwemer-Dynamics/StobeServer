@@ -1323,6 +1323,15 @@ CREATE TABLE IF NOT EXISTS core_api_badge (
 
 CREATE INDEX IF NOT EXISTS idx_core_api_badge_label_lower ON core_api_badge (LOWER(label));
 
+CREATE TABLE IF NOT EXISTS core_stt_connector (
+    id SERIAL PRIMARY KEY,
+    driver TEXT NOT NULL DEFAULT 'parakeet',
+    label TEXT NOT NULL DEFAULT 'Global STT Connector',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    api_badge_id INT REFERENCES core_api_badge(id) ON DELETE SET NULL,
+    url TEXT
+);
+
 CREATE TABLE IF NOT EXISTS core_llm_connector (
     id SERIAL PRIMARY KEY,
     name VARCHAR(128) UNIQUE NOT NULL,
@@ -3671,12 +3680,27 @@ INSERT INTO core_api_badge (label, api_key) VALUES
 ('OpenRouter', ''),
 ('OpenAI', ''),
 ('Google', ''),
+('Deepgram', ''),
+('Azure', ''),
 ('Cartesia', ''),
 ('Inworld', ''),
 ('Nano-GPT', ''),
 ('Groq', ''),
 ('Player2', '019cf504-1461-74e7-b4da-045b14e9019d')
 ON CONFLICT (label) DO NOTHING;
+
+INSERT INTO core_stt_connector (driver, label, metadata, url)
+SELECT 'parakeet', 'Global STT Connector',
+       '{"LANGUAGE":"en","TRANSLATE":false,"TIMEOUT":60}'::jsonb,
+       'http://127.0.0.1:8022/v1/audio/transcriptions'
+WHERE NOT EXISTS (SELECT 1 FROM core_stt_connector);
+
+INSERT INTO general_settings (id, value, description, updated_at)
+SELECT 'GLOBAL_STT_CONNECTOR_ID', id::text, 'Active speech-to-text connector.', NOW()
+FROM core_stt_connector
+ORDER BY CASE WHEN driver = 'parakeet' THEN 0 ELSE 1 END, id ASC
+LIMIT 1
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO core_llm_connector (
     name,
