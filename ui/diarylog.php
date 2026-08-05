@@ -681,11 +681,12 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
         <table class="event-table" id="event-table">
             <colgroup>
                 <col style="width: 12%;">
-                <col style="width: 34%;">
+                <col style="width: 30%;">
                 <col style="width: 14%;">
                 <col style="width: 10%;">
-                <col style="width: 25%;">
+                <col style="width: 21%;">
                 <col style="width: 5%;">
+                <col style="width: 8%;">
             </colgroup>
             <tr>
                 <th>Topic</th>
@@ -694,10 +695,11 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
                 <th>Tags</th>
                 <th>Location & Kenshi Calendar</th>
                 <th>Time(UTC)</th>
+                <th>Audio</th>
             </tr>
             <?php if (count($rows) === 0): ?>
                 <tr>
-                    <td colspan="6" style="text-align: center; padding: 24px;">
+                    <td colspan="7" style="text-align: center; padding: 24px;">
                         No diary entries found for this date<?= ($selectedPerson !== "") ? " and person" : "" ?>.
                     </td>
                 </tr>
@@ -706,6 +708,7 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
                     <?php $processedRow = processDiaryRow($row, false); ?>
                     <?php
                     $modalPayload = [
+                        "rowid" => intval($row["rowid"] ?? 0),
                         "topic" => trim(strval($row["topic"] ?? "Diary Entry")),
                         "content" => trim(strval($row["content"] ?? "")),
                         "people" => parsePeopleList($row["people"] ?? ""),
@@ -723,6 +726,14 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
                         <td><?= $processedRow["Tags"] ?></td>
                         <td><?= $processedRow["Location & Kenshi Calendar"] ?></td>
                         <td><?= $processedRow["Time(UTC)"] ?></td>
+                        <td>
+                            <button type="button"
+                                    class="log-action-button diary-audio-button"
+                                    data-diary-audio-entry="<?= intval($row["rowid"] ?? 0) ?>"
+                                    onclick="event.stopPropagation(); toggleDiaryAudio(<?= intval($row["rowid"] ?? 0) ?>);">
+                                &#9654; Play Audio
+                            </button>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
             <?php endif; ?>
@@ -743,6 +754,14 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
                 <div class="diary-modal-entry" id="diaryModalContent"></div>
             </div>
             <div class="modal-footer">
+                <button type="button"
+                        id="diaryModalAudioButton"
+                        class="log-action-button diary-audio-button"
+                        data-diary-audio-entry="0"
+                        onclick="toggleDiaryAudio(Number(this.dataset.diaryAudioEntry || 0));">
+                    &#9654; Play Audio
+                </button>
+                <span id="diaryAudioStatus" class="diary-audio-status" aria-live="polite"></span>
                 <button type="button" class="log-action-button" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
@@ -755,7 +774,84 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
     const diaryEntryModal = diaryEntryModalElement ? new bootstrap.Modal(diaryEntryModalElement) : null;
     const personFilterInput = document.getElementById('person');
     const personFilterForm = personFilterInput ? personFilterInput.form : null;
+    const diaryAudioEndpoint = <?= json_encode($webRoot . '/diary_audio.php', JSON_UNESCAPED_SLASHES) ?>;
+    const diaryAudio = new Audio();
+    let activeDiaryAudioEntryId = 0;
+    let diaryAudioRequest = null;
     let personFilterSubmitTimer = null;
+
+    function setDiaryAudioControls(entryId, label, status = '') {
+        document.querySelectorAll('[data-diary-audio-entry="' + entryId + '"]').forEach((button) => {
+            button.innerHTML = label;
+        });
+        const statusElement = document.getElementById('diaryAudioStatus');
+        if (statusElement) {
+            statusElement.textContent = status;
+        }
+    }
+
+    function stopDiaryAudio() {
+        if (diaryAudioRequest) {
+            diaryAudioRequest.abort();
+            diaryAudioRequest = null;
+        }
+        diaryAudio.pause();
+        diaryAudio.removeAttribute('src');
+        diaryAudio.load();
+        if (activeDiaryAudioEntryId > 0) {
+            setDiaryAudioControls(activeDiaryAudioEntryId, '&#9654; Play Audio');
+        }
+        activeDiaryAudioEntryId = 0;
+    }
+
+    async function toggleDiaryAudio(entryId) {
+        if (!entryId) {
+            return;
+        }
+        if (activeDiaryAudioEntryId === entryId) {
+            stopDiaryAudio();
+            return;
+        }
+
+        stopDiaryAudio();
+        activeDiaryAudioEntryId = entryId;
+        diaryAudioRequest = new AbortController();
+        setDiaryAudioControls(entryId, '&#9632; Stop Audio', 'Generating audio with the NPC voice...');
+
+        try {
+            const response = await fetch(diaryAudioEndpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rowid: entryId}),
+                cache: 'no-store',
+                signal: diaryAudioRequest.signal
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok || !result.audio_url) {
+                throw new Error(result.error || 'Diary audio could not be generated.');
+            }
+            if (activeDiaryAudioEntryId !== entryId) {
+                return;
+            }
+
+            diaryAudioRequest = null;
+            diaryAudio.src = result.audio_url;
+            await diaryAudio.play();
+            setDiaryAudioControls(entryId, '&#9632; Stop Audio', 'Playing ' + (result.author || 'NPC') + '.');
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                return;
+            }
+            const failedEntryId = activeDiaryAudioEntryId;
+            stopDiaryAudio();
+            setDiaryAudioControls(failedEntryId || entryId, '&#9654; Play Audio', error.message || 'Diary audio failed.');
+        }
+    }
+
+    diaryAudio.addEventListener('ended', stopDiaryAudio);
+    if (diaryEntryModalElement) {
+        diaryEntryModalElement.addEventListener('hidden.bs.modal', stopDiaryAudio);
+    }
 
     function submitPersonFilter() {
         if (!personFilterForm) {
@@ -798,6 +894,15 @@ $rows = buildDiaryRows($db, $startOfDay, $endOfDay, $selectedPerson);
             const contentElement = document.getElementById('diaryModalContent');
             if (contentElement) {
                 contentElement.textContent = String(entry.content || '').trim() || '(empty)';
+            }
+
+            const audioButton = document.getElementById('diaryModalAudioButton');
+            if (audioButton) {
+                const entryId = Number(entry.rowid || 0);
+                audioButton.dataset.diaryAudioEntry = String(entryId);
+                audioButton.innerHTML = activeDiaryAudioEntryId === entryId
+                    ? '&#9632; Stop Audio'
+                    : '&#9654; Play Audio';
             }
 
             diaryEntryModal.show();

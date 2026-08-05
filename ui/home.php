@@ -193,7 +193,7 @@ $stats = [
 
 $latestDiaryRows = safeRows(
     $db,
-    "SELECT topic, content, people AS author, localts, gamets
+    "SELECT rowid, topic, content, people AS author, localts, gamets
      FROM diarylog
      ORDER BY localts DESC
      LIMIT 1"
@@ -677,6 +677,7 @@ if (!empty($latestDiary)) {
     $content = nl2br(h($latestDiary['content'] ?? ''));
     $topic = h($latestDiary['topic'] ?? '');
     $gameTime = h(stobeGametsDisplayWithRaw($latestDiary['gamets'] ?? 0));
+    $rowId = intval($latestDiary['rowid'] ?? 0);
     $diaryContent = "
         <div class='diary-entry' style='background: #1a1a1a; padding: 25px; border-radius: 8px; max-width: 1200px; margin: 0 auto;'>
             <div style='background: url(\"/StobeServer/ui/images/paper.jpg\") center/cover; padding: 40px; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);'>
@@ -686,6 +687,10 @@ if (!empty($latestDiary)) {
                     <div style='font-size: 1.2em; padding-top: 8px; font-family: Exo2, Arial, sans-serif !important;'>{$content}</div>
                     <div style='font-size: 0.9em; margin-top: 16px; opacity: .75; font-family: Exo2, Arial, sans-serif !important;'>{$gameTime}</div>
                 </div>
+            </div>
+            <div class='latest-diary-audio-controls'>
+                <button type='button' id='latestDiaryAudioButton' class='action-button' onclick='toggleLatestDiaryAudio({$rowId})'>&#9654; Play Audio</button>
+                <span id='latestDiaryAudioStatus' aria-live='polite'></span>
             </div>
         </div>";
 } else {
@@ -821,6 +826,19 @@ if (count($wordCloud) > 0) {
             margin: 0;
             color: #f8f9fa;
             font-size: 1.2em;
+        }
+
+        .latest-diary-audio-controls {
+            align-items: center;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            padding-top: 14px;
+        }
+
+        #latestDiaryAudioStatus {
+            color: #d7d7d7;
+            font-size: 0.9rem;
         }
 
         .widget-actions {
@@ -1117,6 +1135,73 @@ if (count($wordCloud) > 0) {
     </main>
 
     <script>
+        const latestDiaryAudioEndpoint = <?= json_encode($webRoot . '/diary_audio.php', JSON_UNESCAPED_SLASHES) ?>;
+        const latestDiaryAudio = new Audio();
+        let latestDiaryAudioEntryId = 0;
+        let latestDiaryAudioRequest = null;
+
+        function stopLatestDiaryAudio(status = '') {
+            if (latestDiaryAudioRequest) {
+                latestDiaryAudioRequest.abort();
+                latestDiaryAudioRequest = null;
+            }
+            latestDiaryAudio.pause();
+            latestDiaryAudio.removeAttribute('src');
+            latestDiaryAudio.load();
+            latestDiaryAudioEntryId = 0;
+            const button = document.getElementById('latestDiaryAudioButton');
+            const statusElement = document.getElementById('latestDiaryAudioStatus');
+            if (button) button.innerHTML = '&#9654; Play Audio';
+            if (statusElement) statusElement.textContent = status;
+        }
+
+        async function toggleLatestDiaryAudio(entryId) {
+            if (!entryId) {
+                return;
+            }
+            if (latestDiaryAudioEntryId === entryId) {
+                stopLatestDiaryAudio();
+                return;
+            }
+
+            stopLatestDiaryAudio();
+            latestDiaryAudioEntryId = entryId;
+            latestDiaryAudioRequest = new AbortController();
+            const button = document.getElementById('latestDiaryAudioButton');
+            const statusElement = document.getElementById('latestDiaryAudioStatus');
+            if (button) button.innerHTML = '&#9632; Stop Audio';
+            if (statusElement) statusElement.textContent = 'Generating audio with the NPC voice...';
+
+            try {
+                const response = await fetch(latestDiaryAudioEndpoint, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({rowid: entryId}),
+                    cache: 'no-store',
+                    signal: latestDiaryAudioRequest.signal
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok || !result.audio_url) {
+                    throw new Error(result.error || 'Diary audio could not be generated.');
+                }
+                if (latestDiaryAudioEntryId !== entryId) {
+                    return;
+                }
+
+                latestDiaryAudioRequest = null;
+                latestDiaryAudio.src = result.audio_url;
+                await latestDiaryAudio.play();
+                if (statusElement) statusElement.textContent = 'Playing ' + (result.author || 'NPC') + '.';
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    return;
+                }
+                stopLatestDiaryAudio(error.message || 'Diary audio failed.');
+            }
+        }
+
+        latestDiaryAudio.addEventListener('ended', () => stopLatestDiaryAudio());
+
         function openModal(modalId) {
             const modal = document.getElementById(modalId);
             if (modal) {
