@@ -6648,8 +6648,6 @@ function storeGameData(string $name, string $type, array $data): bool {
     $metadata['last_gamedata_type'] = $type;
     $metadata['last_gamedata_source'] = 'gamedata.php';
 
-    $metadataJson = normalizeJsonString($metadata);
-
     $currentRace = trim(strval($existing['race'] ?? ''));
     $currentFaction = trim(strval($existing['faction'] ?? ''));
     $race = $incomingRace !== '' ? $incomingRace : $currentRace;
@@ -6661,6 +6659,13 @@ function storeGameData(string $name, string $type, array $data): bool {
     $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, '', $faction);
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if (
+        $ruleProfileId > 0
+        && strtolower(trim(strval($metadata['profile_assignment_source'] ?? ''))) !== 'manual'
+    ) {
+        $metadata['profile_assignment_source'] = 'rule';
+    }
+    $metadataJson = normalizeJsonString($metadata);
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -8825,11 +8830,20 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
         ], 'DEBUG');
     }
 
-    $metadataJson = normalizeJsonString($metadataArray);
     $extendedDataJson = normalizeJsonString(normalizeCoreNpcExtendedData($profile['extended_data'] ?? '{}'));
-    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
-    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $hasExplicitProfileId = array_key_exists('profile_id', $profile);
+    $explicitProfileId = $hasExplicitProfileId ? intval($profile['profile_id'] ?? 0) : 0;
+    $ruleProfileId = $hasExplicitProfileId ? 0 : stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
+    $selectedProfileId = $hasExplicitProfileId
+        ? $explicitProfileId
+        : ($ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId());
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if ($hasExplicitProfileId && $explicitProfileId > 0) {
+        $metadataArray['profile_assignment_source'] = 'manual';
+    } elseif ($ruleProfileId > 0) {
+        $metadataArray['profile_assignment_source'] = 'rule';
+    }
+    $metadataJson = normalizeJsonString($metadataArray);
 
     $profilePersisted = $db->exec(
         "INSERT INTO core_npc_master (
@@ -10818,7 +10832,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $hornAppearanceSentence = $buildShekHornAppearanceSentence($hornAverageNormalized);
     }
 
-    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
+    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path', 'profile_assignment_source'];
     $preservedMetadataApplied = [];
     foreach ($preservedMetadataKeys as $preservedKey) {
         if (
@@ -11107,6 +11121,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $ruleProfileId = stobeResolveProfileIdFromImportRules($name, $race, $gender, $faction);
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if ($ruleProfileId > 0 && strtolower(trim(strval($metadataForStorage['profile_assignment_source'] ?? ''))) !== 'manual') {
+        $metadataForStorage['profile_assignment_source'] = 'rule';
+        $metadataJson = normalizeJsonString($metadataForStorage);
+    }
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -11383,6 +11401,26 @@ function updateNpcById(int $id, array $fields): void {
         }
 
         $fields['metadata'] = $metadata;
+    }
+
+    if (array_key_exists('profile_id', $fields) && $historyRowBefore) {
+        $currentProfileId = intval($historyRowBefore['profile_id'] ?? 0);
+        $selectedProfileId = intval($fields['profile_id'] ?? 0);
+        if ($selectedProfileId !== $currentProfileId) {
+            $metadata = array_key_exists('metadata', $fields)
+                ? normalizeCoreNpcMetadata($fields['metadata'])
+                : normalizeCoreNpcMetadata($historyRowBefore['metadata'] ?? []);
+            $isPlayerFactionNpc = stobeNpcIsInPlayerFactionForProfileOverride($historyRowBefore);
+            $automaticProfileId = $isPlayerFactionNpc
+                ? getPlayerFactionProfileId()
+                : getDefaultNpcProfileId();
+            if ($selectedProfileId <= 0 || $selectedProfileId === $automaticProfileId) {
+                unset($metadata['profile_assignment_source']);
+            } else {
+                $metadata['profile_assignment_source'] = 'manual';
+            }
+            $fields['metadata'] = $metadata;
+        }
     }
 
     $allowedColumns = [
@@ -11670,9 +11708,7 @@ function stobeProfileRuleRegexMatches(?string $pattern, string $value): bool {
     return $result === 1;
 }
 
-function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
-    stobeEnsureCoreProfileImportRulesTable();
-
+function stobeResolveProfileIdFromRuleRows(array $rules, string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
     $nameVal = trim($npcName);
     if ($nameVal === '') {
         return 0;
@@ -11681,7 +11717,6 @@ function stobeResolveProfileIdFromImportRules(string $npcName, string $race = ''
     $genderVal = trim($gender);
     $factionVal = trim($faction);
 
-    $rules = stobeGetCoreProfileImportRules();
     foreach ($rules as $rule) {
         if (!coerceBoolean($rule['enabled'] ?? false)) {
             continue;
@@ -11706,6 +11741,84 @@ function stobeResolveProfileIdFromImportRules(string $npcName, string $race = ''
     }
 
     return 0;
+}
+
+function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
+    stobeEnsureCoreProfileImportRulesTable();
+    return stobeResolveProfileIdFromRuleRows(stobeGetCoreProfileImportRules(), $npcName, $race, $gender, $faction);
+}
+
+// Re-evaluate automatic assignments after a rule changes while preserving manual profile choices.
+function stobeBackfillCoreProfileImportRules(): int {
+    $db = $GLOBALS["db"];
+    $defaultProfileId = getDefaultNpcProfileId();
+    $playerFactionProfileId = getPlayerFactionProfileId();
+    $rules = stobeGetCoreProfileImportRules();
+    $rows = $db->fetchAll(
+        "SELECT id, name, race, gender, faction, profile_id, metadata
+         FROM core_npc
+         WHERE LOWER(name) <> LOWER('The Narrator')
+         ORDER BY id ASC"
+    );
+
+    $updatedCount = 0;
+    foreach ($rows as $row) {
+        $currentProfileId = intval($row['profile_id'] ?? 0);
+        $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+        $source = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+        if ($source === 'manual') {
+            continue;
+        }
+
+        // Existing custom assignments predate assignment-source tracking and are treated as manual.
+        if (
+            $source === ''
+            && $currentProfileId > 0
+            && $currentProfileId !== $defaultProfileId
+            && $currentProfileId !== $playerFactionProfileId
+        ) {
+            continue;
+        }
+
+        $ruleProfileId = stobeResolveProfileIdFromRuleRows(
+            $rules,
+            strval($row['name'] ?? ''),
+            strval($row['race'] ?? ''),
+            strval($row['gender'] ?? ''),
+            strval($row['faction'] ?? '')
+        );
+        if ($ruleProfileId > 0) {
+            $targetProfileId = $ruleProfileId;
+            $metadata['profile_assignment_source'] = 'rule';
+        } elseif ($source === 'rule') {
+            $targetProfileId = stobeNpcIsInPlayerFactionForProfileOverride($row)
+                ? $playerFactionProfileId
+                : $defaultProfileId;
+            unset($metadata['profile_assignment_source']);
+        } else {
+            continue;
+        }
+
+        if ($targetProfileId <= 0) {
+            $targetProfileId = 0;
+        }
+        $targetSource = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+        if ($currentProfileId === $targetProfileId && $source === $targetSource) {
+            continue;
+        }
+
+        $db->exec(
+            "UPDATE core_npc
+             SET profile_id = $1,
+                 metadata = $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $3",
+            [$targetProfileId > 0 ? $targetProfileId : null, normalizeJsonString($metadata), intval($row['id'] ?? 0)]
+        );
+        $updatedCount++;
+    }
+
+    return $updatedCount;
 }
 
 function getAllCoreProfiles(): array {
@@ -12795,7 +12908,7 @@ function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incom
 
     $db = $GLOBALS["db"];
     $row = $db->fetchOne(
-        "SELECT id, name, faction, metadata, profile_id, profile_id_before_player_faction
+        "SELECT id, name, race, gender, faction, metadata, profile_id, profile_id_before_player_faction
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
          LIMIT 1",
@@ -12813,6 +12926,15 @@ function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incom
     $playerFactionProfileId = getPlayerFactionProfileId();
     $currentProfileId = intval($row['profile_id'] ?? 0);
     $backupProfileId = intval($row['profile_id_before_player_faction'] ?? 0);
+    $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+    $assignmentSource = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+    if (
+        in_array($assignmentSource, ['manual', 'rule'], true)
+        && $currentProfileId > 0
+        && stobeProfileIdExists($currentProfileId)
+    ) {
+        return false;
+    }
     $isInPlayerFaction = stobeNpcIsInPlayerFactionForProfileOverride($row, $incomingFaction);
 
     if ($isInPlayerFaction && $playerFactionProfileId > 0) {
