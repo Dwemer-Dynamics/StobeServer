@@ -2752,6 +2752,29 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('core_stt_connector', 202608050001, static function () use ($db): void {
+            $db->exec("CREATE TABLE IF NOT EXISTS core_stt_connector (
+                id SERIAL PRIMARY KEY,
+                driver TEXT NOT NULL DEFAULT 'parakeet',
+                label TEXT NOT NULL DEFAULT 'Global STT Connector',
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                api_badge_id INT REFERENCES core_api_badge(id) ON DELETE SET NULL,
+                url TEXT
+            )");
+            $db->exec("INSERT INTO core_api_badge (label, api_key) VALUES ('Deepgram', ''), ('Azure', '') ON CONFLICT (label) DO NOTHING");
+            $db->exec("INSERT INTO core_stt_connector (driver, label, metadata, url)
+                SELECT 'parakeet', 'Global STT Connector',
+                       '{\"LANGUAGE\":\"en\",\"TRANSLATE\":false,\"TIMEOUT\":60}'::jsonb,
+                       'http://127.0.0.1:8022/v1/audio/transcriptions'
+                WHERE NOT EXISTS (SELECT 1 FROM core_stt_connector)");
+            $db->exec("INSERT INTO general_settings (id, value, description, updated_at)
+                SELECT 'GLOBAL_STT_CONNECTOR_ID', id::text, 'Active speech-to-text connector.', NOW()
+                FROM core_stt_connector
+                ORDER BY CASE WHEN driver = 'parakeet' THEN 0 ELSE 1 END, id ASC
+                LIMIT 1
+                ON CONFLICT (id) DO NOTHING");
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
