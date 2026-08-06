@@ -309,7 +309,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -323,8 +323,7 @@ function stobeInferGroup(string $id): string
         'RELATIONSHIP_SYSTEM_ENABLED',
         'RELATION_SYSTEM_ENABLED',
         'PLAYER_FACTION_CUSTOM_NAME',
-        'PLAYER_FACTION_PROMPT',
-        'PLAYER_DIALOGUE_AUDIO_ENABLED'
+        'PLAYER_FACTION_PROMPT'
     ], true)) {
         return 'Core';
     }
