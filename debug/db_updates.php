@@ -2781,7 +2781,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  VALUES (
                     'PLAYER_DIALOGUE_AUDIO_ENABLED',
                     'true',
-                    'Play TTS for the selected squadmate when sending Chat, Whisper, or Shout messages. Speech bubbles and NPC response audio are unchanged.',
+                    'Play TTS for the selected squadmate speaks.',
                     NOW()
                  )
                  ON CONFLICT (id) DO NOTHING"

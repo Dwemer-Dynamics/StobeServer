@@ -60,7 +60,7 @@ try {
             [
                 'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
                 'value' => 'true',
-                'description' => 'Play TTS for the selected squadmate when sending Chat, Whisper, or Shout messages. Speech bubbles and NPC response audio are unchanged.',
+                'description' => 'Play TTS for the selected squadmate speaks.',
             ],
             [
                 'id' => 'ALWAYS_INSERT_RACE',
