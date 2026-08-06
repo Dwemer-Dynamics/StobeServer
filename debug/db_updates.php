@@ -2775,6 +2775,19 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 ON CONFLICT (id) DO NOTHING");
         });
 
+        $applyPatch('general_settings', 202608050001, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES (
+                    'PLAYER_DIALOGUE_AUDIO_ENABLED',
+                    'true',
+                    'Play TTS for the selected squadmate when sending Chat, Whisper, or Shout messages. Speech bubbles and NPC response audio are unchanged.',
+                    NOW()
+                 )
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
