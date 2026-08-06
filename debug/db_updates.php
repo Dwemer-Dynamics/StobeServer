@@ -2781,7 +2781,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  VALUES (
                     'PLAYER_DIALOGUE_AUDIO_ENABLED',
                     'true',
-                    'Play TTS for the selected squadmate speaks.',
+                    'Play TTS for when the selected player character speaks.',
                     NOW()
                  )
                  ON CONFLICT (id) DO NOTHING"

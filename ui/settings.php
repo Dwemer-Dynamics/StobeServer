@@ -60,7 +60,7 @@ try {
             [
                 'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
                 'value' => 'true',
-                'description' => 'Play TTS for the selected squadmate speaks.',
+                'description' => 'Play TTS for when the selected player character speaks.',
             ],
             [
                 'id' => 'ALWAYS_INSERT_RACE',
