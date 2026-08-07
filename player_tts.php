@@ -23,6 +23,11 @@ if (!$requestTtsEnabled) {
     exit;
 }
 
+if (!getSettingBool('PLAYER_DIALOGUE_AUDIO_ENABLED', true)) {
+    echo json_encode(['ok' => false, 'error' => 'player_dialogue_audio_disabled']);
+    exit;
+}
+
 $text = sanitizeForKenshi($textRaw);
 $tts = stobeSynthesizePocketTtsLine($actor, $text);
 $hash = trim(strval($tts['hash'] ?? ''));

@@ -6648,8 +6648,6 @@ function storeGameData(string $name, string $type, array $data): bool {
     $metadata['last_gamedata_type'] = $type;
     $metadata['last_gamedata_source'] = 'gamedata.php';
 
-    $metadataJson = normalizeJsonString($metadata);
-
     $currentRace = trim(strval($existing['race'] ?? ''));
     $currentFaction = trim(strval($existing['faction'] ?? ''));
     $race = $incomingRace !== '' ? $incomingRace : $currentRace;
@@ -6661,6 +6659,13 @@ function storeGameData(string $name, string $type, array $data): bool {
     $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, '', $faction);
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if (
+        $ruleProfileId > 0
+        && strtolower(trim(strval($metadata['profile_assignment_source'] ?? ''))) !== 'manual'
+    ) {
+        $metadata['profile_assignment_source'] = 'rule';
+    }
+    $metadataJson = normalizeJsonString($metadata);
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -8825,11 +8830,20 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
         ], 'DEBUG');
     }
 
-    $metadataJson = normalizeJsonString($metadataArray);
     $extendedDataJson = normalizeJsonString(normalizeCoreNpcExtendedData($profile['extended_data'] ?? '{}'));
-    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
-    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $hasExplicitProfileId = array_key_exists('profile_id', $profile);
+    $explicitProfileId = $hasExplicitProfileId ? intval($profile['profile_id'] ?? 0) : 0;
+    $ruleProfileId = $hasExplicitProfileId ? 0 : stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
+    $selectedProfileId = $hasExplicitProfileId
+        ? $explicitProfileId
+        : ($ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId());
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if ($hasExplicitProfileId && $explicitProfileId > 0) {
+        $metadataArray['profile_assignment_source'] = 'manual';
+    } elseif ($ruleProfileId > 0) {
+        $metadataArray['profile_assignment_source'] = 'rule';
+    }
+    $metadataJson = normalizeJsonString($metadataArray);
 
     $profilePersisted = $db->exec(
         "INSERT INTO core_npc_master (
@@ -10818,7 +10832,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $hornAppearanceSentence = $buildShekHornAppearanceSentence($hornAverageNormalized);
     }
 
-    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
+    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path', 'profile_assignment_source'];
     $preservedMetadataApplied = [];
     foreach ($preservedMetadataKeys as $preservedKey) {
         if (
@@ -11107,6 +11121,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $ruleProfileId = stobeResolveProfileIdFromImportRules($name, $race, $gender, $faction);
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if ($ruleProfileId > 0 && strtolower(trim(strval($metadataForStorage['profile_assignment_source'] ?? ''))) !== 'manual') {
+        $metadataForStorage['profile_assignment_source'] = 'rule';
+        $metadataJson = normalizeJsonString($metadataForStorage);
+    }
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -11383,6 +11401,26 @@ function updateNpcById(int $id, array $fields): void {
         }
 
         $fields['metadata'] = $metadata;
+    }
+
+    if (array_key_exists('profile_id', $fields) && $historyRowBefore) {
+        $currentProfileId = intval($historyRowBefore['profile_id'] ?? 0);
+        $selectedProfileId = intval($fields['profile_id'] ?? 0);
+        if ($selectedProfileId !== $currentProfileId) {
+            $metadata = array_key_exists('metadata', $fields)
+                ? normalizeCoreNpcMetadata($fields['metadata'])
+                : normalizeCoreNpcMetadata($historyRowBefore['metadata'] ?? []);
+            $isPlayerFactionNpc = stobeNpcIsInPlayerFactionForProfileOverride($historyRowBefore);
+            $automaticProfileId = $isPlayerFactionNpc
+                ? getPlayerFactionProfileId()
+                : getDefaultNpcProfileId();
+            if ($selectedProfileId <= 0 || $selectedProfileId === $automaticProfileId) {
+                unset($metadata['profile_assignment_source']);
+            } else {
+                $metadata['profile_assignment_source'] = 'manual';
+            }
+            $fields['metadata'] = $metadata;
+        }
     }
 
     $allowedColumns = [
@@ -11670,9 +11708,7 @@ function stobeProfileRuleRegexMatches(?string $pattern, string $value): bool {
     return $result === 1;
 }
 
-function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
-    stobeEnsureCoreProfileImportRulesTable();
-
+function stobeResolveProfileIdFromRuleRows(array $rules, string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
     $nameVal = trim($npcName);
     if ($nameVal === '') {
         return 0;
@@ -11681,7 +11717,6 @@ function stobeResolveProfileIdFromImportRules(string $npcName, string $race = ''
     $genderVal = trim($gender);
     $factionVal = trim($faction);
 
-    $rules = stobeGetCoreProfileImportRules();
     foreach ($rules as $rule) {
         if (!coerceBoolean($rule['enabled'] ?? false)) {
             continue;
@@ -11706,6 +11741,84 @@ function stobeResolveProfileIdFromImportRules(string $npcName, string $race = ''
     }
 
     return 0;
+}
+
+function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
+    stobeEnsureCoreProfileImportRulesTable();
+    return stobeResolveProfileIdFromRuleRows(stobeGetCoreProfileImportRules(), $npcName, $race, $gender, $faction);
+}
+
+// Re-evaluate automatic assignments after a rule changes while preserving manual profile choices.
+function stobeBackfillCoreProfileImportRules(): int {
+    $db = $GLOBALS["db"];
+    $defaultProfileId = getDefaultNpcProfileId();
+    $playerFactionProfileId = getPlayerFactionProfileId();
+    $rules = stobeGetCoreProfileImportRules();
+    $rows = $db->fetchAll(
+        "SELECT id, name, race, gender, faction, profile_id, metadata
+         FROM core_npc
+         WHERE LOWER(name) <> LOWER('The Narrator')
+         ORDER BY id ASC"
+    );
+
+    $updatedCount = 0;
+    foreach ($rows as $row) {
+        $currentProfileId = intval($row['profile_id'] ?? 0);
+        $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+        $source = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+        if ($source === 'manual') {
+            continue;
+        }
+
+        // Existing custom assignments predate assignment-source tracking and are treated as manual.
+        if (
+            $source === ''
+            && $currentProfileId > 0
+            && $currentProfileId !== $defaultProfileId
+            && $currentProfileId !== $playerFactionProfileId
+        ) {
+            continue;
+        }
+
+        $ruleProfileId = stobeResolveProfileIdFromRuleRows(
+            $rules,
+            strval($row['name'] ?? ''),
+            strval($row['race'] ?? ''),
+            strval($row['gender'] ?? ''),
+            strval($row['faction'] ?? '')
+        );
+        if ($ruleProfileId > 0) {
+            $targetProfileId = $ruleProfileId;
+            $metadata['profile_assignment_source'] = 'rule';
+        } elseif ($source === 'rule') {
+            $targetProfileId = stobeNpcIsInPlayerFactionForProfileOverride($row)
+                ? $playerFactionProfileId
+                : $defaultProfileId;
+            unset($metadata['profile_assignment_source']);
+        } else {
+            continue;
+        }
+
+        if ($targetProfileId <= 0) {
+            $targetProfileId = 0;
+        }
+        $targetSource = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+        if ($currentProfileId === $targetProfileId && $source === $targetSource) {
+            continue;
+        }
+
+        $db->exec(
+            "UPDATE core_npc
+             SET profile_id = $1,
+                 metadata = $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $3",
+            [$targetProfileId > 0 ? $targetProfileId : null, normalizeJsonString($metadata), intval($row['id'] ?? 0)]
+        );
+        $updatedCount++;
+    }
+
+    return $updatedCount;
 }
 
 function getAllCoreProfiles(): array {
@@ -12395,31 +12508,53 @@ function ensureDefaultCoreProfile(): int {
         return intval($row['id'] ?? 0);
     };
 
-    $responseConnectorId = $connectorIdByName('Gemini 2.5 Flash');
-    if ($responseConnectorId <= 0) {
+    $primaryConnectorId = $connectorIdByName('GLM 4.7');
+    if ($primaryConnectorId <= 0) {
+        $primaryConnectorId = $connectorIdByName('Gemini 2.5 Flash');
+    }
+    if ($primaryConnectorId <= 0) {
         $defaultLlm = getDefaultLlmConnector();
-        $responseConnectorId = intval($defaultLlm['id'] ?? 0);
+        $primaryConnectorId = intval($defaultLlm['id'] ?? 0);
     }
-    if ($responseConnectorId <= 0) {
-        $responseConnectorId = $connectorIdByName('OpenRouter Default');
+    if ($primaryConnectorId <= 0) {
+        $primaryConnectorId = $connectorIdByName('OpenRouter Default');
     }
-    $responseConnectorIdOrNull = $responseConnectorId > 0 ? $responseConnectorId : null;
-    $diaryConnectorIdOrNull = $responseConnectorIdOrNull;
+    $primaryConnectorIdOrNull = $primaryConnectorId > 0 ? $primaryConnectorId : null;
+
+    $secondaryConnectorId = $connectorIdByName('Gemini 2.5 Flash Lite');
+    if ($secondaryConnectorId <= 0) {
+        $secondaryConnectorId = $primaryConnectorId;
+    }
+    $secondaryConnectorIdOrNull = $secondaryConnectorId > 0 ? $secondaryConnectorId : null;
+
+    $tertiaryConnectorId = $connectorIdByName('GLM 5.2');
+    if ($tertiaryConnectorId <= 0) {
+        $tertiaryConnectorId = $primaryConnectorId;
+    }
+    $tertiaryConnectorIdOrNull = $tertiaryConnectorId > 0 ? $tertiaryConnectorId : null;
+
+    $quaternaryConnectorId = $connectorIdByName('DeepSeek V4 Pro');
+    if ($quaternaryConnectorId <= 0) {
+        $quaternaryConnectorId = $primaryConnectorId;
+    }
+    $quaternaryConnectorIdOrNull = $quaternaryConnectorId > 0 ? $quaternaryConnectorId : null;
+
+    $diaryConnectorIdOrNull = $primaryConnectorIdOrNull;
 
     $autochatConnectorId = $connectorIdByName('Gemini 2.5 Flash Lite');
     if ($autochatConnectorId <= 0) {
-        $autochatConnectorId = $responseConnectorId;
+        $autochatConnectorId = $primaryConnectorId;
     }
     $autochatConnectorIdOrNull = $autochatConnectorId > 0 ? $autochatConnectorId : null;
 
     $memoryConnectorId = $connectorIdByName('Mistral Small 3.2 24B');
     if ($memoryConnectorId <= 0) {
-        $memoryConnectorId = $responseConnectorId;
+        $memoryConnectorId = $primaryConnectorId;
     }
     $memoryConnectorIdOrNull = $memoryConnectorId > 0 ? $memoryConnectorId : null;
     $backgroundlifeConnectorIdOrNull = $memoryConnectorIdOrNull;
-    $dynamicConnectorIdOrNull = $responseConnectorIdOrNull;
-    $relationshipConnectorIdOrNull = $responseConnectorIdOrNull;
+    $dynamicConnectorIdOrNull = $primaryConnectorIdOrNull;
+    $relationshipConnectorIdOrNull = $primaryConnectorIdOrNull;
 
     $ttsConnectorId = ensurePocketTtsPlaceholderConnectorId();
     $ttsConnectorIdOrNull = $ttsConnectorId > 0 ? $ttsConnectorId : null;
@@ -12439,27 +12574,33 @@ function ensureDefaultCoreProfile(): int {
              SET is_default_npc = TRUE,
                  prompt_head = COALESCE(prompt_head, ''),
                  profile_prompt = COALESCE(profile_prompt, ''),
-                 llm_primary_id = COALESCE($2::INT, llm_primary_id, response_connector),
-                 response_connector = COALESCE($2::INT, response_connector),
-                 diary_connector = COALESCE($3::INT, diary_connector),
-                 autochat_connector = COALESCE($4::INT, autochat_connector),
-                 middleterm_connector = COALESCE($5::INT, middleterm_connector),
-                 backgroundlife_connector = COALESCE($6::INT, backgroundlife_connector),
-                 dynamic_connector = COALESCE($7::INT, dynamic_connector),
-                 relationship_connector = COALESCE($8::INT, relationship_connector),
-                 tts_connector_id = COALESCE($9::INT, tts_connector_id),
-                 metadata = CASE
+                  llm_primary_id = COALESCE(llm_primary_id, response_connector, $2::INT),
+                  llm_secondary_id = COALESCE(llm_secondary_id, $3::INT),
+                  llm_tertiary_id = COALESCE(llm_tertiary_id, $4::INT),
+                  llm_quaternary_id = COALESCE(llm_quaternary_id, $5::INT),
+                  response_connector = COALESCE(response_connector, llm_primary_id, $2::INT),
+                  diary_connector = COALESCE($6::INT, diary_connector),
+                  autochat_connector = COALESCE($7::INT, autochat_connector),
+                  middleterm_connector = COALESCE($8::INT, middleterm_connector),
+                  backgroundlife_connector = COALESCE($9::INT, backgroundlife_connector),
+                  dynamic_connector = COALESCE($10::INT, dynamic_connector),
+                  relationship_connector = COALESCE($11::INT, relationship_connector),
+                  tts_connector_id = COALESCE($12::INT, tts_connector_id),
+                  metadata = CASE
                     WHEN metadata IS NULL
                       OR metadata = '[]'::jsonb
                       OR jsonb_typeof(metadata) <> 'object'
-                    THEN $10::jsonb
-                    ELSE $10::jsonb || metadata
+                    THEN $13::jsonb
+                    ELSE $13::jsonb || metadata
                  END,
                  updated_at = NOW()
              WHERE id = $1",
             [
                 $profileId,
-                $responseConnectorIdOrNull,
+                $primaryConnectorIdOrNull,
+                $secondaryConnectorIdOrNull,
+                $tertiaryConnectorIdOrNull,
+                $quaternaryConnectorIdOrNull,
                 $diaryConnectorIdOrNull,
                 $autochatConnectorIdOrNull,
                 $memoryConnectorIdOrNull,
@@ -12478,6 +12619,9 @@ function ensureDefaultCoreProfile(): int {
                 prompt_head,
                 profile_prompt,
                 llm_primary_id,
+                llm_secondary_id,
+                llm_tertiary_id,
+                llm_quaternary_id,
                 response_connector,
                 diary_connector,
                 autochat_connector,
@@ -12488,12 +12632,15 @@ function ensureDefaultCoreProfile(): int {
                 tts_connector_id,
                 metadata
              ) VALUES (
-                $1, TRUE, '', '', $2, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
+                $1, TRUE, '', '', $2, $3, $4, $5, $2, $6, $7, $8, $9, $10, $11, $12, $13::jsonb
             )
             RETURNING id",
             [
                 $profileLabel,
-                $responseConnectorIdOrNull,
+                $primaryConnectorIdOrNull,
+                $secondaryConnectorIdOrNull,
+                $tertiaryConnectorIdOrNull,
+                $quaternaryConnectorIdOrNull,
                 $diaryConnectorIdOrNull,
                 $autochatConnectorIdOrNull,
                 $memoryConnectorIdOrNull,
@@ -12761,7 +12908,7 @@ function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incom
 
     $db = $GLOBALS["db"];
     $row = $db->fetchOne(
-        "SELECT id, name, faction, metadata, profile_id, profile_id_before_player_faction
+        "SELECT id, name, race, gender, faction, metadata, profile_id, profile_id_before_player_faction
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
          LIMIT 1",
@@ -12779,6 +12926,15 @@ function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incom
     $playerFactionProfileId = getPlayerFactionProfileId();
     $currentProfileId = intval($row['profile_id'] ?? 0);
     $backupProfileId = intval($row['profile_id_before_player_faction'] ?? 0);
+    $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+    $assignmentSource = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+    if (
+        in_array($assignmentSource, ['manual', 'rule'], true)
+        && $currentProfileId > 0
+        && stobeProfileIdExists($currentProfileId)
+    ) {
+        return false;
+    }
     $isInPlayerFaction = stobeNpcIsInPlayerFactionForProfileOverride($row, $incomingFaction);
 
     if ($isInPlayerFaction && $playerFactionProfileId > 0) {

@@ -16,6 +16,7 @@ try {
 } catch (Throwable $exception) {
     stobeLogException($exception, "Quickstart db update check failed");
 }
+require_once($path . "lib/core/stt_connector.class.php");
 
 function h(mixed $value): string
 {
@@ -423,6 +424,23 @@ function stobeQuickstartMiniMeDefaultUrl(): string
     return 'http://127.0.0.1:8082/';
 }
 
+function stobeQuickstartApplySttSelection(sql $db, string $selectedDriver): int
+{
+    $connector = new STTConnector();
+    $driver = $connector->normalizeDriverValue($selectedDriver);
+    $active = $connector->getActive();
+    $activeDriver = $connector->normalizeDriverValue($active['driver'] ?? '');
+    $metadata = $active && $activeDriver === $driver
+        ? array_merge($connector->defaultsForDriver($driver), $connector->decodeMetadata($active['metadata'] ?? '{}'))
+        : $connector->defaultsForDriver($driver);
+    return $connector->saveGlobal([
+        'driver' => $driver,
+        'metadata' => $metadata,
+        'api_badge_id' => $connector->driverUsesApiBadge($driver) ? $connector->getDefaultApiBadgeIdForDriver($driver) : null,
+        'url' => $active && $activeDriver === $driver ? strval($active['url'] ?? '') : $connector->getDefaultUrlForDriver($driver),
+    ]);
+}
+
 function stobeQuickstartDecodeJsonObject(mixed $raw): array
 {
     if (is_array($raw)) {
@@ -638,45 +656,65 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
     if ($profileId <= 0) {
         return;
     }
-    $responseDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash');
-    if ($responseDefault <= 0) {
-        $responseDefault = stobeQuickstartConnectorIdByName($db, 'OpenRouter Default');
+    $standardDefault = stobeQuickstartConnectorIdByName($db, 'GLM 4.7');
+    if ($standardDefault <= 0) {
+        $standardDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash');
     }
-    if ($responseDefault <= 0) {
+    if ($standardDefault <= 0) {
+        $standardDefault = stobeQuickstartConnectorIdByName($db, 'OpenRouter Default');
+    }
+    if ($standardDefault <= 0) {
         return;
     }
-    $diaryDefault = $responseDefault;
+
+    $fastDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash Lite');
+    if ($fastDefault <= 0) {
+        $fastDefault = $standardDefault;
+    }
+    $powerfulDefault = stobeQuickstartConnectorIdByName($db, 'GLM 5.2');
+    if ($powerfulDefault <= 0) {
+        $powerfulDefault = $standardDefault;
+    }
+    $experimentalDefault = stobeQuickstartConnectorIdByName($db, 'DeepSeek V4 Pro');
+    if ($experimentalDefault <= 0) {
+        $experimentalDefault = $standardDefault;
+    }
+
+    $diaryDefault = $standardDefault;
 
     $autochatDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash Lite');
     if ($autochatDefault <= 0) {
-        $autochatDefault = $responseDefault;
+        $autochatDefault = $standardDefault;
     }
 
     $memoryDefault = stobeQuickstartConnectorIdByName($db, 'Mistral Small 3.2 24B');
     if ($memoryDefault <= 0) {
-        $memoryDefault = $responseDefault;
+        $memoryDefault = $standardDefault;
     }
     $backgroundlifeDefault = $memoryDefault;
-    $dynamicDefault = $responseDefault;
-    $relationshipDefault = $responseDefault;
+    $dynamicDefault = $standardDefault;
+    $relationshipDefault = $standardDefault;
 
     $db->exec(
         "UPDATE core_profiles
           SET llm_primary_id = $1,
-              llm_secondary_id = NULL,
-              llm_tertiary_id = NULL,
-              llm_quaternary_id = NULL,
+              llm_secondary_id = $2,
+              llm_tertiary_id = $3,
+              llm_quaternary_id = $4,
               response_connector = $1,
-             diary_connector = $2,
-             autochat_connector = $3,
-             middleterm_connector = $4,
-             backgroundlife_connector = $5,
-             dynamic_connector = $6,
-             relationship_connector = $7,
+             diary_connector = $5,
+             autochat_connector = $6,
+             middleterm_connector = $7,
+             backgroundlife_connector = $8,
+             dynamic_connector = $9,
+             relationship_connector = $10,
              updated_at = NOW()
-         WHERE id = $8",
+         WHERE id = $11",
         [
-            $responseDefault,
+            $standardDefault,
+            $fastDefault,
+            $powerfulDefault,
+            $experimentalDefault,
             $diaryDefault,
             $autochatDefault,
             $memoryDefault,
@@ -800,6 +838,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && strval($_POST['qs_action'] ?? '') =
     header('Content-Type: application/json');
     try {
         stobeQuickstartUpsertApiKey($db, 'OpenRouter', trim(strval($_POST['openrouter_api_key'] ?? '')));
+        $selectedSttDriver = strval($_POST['stt_driver'] ?? 'parakeet');
+        if (strtolower(trim($selectedSttDriver)) === 'deepgram') {
+            stobeQuickstartUpsertApiKey($db, 'Deepgram', trim(strval($_POST['deepgram_api_key'] ?? '')));
+        }
+        stobeQuickstartApplySttSelection($db, $selectedSttDriver);
 
         $selectedTtsId = intval($_POST['tts_connector_id'] ?? 0);
         $allTtsConnectors = stobeQuickstartFetchTtsConnectors($db);
@@ -918,6 +961,10 @@ if ($ttsConnectorId <= 0 || !isset($ttsById[$ttsConnectorId])) {
 $openrouterApiKey = strval($apiKeyMap['openrouter'] ?? '');
 $cartesiaApiKey = strval($apiKeyMap['cartesia'] ?? '');
 $inworldApiKey = strval($apiKeyMap['inworld'] ?? '');
+$deepgramApiKey = strval($apiKeyMap['deepgram'] ?? '');
+$quickstartSttConnector = new STTConnector();
+$quickstartSttRow = $quickstartSttConnector->getActive() ?: [];
+$quickstartSttDriver = $quickstartSttConnector->normalizeDriverValue($quickstartSttRow['driver'] ?? 'parakeet');
 $player2ConnectorId = stobeQuickstartEnsurePlayer2ConnectorId($db);
 $usePlayer2AllLlm = count($targetProfileRows) > 0;
 foreach ($targetProfileRows as $profileRow) {
@@ -1162,6 +1209,29 @@ foreach ($targetProfileRows as $profileRow) {
         </section>
 
         <section class="qs-section">
+            <h2>STT Service</h2>
+            <p class="qs-help">Choose the speech-to-text service used by Stobe push-to-talk. Parakeet is installed through Dwemer Distro and is the default.</p>
+            <div class="qs-field">
+                <label for="stt_driver">STT Service</label>
+                <select id="stt_driver" name="stt_driver">
+                    <optgroup label="Recommended">
+                        <option value="parakeet"<?= $quickstartSttDriver === 'parakeet' ? ' selected' : '' ?>>Parakeet (Recommended)</option>
+                        <option value="deepgram"<?= $quickstartSttDriver === 'deepgram' ? ' selected' : '' ?>>Deepgram (Recommended)</option>
+                    </optgroup>
+                </select>
+            </div>
+            <div id="deepgram-api-block" class="qs-field"<?= $quickstartSttDriver === 'deepgram' ? '' : ' style="display:none;"' ?>>
+                <label for="deepgram_api_key">Deepgram API Key</label>
+                <div class="qs-inline">
+                    <input id="deepgram_api_key" type="password" name="deepgram_api_key" value="<?= h($deepgramApiKey) ?>" placeholder="Paste Deepgram API key">
+                    <button type="button" onclick="toggleApiInput(this)">Show</button>
+                </div>
+                <a class="qs-link" href="https://console.deepgram.com/" target="_blank" rel="noopener">Create Deepgram key</a>
+            </div>
+            <p class="qs-note">More STT providers are available from Configuration &gt; STT.</p>
+        </section>
+
+        <section class="qs-section">
             <h2>MiniMe Service</h2>
             <p class="qs-help">Checks if MiniMe is reachable at the local default endpoint.</p>
             <div class="qs-field">
@@ -1365,6 +1435,13 @@ async function saveQuickstart() {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
+    const sttSelect = document.getElementById('stt_driver');
+    const deepgramBlock = document.getElementById('deepgram-api-block');
+    if (sttSelect && deepgramBlock) {
+        const syncStt = () => { deepgramBlock.style.display = sttSelect.value === 'deepgram' ? '' : 'none'; };
+        sttSelect.addEventListener('change', syncStt);
+        syncStt();
+    }
     const select = document.getElementById('tts_connector_id');
     const player2Toggle = document.getElementById('use_player2_all_llm');
     if (select) {

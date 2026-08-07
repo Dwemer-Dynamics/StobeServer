@@ -550,6 +550,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_import_rule'])
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['backfill_import_rules'])) {
+    try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
+    header('Content-Type: application/json');
+    try {
+        $backfilled = stobeBackfillCoreProfileImportRules();
+        echo json_encode(['ok' => true, 'backfilled' => $backfilled]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 if (isset($_GET['export_profile'])) {
     $exportId = intval($_GET['export_profile']);
     $profile = getCoreProfileById($exportId);
@@ -1317,12 +1329,13 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                 <h2 class="modal-title">Profile Rules</h2>
                 <div style="display:flex; gap:8px;">
                     <button type="button" id="add_rule_btn" class="btn-save">+ New Rule</button>
+                    <button type="button" id="backfill_rules_btn" class="btn-save">Run on Current Profiles</button>
                     <button type="button" id="close_rules_modal" class="modal-close">Close</button>
                 </div>
             </div>
             <div class="modal-body">
                 <div class="rules-help">
-                    Rules are evaluated top-down by <strong>priority</strong>. First matching rule assigns the selected profile when NPC data is imported.
+                    Rules are evaluated top-down by <strong>priority</strong>. New NPCs use the first matching rule automatically. Use <strong>Run on Current Profiles</strong> to apply rules to NPCs already imported. Manual NPC profile choices always take priority.
                     <div style="margin-top:6px;">
                         Match fields use regex and currently support: <strong>name</strong>, <strong>race</strong>, <strong>gender</strong>, <strong>faction</strong>.
                     </div>
@@ -1795,8 +1808,10 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
     const rulesOpenBtn = document.getElementById('open_import_rules_btn');
     const rulesCloseBtn = document.getElementById('close_rules_modal');
     const addRuleBtn = document.getElementById('add_rule_btn');
+    const backfillRulesBtn = document.getElementById('backfill_rules_btn');
     const rulesList = document.getElementById('rules_list');
     let rulesData = [];
+    const unsavedNewRuleIds = new Set();
 
     function renderProfileSelect(selectedValue) {
         const selected = String(selectedValue ?? '');
@@ -1905,9 +1920,13 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
             formData.append('profile', String(currentProfileId));
         }
         try {
-            await postRulesForm(formData);
+            const payload = await postRulesForm(formData);
+            const newRuleId = parseInt(payload.id, 10) || 0;
+            if (newRuleId > 0) {
+                unsavedNewRuleIds.add(newRuleId);
+            }
             await loadRules();
-            notify('Rule created', false);
+            notify('Rule created. Configure it, then save.', false);
         } catch (error) {
             const message = error && error.message ? String(error.message) : 'Failed to create rule';
             notify(message, true);
@@ -1938,13 +1957,47 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
         formData.append('priority', getCardValue(card, '.rule-priority') || '0');
         formData.append('enabled', getCardValue(card, '.rule-enabled'));
 
+        const isNewRule = unsavedNewRuleIds.has(id);
         try {
             await postRulesForm(formData);
+            unsavedNewRuleIds.delete(id);
             await loadRules();
             notify('Rule saved', false);
+            if (isNewRule && confirm('Apply Profile Rules to current NPC profiles now? Manual NPC profile choices will not be changed.')) {
+                await runRulesOnCurrentProfiles(false);
+            }
         } catch (error) {
             const message = error && error.message ? String(error.message) : 'Failed to save rule';
             notify(message, true);
+        }
+    }
+
+    async function runRulesOnCurrentProfiles(requireConfirmation) {
+        if (
+            requireConfirmation
+            && !confirm('Apply enabled Profile Rules to current NPC profiles? Manual NPC profile choices will not be changed.')
+        ) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('backfill_import_rules', '1');
+        if (backfillRulesBtn) {
+            backfillRulesBtn.disabled = true;
+            backfillRulesBtn.textContent = 'Running...';
+        }
+        try {
+            const payload = await postRulesForm(formData);
+            const updated = parseInt(payload.backfilled, 10) || 0;
+            notify('Updated ' + updated + ' current NPC profile' + (updated === 1 ? '' : 's'), false);
+        } catch (error) {
+            const message = error && error.message ? String(error.message) : 'Failed to apply rules';
+            notify(message, true);
+        } finally {
+            if (backfillRulesBtn) {
+                backfillRulesBtn.disabled = false;
+                backfillRulesBtn.textContent = 'Run on Current Profiles';
+            }
         }
     }
 
@@ -1980,6 +2033,11 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
     if (addRuleBtn) {
         addRuleBtn.addEventListener('click', function () {
             createRule();
+        });
+    }
+    if (backfillRulesBtn) {
+        backfillRulesBtn.addEventListener('click', function () {
+            runRulesOnCurrentProfiles(true);
         });
     }
     if (rulesList) {
