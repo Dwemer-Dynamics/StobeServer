@@ -10361,7 +10361,7 @@ function stobePersistNpcRelationshipMap(string $speakerName, array $relationship
     $serializedJsonbMap = count($normalizedMap) > 0 ? normalizeJsonString($normalizedMap) : '{}';
 
     $db = $GLOBALS["db"];
-    $db->exec(
+    $updated = $db->exec(
         "UPDATE core_npc
          SET relationships = $1,
              extended_data = jsonb_set(
@@ -10374,6 +10374,10 @@ function stobePersistNpcRelationshipMap(string $speakerName, array $relationship
          WHERE id = $3",
         [$serializedMap, $serializedJsonbMap, $npcId]
     );
+    if ($updated === false) {
+        return false;
+    }
+    stobeRelationshipTimelineStamp($npcId);
 
     return true;
 }

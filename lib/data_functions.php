@@ -7731,6 +7731,147 @@ function stobeSortArrayRecursive(mixed $value): mixed {
     return $value;
 }
 
+function stobeRelationshipExtendedDataKeys(): array {
+    return [
+        'relationships',
+        'relationships_analyzed',
+        'relationships_inferred',
+        'relationships_last_eval',
+        'relationships_model',
+        'relationships_updated',
+    ];
+}
+
+function stobeRelationshipTimelineState(mixed $extendedData): ?array {
+    if (is_string($extendedData) && trim($extendedData) !== '') {
+        $extendedData = json_decode($extendedData, true);
+    }
+    if (!is_array($extendedData)) {
+        return null;
+    }
+
+    $state = [];
+    foreach (['relationships', 'relationships_analyzed', 'relationships_inferred', 'relationships_model'] as $key) {
+        if (array_key_exists($key, $extendedData)) {
+            $state[$key] = $extendedData[$key];
+        }
+    }
+    return $state;
+}
+
+// Build an atomic JSONB update that keeps relationship state owned by relationship writers.
+function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
+    $incomingWithoutRelationships = '(' . $incomingExpression . ')';
+    foreach (stobeRelationshipExtendedDataKeys() as $key) {
+        $incomingWithoutRelationships .= " - '" . $key . "'";
+    }
+
+    $relationshipPairs = [];
+    foreach (stobeRelationshipExtendedDataKeys() as $key) {
+        $relationshipPairs[] = "'" . $key . "', (" . $currentExpression . ") -> '" . $key . "'";
+    }
+
+    return '(' . $incomingWithoutRelationships . ') || jsonb_strip_nulls(jsonb_build_object('
+        . implode(', ', $relationshipPairs)
+        . '))';
+}
+
+function stobeRunWithRelationshipExtendedDataWrite(callable $callback): mixed {
+    $hadPrevious = array_key_exists('STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE', $GLOBALS);
+    $previous = $hadPrevious ? $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] : null;
+    $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = true;
+
+    try {
+        return $callback();
+    } finally {
+        if ($hadPrevious) {
+            $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = $previous;
+        } else {
+            unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE']);
+        }
+    }
+}
+
+// Anchor relationship changes to Kenshi time and retain every distinct durable state for rollback.
+function stobeRelationshipTimelineStamp(int $npcId): bool {
+    try {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || $npcId <= 0) {
+            return false;
+        }
+
+        $gamets = 0;
+        if (isset($GLOBALS['gameRequest'][2]) && is_numeric($GLOBALS['gameRequest'][2])) {
+            $gamets = max(0, intval($GLOBALS['gameRequest'][2]));
+        }
+        if ($gamets <= 0 && function_exists('getConfOpt')) {
+            $gamets = max(0, intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0')));
+        }
+        if ($gamets <= 0) {
+            $latest = $db->fetchOne('SELECT COALESCE(MAX(gamets), 0) AS gamets FROM eventlog');
+            $gamets = max(0, intval($latest['gamets'] ?? 0));
+        }
+
+        if ($gamets > 0) {
+            $updated = $db->exec(
+                'UPDATE core_npc SET gamets_last_updated = $1, updated_at = NOW() WHERE id = $2',
+                [$gamets, $npcId]
+            );
+            if ($updated === false) {
+                throw new RuntimeException('failed to stamp game timestamp');
+            }
+        }
+
+        $current = stobeFetchNpcRowForHistoryById($npcId);
+        if (!$current) {
+            throw new RuntimeException('NPC row not found after relationship write');
+        }
+        $currentState = stobeRelationshipTimelineState($current['extended_data'] ?? null);
+        if ($currentState === null) {
+            throw new RuntimeException('live extended_data is not valid relationship JSON');
+        }
+
+        $params = [$npcId];
+        $eligibleClause = '';
+        if ($gamets > 0) {
+            $params[] = $gamets;
+            $eligibleClause = 'AND gamets_last_updated <= $2';
+        }
+        $history = $db->fetchOne(
+            "SELECT extended_data
+             FROM core_npc_master_history
+             WHERE npc_id = $1
+               {$eligibleClause}
+             ORDER BY gamets_last_updated DESC,
+                      CASE WHEN snapshot_reason = 'relationship' THEN 1 ELSE 0 END DESC,
+                      history_id DESC
+             LIMIT 1",
+            $params
+        );
+        $historyState = $history
+            ? stobeRelationshipTimelineState($history['extended_data'] ?? null)
+            : null;
+        if ($historyState !== null && $currentState == $historyState) {
+            return true;
+        }
+
+        if (!stobeInsertNpcHistorySnapshotFromRow($current, 'relationship')) {
+            throw new RuntimeException('failed to store relationship history snapshot');
+        }
+        return true;
+    } catch (Throwable $exception) {
+        if (function_exists('stobeLogWarn')) {
+            stobeLogWarn('RELATIONSHIP: timeline snapshot failed', [
+                'npc_id' => $npcId,
+                'error' => $exception->getMessage(),
+            ]);
+        } else {
+            error_log('[REL] Timeline snapshot failed for npc_id ' . strval($npcId) . ': ' . $exception->getMessage());
+        }
+        return false;
+    }
+}
+
 function stobeNormalizeJsonArrayValue(mixed $value): array {
     if (is_array($value)) {
         return $value;
@@ -7768,6 +7909,7 @@ function stobeBuildNpcHistoryCanonicalFromRow(array $row): array {
         'speechstyle' => strval($row['speechstyle'] ?? ''),
         'goals' => strval($row['goals'] ?? ''),
         'relationships' => strval($row['relationships'] ?? ''),
+        'relationship_state' => stobeSortArrayRecursive(stobeRelationshipTimelineState($row['extended_data'] ?? '{}') ?? []),
         'voiceid' => strval($row['voiceid'] ?? ''),
         'race' => strval($row['race'] ?? ''),
         'faction' => strval($row['faction'] ?? ''),
@@ -7961,6 +8103,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
     $cooldownBypassReason = (
         str_starts_with($safeReason, 'rollback_')
         || $safeReason === 'delete_before'
+        || $safeReason === 'relationship'
     );
     if (!$cooldownBypassReason) {
         $latestCreatedUnix = strtotime(strval($latest['created'] ?? ''));
@@ -11126,6 +11269,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $metadataJson = normalizeJsonString($metadataForStorage);
     }
 
+    $preservedSnapshotExtendedDataSql = stobeRelationshipPreservingExtendedDataSql(
+        '$10::jsonb',
+        'core_npc_master.extended_data'
+    );
     $result = $db->exec(
         "INSERT INTO core_npc_master (
             name,
@@ -11165,7 +11312,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             END,
             extended_data = CASE
                 WHEN $10::jsonb = '{}'::jsonb OR $10::jsonb = '[]'::jsonb THEN core_npc_master.extended_data
-                ELSE $10::jsonb
+                ELSE " . $preservedSnapshotExtendedDataSql . "
             END,
             tags = CASE
                 WHEN NULLIF($11, '') IS NOT NULL THEN $11
@@ -11466,7 +11613,18 @@ function updateNpcById(int $id, array $fields): void {
         }
 
         if ($type === 'json') {
-            $setClauses[] = "{$column} = $" . $paramIndex . "::jsonb";
+            $incomingExpression = '$' . $paramIndex . '::jsonb';
+            if (
+                $column === 'extended_data'
+                && empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])
+            ) {
+                $setClauses[] = $column . ' = ' . stobeRelationshipPreservingExtendedDataSql(
+                    $incomingExpression,
+                    $column
+                );
+            } else {
+                $setClauses[] = "{$column} = " . $incomingExpression;
+            }
             $params[] = normalizeJsonString($fields[$column]);
             $paramIndex++;
             continue;
