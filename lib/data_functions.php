@@ -7776,9 +7776,31 @@ function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, 
         . '))';
 }
 
-function stobeRunWithRelationshipExtendedDataWrite(callable $callback): mixed {
+function stobeAcquireNpcRelationshipLock(int $npcId): ?int {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $npcId <= 0) {
+        return null;
+    }
+
+    $lockId = 1001000000 + $npcId;
+    $locked = $db->fetchOne('SELECT pg_advisory_lock($1) AS locked', [$lockId]);
+    if (!is_array($locked)) {
+        throw new RuntimeException('failed to acquire NPC relationship lock');
+    }
+    return $lockId;
+}
+
+function stobeReleaseNpcRelationshipLock(?int $lockId): void {
+    if ($lockId === null || !isset($GLOBALS['db'])) {
+        return;
+    }
+    $GLOBALS['db']->exec('SELECT pg_advisory_unlock($1)', [$lockId]);
+}
+
+function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcId = 0): mixed {
     $hadPrevious = array_key_exists('STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE', $GLOBALS);
     $previous = $hadPrevious ? $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] : null;
+    $lockId = stobeAcquireNpcRelationshipLock($npcId);
     $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = true;
 
     try {
@@ -7789,6 +7811,7 @@ function stobeRunWithRelationshipExtendedDataWrite(callable $callback): mixed {
         } else {
             unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE']);
         }
+        stobeReleaseNpcRelationshipLock($lockId);
     }
 }
 
@@ -11516,7 +11539,7 @@ function deleteNpc(int $id): void {
     $db->exec("DELETE FROM core_npc WHERE id = $1", [$id]);
 }
 
-function updateNpcById(int $id, array $fields): void {
+function updateNpcById(int $id, array $fields): bool {
     $db = $GLOBALS["db"];
     $historyRowBefore = stobeFetchNpcRowForHistoryById($id);
     if (array_key_exists('dynamic_profile', $fields) || array_key_exists('middle_term_enabled', $fields)) {
@@ -11669,13 +11692,16 @@ function updateNpcById(int $id, array $fields): void {
     }
 
     if (count($setClauses) === 0) {
-        return;
+        return true;
     }
 
     $params[] = $id;
     $idIndex = $paramIndex;
     $query = "UPDATE core_npc SET " . implode(', ', $setClauses) . ", updated_at = NOW() WHERE id = $" . $idIndex;
-    $db->exec($query, $params);
+    $updated = $db->exec($query, $params);
+    if ($updated === false) {
+        return false;
+    }
     $historyRowAfter = stobeFetchNpcRowForHistoryById($id);
     $rewroteUiHistorySnapshot = false;
     if ($historyRowBefore && $historyRowAfter) {
@@ -11709,6 +11735,7 @@ function updateNpcById(int $id, array $fields): void {
             stobeApplyPlayerFactionProfileForNpcName($npcName, $incomingFaction);
         }
     }
+    return true;
 }
 
 function stobeEnsureCoreProfileImportRulesTable(): void {

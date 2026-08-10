@@ -540,11 +540,15 @@ class RelationshipManager {
             $npcId = intval($npcData['id'] ?? 0);
             $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $updated = stobeRunWithRelationshipExtendedDataWrite(
-                static fn(): bool => $npcMaster->update($npcId, ['extended_data' => $extendedJson])
+                static function () use ($npcMaster, $npcId, $extendedJson): bool {
+                    $result = $npcMaster->update($npcId, ['extended_data' => $extendedJson]);
+                    if ($result !== false) {
+                        stobeRelationshipTimelineStamp($npcId);
+                    }
+                    return $result;
+                },
+                $npcId
             );
-            if ($updated !== false) {
-                stobeRelationshipTimelineStamp($npcId);
-            }
         }
 
         // Strip commands before TTS
@@ -592,12 +596,18 @@ class RelationshipManager {
         $npcId = intval($npcData['id'] ?? 0);
         $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $updated = stobeRunWithRelationshipExtendedDataWrite(
-            static fn(): bool => $npcMaster->update($npcId, ['extended_data' => $extendedJson])
+            static function () use ($npcMaster, $npcId, $extendedJson): bool {
+                $result = $npcMaster->update($npcId, ['extended_data' => $extendedJson]);
+                if ($result !== false) {
+                    stobeRelationshipTimelineStamp($npcId);
+                }
+                return $result;
+            },
+            $npcId
         );
         if ($updated === false) {
             return false;
         }
-        stobeRelationshipTimelineStamp($npcId);
 
         error_log("[REL] Set $npcName -> $targetName: " . $rels[$targetName]['aff'] .
                   " (" . $rels[$targetName]['type'] . ")");

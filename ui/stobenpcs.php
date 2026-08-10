@@ -953,11 +953,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
     }
     $_POST["md5"]=md5($_POST["npc_name"]);
     $saveResult = $relationshipSave
-        ? stobeRunWithRelationshipExtendedDataWrite(static fn(): bool => $npc->update($_POST["id"], $_POST))
+        ? stobeRunWithRelationshipExtendedDataWrite(
+            static function () use ($npc): bool {
+                $result = $npc->update($_POST["id"], $_POST);
+                if ($result !== false) {
+                    stobeRelationshipTimelineStamp(intval($_POST['id'] ?? 0));
+                }
+                return $result;
+            },
+            intval($_POST['id'] ?? 0)
+        )
         : $npc->update($_POST["id"], $_POST);
-    if ($relationshipSave && $saveResult !== false) {
-        stobeRelationshipTimelineStamp(intval($_POST['id'] ?? 0));
-    }
     header("Location: npc_master.php");
     exit;
 }
@@ -1045,11 +1051,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
         } else {
             $_POST["md5"]=md5($_POST["npc_name"]);
             $ok = $relationshipSave
-                ? stobeRunWithRelationshipExtendedDataWrite(static fn(): bool => $npc->update($id, $_POST))
+                ? stobeRunWithRelationshipExtendedDataWrite(
+                    static function () use ($npc, $id): bool {
+                        $result = $npc->update($id, $_POST);
+                        if ($result !== false) {
+                            stobeRelationshipTimelineStamp($id);
+                        }
+                        return $result;
+                    },
+                    $id
+                )
                 : $npc->update($id, $_POST);
-            if ($relationshipSave && $ok !== false) {
-                stobeRelationshipTimelineStamp($id);
-            }
             $npc->backupNpcById($id);// We also make a backup of manually edited NPCs, so when loading a save, will load this record
             if ($ok === false) {
                 echo json_encode(["ok"=>false, "error"=>($npc->getLastError() ?? 'Update failed')]);

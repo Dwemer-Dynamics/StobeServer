@@ -76,6 +76,8 @@ $zoneDropName = 'UT_ROLLBACK_ZONE_DROP_' . $seed;
 $baseKeepId = 'ut-rollback-base-keep-' . $seed;
 $baseDropId = 'ut-rollback-base-drop-' . $seed;
 $baseLegacyId = 'ut-rollback-base-legacy-' . $seed;
+$lockedRelationshipNpc = $prefix . '_LOCKED_REL';
+$futureRelationshipNpc = $prefix . '_FUTURE_REL';
 $presenceBackup = $db->fetchOne(
     "SELECT scope_key, session_id, observer_serial, observer_name, inside, base_id, game_ts, observed_at
      FROM player_base_presence
@@ -243,6 +245,116 @@ try {
     ptAssert(($presence['base_id'] ?? null) === null, 'Rollback prune should detach current presence from the future base');
     ptAssert(intval($presence['game_ts'] ?? 0) === 250, 'Rollback prune should rewind presence to cutoff');
 
+    // Relationship state follows the game timeline even when the profile itself is locked.
+    storeNpcProfile($lockedRelationshipNpc, [
+        'race' => 'Greenlander',
+        'faction' => 'Player Faction',
+        'gender' => 'female',
+        'personality' => 'Original locked profile text.',
+        'extended_data' => [
+            'relationships' => ['Beep' => ['aff' => 15, 'type' => 'friend']],
+        ],
+    ]);
+    $lockedRow = $db->fetchOne('SELECT * FROM core_npc WHERE name = $1 LIMIT 1', [$lockedRelationshipNpc]);
+    $lockedNpcId = intval($lockedRow['id'] ?? 0);
+    ptAssert($lockedNpcId > 0, 'Locked relationship test NPC should exist');
+    $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$lockedNpcId]);
+    $db->exec(
+        "UPDATE core_npc
+         SET lock_profile = TRUE,
+             gamets_last_updated = 1000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString([
+            'relationships' => ['Beep' => ['aff' => 15, 'type' => 'friend']],
+            'environment' => ['town_name' => 'The Hub'],
+        ]), $lockedNpcId]
+    );
+    $lockedHistoryRow = stobeFetchNpcRowForHistoryById($lockedNpcId);
+    ptAssert(
+        is_array($lockedHistoryRow) && stobeInsertNpcHistorySnapshotFromRow($lockedHistoryRow, 'relationship'),
+        'Locked NPC relationship snapshot should be stored'
+    );
+
+    // A later generic snapshot at the same game time must not outrank the relationship snapshot.
+    $db->exec(
+        "UPDATE core_npc
+         SET extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString([
+            'relationships' => ['Beep' => ['aff' => 30, 'type' => 'trusted']],
+            'environment' => ['town_name' => 'Squin'],
+        ]), $lockedNpcId]
+    );
+    $db->exec(
+        "UPDATE core_npc
+         SET personality = 'Locked profile text must remain current.',
+             gamets_last_updated = 2000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString([
+            'relationships' => ['Beep' => ['aff' => 80, 'type' => 'devoted']],
+            'environment' => ['town_name' => 'Stack'],
+        ]), $lockedNpcId]
+    );
+
+    storeNpcProfile($futureRelationshipNpc, [
+        'race' => 'Shek',
+        'faction' => 'Bandits',
+        'gender' => 'male',
+    ]);
+    $futureRow = $db->fetchOne('SELECT * FROM core_npc WHERE name = $1 LIMIT 1', [$futureRelationshipNpc]);
+    $futureNpcId = intval($futureRow['id'] ?? 0);
+    ptAssert($futureNpcId > 0, 'Future-only relationship test NPC should exist');
+    $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$futureNpcId]);
+    $db->exec(
+        "UPDATE core_npc
+         SET lock_profile = TRUE,
+             gamets_last_updated = 2000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString([
+            'relationships' => ['Locked NPC' => ['aff' => -60, 'type' => 'enemy']],
+            'environment' => ['town_name' => 'Stack'],
+        ]), $futureNpcId]
+    );
+
+    $relationshipRestore = stobePlaythroughRestoreRelationshipStates(1500);
+    ptAssert(intval($relationshipRestore['errors'] ?? 0) === 0, 'Relationship-only rollback should succeed');
+    ptAssert(intval($relationshipRestore['restored'] ?? 0) >= 1, 'Locked NPC relationship state should be restored');
+    ptAssert(intval($relationshipRestore['cleared'] ?? 0) >= 1, 'Future-only relationship state should be cleared');
+
+    $lockedAfterRestore = $db->fetchOne(
+        'SELECT lock_profile, personality, extended_data FROM core_npc WHERE id = $1 LIMIT 1',
+        [$lockedNpcId]
+    );
+    $lockedExtended = normalizeCoreNpcExtendedData($lockedAfterRestore['extended_data'] ?? '{}');
+    ptAssert(coerceBoolean($lockedAfterRestore['lock_profile'] ?? false), 'Relationship rollback should keep the profile locked');
+    ptAssert(
+        strval($lockedAfterRestore['personality'] ?? '') === 'Locked profile text must remain current.',
+        'Relationship rollback should not replace locked profile fields'
+    );
+    ptAssert(
+        intval($lockedExtended['relationships']['Beep']['aff'] ?? 0) === 15,
+        'Locked NPC affinity should rewind to the relationship snapshot'
+    );
+    ptAssert(
+        strval($lockedExtended['environment']['town_name'] ?? '') === 'Stack',
+        'Relationship rollback should preserve unrelated extended data'
+    );
+
+    $futureAfterRestore = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1 LIMIT 1', [$futureNpcId]);
+    $futureExtended = normalizeCoreNpcExtendedData($futureAfterRestore['extended_data'] ?? '{}');
+    ptAssert(!array_key_exists('relationships', $futureExtended), 'Future-only affinities should be removed');
+    ptAssert(
+        strval($futureExtended['environment']['town_name'] ?? '') === 'Stack',
+        'Clearing future affinities should preserve unrelated extended data'
+    );
+
     // Pure threshold helper checks.
     ptAssert(stobeDragonBreakDaysRollback(200000, 200000) === 0, 'Equal gamets should be zero rollback days');
     ptAssert(stobeDragonBreakDaysRollback(200000, 199999) === 0, 'Sub-day rollback should be zero days');
@@ -322,6 +434,18 @@ try {
         'DELETE FROM player_bases WHERE base_id IN ($1, $2, $3)',
         [$baseKeepId, $baseDropId, $baseLegacyId]
     );
+    $relationshipTestRows = $db->fetchAll(
+        'SELECT id FROM core_npc WHERE name IN ($1, $2)',
+        [$lockedRelationshipNpc, $futureRelationshipNpc]
+    );
+    foreach ($relationshipTestRows as $relationshipTestRow) {
+        $relationshipTestNpcId = intval($relationshipTestRow['id'] ?? 0);
+        if ($relationshipTestNpcId <= 0) {
+            continue;
+        }
+        $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$relationshipTestNpcId]);
+        $db->exec('DELETE FROM core_npc WHERE id = $1', [$relationshipTestNpcId]);
+    }
     if (is_array($presenceBackup)) {
         $db->exec(
             "INSERT INTO player_base_presence (
