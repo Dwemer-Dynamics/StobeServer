@@ -528,12 +528,16 @@ PROMPT;
             $extended['relationships_analyzed'] = date('Y-m-d H:i:s');
             $extended['relationships_model'] = $this->modelName;
 
-            $result = $npcMaster->update(
-                intval($npcId),
-                [
-                    'extended_data' => json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                ]
+            $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $result = stobeRunWithRelationshipExtendedDataWrite(
+                static fn(): bool => $npcMaster->update(
+                    intval($npcId),
+                    ['extended_data' => $extendedJson]
+                )
             );
+            if ($result !== false) {
+                stobeRelationshipTimelineStamp(intval($npcId));
+            }
 
             $this->releaseNpcLock($npcId);
             return $result;
@@ -713,12 +717,16 @@ PROMPT;
                 $extended['relationships'] = $myRels;
                 $extended['relationships_inferred'] = date('Y-m-d H:i:s');
 
-                $npcMaster->update(
-                    intval($npcId),
-                    [
-                        'extended_data' => json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                    ]
+                $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $result = stobeRunWithRelationshipExtendedDataWrite(
+                    static fn(): bool => $npcMaster->update(
+                        intval($npcId),
+                        ['extended_data' => $extendedJson]
+                    )
                 );
+                if ($result !== false) {
+                    stobeRelationshipTimelineStamp(intval($npcId));
+                }
 
                 $this->releaseNpcLock($npcId);
                 Logger::info("[REL-LLM] Inferred " . count($inferred) . " relationships for " . $npc['npc_name']);
@@ -1333,12 +1341,15 @@ PROMPT;
 
                 $jsonData = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-                $result = $npcMaster->update(
-                    intval($npcId),
-                    [
-                        'extended_data' => $jsonData,
-                    ]
+                $result = stobeRunWithRelationshipExtendedDataWrite(
+                    static fn(): bool => $npcMaster->update(
+                        intval($npcId),
+                        ['extended_data' => $jsonData]
+                    )
                 );
+                if ($result !== false) {
+                    stobeRelationshipTimelineStamp(intval($npcId));
+                }
 
                 $this->releaseNpcLock($npcId);
                 Logger::debug("[REL-LLM] Database update for NPC {$npcId}: " . ($result ? "SUCCESS" : "FAILED") . " - relationships: " . json_encode($existingRels));

@@ -80,6 +80,19 @@ function stobeUiResolveIndividualMemoryEnabled(array $extended): bool
     return coerceBoolean($raw);
 }
 
+function stobeUiPrepareRelationshipSavePayload(): bool
+{
+    if (!isset($_POST['relationships_jsonb']) || $_POST['relationships_jsonb'] === '') {
+        return false;
+    }
+
+    $handler = __DIR__ . '/../ext/relationship_system/npc_save_handler.php';
+    if (file_exists($handler)) {
+        include $handler;
+    }
+    return true;
+}
+
 function stobeUiAutoLockProfileEnabled(): bool
 {
     if (function_exists('getSettingBool')) {
@@ -918,21 +931,39 @@ if (!function_exists('stobeUiSortNpcRows')) {
 
 // Handle Create
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
+    $relationshipSave = stobeUiPrepareRelationshipSavePayload();
     if (stobeUiAutoLockProfileEnabled()) {
         $_POST['lock_profile'] = 1;
     }
-    $npc->create($_POST);
+    $createdId = $relationshipSave
+        ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST))
+        : $npc->create($_POST);
+    if ($relationshipSave && $createdId > 0) {
+        stobeRelationshipTimelineStamp($createdId);
+    }
     header("Location: npc_master.php");
     exit;
 }
 
 // Handle Update
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
+    $relationshipSave = stobeUiPrepareRelationshipSavePayload();
     if (stobeUiAutoLockProfileEnabled()) {
         $_POST['lock_profile'] = 1;
     }
     $_POST["md5"]=md5($_POST["npc_name"]);
-    $npc->update($_POST["id"], $_POST);
+    $saveResult = $relationshipSave
+        ? stobeRunWithRelationshipExtendedDataWrite(
+            static function () use ($npc): bool {
+                $result = $npc->update($_POST["id"], $_POST);
+                if ($result !== false) {
+                    stobeRelationshipTimelineStamp(intval($_POST['id'] ?? 0));
+                }
+                return $result;
+            },
+            intval($_POST['id'] ?? 0)
+        )
+        : $npc->update($_POST["id"], $_POST);
     header("Location: npc_master.php");
     exit;
 }
@@ -944,10 +975,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
     try {
         $id = intval($_POST['id'] ?? 0);
 
-        // Merge relationship editor data into extended_data BEFORE processing
-        if (file_exists(__DIR__."/../ext/relationship_system/npc_save_handler.php")) {
-            include(__DIR__."/../ext/relationship_system/npc_save_handler.php");
-        }
+        $relationshipSave = stobeUiPrepareRelationshipSavePayload();
 
         // Ensure extended_data is valid JSON and sync NPC-only toggles.
         try {
@@ -1009,15 +1037,31 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
             $_POST['lock_profile'] = 1;
         }
         if ($id <= 0) {
-            $newId = $npc->create($_POST);
+            $newId = $relationshipSave
+                ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST))
+                : $npc->create($_POST);
             if ($newId <= 0) {
                 echo json_encode(["ok"=>false, "error"=>($npc->getLastError() ?: "Insert failed")]);
                 exit;
             }
+            if ($relationshipSave) {
+                stobeRelationshipTimelineStamp($newId);
+            }
             echo json_encode(["ok"=>true, "id"=>$newId]);
         } else {
             $_POST["md5"]=md5($_POST["npc_name"]);
-            $ok = $npc->update($id, $_POST);
+            $ok = $relationshipSave
+                ? stobeRunWithRelationshipExtendedDataWrite(
+                    static function () use ($npc, $id): bool {
+                        $result = $npc->update($id, $_POST);
+                        if ($result !== false) {
+                            stobeRelationshipTimelineStamp($id);
+                        }
+                        return $result;
+                    },
+                    $id
+                )
+                : $npc->update($id, $_POST);
             $npc->backupNpcById($id);// We also make a backup of manually edited NPCs, so when loading a save, will load this record
             if ($ok === false) {
                 echo json_encode(["ok"=>false, "error"=>($npc->getLastError() ?? 'Update failed')]);

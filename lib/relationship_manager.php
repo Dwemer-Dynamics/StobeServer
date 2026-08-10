@@ -537,10 +537,18 @@ class RelationshipManager {
         // Save if changed
         if ($changed) {
             $extended['relationships'] = $rels;
-            $npcMaster->updateByArray([
-                'id' => $npcData['id'],
-                'extended_data' => json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-            ]);
+            $npcId = intval($npcData['id'] ?? 0);
+            $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $updated = stobeRunWithRelationshipExtendedDataWrite(
+                static function () use ($npcMaster, $npcId, $extendedJson): bool {
+                    $result = $npcMaster->update($npcId, ['extended_data' => $extendedJson]);
+                    if ($result !== false) {
+                        stobeRelationshipTimelineStamp($npcId);
+                    }
+                    return $result;
+                },
+                $npcId
+            );
         }
 
         // Strip commands before TTS
@@ -585,10 +593,21 @@ class RelationshipManager {
         }
 
         $extended['relationships'] = $rels;
-        $npcMaster->updateByArray([
-            'id' => $npcData['id'],
-            'extended_data' => json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-        ]);
+        $npcId = intval($npcData['id'] ?? 0);
+        $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $updated = stobeRunWithRelationshipExtendedDataWrite(
+            static function () use ($npcMaster, $npcId, $extendedJson): bool {
+                $result = $npcMaster->update($npcId, ['extended_data' => $extendedJson]);
+                if ($result !== false) {
+                    stobeRelationshipTimelineStamp($npcId);
+                }
+                return $result;
+            },
+            $npcId
+        );
+        if ($updated === false) {
+            return false;
+        }
 
         error_log("[REL] Set $npcName -> $targetName: " . $rels[$targetName]['aff'] .
                   " (" . $rels[$targetName]['type'] . ")");
