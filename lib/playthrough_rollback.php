@@ -1031,6 +1031,97 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
     ];
 }
 
+// Restore only relationship-owned keys so profile locks do not retain future affinity state.
+function stobePlaythroughRestoreRelationshipStates(int $cutoffGamets): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !function_exists('stobeRelationshipExtendedDataKeys')) {
+        return ['restored' => 0, 'cleared' => 0, 'errors' => 1, 'sample_names' => ''];
+    }
+
+    $cutoff = max(0, intval($cutoffGamets));
+    $keys = stobeRelationshipExtendedDataKeys();
+    $stripCurrent = "COALESCE(c.extended_data, '{}'::jsonb)";
+    $restoredPairs = [];
+    $currentPairs = [];
+    $historyPairs = [];
+    $keyLiterals = [];
+    foreach ($keys as $key) {
+        $stripCurrent .= " - '" . $key . "'";
+        $restoredPairs[] = "'" . $key . "', latest.extended_data -> '" . $key . "'";
+        $currentPairs[] = "'" . $key . "', c.extended_data -> '" . $key . "'";
+        $historyPairs[] = "'" . $key . "', latest.extended_data -> '" . $key . "'";
+        $keyLiterals[] = "'" . $key . "'";
+    }
+
+    $restoredState = 'jsonb_strip_nulls(jsonb_build_object(' . implode(', ', $restoredPairs) . '))';
+    $currentState = 'jsonb_strip_nulls(jsonb_build_object(' . implode(', ', $currentPairs) . '))';
+    $historyState = 'jsonb_strip_nulls(jsonb_build_object(' . implode(', ', $historyPairs) . '))';
+    $relationshipKeyArray = 'ARRAY[' . implode(', ', $keyLiterals) . ']';
+
+    try {
+        $result = $db->fetchOne(
+            "WITH latest AS (
+                SELECT DISTINCT ON (npc_id)
+                    npc_id,
+                    COALESCE(extended_data, '{}'::jsonb) AS extended_data
+                FROM core_npc_master_history
+                WHERE gamets_last_updated <= $1 OR gamets_last_updated IS NULL
+                ORDER BY npc_id,
+                         gamets_last_updated DESC NULLS LAST,
+                         CASE WHEN snapshot_reason = 'relationship' THEN 1 ELSE 0 END DESC,
+                         history_id DESC
+            ),
+            restored AS (
+                UPDATE core_npc c
+                SET extended_data = (" . $stripCurrent . ") || " . $restoredState . ",
+                    updated_at = NOW()
+                FROM latest
+                WHERE c.id = latest.npc_id
+                  AND " . $currentState . " IS DISTINCT FROM " . $historyState . "
+                RETURNING c.id, c.name
+            ),
+            cleared AS (
+                UPDATE core_npc c
+                SET extended_data = " . $stripCurrent . ",
+                    updated_at = NOW()
+                WHERE NOT EXISTS (SELECT 1 FROM latest WHERE latest.npc_id = c.id)
+                  AND (c.gamets_last_updated > $1 OR c.gamets_last_updated IS NULL)
+                  AND COALESCE(c.extended_data, '{}'::jsonb) ?| " . $relationshipKeyArray . "
+                RETURNING c.id, c.name
+            )
+            SELECT
+                (SELECT COUNT(*)::int FROM restored) AS restored,
+                (SELECT COUNT(*)::int FROM cleared) AS cleared,
+                COALESCE((
+                    SELECT string_agg(sample.name, ', ')
+                    FROM (SELECT name FROM cleared ORDER BY name LIMIT 10) sample
+                ), '') AS sample_names",
+            [$cutoff]
+        );
+        if (!is_array($result)) {
+            throw new RuntimeException('relationship restore query did not return a result');
+        }
+
+        $counts = [
+            'restored' => intval($result['restored'] ?? 0),
+            'cleared' => intval($result['cleared'] ?? 0),
+            'errors' => 0,
+            'sample_names' => trim(strval($result['sample_names'] ?? '')),
+        ];
+        stobeLogInfo('PLAYTHROUGH: restored relationship timeline state', [
+            'cutoff_gamets' => $cutoff,
+            'restored' => $counts['restored'],
+            'cleared' => $counts['cleared'],
+            'cleared_sample' => $counts['sample_names'],
+        ]);
+        return $counts;
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'PLAYTHROUGH: relationship timeline restore failed');
+        return ['restored' => 0, 'cleared' => 0, 'errors' => 1, 'sample_names' => ''];
+    }
+}
+
 function stobePlaythroughRecordLastSeenGamets(int $gamets): void
 {
     $safeGamets = max(0, intval($gamets));
@@ -1071,6 +1162,9 @@ function stobePlaythroughZeroRestoreCounts(): array
         'deleted' => 0,
         'skipped' => 0,
         'errors' => 0,
+        'relationships_restored' => 0,
+        'relationships_cleared' => 0,
+        'relationship_errors' => 0,
     ];
 }
 
@@ -1601,6 +1695,11 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             ? stobePlaythroughPruneFutureTimeline($incoming)
             : stobePlaythroughZeroPruneCounts();
         $restoreCounts = stobePlaythroughRestoreUnlockedNpcs($incoming);
+        $relationshipRestoreCounts = stobePlaythroughRestoreRelationshipStates($incoming);
+        $restoreCounts['relationships_restored'] = intval($relationshipRestoreCounts['restored'] ?? 0);
+        $restoreCounts['relationships_cleared'] = intval($relationshipRestoreCounts['cleared'] ?? 0);
+        $restoreCounts['relationship_errors'] = intval($relationshipRestoreCounts['errors'] ?? 0);
+        $restoreCounts['errors'] += $restoreCounts['relationship_errors'];
         $queueCounts = stobePlaythroughClearRelationshipQueues();
         $volatileStateCounts = stobePlaythroughClearFutureVolatileNpcStates($incoming);
 

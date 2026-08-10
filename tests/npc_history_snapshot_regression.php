@@ -134,6 +134,80 @@ historyRunInRollbackTransaction('storeNpcSnapshot dedupes unchanged payload upda
     historyAssertTrue($afterCount === ($beforeCount + 1), 'Identical snapshot writes should only create one history row');
 });
 
+historyRunInRollbackTransaction('relationship state survives generic writes and is anchored to history', function () use ($seed): void {
+    $name = 'UT_HISTORY_' . $seed . '_REL';
+    $storageId = 'rel_' . strval(random_int(1000000, 9999999));
+    $initialRelationships = [
+        'Beep' => ['aff' => 25, 'type' => 'friend'],
+    ];
+
+    storeNpcProfile($name, [
+        'race' => 'Greenlander',
+        'faction' => 'Player Faction',
+        'gender' => 'female',
+        'metadata' => ['storage_id' => $storageId],
+        'extended_data' => [
+            'relationships' => $initialRelationships,
+            'environment' => ['town_name' => 'The Hub'],
+        ],
+    ]);
+
+    $npcId = historyFetchNpcId($name);
+    historyAssertTrue($npcId > 0, 'NPC id should resolve for relationship test');
+
+    updateNpcById($npcId, [
+        'extended_data' => ['environment' => ['town_name' => 'Squin']],
+    ]);
+    $afterGenericUpdate = $GLOBALS['db']->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$npcId]);
+    $genericExtended = normalizeCoreNpcExtendedData($afterGenericUpdate['extended_data'] ?? '{}');
+    historyAssertTrue(
+        ($genericExtended['relationships'] ?? null) === $initialRelationships,
+        'Generic NPC updates should preserve relationship affinities'
+    );
+
+    $updatedRelationships = [
+        'Beep' => ['aff' => 40, 'type' => 'trusted'],
+    ];
+    $genericExtended['relationships'] = $updatedRelationships;
+    stobeRunWithRelationshipExtendedDataWrite(
+        static function () use ($npcId, $genericExtended): void {
+            updateNpcById($npcId, ['extended_data' => $genericExtended]);
+        }
+    );
+    setConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '123456', true);
+    historyAssertTrue(stobeRelationshipTimelineStamp($npcId), 'Relationship timeline stamp should succeed');
+
+    $timelineRow = $GLOBALS['db']->fetchOne(
+        "SELECT snapshot_reason, gamets_last_updated, extended_data
+         FROM core_npc_master_history
+         WHERE npc_id = $1
+         ORDER BY history_id DESC
+         LIMIT 1",
+        [$npcId]
+    );
+    $timelineExtended = normalizeCoreNpcExtendedData($timelineRow['extended_data'] ?? '{}');
+    historyAssertTrue(intval($timelineRow['gamets_last_updated'] ?? 0) === 123456, 'Relationship history should use current game time');
+    historyAssertTrue(
+        ($timelineExtended['relationships'] ?? null) === $updatedRelationships,
+        'Relationship history should contain the edited affinities'
+    );
+
+    historyAssertTrue(storeNpcSnapshot([
+        'name' => $name,
+        'storage_id' => $storageId,
+        'race' => 'Greenlander',
+        'faction' => 'Player Faction',
+        'gender' => 'female',
+        'environment' => ['town_name' => 'Stack'],
+    ], 123900), 'Generic game snapshot should succeed');
+    $afterGameSnapshot = $GLOBALS['db']->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$npcId]);
+    $snapshotExtended = normalizeCoreNpcExtendedData($afterGameSnapshot['extended_data'] ?? '{}');
+    historyAssertTrue(
+        ($snapshotExtended['relationships'] ?? null) === $updatedRelationships,
+        'Game snapshots should not replace relationship affinities'
+    );
+});
+
 echo 'All npc history snapshot regression tests passed.' . PHP_EOL;
 exit(0);
 

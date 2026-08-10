@@ -10361,19 +10361,31 @@ function stobePersistNpcRelationshipMap(string $speakerName, array $relationship
     $serializedJsonbMap = count($normalizedMap) > 0 ? normalizeJsonString($normalizedMap) : '{}';
 
     $db = $GLOBALS["db"];
-    $db->exec(
-        "UPDATE core_npc
-         SET relationships = $1,
-             extended_data = jsonb_set(
-                 COALESCE(extended_data, '{}'::jsonb),
-                 '{relationships}',
-                 $2::jsonb,
-                 true
-             ),
-             updated_at = NOW()
-         WHERE id = $3",
-        [$serializedMap, $serializedJsonbMap, $npcId]
+    $updated = stobeRunWithRelationshipExtendedDataWrite(
+        static function () use ($db, $serializedMap, $serializedJsonbMap, $npcId) {
+            $result = $db->exec(
+                "UPDATE core_npc
+                 SET relationships = $1,
+                     extended_data = jsonb_set(
+                         COALESCE(extended_data, '{}'::jsonb),
+                         '{relationships}',
+                         $2::jsonb,
+                         true
+                     ),
+                     updated_at = NOW()
+                 WHERE id = $3",
+                [$serializedMap, $serializedJsonbMap, $npcId]
+            );
+            if ($result !== false) {
+                stobeRelationshipTimelineStamp($npcId);
+            }
+            return $result;
+        },
+        $npcId
     );
+    if ($updated === false) {
+        return false;
+    }
 
     return true;
 }
