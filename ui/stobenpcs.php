@@ -2296,7 +2296,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="bios">📖 Roleplay</button>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="relationships">🤝 Relationships</button>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="info">🛠️ Info</button>
-    <?php if ($editItem): ?><button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="history">History</button><?php endif; ?>
+    <?php if ($editItem): ?><button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="history">📜 History</button><?php endif; ?>
 </div>
 <style>
 .npc-editor-tabs {
