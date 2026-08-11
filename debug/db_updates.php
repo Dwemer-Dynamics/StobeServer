@@ -2538,10 +2538,10 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                     model, max_tokens, temperature, is_default, config
                  ) VALUES
                  (
-                    'GLM 4.7', 'openrouterjson',
+                    'DeepSeek V4 Flash', 'openrouterjson',
                     (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
-                    '', 'https://openrouter.ai/api/v1/chat/completions', 'z-ai/glm-4.7',
-                    750, 1.0, FALSE,
+                    '', 'https://openrouter.ai/api/v1/chat/completions', 'deepseek/deepseek-v4-flash',
+                    750, 0.6, FALSE,
                     '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
                  ),
                  (
@@ -2565,6 +2565,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  SET llm_primary_id = COALESCE(
                         llm_primary_id,
                         response_connector,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
                         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
                         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
                      ),
@@ -2589,6 +2590,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      response_connector = COALESCE(
                         response_connector,
                         llm_primary_id,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
                         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
                      ),
                      updated_at = NOW()

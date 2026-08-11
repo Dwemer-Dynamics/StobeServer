@@ -12693,7 +12693,10 @@ function ensureDefaultCoreProfile(): int {
         return intval($row['id'] ?? 0);
     };
 
-    $primaryConnectorId = $connectorIdByName('GLM 4.7');
+    $primaryConnectorId = $connectorIdByName('DeepSeek V4 Flash');
+    if ($primaryConnectorId <= 0) {
+        $primaryConnectorId = $connectorIdByName('GLM 4.7');
+    }
     if ($primaryConnectorId <= 0) {
         $primaryConnectorId = $connectorIdByName('Gemini 2.5 Flash');
     }
