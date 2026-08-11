@@ -272,6 +272,7 @@ include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
 ?>
 
 <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css">
+<link rel="stylesheet" href="css/npc_event_history.css">
 <style>
 /* Core styling alignment */
 @font-face {
@@ -2142,6 +2143,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 
 <?php if (isset($_GET['partial']) && $_GET['partial']=='1') { ob_end_clean(); ?>
 <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css">
+<link rel="stylesheet" href="css/npc_event_history.css">
 <style>html,body{background:#2a2a2a;margin-bottom:50px;margin-right:5px;} main{background:#2a2a2a; padding:12px;} .form-container{background:#2a2a2a; border:1px solid #4a4a4a; border-radius:8px;}
 .modal-inline-actions{display:flex; gap:6px; align-items:center; justify-content:flex-end; margin-bottom:8px;}
 .modal-inline-actions .btn-toggle{background:transparent; border:none; padding:6px; color:#e9efff; font-size:22px; line-height:1; text-decoration:none; cursor:pointer;}
@@ -2294,11 +2296,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="bios">📖 Roleplay</button>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="relationships">🤝 Relationships</button>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="info">🛠️ Info</button>
+    <?php if ($editItem): ?><button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="history">History</button><?php endif; ?>
 </div>
 <style>
 .npc-editor-tabs {
     display:grid;
-    grid-template-columns:repeat(4, minmax(0, 1fr));
+    grid-template-columns:repeat(<?= $editItem ? 5 : 4 ?>, minmax(0, 1fr));
     gap:8px;
     margin-bottom:14px;
     padding:8px;
@@ -2350,9 +2353,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
             tablist.dataset.initialized = '1';
 
             const panels = {};
-            ['general','bios','relationships','info'].forEach(function(section){
+            const sections = ['general','bios','relationships','info'];
+            if (tablist.querySelector('[data-npc-editor-tab="history"]')) sections.push('history');
+            sections.forEach(function(section){
                 const panel = document.createElement('div');
-                panel.className = 'npc-editor-panel form-grid';
+                panel.className = 'npc-editor-panel npc-editor-panel-' + section + ' form-grid';
                 panel.dataset.npcEditorPanel = section;
                 panel.id = 'npc-editor-panel-' + section + '-' + index;
                 panel.setAttribute('role', 'tabpanel');
@@ -2419,6 +2424,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
                 });
                 Object.entries(panels).forEach(function(entry){ entry[1].hidden = entry[0] !== section; });
                 try { window.localStorage.setItem(storageKey, section); } catch (_e) {}
+                if (section === 'history' && window.stobeNpcEventHistoryController) {
+                    window.stobeNpcEventHistoryController.load();
+                }
             }
 
             tablist.addEventListener('click', function(event){
@@ -3097,6 +3105,27 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <button type="submit" name="<?= $editItem ? "update" : "create" ?>" class="btn-save"><?= $editItem ? "Update" : "Create" ?></button>
     <?php } ?>
 </form>
+<script src="js/npc_event_history.js"></script>
+<script>
+(function(){
+    function mountNpcEventHistory(){
+        const panel = document.querySelector('[data-npc-editor-panel="history"]');
+        const idInput = document.querySelector('form input[name="id"]');
+        const nameInput = document.getElementById('npc_name');
+        if (!panel || !idInput || !nameInput || !window.stobeNpcEventHistory || panel.dataset.historyMounted === '1') return;
+        panel.dataset.historyMounted = '1';
+        window.stobeNpcEventHistoryController = window.stobeNpcEventHistory.mount(panel, {
+            npcId: Number(idInput.value || 0),
+            npcName: nameInput.value || '',
+            apiUrl: 'api/stobe_npc_history.php'
+        });
+        const active = document.querySelector('[data-npc-editor-tab="history"].is-active');
+        if (active) window.stobeNpcEventHistoryController.load();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountNpcEventHistory);
+    else mountNpcEventHistory();
+})();
+</script>
 <?php if (isset($_GET['partial']) && $_GET['partial']=='1') { ?>
     <?php include(__DIR__."/tmpl/metadata_json_editor.php"); ?>
     </div>
@@ -3820,7 +3849,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   Loading an older save will roll unlocked profiles back to that point in time. NPCs created <em>after</em> that save timestamp may disappear.
   <div style="margin-top:4px;">
     <span style="color:#e6b76c;">Lock a profile (Lock) to protect it from rollback.</span>
-    You can view and restore previous versions of any NPC via the <strong>View History</strong> button in the edit modal.
+    You can view and restore previous versions of any NPC via the <strong>Profile Versions</strong> button in the edit modal.
   </div>
 </div>
 <div class="npc-grid">
@@ -3980,7 +4009,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
         <button id="npc_modal_export" class="btn-cancel" title="Export NPC biography to JSON file">Export Bio</button>
         <button id="npc_modal_import_to" class="btn-cancel" title="Import biography from another NPC's export file">Import Bio</button>
         <button id="npc_modal_reset" class="btn-cancel" title="Reimport bio template fields">Reset NPC</button>
-        <button id="npc_modal_history" class="btn-cancel">View History</button>
+        <button id="npc_modal_history" class="btn-cancel">Profile Versions</button>
         <button id="npc_modal_regen" class="btn-cancel" title="Will use AI to regenerate this profile. Intended for custom NPCs without biography descriptions.">AI Generate Profile</button>
         <button id="npc_modal_close" class="btn-cancel">Close</button>
       </div>
@@ -4029,11 +4058,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   </div>
 </div>
 
-<!-- NPC History viewer overlay -->
+<!-- NPC profile versions viewer overlay -->
 <div id="history_viewer" class="modal-backdrop" style="z-index:10002;">
   <div class="modal-container" style="max-width:1100px; width:95%;">
     <div class="modal-header">
-      <h2 class="modal-title">NPC History</h2>
+      <h2 class="modal-title">Profile Versions</h2>
       <div class="modal-actions">
         <button id="history_close" class="btn-cancel">Close</button>
       </div>
@@ -4571,7 +4600,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
   })();
 
   
-  // View History button wiring
+  // Profile Versions button wiring
   (function(){
     const btn = document.getElementById('npc_modal_history');
     const overlay = document.getElementById('history_viewer');
