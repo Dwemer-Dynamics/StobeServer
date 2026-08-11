@@ -186,6 +186,13 @@ function stobeNpcHistoryInject(array $input): array
     }
 
     $recipients = stobeNpcHistoryResolveRecipients($input, $npc);
+    $people = json_encode(
+        array_column($recipients, 'name'),
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
+    if ($people === false) {
+        throw new RuntimeException('Event recipients could not be encoded');
+    }
     $latest = $GLOBALS['db']->fetchOne(
         'SELECT COALESCE(MAX(ts), 0)::bigint AS ts, COALESCE(MAX(gamets), 0)::bigint AS gamets FROM eventlog'
     );
@@ -198,7 +205,7 @@ function stobeNpcHistoryInject(array $input): array
             max(0, intval($latest['gamets'] ?? 0)),
             '(' . $eventText . ')',
             time(),
-            '|' . implode('|', array_column($recipients, 'name')) . '|',
+            $people,
         ]
     );
     $rowId = intval($inserted['rowid'] ?? 0);

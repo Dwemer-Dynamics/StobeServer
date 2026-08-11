@@ -34,8 +34,19 @@ function stobeBuildNpcEventPeopleWhereClause(string $npcPlaceholder = '$1', stri
 
     return "EXISTS (
         SELECT 1
-        FROM unnest(string_to_array(trim(BOTH '|' FROM COALESCE({$peopleColumn}, '')), '|')) AS stobe_person(person_name)
-        WHERE lower(regexp_replace(btrim(stobe_person.person_name), ' \\((busy|hostile|in combat|restrained)\\)$', '', 'i')) = lower({$npcPlaceholder})
+        FROM jsonb_array_elements_text(
+            CASE
+                WHEN left(btrim(COALESCE({$peopleColumn}, '')), 1) = '['
+                    THEN COALESCE(NULLIF(btrim({$peopleColumn}), ''), '[]')::jsonb
+                ELSE to_jsonb(string_to_array(trim(BOTH '|' FROM COALESCE({$peopleColumn}, '')), '|'))
+            END
+        ) AS stobe_person(person_name)
+        WHERE lower(regexp_replace(
+            btrim(stobe_person.person_name),
+            '( \\((busy|hostile|in combat|restrained)\\)|\\|hand_[0-9]+)+$',
+            '',
+            'i'
+        )) = lower({$npcPlaceholder})
     )";
 }
 
@@ -51,6 +62,7 @@ function stobeParseEventPeople(mixed $people): array
     $recipients = [];
     foreach ($parts as $part) {
         $name = trim(strval($part));
+        $name = preg_replace('/(?: \\((?:busy|hostile|in combat|restrained)\\)|\\|hand_[0-9]+)+$/i', '', $name) ?? $name;
         if ($name !== '' && !in_array($name, $recipients, true)) {
             $recipients[] = $name;
         }
