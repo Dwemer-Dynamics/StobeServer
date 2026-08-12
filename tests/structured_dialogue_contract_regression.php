@@ -151,4 +151,30 @@ contractAssertSame('Dagur', trim(strval($partialStructured['character'] ?? '')),
 contractAssertSame('RANGROO', trim(strval($partialStructured['listener'] ?? '')), 'Partial structured JSON should preserve listener');
 contractAssertSame('Well met, traveler', trim(strval($partialStructured['message'] ?? '')), 'Partial structured JSON should expose message early');
 
+$unusablePrefix = stobeParseStructuredDialogueResponse('{ "character":', 'chat');
+contractAssertTrue(
+    !boolval($unusablePrefix['is_structured'] ?? false),
+    'A JSON prefix without dialogue should not parse as a structured response'
+);
+contractAssertTrue(
+    !stobeStructuredStreamResponseIsUsable(
+        '{ "character":',
+        boolval($unusablePrefix['is_structured'] ?? false),
+        trim(strval($unusablePrefix['message'] ?? ''))
+    ),
+    'A JSON prefix without dialogue should be rejected before streaming'
+);
+contractAssertTrue(
+    stobeStructuredStreamResponseIsUsable(
+        '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler',
+        boolval($partialStructured['is_structured'] ?? false),
+        trim(strval($partialStructured['message'] ?? ''))
+    ),
+    'A partial structured response with usable dialogue should remain compatible'
+);
+contractAssertTrue(
+    stobeStructuredStreamResponseIsUsable('Plain text fallback.', false, 'Plain text fallback.'),
+    'A plain-text provider fallback should remain compatible'
+);
+
 echo "PASS: structured dialogue contract regression\n";

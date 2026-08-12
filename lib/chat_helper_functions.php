@@ -12359,6 +12359,15 @@ function stobeStreamDialogueResponse(
     );
 }
 
+function stobeStructuredStreamResponseIsUsable(string $rawResponse, bool $isStructured, string $message): bool {
+    if (trim($message) === '') {
+        return false;
+    }
+
+    $looksLikeStructuredPayload = preg_match('/^\s*[\{\[]/', $rawResponse) === 1;
+    return !$looksLikeStructuredPayload || $isStructured;
+}
+
 function stobeStreamDialogueViaLlm(
     string $actor,
     array|false $actorData,
@@ -12587,11 +12596,20 @@ function stobeStreamDialogueViaLlm(
         }
 
         $finalSnapshot = $processStructuredSnapshot(true);
+        $finalIsStructured = boolval($finalSnapshot['is_structured'] ?? false) || $structuredParsed;
         $finalMessage = stobeStripParentheticalDialogueText(
             sanitizeForKenshi(trim(strval($finalSnapshot['message'] ?? '')))
         );
         if ($finalMessage === '' && $lastStructuredMessage !== '') {
             $finalMessage = $lastStructuredMessage;
+        }
+        if (!stobeStructuredStreamResponseIsUsable($rawResponse, $finalIsStructured, $finalMessage)) {
+            stobeLogWarn('LLM structured stream did not contain usable dialogue', [
+                'npc_name' => $actor,
+                'event_type' => $eventType,
+                'response_preview' => substr(trim($rawResponse), 0, 500),
+            ]);
+            return $result;
         }
 
         $finalActions = [];
@@ -12607,7 +12625,7 @@ function stobeStreamDialogueViaLlm(
         $result['response_text'] = $finalMessage;
         $result['actions'] = $finalActions;
         $result['actions_streamed'] = false;
-        $result['structured_json'] = boolval($finalSnapshot['is_structured'] ?? false) || $structuredParsed;
+        $result['structured_json'] = $finalIsStructured;
         $result['listener'] = $structuredListener !== ''
             ? $structuredListener
             : normalizeParticipantNameToken(strval($finalSnapshot['listener'] ?? ''));
