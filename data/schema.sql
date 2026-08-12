@@ -3805,7 +3805,7 @@ INSERT INTO core_llm_connector (
     750,
     0.6,
     FALSE,
-    '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
+    '{"service":"openrouter","provider":"openrouter","reasoning_model":true,"enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
 ),
 (
     'Gemini 2.5 Flash',

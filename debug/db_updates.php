@@ -2542,7 +2542,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                     (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
                     '', 'https://openrouter.ai/api/v1/chat/completions', 'deepseek/deepseek-v4-flash',
                     750, 0.6, FALSE,
-                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
+                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"reasoning_model\":true,\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
                  ),
                  (
                     'GLM 5.2', 'openrouterjson',
