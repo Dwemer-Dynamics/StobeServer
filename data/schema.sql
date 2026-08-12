@@ -3796,16 +3796,16 @@ INSERT INTO core_llm_connector (
     config
 ) VALUES
 (
-    'GLM 4.7',
+    'DeepSeek V4 Flash',
     'openrouterjson',
     (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
     '',
     'https://openrouter.ai/api/v1/chat/completions',
-    'z-ai/glm-4.7',
+    'deepseek/deepseek-v4-flash',
     750,
-    1.0,
+    0.6,
     FALSE,
-    '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
+    '{"service":"openrouter","provider":"openrouter","reasoning_model":true,"enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
 ),
 (
     'Gemini 2.5 Flash',
@@ -3980,27 +3980,27 @@ INSERT INTO core_profiles (
     'Default Profile',
     TRUE,
     COALESCE(
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash lite' LIMIT 1),
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 5.2' LIMIT 1),
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 pro' LIMIT 1),
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
@@ -4185,7 +4185,7 @@ WHERE LOWER(COALESCE(label, '')) = 'player faction';
 
 UPDATE core_profiles
 SET response_connector = COALESCE(
-    (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+    (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ),
@@ -4225,7 +4225,7 @@ UPDATE core_profiles
 SET llm_primary_id = COALESCE(
         llm_primary_id,
         response_connector,
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1)
     ),
     llm_secondary_id = COALESCE(
         llm_secondary_id,
@@ -4248,7 +4248,7 @@ SET llm_primary_id = COALESCE(
     response_connector = COALESCE(
         response_connector,
         llm_primary_id,
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1)
     )
 WHERE COALESCE(is_default_npc, FALSE) = TRUE
    OR COALESCE(is_player_faction_profile, FALSE) = TRUE;

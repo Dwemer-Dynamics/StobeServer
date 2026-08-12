@@ -49,7 +49,7 @@ assert_profile_llm_defaults() {
                        WHERE COALESCE(p.is_default_npc, FALSE) = TRUE
                           OR COALESCE(p.is_player_faction_profile, FALSE) = TRUE
                        ORDER BY p.label")"
-    expected=$'Default Profile|GLM 4.7|Gemini 2.5 Flash Lite|GLM 5.2|DeepSeek V4 Pro\nPlayer Faction|GLM 4.7|Gemini 2.5 Flash Lite|GLM 5.2|DeepSeek V4 Pro'
+    expected=$'Default Profile|DeepSeek V4 Flash|Gemini 2.5 Flash Lite|GLM 5.2|DeepSeek V4 Pro\nPlayer Faction|DeepSeek V4 Flash|Gemini 2.5 Flash Lite|GLM 5.2|DeepSeek V4 Pro'
     [[ "$actual" == "$expected" ]] || {
         echo "Default profile LLM tiers did not match HerikaServer defaults." >&2
         printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual" >&2
