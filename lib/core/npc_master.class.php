@@ -357,14 +357,21 @@ class NpcMaster
         $mapped = $this->mapIncoming($input);
         try {
             if (isset($mapped['name']) && trim((string)$mapped['name']) !== '') {
-                $this->db->exec(
+                $renamed = $this->db->exec(
                     "UPDATE core_npc SET name = $1, updated_at = NOW() WHERE id = $2",
                     [trim((string)$mapped['name']), $id]
                 );
+                if ($renamed === false) {
+                    $this->lastError = 'NPC rename failed';
+                    return false;
+                }
                 unset($mapped['name']);
             }
             if (count($mapped) > 0) {
-                updateNpcById($id, $mapped);
+                if (!updateNpcById($id, $mapped)) {
+                    $this->lastError = 'NPC update failed';
+                    return false;
+                }
             }
             return true;
         } catch (Throwable $exception) {

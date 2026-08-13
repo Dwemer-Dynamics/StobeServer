@@ -6648,8 +6648,6 @@ function storeGameData(string $name, string $type, array $data): bool {
     $metadata['last_gamedata_type'] = $type;
     $metadata['last_gamedata_source'] = 'gamedata.php';
 
-    $metadataJson = normalizeJsonString($metadata);
-
     $currentRace = trim(strval($existing['race'] ?? ''));
     $currentFaction = trim(strval($existing['faction'] ?? ''));
     $race = $incomingRace !== '' ? $incomingRace : $currentRace;
@@ -6661,6 +6659,13 @@ function storeGameData(string $name, string $type, array $data): bool {
     $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, '', $faction);
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if (
+        $ruleProfileId > 0
+        && strtolower(trim(strval($metadata['profile_assignment_source'] ?? ''))) !== 'manual'
+    ) {
+        $metadata['profile_assignment_source'] = 'rule';
+    }
+    $metadataJson = normalizeJsonString($metadata);
 
     $result = $db->exec(
         "INSERT INTO core_npc_master (
@@ -7726,6 +7731,170 @@ function stobeSortArrayRecursive(mixed $value): mixed {
     return $value;
 }
 
+function stobeRelationshipExtendedDataKeys(): array {
+    return [
+        'relationships',
+        'relationships_analyzed',
+        'relationships_inferred',
+        'relationships_last_eval',
+        'relationships_model',
+        'relationships_updated',
+    ];
+}
+
+function stobeRelationshipTimelineState(mixed $extendedData): ?array {
+    if (is_string($extendedData) && trim($extendedData) !== '') {
+        $extendedData = json_decode($extendedData, true);
+    }
+    if (!is_array($extendedData)) {
+        return null;
+    }
+
+    $state = [];
+    foreach (['relationships', 'relationships_analyzed', 'relationships_inferred', 'relationships_model'] as $key) {
+        if (array_key_exists($key, $extendedData)) {
+            $state[$key] = $extendedData[$key];
+        }
+    }
+    return $state;
+}
+
+// Build an atomic JSONB update that keeps relationship state owned by relationship writers.
+function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
+    $incomingWithoutRelationships = '(' . $incomingExpression . ')';
+    foreach (stobeRelationshipExtendedDataKeys() as $key) {
+        $incomingWithoutRelationships .= " - '" . $key . "'";
+    }
+
+    $relationshipPairs = [];
+    foreach (stobeRelationshipExtendedDataKeys() as $key) {
+        $relationshipPairs[] = "'" . $key . "', (" . $currentExpression . ") -> '" . $key . "'";
+    }
+
+    return '(' . $incomingWithoutRelationships . ') || jsonb_strip_nulls(jsonb_build_object('
+        . implode(', ', $relationshipPairs)
+        . '))';
+}
+
+function stobeAcquireNpcRelationshipLock(int $npcId): ?int {
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || $npcId <= 0) {
+        return null;
+    }
+
+    $lockId = 1001000000 + $npcId;
+    $locked = $db->fetchOne('SELECT pg_advisory_lock($1) AS locked', [$lockId]);
+    if (!is_array($locked)) {
+        throw new RuntimeException('failed to acquire NPC relationship lock');
+    }
+    return $lockId;
+}
+
+function stobeReleaseNpcRelationshipLock(?int $lockId): void {
+    if ($lockId === null || !isset($GLOBALS['db'])) {
+        return;
+    }
+    $GLOBALS['db']->exec('SELECT pg_advisory_unlock($1)', [$lockId]);
+}
+
+function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcId = 0): mixed {
+    $hadPrevious = array_key_exists('STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE', $GLOBALS);
+    $previous = $hadPrevious ? $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] : null;
+    $lockId = stobeAcquireNpcRelationshipLock($npcId);
+    $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = true;
+
+    try {
+        return $callback();
+    } finally {
+        if ($hadPrevious) {
+            $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = $previous;
+        } else {
+            unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE']);
+        }
+        stobeReleaseNpcRelationshipLock($lockId);
+    }
+}
+
+// Anchor relationship changes to Kenshi time and retain every distinct durable state for rollback.
+function stobeRelationshipTimelineStamp(int $npcId): bool {
+    try {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db || $npcId <= 0) {
+            return false;
+        }
+
+        $gamets = 0;
+        if (isset($GLOBALS['gameRequest'][2]) && is_numeric($GLOBALS['gameRequest'][2])) {
+            $gamets = max(0, intval($GLOBALS['gameRequest'][2]));
+        }
+        if ($gamets <= 0 && function_exists('getConfOpt')) {
+            $gamets = max(0, intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0')));
+        }
+        if ($gamets <= 0) {
+            $latest = $db->fetchOne('SELECT COALESCE(MAX(gamets), 0) AS gamets FROM eventlog');
+            $gamets = max(0, intval($latest['gamets'] ?? 0));
+        }
+
+        if ($gamets > 0) {
+            $updated = $db->exec(
+                'UPDATE core_npc SET gamets_last_updated = $1, updated_at = NOW() WHERE id = $2',
+                [$gamets, $npcId]
+            );
+            if ($updated === false) {
+                throw new RuntimeException('failed to stamp game timestamp');
+            }
+        }
+
+        $current = stobeFetchNpcRowForHistoryById($npcId);
+        if (!$current) {
+            throw new RuntimeException('NPC row not found after relationship write');
+        }
+        $currentState = stobeRelationshipTimelineState($current['extended_data'] ?? null);
+        if ($currentState === null) {
+            throw new RuntimeException('live extended_data is not valid relationship JSON');
+        }
+
+        $params = [$npcId];
+        $eligibleClause = '';
+        if ($gamets > 0) {
+            $params[] = $gamets;
+            $eligibleClause = 'AND gamets_last_updated <= $2';
+        }
+        $history = $db->fetchOne(
+            "SELECT extended_data
+             FROM core_npc_master_history
+             WHERE npc_id = $1
+               {$eligibleClause}
+             ORDER BY gamets_last_updated DESC,
+                      CASE WHEN snapshot_reason = 'relationship' THEN 1 ELSE 0 END DESC,
+                      history_id DESC
+             LIMIT 1",
+            $params
+        );
+        $historyState = $history
+            ? stobeRelationshipTimelineState($history['extended_data'] ?? null)
+            : null;
+        if ($historyState !== null && $currentState == $historyState) {
+            return true;
+        }
+
+        if (!stobeInsertNpcHistorySnapshotFromRow($current, 'relationship')) {
+            throw new RuntimeException('failed to store relationship history snapshot');
+        }
+        return true;
+    } catch (Throwable $exception) {
+        if (function_exists('stobeLogWarn')) {
+            stobeLogWarn('RELATIONSHIP: timeline snapshot failed', [
+                'npc_id' => $npcId,
+                'error' => $exception->getMessage(),
+            ]);
+        } else {
+            error_log('[REL] Timeline snapshot failed for npc_id ' . strval($npcId) . ': ' . $exception->getMessage());
+        }
+        return false;
+    }
+}
+
 function stobeNormalizeJsonArrayValue(mixed $value): array {
     if (is_array($value)) {
         return $value;
@@ -7763,6 +7932,7 @@ function stobeBuildNpcHistoryCanonicalFromRow(array $row): array {
         'speechstyle' => strval($row['speechstyle'] ?? ''),
         'goals' => strval($row['goals'] ?? ''),
         'relationships' => strval($row['relationships'] ?? ''),
+        'relationship_state' => stobeSortArrayRecursive(stobeRelationshipTimelineState($row['extended_data'] ?? '{}') ?? []),
         'voiceid' => strval($row['voiceid'] ?? ''),
         'race' => strval($row['race'] ?? ''),
         'faction' => strval($row['faction'] ?? ''),
@@ -7956,6 +8126,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
     $cooldownBypassReason = (
         str_starts_with($safeReason, 'rollback_')
         || $safeReason === 'delete_before'
+        || $safeReason === 'relationship'
     );
     if (!$cooldownBypassReason) {
         $latestCreatedUnix = strtotime(strval($latest['created'] ?? ''));
@@ -8825,11 +8996,20 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
         ], 'DEBUG');
     }
 
-    $metadataJson = normalizeJsonString($metadataArray);
     $extendedDataJson = normalizeJsonString(normalizeCoreNpcExtendedData($profile['extended_data'] ?? '{}'));
-    $ruleProfileId = stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
-    $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
+    $hasExplicitProfileId = array_key_exists('profile_id', $profile);
+    $explicitProfileId = $hasExplicitProfileId ? intval($profile['profile_id'] ?? 0) : 0;
+    $ruleProfileId = $hasExplicitProfileId ? 0 : stobeResolveProfileIdFromImportRules($safeName, $race, $gender, $faction);
+    $selectedProfileId = $hasExplicitProfileId
+        ? $explicitProfileId
+        : ($ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId());
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if ($hasExplicitProfileId && $explicitProfileId > 0) {
+        $metadataArray['profile_assignment_source'] = 'manual';
+    } elseif ($ruleProfileId > 0) {
+        $metadataArray['profile_assignment_source'] = 'rule';
+    }
+    $metadataJson = normalizeJsonString($metadataArray);
 
     $profilePersisted = $db->exec(
         "INSERT INTO core_npc_master (
@@ -10818,7 +10998,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $hornAppearanceSentence = $buildShekHornAppearanceSentence($hornAverageNormalized);
     }
 
-    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path'];
+    $preservedMetadataKeys = ['portrait', 'portrait_url', 'portrait_path', 'profile_assignment_source'];
     $preservedMetadataApplied = [];
     foreach ($preservedMetadataKeys as $preservedKey) {
         if (
@@ -11107,7 +11287,15 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     $ruleProfileId = stobeResolveProfileIdFromImportRules($name, $race, $gender, $faction);
     $selectedProfileId = $ruleProfileId > 0 ? $ruleProfileId : getDefaultNpcProfileId();
     $selectedProfileIdOrNull = $selectedProfileId > 0 ? $selectedProfileId : null;
+    if ($ruleProfileId > 0 && strtolower(trim(strval($metadataForStorage['profile_assignment_source'] ?? ''))) !== 'manual') {
+        $metadataForStorage['profile_assignment_source'] = 'rule';
+        $metadataJson = normalizeJsonString($metadataForStorage);
+    }
 
+    $preservedSnapshotExtendedDataSql = stobeRelationshipPreservingExtendedDataSql(
+        '$10::jsonb',
+        'core_npc_master.extended_data'
+    );
     $result = $db->exec(
         "INSERT INTO core_npc_master (
             name,
@@ -11147,7 +11335,7 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             END,
             extended_data = CASE
                 WHEN $10::jsonb = '{}'::jsonb OR $10::jsonb = '[]'::jsonb THEN core_npc_master.extended_data
-                ELSE $10::jsonb
+                ELSE " . $preservedSnapshotExtendedDataSql . "
             END,
             tags = CASE
                 WHEN NULLIF($11, '') IS NOT NULL THEN $11
@@ -11351,7 +11539,7 @@ function deleteNpc(int $id): void {
     $db->exec("DELETE FROM core_npc WHERE id = $1", [$id]);
 }
 
-function updateNpcById(int $id, array $fields): void {
+function updateNpcById(int $id, array $fields): bool {
     $db = $GLOBALS["db"];
     $historyRowBefore = stobeFetchNpcRowForHistoryById($id);
     if (array_key_exists('dynamic_profile', $fields) || array_key_exists('middle_term_enabled', $fields)) {
@@ -11383,6 +11571,26 @@ function updateNpcById(int $id, array $fields): void {
         }
 
         $fields['metadata'] = $metadata;
+    }
+
+    if (array_key_exists('profile_id', $fields) && $historyRowBefore) {
+        $currentProfileId = intval($historyRowBefore['profile_id'] ?? 0);
+        $selectedProfileId = intval($fields['profile_id'] ?? 0);
+        if ($selectedProfileId !== $currentProfileId) {
+            $metadata = array_key_exists('metadata', $fields)
+                ? normalizeCoreNpcMetadata($fields['metadata'])
+                : normalizeCoreNpcMetadata($historyRowBefore['metadata'] ?? []);
+            $isPlayerFactionNpc = stobeNpcIsInPlayerFactionForProfileOverride($historyRowBefore);
+            $automaticProfileId = $isPlayerFactionNpc
+                ? getPlayerFactionProfileId()
+                : getDefaultNpcProfileId();
+            if ($selectedProfileId <= 0 || $selectedProfileId === $automaticProfileId) {
+                unset($metadata['profile_assignment_source']);
+            } else {
+                $metadata['profile_assignment_source'] = 'manual';
+            }
+            $fields['metadata'] = $metadata;
+        }
     }
 
     $allowedColumns = [
@@ -11428,7 +11636,18 @@ function updateNpcById(int $id, array $fields): void {
         }
 
         if ($type === 'json') {
-            $setClauses[] = "{$column} = $" . $paramIndex . "::jsonb";
+            $incomingExpression = '$' . $paramIndex . '::jsonb';
+            if (
+                $column === 'extended_data'
+                && empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])
+            ) {
+                $setClauses[] = $column . ' = ' . stobeRelationshipPreservingExtendedDataSql(
+                    $incomingExpression,
+                    $column
+                );
+            } else {
+                $setClauses[] = "{$column} = " . $incomingExpression;
+            }
             $params[] = normalizeJsonString($fields[$column]);
             $paramIndex++;
             continue;
@@ -11473,13 +11692,16 @@ function updateNpcById(int $id, array $fields): void {
     }
 
     if (count($setClauses) === 0) {
-        return;
+        return true;
     }
 
     $params[] = $id;
     $idIndex = $paramIndex;
     $query = "UPDATE core_npc SET " . implode(', ', $setClauses) . ", updated_at = NOW() WHERE id = $" . $idIndex;
-    $db->exec($query, $params);
+    $updated = $db->exec($query, $params);
+    if ($updated === false) {
+        return false;
+    }
     $historyRowAfter = stobeFetchNpcRowForHistoryById($id);
     $rewroteUiHistorySnapshot = false;
     if ($historyRowBefore && $historyRowAfter) {
@@ -11513,6 +11735,7 @@ function updateNpcById(int $id, array $fields): void {
             stobeApplyPlayerFactionProfileForNpcName($npcName, $incomingFaction);
         }
     }
+    return true;
 }
 
 function stobeEnsureCoreProfileImportRulesTable(): void {
@@ -11670,9 +11893,7 @@ function stobeProfileRuleRegexMatches(?string $pattern, string $value): bool {
     return $result === 1;
 }
 
-function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
-    stobeEnsureCoreProfileImportRulesTable();
-
+function stobeResolveProfileIdFromRuleRows(array $rules, string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
     $nameVal = trim($npcName);
     if ($nameVal === '') {
         return 0;
@@ -11681,7 +11902,6 @@ function stobeResolveProfileIdFromImportRules(string $npcName, string $race = ''
     $genderVal = trim($gender);
     $factionVal = trim($faction);
 
-    $rules = stobeGetCoreProfileImportRules();
     foreach ($rules as $rule) {
         if (!coerceBoolean($rule['enabled'] ?? false)) {
             continue;
@@ -11706,6 +11926,84 @@ function stobeResolveProfileIdFromImportRules(string $npcName, string $race = ''
     }
 
     return 0;
+}
+
+function stobeResolveProfileIdFromImportRules(string $npcName, string $race = '', string $gender = '', string $faction = ''): int {
+    stobeEnsureCoreProfileImportRulesTable();
+    return stobeResolveProfileIdFromRuleRows(stobeGetCoreProfileImportRules(), $npcName, $race, $gender, $faction);
+}
+
+// Re-evaluate automatic assignments after a rule changes while preserving manual profile choices.
+function stobeBackfillCoreProfileImportRules(): int {
+    $db = $GLOBALS["db"];
+    $defaultProfileId = getDefaultNpcProfileId();
+    $playerFactionProfileId = getPlayerFactionProfileId();
+    $rules = stobeGetCoreProfileImportRules();
+    $rows = $db->fetchAll(
+        "SELECT id, name, race, gender, faction, profile_id, metadata
+         FROM core_npc
+         WHERE LOWER(name) <> LOWER('The Narrator')
+         ORDER BY id ASC"
+    );
+
+    $updatedCount = 0;
+    foreach ($rows as $row) {
+        $currentProfileId = intval($row['profile_id'] ?? 0);
+        $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+        $source = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+        if ($source === 'manual') {
+            continue;
+        }
+
+        // Existing custom assignments predate assignment-source tracking and are treated as manual.
+        if (
+            $source === ''
+            && $currentProfileId > 0
+            && $currentProfileId !== $defaultProfileId
+            && $currentProfileId !== $playerFactionProfileId
+        ) {
+            continue;
+        }
+
+        $ruleProfileId = stobeResolveProfileIdFromRuleRows(
+            $rules,
+            strval($row['name'] ?? ''),
+            strval($row['race'] ?? ''),
+            strval($row['gender'] ?? ''),
+            strval($row['faction'] ?? '')
+        );
+        if ($ruleProfileId > 0) {
+            $targetProfileId = $ruleProfileId;
+            $metadata['profile_assignment_source'] = 'rule';
+        } elseif ($source === 'rule') {
+            $targetProfileId = stobeNpcIsInPlayerFactionForProfileOverride($row)
+                ? $playerFactionProfileId
+                : $defaultProfileId;
+            unset($metadata['profile_assignment_source']);
+        } else {
+            continue;
+        }
+
+        if ($targetProfileId <= 0) {
+            $targetProfileId = 0;
+        }
+        $targetSource = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+        if ($currentProfileId === $targetProfileId && $source === $targetSource) {
+            continue;
+        }
+
+        $db->exec(
+            "UPDATE core_npc
+             SET profile_id = $1,
+                 metadata = $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $3",
+            [$targetProfileId > 0 ? $targetProfileId : null, normalizeJsonString($metadata), intval($row['id'] ?? 0)]
+        );
+        $updatedCount++;
+    }
+
+    return $updatedCount;
 }
 
 function getAllCoreProfiles(): array {
@@ -12795,7 +13093,7 @@ function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incom
 
     $db = $GLOBALS["db"];
     $row = $db->fetchOne(
-        "SELECT id, name, faction, metadata, profile_id, profile_id_before_player_faction
+        "SELECT id, name, race, gender, faction, metadata, profile_id, profile_id_before_player_faction
          FROM core_npc
          WHERE LOWER(name) = LOWER($1)
          LIMIT 1",
@@ -12813,6 +13111,15 @@ function stobeApplyPlayerFactionProfileForNpcName(string $npcName, string $incom
     $playerFactionProfileId = getPlayerFactionProfileId();
     $currentProfileId = intval($row['profile_id'] ?? 0);
     $backupProfileId = intval($row['profile_id_before_player_faction'] ?? 0);
+    $metadata = normalizeCoreNpcMetadata($row['metadata'] ?? []);
+    $assignmentSource = strtolower(trim(strval($metadata['profile_assignment_source'] ?? '')));
+    if (
+        in_array($assignmentSource, ['manual', 'rule'], true)
+        && $currentProfileId > 0
+        && stobeProfileIdExists($currentProfileId)
+    ) {
+        return false;
+    }
     $isInPlayerFaction = stobeNpcIsInPlayerFactionForProfileOverride($row, $incomingFaction);
 
     if ($isInPlayerFaction && $playerFactionProfileId > 0) {

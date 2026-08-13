@@ -234,6 +234,23 @@
     text-decoration: none;
 }
 
+.event-table .diary-audio-button {
+    min-width: 0;
+    width: 100%;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.diary-modal .diary-audio-button {
+    min-width: 180px;
+}
+
+.diary-audio-status {
+    color: #d7d7d7;
+    flex: 1;
+    font-size: 0.9rem;
+}
+
 /* Event Table Styles */
 .event-table {
     width: 100%;

@@ -1323,6 +1323,15 @@ CREATE TABLE IF NOT EXISTS core_api_badge (
 
 CREATE INDEX IF NOT EXISTS idx_core_api_badge_label_lower ON core_api_badge (LOWER(label));
 
+CREATE TABLE IF NOT EXISTS core_stt_connector (
+    id SERIAL PRIMARY KEY,
+    driver TEXT NOT NULL DEFAULT 'parakeet',
+    label TEXT NOT NULL DEFAULT 'Global STT Connector',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    api_badge_id INT REFERENCES core_api_badge(id) ON DELETE SET NULL,
+    url TEXT
+);
+
 CREATE TABLE IF NOT EXISTS core_llm_connector (
     id SERIAL PRIMARY KEY,
     name VARCHAR(128) UNIQUE NOT NULL,
@@ -3663,6 +3672,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('ENFORCE_STRICT_RECHAT_RESPONSE', 'false', 'When true, rechat replies must target the actor who just spoke.'),
 ('SPEAKER_RECHAT', 'false',              'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.'),
 ('COMPACT_CHAT_HISTORY_ENABLED', 'false', 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.'),
+('PLAYER_DIALOGUE_AUDIO_ENABLED', 'true', 'Play TTS for when the selected player character speaks.'),
 ('PROMPT_CONTEXT_OPTIONS', '{"enabled_sections":["world","knowledge","player_faction_funds","available_actions_list","nearby_actors","nearby_player_allies","nearby_items","points_of_interest","combat_priority","nearby_context_json","detailed_context_json"],"enabled_character_subsections":["basic_summary","personality","appearance","relationships","occupation","bounty","skills","speech_style","goals","middle_term_memory"],"enabled_state_subsections":["current_condition","activity_state","equipment","personal_inventory","merchant_inventory"],"enabled_knowledge_subsections":["world_knowledge","player_faction_prompt"]}', 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
 ON CONFLICT (id) DO NOTHING;
@@ -3671,12 +3681,27 @@ INSERT INTO core_api_badge (label, api_key) VALUES
 ('OpenRouter', ''),
 ('OpenAI', ''),
 ('Google', ''),
+('Deepgram', ''),
+('Azure', ''),
 ('Cartesia', ''),
 ('Inworld', ''),
 ('Nano-GPT', ''),
 ('Groq', ''),
 ('Player2', '019cf504-1461-74e7-b4da-045b14e9019d')
 ON CONFLICT (label) DO NOTHING;
+
+INSERT INTO core_stt_connector (driver, label, metadata, url)
+SELECT 'parakeet', 'Global STT Connector',
+       '{"LANGUAGE":"en","TRANSLATE":false,"TIMEOUT":60}'::jsonb,
+       'http://127.0.0.1:8022/v1/audio/transcriptions'
+WHERE NOT EXISTS (SELECT 1 FROM core_stt_connector);
+
+INSERT INTO general_settings (id, value, description, updated_at)
+SELECT 'GLOBAL_STT_CONNECTOR_ID', id::text, 'Active speech-to-text connector.', NOW()
+FROM core_stt_connector
+ORDER BY CASE WHEN driver = 'parakeet' THEN 0 ELSE 1 END, id ASC
+LIMIT 1
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO core_llm_connector (
     name,

@@ -58,6 +58,11 @@ try {
                 'description' => 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
             ],
             [
+                'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
+                'value' => 'true',
+                'description' => 'Play TTS for when the selected player character speaks.',
+            ],
+            [
                 'id' => 'ALWAYS_INSERT_RACE',
                 'value' => 'true',
                 'description' => 'When true, always inject world knowledge entries for detected speaker and nearby NPC races when matching topics exist.',
@@ -304,7 +309,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -369,6 +374,7 @@ function stobePrettySettingLabel(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
         'SPEAKER_RECHAT' => 'Speaker Rechat',
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Compact Chat History',
+        'PLAYER_DIALOGUE_AUDIO_ENABLED' => 'Speak Player Dialogue',
         'PROMPT_HEAD' => 'Prompt Head',
         'EMOTEMOODS' => 'Emote Moods',
         'ROLEPLAY_INSTRUCTIONS' => 'Roleplay Instructions',
@@ -396,6 +402,7 @@ function stobeIconForSetting(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
         'SPEAKER_RECHAT' => '🗣️',
         'COMPACT_CHAT_HISTORY_ENABLED' => '📝',
+        'PLAYER_DIALOGUE_AUDIO_ENABLED' => '🔊',
         'MEMORY_ENABLED' => '🧠',
         'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
         'TXTAI_URL' => '🔗',
@@ -593,7 +600,8 @@ foreach ($grouped as $groupName => $rows) {
             'RELATION_SYSTEM_ENABLED' => 2,
             'PLAYER_FACTION_CUSTOM_NAME' => 3,
             'PLAYER_FACTION_PROMPT' => 4,
-            'DYNAMIC_PROFILE_INTERVAL_HOURS' => 5,
+            'PLAYER_DIALOGUE_AUDIO_ENABLED' => 5,
+            'DYNAMIC_PROFILE_INTERVAL_HOURS' => 6,
             'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
             'WORLD_KNOWLEDGE_ENABLED' => 0,
