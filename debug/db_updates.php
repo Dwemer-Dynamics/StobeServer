@@ -1948,6 +1948,28 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 [$prompt]
             );
         });
+        $applyPatch('prompts', 202608160001, static function () use ($db): void {
+            $regularMemoryPrompt = 'Focus on key events, tagging characters, locations, and factions accurately. Prioritize combat, injury, death, enslavement, relationships, and consequential goals. Compress routine inventory movement, hauling, building, buying, and selling, and omit repetitive logistics unless they had a lasting consequence. Ensure memories align and maintain chronological order while foreshadowing future arcs.';
+            $dynamicProfilePrompt = "You generate Kenshi NPC profile fields for dynamic profile refresh.\n"
+                . "Return STRICT JSON only (no markdown, no prose).\n"
+                . "Allowed keys: {\"backstory\":\"\",\"personality\":\"\",\"occupation\":\"\",\"speechstyle\":\"\",\"goals\":\"\"}\n"
+                . "Only meaningfully change fields when context supports it.\n"
+                . "Treat routine inventory movement, hauling, building, buying, and selling as transient logistics, not enduring personality traits or goals.\n"
+                . "When logistics and danger both appear, prioritize combat, injury, death, enslavement, and other high-stakes consequences.\n"
+                . "Stay grounded and in-world. Avoid placeholders like unknown/none.\n"
+                . "Fields currently editable for this NPC: #ALLOWED_FIELDS#";
+            $db->exec(
+                "INSERT INTO prompts (prompt_key, default_prompt, description, updated_at)
+                 VALUES
+                    ('regular_memory_summarizer', $1, 'System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.', NOW()),
+                    ('dynamic_profile_generator', $2, 'System prompt for dynamic profile generation. Supports #ALLOWED_FIELDS#. Used in lib/dynamic_profile_helper_functions.php.', NOW())
+                 ON CONFLICT (prompt_key) DO UPDATE SET
+                    default_prompt = EXCLUDED.default_prompt,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [$regularMemoryPrompt, $dynamicProfilePrompt]
+            );
+        });
         $applyPatch('core_profiles', 202604110102, static function () use ($db): void {
             $db->exec(
                 "UPDATE core_profiles

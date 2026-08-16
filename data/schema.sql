@@ -3587,7 +3587,7 @@ BONDED: Absolute trust, would die for them$$,
   ),
   (
     'regular_memory_summarizer',
-    $$Focus on key events, tagging characters, locations, and factions accurately. Ensure memories align and maintain chronological order while foreshadowing future arcs.$$,
+    $$Focus on key events, tagging characters, locations, and factions accurately. Prioritize combat, injury, death, enslavement, relationships, and consequential goals. Compress routine inventory movement, hauling, building, buying, and selling, and omit repetitive logistics unless they had a lasting consequence. Ensure memories align and maintain chronological order while foreshadowing future arcs.$$,
     $$System prompt for regular memory summary packing. Used in lib/memory_helper_functions.php.$$
   ),
 (
@@ -3596,6 +3596,8 @@ BONDED: Absolute trust, would die for them$$,
 Return STRICT JSON only (no markdown, no prose).
 Allowed keys: {"backstory":"","personality":"","occupation":"","speechstyle":"","goals":""}
 Only meaningfully change fields when context supports it.
+Treat routine inventory movement, hauling, building, buying, and selling as transient logistics, not enduring personality traits or goals.
+When logistics and danger both appear, prioritize combat, injury, death, enslavement, and other high-stakes consequences.
 Stay grounded and in-world. Avoid placeholders like unknown/none.
 Fields currently editable for this NPC: #ALLOWED_FIELDS#$$,
     $$System prompt for dynamic profile generation. Supports #ALLOWED_FIELDS#. Used in lib/dynamic_profile_helper_functions.php.$$

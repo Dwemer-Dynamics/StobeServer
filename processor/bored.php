@@ -131,18 +131,6 @@ if ($listener === '') {
     return;
 }
 
-$cuePool = [
-    'comment on the current location',
-    'remark on the weather or atmosphere',
-    'share a practical survival thought',
-    'mention a rumor from nearby settlements',
-    'reflect on recent dangers in the area',
-    'make a quick comment about local factions',
-    'talk about work, trade, or supplies',
-    'share a short personal observation',
-];
-$cue = $cuePool[array_rand($cuePool)];
-
 $contextHistory = getNpcProfileIntegerSetting(
     is_array($speakerData) ? $speakerData : [],
     ['CONTEXT_HISTORY'],
@@ -153,6 +141,31 @@ $contextHistory = getNpcProfileIntegerSetting(
 );
 $eventHistory = DataEventLog($contextHistory, $speakerNpc, $campaign);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $speakerNpc, 'bored');
+$recentCombatHasPriority = false;
+$combatEventTypes = ['combat_start', 'combat_end', 'combat', 'knockout', 'recovered', 'death', 'limb_loss', 'healing'];
+$routineLogisticsEventTypes = ['trade', 'item_pickup', 'carry', 'build', 'dismantle'];
+foreach ($eventHistory as $row) {
+    $historyEventType = strtolower(trim(strval(is_array($row) ? ($row['type'] ?? '') : '')));
+    if (in_array($historyEventType, $combatEventTypes, true)) {
+        $recentCombatHasPriority = true;
+        break;
+    }
+    if (in_array($historyEventType, $routineLogisticsEventTypes, true)) {
+        break;
+    }
+}
+$cuePool = [
+    'comment on the current location',
+    'remark on the weather or atmosphere',
+    'share a practical survival thought',
+    'mention a rumor from nearby settlements',
+    'reflect on recent dangers in the area',
+    'make a quick comment about local factions',
+    'share a short personal observation',
+];
+$cue = $recentCombatHasPriority
+    ? 'briefly acknowledge the most recent fight or its immediate aftermath'
+    : $cuePool[array_rand($cuePool)];
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
@@ -209,7 +222,8 @@ $messages[] = [
     'content' => "<bored_event_request>\n"
         . "  <speaker>" . stobePromptXmlEscape($speakerNpc) . "</speaker>\n"
         . "  <listener>" . stobePromptXmlEscape($listener) . "</listener>\n"
-        . "  <instruction>Start a brief spontaneous conversation to the listener about the current situation.</instruction>\n"
+        . "  <topic_hint>" . stobePromptXmlEscape($cue) . "</topic_hint>\n"
+        . "  <instruction>Start a brief spontaneous conversation to the listener about the current situation. If recent context contains combat or its aftermath, address that before routine work, trade, inventory, hauling, or supplies.</instruction>\n"
         . "</bored_event_request>",
 ];
 $messages[] = [

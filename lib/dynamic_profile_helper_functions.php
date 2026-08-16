@@ -97,6 +97,18 @@ function stobeDynamicProfileRealtimeCooldownSeconds(): int
     return $seconds;
 }
 
+function stobeDynamicProfileContextHistoryLimit(array $npcData): int
+{
+    return getNpcProfileIntegerSetting(
+        $npcData,
+        ['CONTEXT_HISTORY_DYNAMIC_PROFILE'],
+        '',
+        50,
+        10,
+        80
+    );
+}
+
 function stobeDynamicProfileMarkLoadGrace(int $nowTs, int $seconds, string $reason): void
 {
     if ($nowTs <= 0) {
@@ -259,7 +271,10 @@ function stobeDynamicProfileProcessNarrator(
     $narratorData['dynamic_profile'] = 1;
     $narratorData['profile_id'] = max(1, intval($narratorData['profile_id'] ?? 1));
 
-    $rows = stobeDynamicProfileFetchRecentContext($narratorName, 30);
+    $rows = stobeDynamicProfileFetchRecentContext(
+        $narratorName,
+        stobeDynamicProfileContextHistoryLimit($narratorData)
+    );
     $contextText = stobeDynamicProfileBuildContextText($rows);
     if ($contextText === '(none)') {
         return false;
@@ -579,9 +594,6 @@ function stobeDynamicProfileBuildContextText(array $rows): string
             $line = substr($line, 0, 420) . '...';
         }
         $lines[] = $line;
-        if (count($lines) >= 18) {
-            break;
-        }
     }
     return count($lines) > 0 ? implode("\n", $lines) : '(none)';
 }
@@ -612,6 +624,8 @@ function stobeDynamicProfileGenerateUpdates(string $npcName, array $npcData, str
         'Return STRICT JSON only (no markdown, no prose).',
         'Allowed keys: {"backstory":"","personality":"","occupation":"","speechstyle":"","goals":""}',
         'Only meaningfully change fields when context supports it.',
+        'Treat routine inventory movement, hauling, building, buying, and selling as transient logistics, not enduring personality traits or goals.',
+        'When logistics and danger both appear, prioritize combat, injury, death, enslavement, and other high-stakes consequences.',
         'Stay grounded and in-world. Avoid placeholders like unknown/none.',
     ]);
     $systemPromptTemplate = function_exists('stobeGetPromptTemplateValue')
@@ -728,7 +742,10 @@ function stobeMaybeRunDynamicProfileCycle(
                 continue;
             }
 
-            $rows = stobeDynamicProfileFetchRecentContext($npcName, 30);
+            $rows = stobeDynamicProfileFetchRecentContext(
+                $npcName,
+                stobeDynamicProfileContextHistoryLimit($npcData)
+            );
             $contextText = stobeDynamicProfileBuildContextText($rows);
             if ($contextText === '(none)') {
                 continue;
