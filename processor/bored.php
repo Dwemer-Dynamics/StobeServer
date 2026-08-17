@@ -142,7 +142,7 @@ $contextHistory = getNpcProfileIntegerSetting(
 $eventHistory = DataEventLog($contextHistory, $speakerNpc, $campaign);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $speakerNpc, 'bored');
 $recentCombatHasPriority = false;
-$combatEventTypes = ['combat_start', 'combat_end', 'combat', 'knockout', 'recovered', 'death', 'limb_loss', 'healing'];
+$combatEventTypes = ['combat_start', 'combat_end', 'major_damage', 'combat', 'knockout', 'recovered', 'death', 'limb_loss', 'healing'];
 $routineLogisticsEventTypes = ['trade', 'item_pickup', 'carry', 'build', 'dismantle'];
 foreach ($eventHistory as $row) {
     $historyEventType = strtolower(trim(strval(is_array($row) ? ($row['type'] ?? '') : '')));

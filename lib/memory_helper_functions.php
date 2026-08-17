@@ -48,6 +48,7 @@ function stobeRegularMemoryAllowedEventType(string $eventType): bool
         'location',
         'combat_start',
         'combat_end',
+        'major_damage',
         'limb_loss',
         'horn_cut',
         'knockout',

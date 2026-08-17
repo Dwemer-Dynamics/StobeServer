@@ -306,6 +306,7 @@ try {
 
         case 'combat_start':
         case 'combat_end':
+        case 'major_damage':
         case 'combat':
         case 'knockout':
         case 'recovered':
