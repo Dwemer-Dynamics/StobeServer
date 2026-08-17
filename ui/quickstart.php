@@ -656,7 +656,10 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
     if ($profileId <= 0) {
         return;
     }
-    $standardDefault = stobeQuickstartConnectorIdByName($db, 'GLM 4.7');
+    $standardDefault = stobeQuickstartConnectorIdByName($db, 'DeepSeek V4 Flash');
+    if ($standardDefault <= 0) {
+        $standardDefault = stobeQuickstartConnectorIdByName($db, 'GLM 4.7');
+    }
     if ($standardDefault <= 0) {
         $standardDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash');
     }
