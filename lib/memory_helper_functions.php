@@ -922,8 +922,6 @@ function stobeRegularMemoryGenerateSummaryFromPacked(
     }
 
     $defaultSystemPrompt = "Focus on key events, tagging characters, locations, and factions accurately. "
-        . "Prioritize combat, injury, death, enslavement, relationships, and consequential goals. "
-        . "Compress routine inventory movement, hauling, building, buying, and selling, and omit repetitive logistics unless they had a lasting consequence. "
         . "Ensure memories align and maintain chronological order while foreshadowing future arcs.";
     $systemPrompt = function_exists('stobeGetPromptTemplateValue')
         ? stobeGetPromptTemplateValue('regular_memory_summarizer', $defaultSystemPrompt)
