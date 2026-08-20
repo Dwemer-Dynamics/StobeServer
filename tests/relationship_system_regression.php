@@ -50,6 +50,13 @@ $baseMap = stobeNormalizeRelationshipMap([
 ]);
 relAssertTrue(isset($baseMap['Whistler']), 'normalized map should contain Whistler');
 
+$storedMap = stobeNormalizeRelationshipMap(
+    '{"Whistler":{"aff":12,"type":"neutral","note":"known drifter"}}'
+);
+relAssertTrue(isset($storedMap['Whistler']), 'stored JSON relationship map should normalize');
+relAssertSameInt(12, intval($storedMap['Whistler']['aff'] ?? 0), 'stored JSON affinity should be preserved');
+relAssertSame('neutral', strval($storedMap['Whistler']['type'] ?? ''), 'stored JSON type should be preserved');
+
 $applied = stobeApplyRelationshipUpdatesMap($baseMap, $parsed['updates'], ['Whistler']);
 relAssertSameInt(1, intval($applied['updated'] ?? 0), 'one relationship should be updated');
 $updatedMap = is_array($applied['map'] ?? null) ? $applied['map'] : [];
