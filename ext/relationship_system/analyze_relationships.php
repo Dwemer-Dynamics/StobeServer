@@ -5,8 +5,8 @@
  * AJAX endpoint that uses the Relationship Management LLM to analyze NPC
  * event history and generate affinity scores and relationship types.
  *
- * Uses GLOBALS['RELLLM_CONNECTOR'] for the dedicated relationship LLM.
- * Falls back to first available connector if not configured.
+ * Uses the NPC/profile relationship connector for the dedicated relationship LLM.
+ * Falls back through the profile response connector and default connector.
  *
  * Uses full NPC context (bio, personality, etc.) for better analysis.
  *
@@ -88,29 +88,29 @@ try {
     $eventCount = intval($baseline['event_count'] ?? 0);
     $counterparts = is_array($baseline['counterparts'] ?? null) ? $baseline['counterparts'] : [];
 
-    // Get Relationship Management LLM connector
-    // Priority: RELLLM_CONNECTOR global > first available connector
+    // Resolve the same NPC/profile relationship connector used by live affinity updates.
     $llmConnector = new LLMConnector();
-    $connectorId = $GLOBALS['RELLLM_CONNECTOR'] ?? 0;
     $connectorData = null;
+    $connectorId = intval($GLOBALS['RELLLM_CONNECTOR'] ?? 0);
 
     if ($connectorId > 0) {
         $connectorData = $llmConnector->readOne($connectorId);
     }
 
-    // Fallback to first connector if RELLLM_CONNECTOR not configured
     if (empty($connectorData)) {
-        $connectors = $llmConnector->readAll();
-        if (empty($connectors)) {
-            echo json_encode(['ok' => false, 'error' => 'No LLM connectors configured. Set RELLLM_CONNECTOR in conf.php']);
-            exit;
-        }
-        $connectorData = $connectors[0];
-        Logger::warn("[REL-AI] Warning: RELLLM_CONNECTOR not set, using first available connector");
+        $connectorData = getProfileLlmConnectorForNpcByPurpose($npcData ?: false, 'relationship');
     }
 
-    if (!$connectorData) {
-        echo json_encode(['ok' => false, 'error' => 'LLM connector not found']);
+    if (empty($connectorData)) {
+        $connectorData = getProfileLlmConnectorForNpcByPurpose($npcData ?: false, 'response');
+    }
+
+    if (empty($connectorData)) {
+        $connectorData = getDefaultLlmConnector();
+    }
+
+    if (empty($connectorData)) {
+        echo json_encode(['ok' => false, 'error' => 'No LLM connector configured']);
         exit;
     }
 
