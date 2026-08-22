@@ -90,13 +90,15 @@ if (!isset($tabMap[$activeTab])) {
     <link rel="stylesheet" href="css/hub-navigation.css?v=<?= filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'hub-navigation.css') ?>">
     <style>
         body {
-            padding-top: 80px;
+            /* Match the fixed navbar height instead of a hard-coded 80px band. */
+            padding-top: var(--hub-navbar-offset);
         }
 
         main {
-            padding-top: 20px;
-            padding-bottom: 40px;
+            padding-top: 0;
+            padding-bottom: 8px;
             padding-left: 10px;
+            padding-right: 10px;
         }
 
         @font-face {
@@ -112,7 +114,7 @@ if (!isset($tabMap[$activeTab])) {
         }
 
         .tab-container {
-            margin: 20px 0;
+            margin: 0 0 6px;
         }
 
         .tab-buttons {
@@ -164,7 +166,7 @@ if (!isset($tabMap[$activeTab])) {
         .tab-content {
             display: none;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            padding: 20px;
+            padding: 10px 12px 12px;
             border-radius: 8px;
             border-top-left-radius: 0;
             border: 1px solid #3a3a3a;
@@ -178,7 +180,7 @@ if (!isset($tabMap[$activeTab])) {
 
         .embed-wrap {
             width: 100%;
-            min-height: calc(100vh - 260px);
+            min-height: calc(100vh - 200px);
             border: 1px solid #4a4a4a;
             border-radius: 8px;
             overflow: hidden;
@@ -187,7 +189,7 @@ if (!isset($tabMap[$activeTab])) {
 
         .embed {
             width: 100%;
-            min-height: calc(100vh - 260px);
+            min-height: calc(100vh - 200px);
             border: 0;
             background: transparent;
         }

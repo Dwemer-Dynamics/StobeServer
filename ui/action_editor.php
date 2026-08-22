@@ -150,45 +150,27 @@ $countDisabled = max(0, $countAll - $countEnabled);
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         main {
-            padding-top: 30px;
-            padding-bottom: 40px;
+            padding-top: 10px;
+            padding-bottom: 24px;
             padding-left: 5px;
             padding-right: 5px;
             width: 100%;
             margin: 0;
         }
-        .page-header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding: 20px;
-            background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            border-radius: 10px;
-            border: 1px solid #3a3a3a;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-        }
-        .page-header h1.api-title {
-            margin-bottom: 8px;
-        }
-        h1.api-title {
-            margin: 0 0 20px 0;
-            font-family: "MagicCards", serif;
-            word-spacing: 8px;
-            font-size: 2.2em;
-            color: #e6b76c;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-            text-align: center;
-        }
-        .page-subtitle {
-            margin: 0;
-            color: #bbb;
-            font-size: 1.1em;
-            line-height: 1.6;
-        }
+        /* Page header is the shared compact inline row (.stobe-page-head in main.css). */
         .content-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
+            gap: 14px;
+            margin-bottom: 12px;
+        }
+        /* Summary cards sit directly under the header, so keep them low. */
+        .content-grid > .content-section {
+            padding: 12px 16px;
+        }
+        .content-grid > .content-section h2 {
+            margin-bottom: 8px;
+            font-size: 1.2em;
         }
         .content-section {
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -372,9 +354,9 @@ $countDisabled = max(0, $countAll - $countEnabled);
 <main>
     <div id="toast" class="toast-notification"><span class="message"></span></div>
 
-    <div class="page-header">
-        <h1 class="api-title">Action Editor</h1>
-        <p class="page-subtitle">Configure available actions exposed to AI prompting and execution</p>
+    <div class="page-header stobe-page-head">
+        <h1 class="api-title stobe-page-head-title">Action Editor</h1>
+        <p class="page-subtitle stobe-page-head-note">Configure available actions exposed to AI prompting and execution</p>
     </div>
 
     <div class="content-grid">

@@ -154,13 +154,13 @@ foreach ($driverOptions as $driverOption) {
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/stobe-theme.css">
     <style>
-        body { padding-top: <?= $isEmbed ? '0' : '70px' ?>; }
-        main { padding: <?= $isEmbed ? '20px 5px 5px' : '30px 5px 5px' ?>; }
+        /* Non-embedded offset matches the fixed 64px .stobe-navbar height. */
+        body { padding-top: <?= $isEmbed ? '0' : '64px' ?>; }
+        main { padding: <?= $isEmbed ? '10px 5px 5px' : '30px 5px 5px' ?>; }
         .page-shell { max-width: 1450px; margin: 0 auto; }
-        .page-header, .left-col, .right-col { background: var(--stobe-surface, #242424); border: 1px solid var(--stobe-border, #3a3a3a); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
-        .page-header { padding: 20px; text-align: center; margin-bottom: 30px; }
-        h1.api-title { margin: 0 0 8px; font-family: var(--stobe-title-font); word-spacing: 8px; font-size: 2.2em; font-weight: 400; color: var(--stobe-accent, #e6b76c); text-shadow: 2px 2px 4px rgba(0,0,0,.5); }
-        .page-subtitle { color: var(--stobe-text-muted, #bbb); font-size: 1.1em; margin: 0; }
+        .left-col, .right-col { background: var(--stobe-surface, #242424); border: 1px solid var(--stobe-border, #3a3a3a); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+        /* Page header is the shared compact inline row (.stobe-page-head in main.css). */
+        .stobe-page-head-title { font-weight: 400; }
         .notice { margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(230,183,108,.3); background: var(--stobe-surface, #242424); color: #eed9b5; }
         .layout { display: grid; grid-template-columns: minmax(280px, 340px) 1fr; gap: 18px; align-items: start; }
         .left-col, .right-col { padding: 14px; }
@@ -207,9 +207,9 @@ foreach ($driverOptions as $driverOption) {
 <?php if (!$isEmbed) include __DIR__ . '/tmpl/navbar.php'; ?>
 <main>
     <div class="page-shell">
-        <div class="page-header">
-            <h1 class="api-title">STT Connector</h1>
-            <p class="page-subtitle">Speech-to-text setup options for Stobe push-to-talk.</p>
+        <div class="page-header stobe-page-head">
+            <h1 class="api-title stobe-page-head-title">STT Connector</h1>
+            <p class="page-subtitle stobe-page-head-note">Speech-to-text setup options for Stobe push-to-talk.</p>
         </div>
 
         <?php if ($saved): ?>

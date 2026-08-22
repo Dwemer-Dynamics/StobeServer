@@ -1,6 +1,7 @@
 :root {
-    --hub-navbar-offset: 80px;
-    --hub-navigation-gap: 20px;
+    /* Matches the fixed .stobe-navbar height so no blank band is left below it. */
+    --hub-navbar-offset: 64px;
+    --hub-navigation-gap: 8px;
 }
 
 body.hub-page {
@@ -27,7 +28,7 @@ body.hub-page .config-navigation {
 }
 
 .config-navigation {
-    margin: 20px 0 8px;
+    margin: 8px 0 6px;
     padding: 8px;
     border: 1px solid var(--stobe-border, #404040);
     border-radius: 10px;
