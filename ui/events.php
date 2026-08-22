@@ -282,14 +282,15 @@ $visibleTypeRows = safeFetchAll(
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         body {
-            padding-top: 80px;
+            /* Matches the fixed navbar height so no blank band is left below it. */
+            padding-top: 64px;
         }
         body.embed-page { padding-top: 0; }
         body.embed-page main { padding-top: 10px; }
 
         main {
-            padding-top: 20px;
-            padding-bottom: 40px;
+            padding-top: 10px;
+            padding-bottom: 24px;
             padding-left: 10px;
         }
 
@@ -306,13 +307,13 @@ $visibleTypeRows = safeFetchAll(
         }
 
         .tab-container {
-            margin: 20px 0;
+            margin: 0 0 6px;
         }
 
         .tab-buttons {
             display: flex;
             flex-wrap: wrap;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             border-bottom: 2px solid rgba(230, 183, 108, 0.2);
             gap: 5px;
             word-spacing: 5px;
@@ -358,7 +359,7 @@ $visibleTypeRows = safeFetchAll(
         .tab-content {
             display: block;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            padding: 20px;
+            padding: 10px 12px 12px;
             border-radius: 8px;
             border-top-left-radius: 0;
             border: 1px solid #3a3a3a;
@@ -366,15 +367,15 @@ $visibleTypeRows = safeFetchAll(
         }
 
         .table-container {
-            max-height: calc(100vh - 450px) !important;
-            margin-top: 20px;
+            max-height: calc(100vh - 330px) !important;
+            margin-top: 8px;
             width: 100%;
             overflow-x: auto;
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
             border-radius: 10px;
             border: 1px solid #3a3a3a;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-            padding: 12px;
+            padding: 8px;
         }
 
         table {
@@ -462,7 +463,7 @@ $visibleTypeRows = safeFetchAll(
         <?php endif; ?>
 
         <div id="eventlog-tab" class="tab-content">
-            <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 12px 15px; border-radius: 5px; margin: 15px 0; font-size: 0.9em;">
+            <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 9px 12px; border-radius: 5px; margin: 0 0 6px; font-size: 0.88em; line-height: 1.4;">
                 <span style="color: #e6b76c; font-weight: bold;">Events:</span>
                 <span style="color: #f8f9fa;">Raw log of in-game events used for AI context and timeline tracking.</span>
             </div>
@@ -473,7 +474,7 @@ $visibleTypeRows = safeFetchAll(
                 </div>
             <?php endif; ?>
 
-            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 20px 0;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 6px;">
                 <button id="live-toggle-btn-eventlog" onclick="toggleAutoRefreshEventLog()" class="btn-base <?= $isAutoRefresh ? "btn-secondary" : "btn-primary" ?>" style="padding: 8px 12px; font-size: 0.9em;" title="Toggle live monitoring">
                     <?= $isAutoRefresh ? "Stop Live" : "Auto Refresh" ?>
                 </button>

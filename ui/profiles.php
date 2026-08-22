@@ -643,16 +643,13 @@ ob_start();
 include(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'tmpl' . DIRECTORY_SEPARATOR . 'head.html');
 ?>
 <style>
-main { padding: 30px 5px 5px; }
+main { padding: 10px 5px 5px; }
 .layout { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; position: relative; isolation: isolate; }
 @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
 .cardx { border: 1px solid #3a3a3a; border-radius: 10px; background: linear-gradient(180deg, rgba(42,42,42,.95), rgba(34,34,34,.98)); padding: 12px; }
 .profiles-list-panel { position: relative; z-index: 2; }
 .profile-editor-panel { min-width: 0; }
-.page-header { background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98)); padding: 20px; border-radius: 10px; border: 1px solid #3a3a3a; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03); text-align: center; margin-bottom: 30px; }
-.page-header h1.api-title { margin-bottom: 8px; }
-.page-subtitle { color: #bbb; font-size: 1.1em; margin: 0; }
-h1.api-title { margin: 0 0 20px 0; font-family: 'MagicCards', serif; word-spacing: 8px; font-size: 2.2em; color: #e6b76c; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); text-align: center; }
+/* Page header is the shared compact inline row (.stobe-page-head in main.css). */
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .toolbar form { margin: 0; }
 .toolbar .btn-save,
@@ -826,9 +823,9 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
 @media (max-width: 840px) { .profile-test-summary { grid-template-columns:repeat(2, minmax(0, 1fr)); } .profile-test-slots { grid-template-columns:1fr; } .profile-test-slot { grid-template-columns:1fr; } }
 </style>
 <main class="container-fluid">
-    <div class="page-header">
-        <h1 class="api-title">Profiles</h1>
-        <p class="page-subtitle">Configure profile prompts, connectors, and metadata for AI dialogue generation</p>
+    <div class="page-header stobe-page-head">
+        <h1 class="api-title stobe-page-head-title">Profiles</h1>
+        <p class="page-subtitle stobe-page-head-note">Configure profile prompts, connectors, and metadata for AI dialogue generation</p>
     </div>
 
     <?php if ($notice !== ''): ?><div class="notice ok"><?= h($notice) ?></div><?php endif; ?>

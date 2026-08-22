@@ -683,20 +683,18 @@ if (isset($grouped['LLM & API'])) {
             color: #f8f9fa;
         }
         main.page-wrap {
-            padding-top: 40px;
-            padding-bottom: 40px;
-            padding-left: 10%;
-            padding-right: 10%;
+            /* Compact responsive gutter instead of a fixed 10% on every viewport. */
+            padding: 10px clamp(10px, 2.5vw, 34px) 24px;
             width: 100%;
             margin: 0;
         }
         .page-header {
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            padding: 18px 20px;
+            padding: 8px 14px;
             border-radius: 10px;
             border: 1px solid #3a3a3a;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-            margin-bottom: 18px;
+            margin-bottom: 10px;
         }
         .page-header-row {
             display: flex;
@@ -727,10 +725,11 @@ if (isset($grouped['LLM & API'])) {
         h1.api-title {
             margin: 0;
             font-family: "MagicCards", serif;
-            word-spacing: 8px;
-            font-size: 2.2em;
+            letter-spacing: 0.5px;
+            font-size: 1.3rem;
+            line-height: 1.25;
             color: #e6b76c;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            text-shadow: none;
             text-align: left;
         }
         .btn-save-green {
@@ -999,11 +998,6 @@ if (isset($grouped['LLM & API'])) {
             .settings-tabs,
             .connector-section .provider-grid {
                 grid-template-columns: 1fr;
-            }
-
-            main.page-wrap {
-                padding-left: 5%;
-                padding-right: 5%;
             }
 
             .page-header-row {

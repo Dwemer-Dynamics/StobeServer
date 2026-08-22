@@ -281,9 +281,9 @@ include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
     font-weight: normal;
     font-style: normal;
 }
-main { 
-    padding-top: 40px; 
-    padding-bottom: 40px; 
+main {
+    padding-top: 10px;
+    padding-bottom: 24px;
 }
 
 /* Relationship Build Button - Gray/Orange theme to match UI */
@@ -3545,7 +3545,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     justify-content:flex-start;
     gap:12px;
     padding:14px;
-    margin:16px 0 0 0;
+    margin:0;
     background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
     border-radius: 10px;
     border: 1px solid #3a3a3a;
@@ -3843,7 +3843,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     'lockOnly' => $lockOnly,
     'playerFactionOnly' => $playerFactionOnly,
 ]); ?>
-<div style="margin:10px 0; padding:10px 14px; background:rgba(230, 183, 108,0.08); border:1px solid rgba(230, 183, 108,0.25); border-radius:8px; font-size:12.5px; color:#cfd9ea; line-height:1.5;">
+<div style="margin:8px 0 10px; padding:10px 14px; background:rgba(230, 183, 108,0.08); border:1px solid rgba(230, 183, 108,0.25); border-radius:8px; font-size:12.5px; color:#cfd9ea; line-height:1.5;">
   <strong style="color:#e6b76c;">Stobe Save Rollback:</strong>
   Every time a save is loaded, Stobe snapshots NPC profiles and restores <strong>unlocked</strong> NPCs to the state captured at that save's Kenshi game timestamp.
   Loading an older save will roll unlocked profiles back to that point in time. NPCs created <em>after</em> that save timestamp may disappear.
