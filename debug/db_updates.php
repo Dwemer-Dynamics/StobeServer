@@ -291,6 +291,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
             'CONTEXT_HISTORY_DIARY' => 100,
             'CONTEXT_HISTORY_DYNAMIC_PROFILE' => 50,
             'BORED_EVENT_CHANCE' => 50,
+            'RELATIONSHIP_UPDATE_CHANCE' => 50,
         ], JSON_UNESCAPED_UNICODE);
         if (!is_string($defaultMetadata) || trim($defaultMetadata) === '') {
             $defaultMetadata = '{}';

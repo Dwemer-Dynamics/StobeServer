@@ -65,6 +65,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         'AUTO_DIARY_MIN_EVENTS',
         'AUTO_DIARY_HOUR',
         'BORED_EVENT_CHANCE',
+        'RELATIONSHIP_UPDATE_CHANCE',
         'DIARY_COOLDOWN',
         'CONTEXT_HISTORY',
         'RECHAT_RESPONSES',
@@ -84,6 +85,8 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         $value = intval($raw);
         if ($key === 'AUTO_DIARY_HOUR') {
             $value = max(0, min(23, $value));
+        } elseif ($key === 'RELATIONSHIP_UPDATE_CHANCE') {
+            $value = max(0, min(100, $value));
         }
         $base[$key] = $value;
     }
@@ -192,7 +195,7 @@ $isEmbed = is_embed();
 $webRoot = web_root();
 $profileSyncableMetadataKeys = [
     'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
-    'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE',
+    'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE', 'RELATIONSHIP_UPDATE_CHANCE',
     'CONTEXT_HISTORY', 'CONTEXT_HISTORY_DIARY', 'CONTEXT_HISTORY_DYNAMIC_PROFILE',
     'DIARY_DAYS', 'AUTO_DIARY_MIN_EVENTS', 'AUTO_DIARY_HOUR', 'DIARY_COOLDOWN',
     'DYNAMIC_PROFILE_FIELDS',
@@ -1124,6 +1127,16 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                                         <input type="number" id="meta_bored_event_chance_num" name="meta_vis[BORED_EVENT_CHANCE]" min="0" max="100" step="1" value="<?= h($metaBoredEventChance) ?>">
                                     </div>
                                 </div>
+                                <div class="setting-row">
+                                    <div>
+                                        <div class="setting-key"><span>RELATIONSHIP_UPDATE_CHANCE</span><?= profile_setting_sync_button('RELATIONSHIP_UPDATE_CHANCE', 'Relationship Update Chance') ?></div>
+                                        <div class="setting-desc">Chance that an eligible response runs an extra relationship evaluation (0-100). Inline relationship commands still apply.</div>
+                                    </div>
+                                    <div class="range-pair">
+                                        <input type="range" id="meta_relationship_update_chance_range" min="0" max="100" step="1" value="<?= h($metaInt('RELATIONSHIP_UPDATE_CHANCE')) ?>">
+                                        <input type="number" id="meta_relationship_update_chance_num" name="meta_vis[RELATIONSHIP_UPDATE_CHANCE]" min="0" max="100" step="1" value="<?= h($metaInt('RELATIONSHIP_UPDATE_CHANCE')) ?>">
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1655,6 +1668,7 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
         ['meta_rechat_responses_range', 'meta_rechat_responses_num', 0, 10],
         ['meta_rechat_probability_range', 'meta_rechat_probability_num', 0, 100],
         ['meta_bored_event_chance_range', 'meta_bored_event_chance_num', 0, 100],
+        ['meta_relationship_update_chance_range', 'meta_relationship_update_chance_num', 0, 100],
         ['meta_context_history_range', 'meta_context_history_num', 0, 300],
         ['meta_context_history_diary_range', 'meta_context_history_diary_num', 0, 300],
         ['meta_context_history_dyn_range', 'meta_context_history_dyn_num', 0, 300],

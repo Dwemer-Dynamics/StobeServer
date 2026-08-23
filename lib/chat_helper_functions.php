@@ -10390,6 +10390,20 @@ function stobePersistNpcRelationshipMap(string $speakerName, array $relationship
     return true;
 }
 
+// Keep the random boundary deterministic for regression probes without changing runtime behavior.
+function stobeShouldRunAutomaticRelationshipEvaluation(int $chance, ?int $roll = null): bool {
+    $chance = max(0, min(100, $chance));
+    if ($chance === 0) {
+        return false;
+    }
+    if ($chance === 100) {
+        return true;
+    }
+
+    $roll = $roll === null ? random_int(1, 100) : max(1, min(100, $roll));
+    return $roll <= $chance;
+}
+
 function stobeEvaluateRelationshipsForTurn(
     string $speakerName,
     string $listenerName,
@@ -10459,9 +10473,22 @@ function stobeEvaluateRelationshipsForTurn(
 
     $updates = [];
     $method = '';
-    $connector = getProfileLlmConnectorForNpcByPurpose($speakerNpcData, 'relationship');
-    $connectorApiKey = trim(strval($connector['api_badge_key'] ?? ($connector['api_key'] ?? '')));
-    if (is_array($connector) && intval($connector['id'] ?? 0) > 0 && $connectorApiKey !== '' && function_exists('stobeCallLLM')) {
+    $relationshipUpdateChance = getNpcProfileIntegerSetting(
+        $speakerNpcData,
+        ['RELATIONSHIP_UPDATE_CHANCE'],
+        '',
+        50,
+        0,
+        100
+    );
+    $shouldRunConnectorEvaluation = stobeShouldRunAutomaticRelationshipEvaluation($relationshipUpdateChance);
+    $connector = false;
+    $connectorApiKey = '';
+    if ($shouldRunConnectorEvaluation) {
+        $connector = getProfileLlmConnectorForNpcByPurpose($speakerNpcData, 'relationship');
+        $connectorApiKey = trim(strval($connector['api_badge_key'] ?? ($connector['api_key'] ?? '')));
+    }
+    if ($shouldRunConnectorEvaluation && is_array($connector) && intval($connector['id'] ?? 0) > 0 && $connectorApiKey !== '' && function_exists('stobeCallLLM')) {
         $currentRelationships = [];
         foreach ($contextTargets as $targetName) {
             $key = stobeFindRelationshipEntryKey($relationshipMap, $targetName);
@@ -10516,7 +10543,7 @@ function stobeEvaluateRelationshipsForTurn(
         } else {
             $result['error'] = 'connector_eval_failed';
         }
-    } elseif (is_array($connector) && intval($connector['id'] ?? 0) > 0 && $connectorApiKey !== '' && !function_exists('stobeCallLLM')) {
+    } elseif ($shouldRunConnectorEvaluation && is_array($connector) && intval($connector['id'] ?? 0) > 0 && $connectorApiKey !== '' && !function_exists('stobeCallLLM')) {
         $result['error'] = 'callllm_unavailable';
     }
 

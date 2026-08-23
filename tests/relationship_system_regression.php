@@ -69,5 +69,13 @@ relAssertSame('Neutral', stobeRelationshipTierLabel(0), 'tier helper should clas
 relAssertSame('Friendly', stobeRelationshipTierLabel(40), 'tier helper should classify friendly score');
 relAssertSame('Hostile', stobeRelationshipTierLabel(-95), 'tier helper should classify hostile score');
 
+relAssertSameInt(50, intval(getDefaultCoreProfileMetadata()['RELATIONSHIP_UPDATE_CHANCE'] ?? -1), 'default relationship update chance should be 50');
+relAssertTrue(!stobeShouldRunAutomaticRelationshipEvaluation(0, 1), 'zero chance should skip automatic evaluation');
+relAssertTrue(stobeShouldRunAutomaticRelationshipEvaluation(100, 100), '100 chance should always evaluate');
+relAssertTrue(stobeShouldRunAutomaticRelationshipEvaluation(25, 25), 'roll equal to chance should evaluate');
+relAssertTrue(!stobeShouldRunAutomaticRelationshipEvaluation(25, 26), 'roll above chance should skip evaluation');
+relAssertTrue(!stobeShouldRunAutomaticRelationshipEvaluation(-5, 1), 'chance should clamp at zero');
+relAssertTrue(stobeShouldRunAutomaticRelationshipEvaluation(105, 100), 'chance should clamp at 100');
+
 echo "PASS: relationship command parsing/apply regression\n";
 
