@@ -1130,7 +1130,7 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                                 <div class="setting-row">
                                     <div>
                                         <div class="setting-key"><span>RELATIONSHIP_UPDATE_CHANCE</span><?= profile_setting_sync_button('RELATIONSHIP_UPDATE_CHANCE', 'Relationship Update Chance') ?></div>
-                                        <div class="setting-desc">Chance that an eligible response runs an extra relationship evaluation (0-100). Inline relationship commands still apply.</div>
+                                        <div class="setting-desc">Chance an eligible turn runs an extra relationship LLM evaluation on the relationship connector (0-100). 0 disables the extra call; inline relationship commands in replies still apply.</div>
                                     </div>
                                     <div class="range-pair">
                                         <input type="range" id="meta_relationship_update_chance_range" min="0" max="100" step="1" value="<?= h($metaInt('RELATIONSHIP_UPDATE_CHANCE')) ?>">
