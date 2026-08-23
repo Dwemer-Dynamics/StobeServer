@@ -2151,6 +2151,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .modal-inline-actions .btn-toggle.active{color:#ffd700; font-weight:700;}
 .modal-inline-actions .btn-toggle[data-lock]{color:#e9efff;}
 .modal-inline-actions .btn-toggle.active[data-lock]{color: #e6b76c;}
+.modal-inline-actions .btn-toggle[data-favorite]:hover,
+.modal-inline-actions .btn-toggle[data-favorite]:focus-visible{color:#ffd700 !important; text-shadow:0 0 8px rgba(255,215,0,.7),0 0 14px rgba(255,215,0,.45) !important;}
+.modal-inline-actions .btn-toggle.active[data-favorite]{color:#ffd700 !important;}
 </style>
 <form method="post" onsubmit='return false' style='display:block'>
 <?php } else { ?>
@@ -3234,10 +3237,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 /* Navbar-like glow only for lock icon on cards */
 .btn-toggle[data-lock-id]:hover,
 .btn-toggle[data-lock-id]:focus-visible { color: #e6b76c; background:transparent; text-decoration:none; text-shadow: 0 0 6px rgba(230, 183, 108, 0.6), 0 0 12px rgba(230, 183, 108, 0.35); }
-.btn-toggle[data-favorite-id]:hover,
-.btn-toggle[data-favorite-id]:focus-visible { color:#ffd700; text-shadow: 0 0 8px rgba(255, 215, 0, 0.7), 0 0 14px rgba(255, 215, 0, 0.45); }
+.npc-title-actions .btn-toggle[data-favorite-id]:hover,
+.npc-title-actions .btn-toggle[data-favorite-id]:focus-visible { color:#ffd700 !important; text-shadow: 0 0 8px rgba(255, 215, 0, 0.7), 0 0 14px rgba(255, 215, 0, 0.45) !important; }
 .btn-toggle.active { color: #e6b76c; font-weight:700; text-decoration:none; }
-.btn-toggle.active[data-favorite-id] { color:#ffd700; }
+.npc-title-actions .btn-toggle.active[data-favorite-id] { color:#ffd700 !important; }
 .btn-trash { background:transparent; border:none; padding:6px; color:#e9efff; font-size:20px; line-height:1; text-decoration:none; transition: color .15s ease, text-shadow .15s ease; }
 .btn-trash:hover, .btn-trash:focus-visible { color:#ff6b6b; text-shadow: 0 0 6px rgba(255, 107, 107, 0.7), 0 0 12px rgba(255, 107, 107, 0.45); }
 .npc-player-faction-badge {
