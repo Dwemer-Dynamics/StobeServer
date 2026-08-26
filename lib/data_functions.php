@@ -7742,6 +7742,10 @@ function stobeRelationshipExtendedDataKeys(): array {
     ];
 }
 
+function stobePersistentNpcSettingExtendedDataKeys(): array {
+    return ['individual_memory_enabled'];
+}
+
 function stobeRelationshipTimelineState(mixed $extendedData): ?array {
     if (is_string($extendedData) && trim($extendedData) !== '') {
         $extendedData = json_decode($extendedData, true);
@@ -7759,21 +7763,42 @@ function stobeRelationshipTimelineState(mixed $extendedData): ?array {
     return $state;
 }
 
-// Build an atomic JSONB update that keeps relationship state owned by relationship writers.
-function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
-    $incomingWithoutRelationships = '(' . $incomingExpression . ')';
-    foreach (stobeRelationshipExtendedDataKeys() as $key) {
-        $incomingWithoutRelationships .= " - '" . $key . "'";
+// Build an atomic JSONB update that keeps selected keys from the current stored object.
+function stobeExtendedDataPreservingKeysSql(
+    string $incomingExpression,
+    string $currentExpression,
+    array $preservedKeys
+): string {
+    $incomingWithoutPreservedKeys = '(' . $incomingExpression . ')';
+    foreach ($preservedKeys as $key) {
+        $incomingWithoutPreservedKeys .= " - '" . $key . "'";
     }
 
-    $relationshipPairs = [];
-    foreach (stobeRelationshipExtendedDataKeys() as $key) {
-        $relationshipPairs[] = "'" . $key . "', (" . $currentExpression . ") -> '" . $key . "'";
+    $preservedPairs = [];
+    foreach ($preservedKeys as $key) {
+        $preservedPairs[] = "'" . $key . "', (" . $currentExpression . ") -> '" . $key . "'";
     }
 
-    return '(' . $incomingWithoutRelationships . ') || jsonb_strip_nulls(jsonb_build_object('
-        . implode(', ', $relationshipPairs)
+    return '(' . $incomingWithoutPreservedKeys . ') || jsonb_strip_nulls(jsonb_build_object('
+        . implode(', ', $preservedPairs)
         . '))';
+}
+
+// Keep relationship state and persistent NPC settings out of generic whole-object replacements.
+function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
+    return stobeExtendedDataPreservingKeysSql(
+        $incomingExpression,
+        $currentExpression,
+        array_merge(stobeRelationshipExtendedDataKeys(), stobePersistentNpcSettingExtendedDataKeys())
+    );
+}
+
+function stobeIndividualMemoryPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
+    return stobeExtendedDataPreservingKeysSql(
+        $incomingExpression,
+        $currentExpression,
+        stobePersistentNpcSettingExtendedDataKeys()
+    );
 }
 
 function stobeAcquireNpcRelationshipLock(int $npcId): ?int {
@@ -11542,6 +11567,21 @@ function deleteNpc(int $id): void {
 function updateNpcById(int $id, array $fields): bool {
     $db = $GLOBALS["db"];
     $historyRowBefore = stobeFetchNpcRowForHistoryById($id);
+    $hasIndividualMemoryUpdate = array_key_exists('individual_memory_enabled', $fields);
+    $individualMemoryEnabled = $hasIndividualMemoryUpdate
+        ? coerceBoolean($fields['individual_memory_enabled'])
+        : false;
+    unset($fields['individual_memory_enabled']);
+
+    if ($hasIndividualMemoryUpdate && array_key_exists('extended_data', $fields)) {
+        $extendedData = normalizeCoreNpcExtendedData($fields['extended_data']);
+        if ($individualMemoryEnabled) {
+            $extendedData['individual_memory_enabled'] = 1;
+        } else {
+            unset($extendedData['individual_memory_enabled']);
+        }
+        $fields['extended_data'] = $extendedData;
+    }
     if (array_key_exists('dynamic_profile', $fields) || array_key_exists('middle_term_enabled', $fields)) {
         $metadata = [];
         if (array_key_exists('metadata', $fields)) {
@@ -11637,14 +11677,24 @@ function updateNpcById(int $id, array $fields): bool {
 
         if ($type === 'json') {
             $incomingExpression = '$' . $paramIndex . '::jsonb';
-            if (
-                $column === 'extended_data'
-                && empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])
-            ) {
-                $setClauses[] = $column . ' = ' . stobeRelationshipPreservingExtendedDataSql(
-                    $incomingExpression,
-                    $column
-                );
+            if ($column === 'extended_data') {
+                $preservedKeys = [];
+                if (empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])) {
+                    $preservedKeys = stobeRelationshipExtendedDataKeys();
+                }
+                if (!$hasIndividualMemoryUpdate) {
+                    $preservedKeys = array_merge($preservedKeys, stobePersistentNpcSettingExtendedDataKeys());
+                }
+
+                if (count($preservedKeys) > 0) {
+                    $setClauses[] = $column . ' = ' . stobeExtendedDataPreservingKeysSql(
+                        $incomingExpression,
+                        $column,
+                        $preservedKeys
+                    );
+                } else {
+                    $setClauses[] = "{$column} = " . $incomingExpression;
+                }
             } else {
                 $setClauses[] = "{$column} = " . $incomingExpression;
             }
@@ -11688,6 +11738,20 @@ function updateNpcById(int $id, array $fields): bool {
 
         $setClauses[] = "{$column} = $" . $paramIndex;
         $params[] = strval($fields[$column]);
+        $paramIndex++;
+    }
+
+    if ($hasIndividualMemoryUpdate && !array_key_exists('extended_data', $fields)) {
+        $setClauses[] = "extended_data = CASE
+            WHEN $" . $paramIndex . " THEN jsonb_set(
+                COALESCE(extended_data, '{}'::jsonb) - 'individual_memory_enabled',
+                '{individual_memory_enabled}',
+                '1'::jsonb,
+                true
+            )
+            ELSE COALESCE(extended_data, '{}'::jsonb) - 'individual_memory_enabled'
+        END";
+        $params[] = $individualMemoryEnabled;
         $paramIndex++;
     }
 
