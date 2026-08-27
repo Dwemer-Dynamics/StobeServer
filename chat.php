@@ -380,7 +380,8 @@ $compactHistory = stobeApplyCompactChatHistory(
     $systemPrompt,
     $historyMessages,
     $targetNpc,
-    stobeShouldCompactChatHistory($targetNpc)
+    stobeShouldCompactChatHistory($targetNpc),
+    getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true)
 );
 $systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
 $historyMessages = is_array($compactHistory['history_messages'] ?? null)
