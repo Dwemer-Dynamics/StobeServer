@@ -52,6 +52,7 @@ $trackedKeys = [
     'BACKGROUND_PROCESSOR_LAST_TICK_GAMETS',
     'BACKGROUND_PROCESSOR_LAST_SUCCESS_TS',
     'BACKGROUND_PROCESSOR_LAST_ERROR_TS',
+    'PLAYER2_GAME_LAST_ACTIVITY_TS',
 ];
 
 $confBackup = [];
@@ -128,6 +129,18 @@ try {
     startupAssert(intval(getConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_GAMETS', '-1')) === 0, 'background manager should record zero gamets when eventlog is empty');
     startupAssert(getConfOpt('BACKGROUND_PROCESSOR_LAST_SUCCESS_TS', '') === '', 'background manager should not record success timestamp without gamets');
     startupAssert(getConfOpt('BACKGROUND_PROCESSOR_LAST_ERROR_TS', '') === '', 'background manager should not record error timestamp on clean no-op startup');
+
+    foreach ([0 => false, 819 => false, 820 => true, 1000 => true, 1001 => false] as $lastActivity => $expected) {
+        setConfOpt('PLAYER2_GAME_LAST_ACTIVITY_TS', strval($lastActivity));
+        startupAssert(stobeHasRecentGameActivity(1000) === $expected, 'game activity should require a real timestamp within the freshness window');
+    }
+    setConfOpt('PLAYER2_GAME_LAST_ACTIVITY_TS', strval(time() - 181));
+    $db->exec('INSERT INTO eventlog (type, ts, gamets, data, localts) VALUES ($1, $2, $3, $4, $2)', ['info', time(), 86400, 'Inactive game probe']);
+    $managerOutput = [];
+    exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../service/manager.php') . ' 2>&1', $managerOutput, $managerExitCode);
+    startupAssert($managerExitCode === 0, 'inactive background tick should exit cleanly');
+    startupAssert(intval(getConfOpt('BACKGROUND_PROCESSOR_LAST_TICK_GAMETS', '0')) === 86400, 'inactive tick should still report health and game time');
+    startupAssert(getConfOpt('BACKGROUND_PROCESSOR_LAST_SUCCESS_TS', '') === '', 'inactive tick must not enter scheduled AI cycles');
 
     echo 'All startup/runtime regression tests passed.' . PHP_EOL;
 } finally {

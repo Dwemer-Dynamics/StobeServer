@@ -58,6 +58,11 @@ if ($tickGamets <= 0) {
     exit(0);
 }
 
+// Keep service health alive, but leave scheduled AI work pending until Kenshi returns.
+if (!stobeHasRecentGameActivity()) {
+    exit(0);
+}
+
 try {
     if (function_exists('stobeRunMiddleTermDaemonEntrypoint')) {
         stobeRunMiddleTermDaemonEntrypoint($tickTimestamp, $tickGamets, $tickPayload);

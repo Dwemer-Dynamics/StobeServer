@@ -69,6 +69,16 @@ function stobePlayer2HealthMarkGameActivity(?int $now = null): bool
     return $newSession;
 }
 
+// Normal game traffic records this timestamp even when Player2 is not the selected provider.
+function stobeHasRecentGameActivity(?int $now = null): bool
+{
+    $now = $now ?? time();
+    $lastActivity = intval(stobePlayer2HealthGetOption('PLAYER2_GAME_LAST_ACTIVITY_TS', '0'));
+    return $lastActivity > 0
+        && $lastActivity <= $now
+        && ($now - $lastActivity) <= STOBE_PLAYER2_HEALTH_ACTIVITY_TTL;
+}
+
 function stobePlayer2HealthMarkUsed(string $connectorUrl, ?int $now = null): bool
 {
     if (empty($GLOBALS['PLAYER2_GAME_REQUEST_ACTIVE'])) {
