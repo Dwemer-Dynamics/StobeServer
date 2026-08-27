@@ -937,7 +937,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
         $_POST['lock_profile'] = 1;
     }
     $createdId = $relationshipSave
-        ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST))
+        ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST), 0, true)
         : $npc->create($_POST);
     if ($relationshipSave && $createdId > 0) {
         stobeRelationshipTimelineStamp($createdId);
@@ -962,7 +962,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
                 }
                 return $result;
             },
-            intval($_POST['id'] ?? 0)
+            intval($_POST['id'] ?? 0),
+            true
         )
         : $npc->update($_POST["id"], $_POST);
     header("Location: npc_master.php");
@@ -1039,7 +1040,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
         }
         if ($id <= 0) {
             $newId = $relationshipSave
-                ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST))
+                ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST), 0, true)
                 : $npc->create($_POST);
             if ($newId <= 0) {
                 echo json_encode(["ok"=>false, "error"=>($npc->getLastError() ?: "Insert failed")]);
@@ -1060,7 +1061,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
                         }
                         return $result;
                     },
-                    $id
+                    $id,
+                    true
                 )
                 : $npc->update($id, $_POST);
             $npc->backupNpcById($id);// We also make a backup of manually edited NPCs, so when loading a save, will load this record

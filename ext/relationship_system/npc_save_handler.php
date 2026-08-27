@@ -25,6 +25,20 @@ if (isset($_POST['relationships_jsonb']) && $_POST['relationships_jsonb'] !== ''
     $relData = json_decode($relJsonbRaw, true);
 
     if (is_array($relData)) {
+        // This trusted editor path owns note trimming; AI writers preserve the stored text exactly.
+        foreach ($relData as &$relationship) {
+            if (!is_array($relationship)) {
+                continue;
+            }
+            if (is_string($relationship['custom_info'] ?? null)) {
+                $customInfo = trim($relationship['custom_info']);
+                $relationship['custom_info'] = mb_substr($customInfo, 0, 1000, 'UTF-8');
+            }
+            if (!is_string($relationship['custom_info'] ?? null) || $relationship['custom_info'] === '') {
+                unset($relationship['custom_info']);
+            }
+        }
+        unset($relationship);
         // Get existing extended_data
         $extRaw = isset($_POST['extended_data']) ? (string)$_POST['extended_data'] : '{}';
         $extData = json_decode($extRaw, true);
