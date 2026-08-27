@@ -63,15 +63,15 @@ if (!isset($tabMap[$activeTab])) {
     <link rel="stylesheet" href="css/navbar.css">
     <link rel="stylesheet" href="css/hub-navigation.css?v=<?= filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'hub-navigation.css') ?>">
     <style>
-        body { padding-top: 80px; }
-        main { padding: 20px 10px 40px; }
+        body { padding-top: var(--hub-navbar-offset); }
+        main { padding: 0 10px 8px; }
         @font-face {
             font-family: "MagicCards";
             src: url("css/font/MailartRubberstamp-Regular.otf") format("opentype");
             font-weight: normal;
             font-style: normal;
         }
-        .tab-container { margin: 20px 0; }
+        .tab-container { margin: 0 0 6px; }
         .tab-content {
             display: none;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -82,7 +82,7 @@ if (!isset($tabMap[$activeTab])) {
         .tab-content.active { display: block; }
         .embed-wrap {
             width: 100%;
-            height: calc(100vh - 245px);
+            height: calc(100vh - 185px);
             min-height: 520px;
             overflow: hidden;
             border: 1px solid #4a4a4a;

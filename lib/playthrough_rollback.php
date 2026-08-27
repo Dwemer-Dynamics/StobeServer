@@ -654,7 +654,15 @@ function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): b
 
     $appendField = static function (string $column, mixed $value, string $type = 'text') use (&$setClauses, &$params, &$paramIndex): void {
         if ($type === 'json') {
-            $setClauses[] = $column . ' = $' . $paramIndex . '::jsonb';
+            $incomingExpression = '$' . $paramIndex . '::jsonb';
+            if ($column === 'extended_data') {
+                $setClauses[] = $column . ' = ' . stobeIndividualMemoryPreservingExtendedDataSql(
+                    $incomingExpression,
+                    $column
+                );
+            } else {
+                $setClauses[] = $column . ' = ' . $incomingExpression;
+            }
         } else {
             $setClauses[] = $column . ' = $' . $paramIndex;
         }

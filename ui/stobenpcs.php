@@ -205,7 +205,7 @@ if (!function_exists('renderStobeNpcToolbar')) {
         $pageStart = max(1, min($page - 4, $totalPages - $pageWindow + 1));
         $pageEnd = min($totalPages, $pageStart + $pageWindow - 1);
         ?>
-        <div class="pagination npc-toolbar">
+        <div class="pagination npc-toolbar" data-current-page="<?= (int)$page ?>" data-total-pages="<?= (int)$totalPages ?>">
           <div class="npc-toolbar-main">
             <div class="npc-toolbar-actions">
               <button id="npc_create_btn" type="button" class="npc-toolbar-btn npc-toolbar-btn-uniform npc-toolbar-btn-action">+ Create NPC</button>
@@ -281,9 +281,9 @@ include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
     font-weight: normal;
     font-style: normal;
 }
-main { 
-    padding-top: 40px; 
-    padding-bottom: 40px; 
+main {
+    padding-top: 10px;
+    padding-bottom: 24px;
 }
 
 /* Relationship Build Button - Gray/Orange theme to match UI */
@@ -937,7 +937,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
         $_POST['lock_profile'] = 1;
     }
     $createdId = $relationshipSave
-        ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST))
+        ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST), 0, true)
         : $npc->create($_POST);
     if ($relationshipSave && $createdId > 0) {
         stobeRelationshipTimelineStamp($createdId);
@@ -962,7 +962,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
                 }
                 return $result;
             },
-            intval($_POST['id'] ?? 0)
+            intval($_POST['id'] ?? 0),
+            true
         )
         : $npc->update($_POST["id"], $_POST);
     header("Location: npc_master.php");
@@ -1039,7 +1040,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
         }
         if ($id <= 0) {
             $newId = $relationshipSave
-                ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST))
+                ? stobeRunWithRelationshipExtendedDataWrite(static fn(): int => $npc->create($_POST), 0, true)
                 : $npc->create($_POST);
             if ($newId <= 0) {
                 echo json_encode(["ok"=>false, "error"=>($npc->getLastError() ?: "Insert failed")]);
@@ -1060,7 +1061,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
                         }
                         return $result;
                     },
-                    $id
+                    $id,
+                    true
                 )
                 : $npc->update($id, $_POST);
             $npc->backupNpcById($id);// We also make a backup of manually edited NPCs, so when loading a save, will load this record
@@ -2151,9 +2153,16 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 .modal-inline-actions .btn-toggle.active{color:#ffd700; font-weight:700;}
 .modal-inline-actions .btn-toggle[data-lock]{color:#e9efff;}
 .modal-inline-actions .btn-toggle.active[data-lock]{color: #e6b76c;}
+.modal-inline-actions .btn-toggle[data-favorite]:hover,
+.modal-inline-actions .btn-toggle[data-favorite]:focus-visible{color:#ffd700 !important; text-shadow:0 0 8px rgba(255,215,0,.7),0 0 14px rgba(255,215,0,.45) !important;}
+.modal-inline-actions .btn-toggle.active[data-favorite]{color:#ffd700 !important;}
 </style>
 <form method="post" onsubmit='return false' style='display:block'>
 <?php } else { ?>
+<script>
+// Ensure consolidation() exists so the full-page editor submit never aborts on a missing hook.
+if (typeof window.consolidation !== 'function') { window.consolidation = function(){ return true; }; }
+</script>
 <form method="post" onsubmit='return consolidation()' style='<?= $editItem!=null?"":"display:none"?>'>
 <?php } ?>
     <style>
@@ -3234,10 +3243,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 /* Navbar-like glow only for lock icon on cards */
 .btn-toggle[data-lock-id]:hover,
 .btn-toggle[data-lock-id]:focus-visible { color: #e6b76c; background:transparent; text-decoration:none; text-shadow: 0 0 6px rgba(230, 183, 108, 0.6), 0 0 12px rgba(230, 183, 108, 0.35); }
-.btn-toggle[data-favorite-id]:hover,
-.btn-toggle[data-favorite-id]:focus-visible { color:#ffd700; text-shadow: 0 0 8px rgba(255, 215, 0, 0.7), 0 0 14px rgba(255, 215, 0, 0.45); }
+.npc-title-actions .btn-toggle[data-favorite-id]:hover,
+.npc-title-actions .btn-toggle[data-favorite-id]:focus-visible { color:#ffd700 !important; text-shadow: 0 0 8px rgba(255, 215, 0, 0.7), 0 0 14px rgba(255, 215, 0, 0.45) !important; }
 .btn-toggle.active { color: #e6b76c; font-weight:700; text-decoration:none; }
-.btn-toggle.active[data-favorite-id] { color:#ffd700; }
+.npc-title-actions .btn-toggle.active[data-favorite-id] { color:#ffd700 !important; }
 .btn-trash { background:transparent; border:none; padding:6px; color:#e9efff; font-size:20px; line-height:1; text-decoration:none; transition: color .15s ease, text-shadow .15s ease; }
 .btn-trash:hover, .btn-trash:focus-visible { color:#ff6b6b; text-shadow: 0 0 6px rgba(255, 107, 107, 0.7), 0 0 12px rgba(255, 107, 107, 0.45); }
 .npc-player-faction-badge {
@@ -3545,7 +3554,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     justify-content:flex-start;
     gap:12px;
     padding:14px;
-    margin:16px 0 0 0;
+    margin:0;
     background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
     border-radius: 10px;
     border: 1px solid #3a3a3a;
@@ -3843,7 +3852,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     'lockOnly' => $lockOnly,
     'playerFactionOnly' => $playerFactionOnly,
 ]); ?>
-<div style="margin:10px 0; padding:10px 14px; background:rgba(230, 183, 108,0.08); border:1px solid rgba(230, 183, 108,0.25); border-radius:8px; font-size:12.5px; color:#cfd9ea; line-height:1.5;">
+<div style="margin:8px 0 10px; padding:10px 14px; background:rgba(230, 183, 108,0.08); border:1px solid rgba(230, 183, 108,0.25); border-radius:8px; font-size:12.5px; color:#cfd9ea; line-height:1.5;">
   <strong style="color:#e6b76c;">Stobe Save Rollback:</strong>
   Every time a save is loaded, Stobe snapshots NPC profiles and restores <strong>unlocked</strong> NPCs to the state captured at that save's Kenshi game timestamp.
   Loading an older save will roll unlocked profiles back to that point in time. NPCs created <em>after</em> that save timestamp may disappear.
@@ -5176,45 +5185,87 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
     });
   }
   let listAbort = null;
+  let listRequestId = 0;
+  const LIST_STATE_KEYS = ['q','letter','profile_id','fav','dyn','mtm','lock','pf','alpha','embed'];
+  const LIST_CHECKBOX_FILTERS = [['fav','npc_filter_fav'],['dyn','npc_filter_dyn'],['mtm','npc_filter_mtm'],['lock','npc_filter_lock'],['pf','npc_filter_pf']];
+  function readServedPage(root){
+    const pag = (root && root.matches && root.matches('.pagination.npc-toolbar'))
+      ? root
+      : (root || document).querySelector('.pagination.npc-toolbar[data-current-page]');
+    const page = pag ? parseInt(pag.getAttribute('data-current-page') || '', 10) : NaN;
+    return Number.isFinite(page) && page > 0 ? page : null;
+  }
+  let currentListPage = readServedPage(document) || 1;
+  function readListControl(id, key, current){
+    const control = document.getElementById(id);
+    return control ? String(control.value || '') : String(current.get(key) || '');
+  }
+  function readListCheckbox(baseId, key, current){
+    const control = document.getElementById(baseId + '_top') || document.getElementById(baseId);
+    return control ? (control.checked ? '1' : '') : (current.get(key) === '1' ? '1' : '');
+  }
+  function buildListState(page){
+    const current = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams();
+    params.set('q', readListControl('npc_search', 'q', current));
+    params.set('letter', readListControl('npc_letter_filter', 'letter', current).toUpperCase());
+    params.set('profile_id', readListControl('npc_profile_filter', 'profile_id', current));
+    LIST_CHECKBOX_FILTERS.forEach(function(pair){
+      params.set(pair[0], readListCheckbox(pair[1], pair[0], current));
+    });
+    params.set('alpha', 'asc');
+    if (current.get('embed') === '1') params.set('embed', '1');
+    const requestedPage = parseInt(page, 10);
+    params.set('page', String(Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1));
+    return params;
+  }
+  // Persist only list state so reloads reproduce the server-confirmed filter and page.
+  function persistListState(params, servedPage){
+    const visible = new URLSearchParams();
+    LIST_STATE_KEYS.forEach(function(key){
+      const value = params.get(key);
+      if (value !== null && value !== '') visible.set(key, value);
+    });
+    const page = parseInt(servedPage, 10);
+    visible.set('page', String(Number.isFinite(page) && page > 0 ? page : 1));
+    const url = window.location.pathname + '?' + visible.toString() + window.location.hash;
+    try { history.replaceState(history.state, document.title, url); } catch(_e){}
+  }
+  (function(){
+    const current = new URLSearchParams(window.location.search);
+    if (!current.has('page')) return;
+    if (parseInt(current.get('page') || '', 10) === currentListPage) return;
+    persistListState(buildListState(currentListPage), currentListPage);
+  })();
+  // Omitting page keeps the current served page; filter changes pass 1 explicitly.
   async function refreshList(page){
-    const params = new URLSearchParams(window.location.search);
     const si = document.getElementById('npc_search');
     const wasFocused = document.activeElement && document.activeElement.id === 'npc_search';
     const caretStart = wasFocused && si && typeof si.selectionStart === 'number' ? si.selectionStart : null;
     const caretEnd = wasFocused && si && typeof si.selectionEnd === 'number' ? si.selectionEnd : null;
-    if (si) params.set('q', si.value || '');
-    const lf = document.getElementById('npc_letter_filter');
-    params.set('letter', lf ? (lf.value || '') : '');
-    const pf = document.getElementById('npc_profile_filter');
-    if (pf) params.set('profile_id', pf.value || '');
-    // Collect checkbox filters (prefer top bar if present else bottom)
-    try {
-      const fav = (document.getElementById('npc_filter_fav_top')||document.getElementById('npc_filter_fav'));
-      const dyn = (document.getElementById('npc_filter_dyn_top')||document.getElementById('npc_filter_dyn'));
-      const mtm = (document.getElementById('npc_filter_mtm_top')||document.getElementById('npc_filter_mtm'));
-      const locked = (document.getElementById('npc_filter_lock_top')||document.getElementById('npc_filter_lock'));
-      const playerFaction = (document.getElementById('npc_filter_pf_top')||document.getElementById('npc_filter_pf'));
-      params.set('fav', fav && fav.checked ? '1' : '');
-      params.set('dyn', dyn && dyn.checked ? '1' : '');
-      params.set('mtm', mtm && mtm.checked ? '1' : '');
-      params.set('lock', locked && locked.checked ? '1' : '');
-      params.set('pf', playerFaction && playerFaction.checked ? '1' : '');
-    } catch(_e){}
-    params.set('alpha', 'asc');
-    if (page) params.set('page', String(page));
-    params.set('list','1');
+    const askedPage = parseInt(page, 10);
+    const requestedPage = Number.isFinite(askedPage) && askedPage > 0 ? askedPage : currentListPage;
+    const params = buildListState(requestedPage);
+    const requestParams = new URLSearchParams(params.toString());
+    requestParams.set('list','1');
     if (listAbort) { try { listAbort.abort(); } catch(_){} }
+    const requestId = ++listRequestId;
     listAbort = new AbortController();
-    const res = await fetch('npc_master.php?'+params.toString(), { signal: listAbort.signal });
-    const html = await res.text();
-    const temp = document.createElement('div'); temp.innerHTML = html;
-    const newPag = temp.querySelector('.pagination.npc-toolbar');
-    const newGrid = temp.querySelector('.npc-grid');
-    if (newPag && newGrid){
+    try {
+      const res = await fetch('npc_master.php?'+requestParams.toString(), { signal: listAbort.signal });
+      if (!res.ok) throw new Error('HTTP ' + String(res.status));
+      const html = await res.text();
+      if (requestId !== listRequestId) return;
+      const temp = document.createElement('div'); temp.innerHTML = html;
+      const newPag = temp.querySelector('.pagination.npc-toolbar');
+      const newGrid = temp.querySelector('.npc-grid');
+      if (!newPag || !newGrid) throw new Error('Incomplete NPC list response');
       const oldPag = document.querySelector('.pagination.npc-toolbar');
       const oldGrid = document.querySelector('.npc-grid');
       if (oldPag && oldPag.parentElement) oldPag.parentElement.replaceChild(newPag, oldPag);
       if (oldGrid && oldGrid.parentElement) oldGrid.parentElement.replaceChild(newGrid, oldGrid);
+      currentListPage = readServedPage(newPag) || requestedPage;
+      persistListState(params, currentListPage);
       // rebind events on new elements
       document.querySelectorAll('.npc-card').forEach(card=>{
         card.addEventListener('click', function(ev){
@@ -5281,6 +5332,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
       const newProfileSel = document.getElementById('npc_profile_filter');
       if (newProfileSel){ newProfileSel.addEventListener('change', function(){ refreshList(1); }); }
       bindAutoLockProfile(document.getElementById('npc_auto_lock_profile'));
+    } catch(error) {
+      if (error && error.name === 'AbortError') return;
+      console.error('NPC profile list refresh failed:', error);
     }
   }
   // Simple debounce for input

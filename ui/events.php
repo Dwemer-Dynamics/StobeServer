@@ -7,6 +7,7 @@
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
 require_once($path . "lib/event_filter_functions.php");
+require_once($path . "lib/eventlog_helper.php");
 $isEmbed = isset($_GET['embed']) && (string)$_GET['embed'] === '1';
 
 function h(mixed $value): string
@@ -105,6 +106,10 @@ $offset = ($page - 1) * $limit;
 $isAutoRefresh = isset($_GET["autorefresh"]) && $_GET["autorefresh"];
 $persistedHiddenTypes = stobeEventsPersistedHiddenTypes();
 $allHiddenTypes = stobeEventsAllHiddenTypes($persistedHiddenTypes);
+// Relationship rows are derived from core_npc_master_history snapshots, not stored
+// in eventlog, but they honour the same hide/show filter as any event type.
+$relationshipEventType = stobeRelationshipTimelineEventType();
+$showRelationshipRows = !in_array($relationshipEventType, $allHiddenTypes, true);
 
 if (isset($_GET["hide_event_type"])) {
     $typeToHide = trim((string)$_GET["hide_event_type"]);
@@ -199,25 +204,56 @@ if (isset($_POST["delete_selected"])) {
     exit;
 }
 
+// Seed the live relationship cursor so a page without relationship rows on screen
+// does not replay the whole snapshot history on the first poll.
+$latestRelationshipHistoryId = 0;
+if ($showRelationshipRows) {
+    $latestHistoryRow = safeFetchOne(
+        $db,
+        "SELECT COALESCE(MAX(history_id), 0) AS latest_id
+         FROM core_npc_master_history"
+    );
+    $latestRelationshipHistoryId = intval($latestHistoryRow["latest_id"] ?? 0);
+}
+
 // Live updates endpoint.
 if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
+    // Each source advances its own cursor: eventlog by rowid, relationships by history_id.
     $sinceRowId = isset($_GET["since_rowid"]) ? max(0, intval($_GET["since_rowid"])) : 0;
+    $sinceHistoryId = isset($_GET["since_history_id"]) ? max(0, intval($_GET["since_history_id"])) : 0;
     $hiddenTypePlaceholders = stobeEventsTypePlaceholders(count($allHiddenTypes), 2);
+    $liveParams = array_merge([$sinceRowId], $allHiddenTypes);
+    $liveUnionParts = [
+        "SELECT " . stobeMergedTimelineEventSelectSql("a") . "
+         FROM eventlog a
+         WHERE a.rowid > $1
+           AND a.type NOT IN (" . $hiddenTypePlaceholders . ")",
+    ];
+    $liveCte = "";
+    if ($showRelationshipRows && $latestRelationshipHistoryId > $sinceHistoryId) {
+        $liveCte = stobeRelationshipHistoryTimelineCte();
+        $liveParams[] = $sinceHistoryId;
+        $liveUnionParts[] = "SELECT " . stobeMergedTimelineRelationshipSelectSql() . "
+         FROM stobe_visible_relationship_history
+         WHERE history_id > $" . strval(count($liveParams));
+    }
     $liveRows = safeFetchAll(
         $db,
-        "SELECT rowid, type, data, people, location, gamets, localts, ts
-         FROM eventlog
-         WHERE rowid > $1
-           AND type NOT IN (" . $hiddenTypePlaceholders . ")
-         ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
-         LIMIT 50",
-        array_merge([$sinceRowId], $allHiddenTypes)
+        $liveCte . " SELECT * FROM (" . implode(" UNION ALL ", $liveUnionParts) . ") stobe_live_timeline "
+        . stobeMergedTimelineOrderSql() . " LIMIT 50",
+        $liveParams
     );
 
     $payloadRows = [];
     foreach ($liveRows as $row) {
+        $isRelationshipRow = (string)($row["timeline_source"] ?? "event") === "relationship";
+        if ($isRelationshipRow) {
+            $row = stobeDecorateRelationshipTimelineRow($row);
+        }
         $payloadRows[] = [
-            "ROWID" => intval($row["rowid"] ?? 0),
+            "Source" => $isRelationshipRow ? "relationship" : "event",
+            "ROWID" => $isRelationshipRow ? 0 : intval($row["event_rowid"] ?? 0),
+            "HistoryId" => $isRelationshipRow ? intval($row["history_id"] ?? 0) : 0,
             "Event" => (string)($row["type"] ?? ""),
             "Events" => (string)($row["data"] ?? ""),
             "People Present" => (string)($row["people"] ?? ""),
@@ -232,6 +268,7 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
     echo json_encode([
         "success" => true,
         "new_count" => count($payloadRows),
+        "latest_history_id" => $latestRelationshipHistoryId,
         "data" => $payloadRows,
     ]);
     exit;
@@ -240,13 +277,23 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "eventlog_updates") {
 $hiddenTypePlaceholders = stobeEventsTypePlaceholders(count($allHiddenTypes), 1);
 $limitPlaceholder = '$' . (count($allHiddenTypes) + 1);
 $offsetPlaceholder = '$' . (count($allHiddenTypes) + 2);
+// Merge and paginate in SQL so a page never loads more than $limit rows into PHP.
+$pageUnionParts = [
+    "SELECT " . stobeMergedTimelineEventSelectSql("a") . "
+     FROM eventlog a
+     WHERE a.type NOT IN (" . $hiddenTypePlaceholders . ")",
+];
+$pageCte = "";
+if ($showRelationshipRows) {
+    $pageCte = stobeRelationshipHistoryTimelineCte();
+    $pageUnionParts[] = "SELECT " . stobeMergedTimelineRelationshipSelectSql() . "
+     FROM stobe_visible_relationship_history";
+}
 $rows = safeFetchAll(
     $db,
-    "SELECT rowid, type, data, people, location, gamets, localts, ts
-     FROM eventlog
-     WHERE type NOT IN (" . $hiddenTypePlaceholders . ")
-     ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC
-     LIMIT " . $limitPlaceholder . " OFFSET " . $offsetPlaceholder,
+    $pageCte . " SELECT * FROM (" . implode(" UNION ALL ", $pageUnionParts) . ") stobe_timeline "
+    . stobeMergedTimelineOrderSql()
+    . " LIMIT " . $limitPlaceholder . " OFFSET " . $offsetPlaceholder,
     array_merge($allHiddenTypes, [$limit, $offset])
 );
 
@@ -258,6 +305,15 @@ $totalRecordsRow = safeFetchOne(
     $allHiddenTypes
 );
 $totalRecords = intval($totalRecordsRow["total"] ?? 0);
+$relationshipTotal = 0;
+if ($showRelationshipRows) {
+    $relationshipTotalRow = safeFetchOne(
+        $db,
+        stobeRelationshipHistoryTimelineCte() . " SELECT COUNT(*) AS total FROM stobe_visible_relationship_history"
+    );
+    $relationshipTotal = intval($relationshipTotalRow["total"] ?? 0);
+    $totalRecords += $relationshipTotal;
+}
 $totalPages = max(1, (int)ceil($totalRecords / $limit));
 
 $visibleTypeRows = safeFetchAll(
@@ -269,6 +325,10 @@ $visibleTypeRows = safeFetchAll(
      ORDER BY type ASC",
     $allHiddenTypes
 );
+if ($showRelationshipRows && $relationshipTotal > 0) {
+    $visibleTypeRows[] = ["type" => $relationshipEventType, "total" => $relationshipTotal];
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -282,14 +342,15 @@ $visibleTypeRows = safeFetchAll(
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         body {
-            padding-top: 80px;
+            /* Matches the fixed navbar height so no blank band is left below it. */
+            padding-top: 64px;
         }
         body.embed-page { padding-top: 0; }
         body.embed-page main { padding-top: 10px; }
 
         main {
-            padding-top: 20px;
-            padding-bottom: 40px;
+            padding-top: 10px;
+            padding-bottom: 24px;
             padding-left: 10px;
         }
 
@@ -306,13 +367,13 @@ $visibleTypeRows = safeFetchAll(
         }
 
         .tab-container {
-            margin: 20px 0;
+            margin: 0 0 6px;
         }
 
         .tab-buttons {
             display: flex;
             flex-wrap: wrap;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             border-bottom: 2px solid rgba(230, 183, 108, 0.2);
             gap: 5px;
             word-spacing: 5px;
@@ -358,7 +419,7 @@ $visibleTypeRows = safeFetchAll(
         .tab-content {
             display: block;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            padding: 20px;
+            padding: 10px 12px 12px;
             border-radius: 8px;
             border-top-left-radius: 0;
             border: 1px solid #3a3a3a;
@@ -366,15 +427,15 @@ $visibleTypeRows = safeFetchAll(
         }
 
         .table-container {
-            max-height: calc(100vh - 450px) !important;
-            margin-top: 20px;
+            max-height: calc(100vh - 330px) !important;
+            margin-top: 8px;
             width: 100%;
             overflow-x: auto;
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
             border-radius: 10px;
             border: 1px solid #3a3a3a;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-            padding: 12px;
+            padding: 8px;
         }
 
         table {
@@ -421,6 +482,20 @@ $visibleTypeRows = safeFetchAll(
             padding: 14px 2px;
         }
 
+        tr.relationship-row td:first-child {
+            box-shadow: inset 3px 0 0 #e6b76c;
+        }
+
+        .relationship-row-marker {
+            color: #e6b76c;
+            font-size: 0.7em;
+        }
+
+        .relationship-row-id {
+            color: #9ca3af;
+            white-space: nowrap;
+        }
+
         th:has(#selectAllCheckbox),
         td:has(.event-checkbox) {
             text-align: center !important;
@@ -462,7 +537,7 @@ $visibleTypeRows = safeFetchAll(
         <?php endif; ?>
 
         <div id="eventlog-tab" class="tab-content">
-            <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 12px 15px; border-radius: 5px; margin: 15px 0; font-size: 0.9em;">
+            <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 9px 12px; border-radius: 5px; margin: 0 0 6px; font-size: 0.88em; line-height: 1.4;">
                 <span style="color: #e6b76c; font-weight: bold;">Events:</span>
                 <span style="color: #f8f9fa;">Raw log of in-game events used for AI context and timeline tracking.</span>
             </div>
@@ -473,7 +548,7 @@ $visibleTypeRows = safeFetchAll(
                 </div>
             <?php endif; ?>
 
-            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 20px 0;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 6px;">
                 <button id="live-toggle-btn-eventlog" onclick="toggleAutoRefreshEventLog()" class="btn-base <?= $isAutoRefresh ? "btn-secondary" : "btn-primary" ?>" style="padding: 8px 12px; font-size: 0.9em;" title="Toggle live monitoring">
                     <?= $isAutoRefresh ? "Stop Live" : "Auto Refresh" ?>
                 </button>
@@ -537,8 +612,22 @@ $visibleTypeRows = safeFetchAll(
                     <tbody>
                     <?php if (count($rows) > 0): ?>
                         <?php foreach ($rows as $row): ?>
-                            <tr>
-                                <td><input type="checkbox" class="event-checkbox" data-rowid="<?= intval($row["rowid"] ?? 0) ?>" style="cursor: pointer; width: 18px; height: 18px;"></td>
+                            <?php
+                            $isRelationshipRow = (string)($row["timeline_source"] ?? "event") === "relationship";
+                            if ($isRelationshipRow) {
+                                $row = stobeDecorateRelationshipTimelineRow($row);
+                            }
+                            $eventRowId = intval($row["event_rowid"] ?? 0);
+                            $relationshipHistoryId = intval($row["history_id"] ?? 0);
+                            ?>
+                            <tr<?= $isRelationshipRow ? ' class="relationship-row" data-history-id="' . $relationshipHistoryId . '"' : '' ?>>
+                                <td>
+                                    <?php if ($isRelationshipRow): ?>
+                                        <span class="relationship-row-marker" title="Recorded relationship change. Read-only." aria-hidden="true">&#9679;</span>
+                                    <?php else: ?>
+                                        <input type="checkbox" class="event-checkbox" data-rowid="<?= $eventRowId ?>" style="cursor: pointer; width: 18px; height: 18px;">
+                                    <?php endif; ?>
+                                </td>
                                 <td><?= h($row["type"] ?? "") ?></td>
                                 <td><?= h($row["data"] ?? "") ?></td>
                                 <td><?= h($row["people"] ?? "") ?></td>
@@ -546,11 +635,15 @@ $visibleTypeRows = safeFetchAll(
                                 <td><?= h(formatGameTs($row["gamets"] ?? 0)) ?></td>
                                 <td><?= h(formatLocalTs($row["localts"] ?? 0)) ?></td>
                                 <td>
-                                    <form method="post" action="<?= h(eventsUrl($page, $limit, $isAutoRefresh)) ?>" onsubmit="return confirm('Delete this event row?');" style="display:inline">
-                                        <input type="hidden" name="delete_row" value="1">
-                                        <input type="hidden" name="rowid" value="<?= intval($row["rowid"] ?? 0) ?>">
-                                        <button type="submit" class="rowid-delete-link"><?= intval($row["rowid"] ?? 0) ?> <i class="bi-trash" aria-hidden="true"></i></button>
-                                    </form>
+                                    <?php if ($isRelationshipRow): ?>
+                                        <span class="relationship-row-id" title="Relationship changes come from NPC history snapshots and cannot be deleted here.">rel <?= $relationshipHistoryId ?></span>
+                                    <?php else: ?>
+                                        <form method="post" action="<?= h(eventsUrl($page, $limit, $isAutoRefresh)) ?>" onsubmit="return confirm('Delete this event row?');" style="display:inline">
+                                            <input type="hidden" name="delete_row" value="1">
+                                            <input type="hidden" name="rowid" value="<?= $eventRowId ?>">
+                                            <button type="submit" class="rowid-delete-link"><?= $eventRowId ?> <i class="bi-trash" aria-hidden="true"></i></button>
+                                        </form>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -578,7 +671,9 @@ $visibleTypeRows = safeFetchAll(
 let autoRefreshIntervalEventLog = null;
 let isLiveModeEventLog = <?= $isAutoRefresh ? "true" : "false" ?>;
 let lastRowIdEventLog = 0;
+let lastHistoryIdEventLog = 0;
 let totalNewEventsEventLog = 0;
+const latestHistoryIdEventLog = <?= intval($latestRelationshipHistoryId) ?>;
 const currentPageEventLog = <?= intval($page) ?>;
 const currentLimitEventLog = <?= intval($limit) ?>;
 const rowDeleteActionEventLog = <?= json_encode(eventsUrl($page, $limit, $isAutoRefresh)) ?>;
@@ -733,6 +828,19 @@ function getLastRowIdEventLog() {
     return maxRowId;
 }
 
+// Relationship rows carry no checkbox, so they track their own history_id cursor.
+function getLastHistoryIdEventLog() {
+    const rows = document.querySelectorAll("#eventlog-table-container table tr[data-history-id]");
+    let maxHistoryId = 0;
+    rows.forEach((row) => {
+        const historyId = parseInt(row.getAttribute("data-history-id"), 10);
+        if (!isNaN(historyId) && historyId > maxHistoryId) {
+            maxHistoryId = historyId;
+        }
+    });
+    return maxHistoryId;
+}
+
 function updateEventTableEventLog() {
     if (!isLiveModeEventLog) {
         return;
@@ -743,9 +851,9 @@ function updateEventTableEventLog() {
         liveIndicator.style.opacity = "0.5";
     }
 
-    const sinceRowId = lastRowIdEventLog;
     const updatesUrl = new URL(<?= json_encode(eventsUrl($page, $limit, false, ["ajax" => "eventlog_updates"])) ?>, window.location.href);
-    updatesUrl.searchParams.set("since_rowid", String(sinceRowId));
+    updatesUrl.searchParams.set("since_rowid", String(lastRowIdEventLog));
+    updatesUrl.searchParams.set("since_history_id", String(lastHistoryIdEventLog));
     fetch(updatesUrl.toString())
         .then((response) => response.json())
         .then((data) => {
@@ -756,8 +864,15 @@ function updateEventTableEventLog() {
                 }
 
                 data.data.reverse().forEach((row) => {
+                    const isRelationship = String(row["Source"] || "event") === "relationship";
+                    const rowId = String(row["ROWID"] || "");
+                    const historyId = String(row["HistoryId"] || "");
                     const newRow = document.createElement("tr");
                     newRow.style.backgroundColor = "#2d5a2d";
+                    if (isRelationship) {
+                        newRow.className = "relationship-row";
+                        newRow.setAttribute("data-history-id", historyId);
+                    }
 
                     const values = [
                         "",
@@ -767,16 +882,23 @@ function updateEventTableEventLog() {
                         row["Location"] || "",
                         row["Game Time"] || "",
                         row["Time (UTC)"] || "",
-                        String(row["ROWID"] || "")
+                        ""
                     ];
 
                     values.forEach((val, idx) => {
                         const td = document.createElement("td");
                         if (idx === 0) {
-                            td.innerHTML = '<input type="checkbox" class="event-checkbox" data-rowid="' + String(row["ROWID"] || "") + '" style="cursor: pointer; width: 18px; height: 18px;">';
+                            if (isRelationship) {
+                                td.innerHTML = '<span class="relationship-row-marker" title="Recorded relationship change. Read-only." aria-hidden="true">&#9679;</span>';
+                            } else {
+                                td.innerHTML = '<input type="checkbox" class="event-checkbox" data-rowid="' + rowId + '" style="cursor: pointer; width: 18px; height: 18px;">';
+                            }
                         } else if (idx === values.length - 1) {
-                            const rowId = String(row["ROWID"] || "");
-                            td.innerHTML = '<form method="post" action="' + rowDeleteActionEventLog + '" onsubmit="return confirm(\'Delete this event row?\');" style="display:inline"><input type="hidden" name="delete_row" value="1"><input type="hidden" name="rowid" value="' + rowId + '"><button type="submit" class="rowid-delete-link">' + rowId + ' <i class="bi-trash" aria-hidden="true"></i></button></form>';
+                            if (isRelationship) {
+                                td.innerHTML = '<span class="relationship-row-id" title="Relationship changes come from NPC history snapshots and cannot be deleted here.">rel ' + historyId + '</span>';
+                            } else {
+                                td.innerHTML = '<form method="post" action="' + rowDeleteActionEventLog + '" onsubmit="return confirm(\'Delete this event row?\');" style="display:inline"><input type="hidden" name="delete_row" value="1"><input type="hidden" name="rowid" value="' + rowId + '"><button type="submit" class="rowid-delete-link">' + rowId + ' <i class="bi-trash" aria-hidden="true"></i></button></form>';
+                            }
                         } else {
                             td.textContent = val;
                         }
@@ -789,9 +911,16 @@ function updateEventTableEventLog() {
                         tbody.appendChild(newRow);
                     }
 
-                    const rowIdNum = parseInt(String(row["ROWID"] || "0"), 10);
-                    if (!isNaN(rowIdNum) && rowIdNum > lastRowIdEventLog) {
-                        lastRowIdEventLog = rowIdNum;
+                    if (isRelationship) {
+                        const historyIdNum = parseInt(historyId, 10);
+                        if (!isNaN(historyIdNum) && historyIdNum > lastHistoryIdEventLog) {
+                            lastHistoryIdEventLog = historyIdNum;
+                        }
+                    } else {
+                        const rowIdNum = parseInt(rowId, 10);
+                        if (!isNaN(rowIdNum) && rowIdNum > lastRowIdEventLog) {
+                            lastRowIdEventLog = rowIdNum;
+                        }
                     }
 
                     setTimeout(() => {
@@ -801,6 +930,9 @@ function updateEventTableEventLog() {
                 });
 
                 totalNewEventsEventLog += Number(data.new_count || 0);
+            }
+            if (data.success) {
+                lastHistoryIdEventLog = Math.max(lastHistoryIdEventLog, Number(data.latest_history_id || 0));
             }
         })
         .catch(() => {
@@ -832,6 +964,7 @@ function toggleAutoRefreshEventLog() {
         }
 
         lastRowIdEventLog = getLastRowIdEventLog();
+        lastHistoryIdEventLog = Math.max(getLastHistoryIdEventLog(), latestHistoryIdEventLog);
         totalNewEventsEventLog = 0;
         autoRefreshIntervalEventLog = setInterval(updateEventTableEventLog, 5000);
     } else {
@@ -867,6 +1000,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     if (isLiveModeEventLog) {
         lastRowIdEventLog = getLastRowIdEventLog();
+        lastHistoryIdEventLog = Math.max(getLastHistoryIdEventLog(), latestHistoryIdEventLog);
         autoRefreshIntervalEventLog = setInterval(updateEventTableEventLog, 5000);
     }
 });
@@ -874,4 +1008,3 @@ document.addEventListener("DOMContentLoaded", function () {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-

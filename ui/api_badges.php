@@ -179,34 +179,15 @@ include(__DIR__ . DIRECTORY_SEPARATOR . "../tmpl/head.html");
 ?>
 <link rel="stylesheet" href="<?php echo $webRoot; ?>/ui/css/main.css">
 <style>
-main{padding:30px 5px 5px}.page-header{background:linear-gradient(180deg,rgba(42,42,42,.95),rgba(34,34,34,.98));padding:20px;border-radius:10px;border:1px solid #3a3a3a;text-align:center;margin-bottom:20px}.api-title{margin:0;color:#e6b76c;font-family:'MagicCards',serif}.page-subtitle{color:#bbb;margin:6px 0 0}.grid{display:grid;grid-template-columns:1fr;gap:16px}.section{border:1px solid #3a3a3a;border-radius:10px;background:linear-gradient(180deg,rgba(42,42,42,.95),rgba(34,34,34,.98));padding:14px}.section-head{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}.section-title{margin:0;color:#e6b76c;font-family:'MagicCards',serif}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.card{border:1px solid #3a3a3a;border-radius:10px;padding:12px;background:rgba(26,26,26,.8)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.card-title{font-weight:600}.small{color:#9fb1c9;font-size:12px}.links a{color:#e6b76c;text-decoration:underline;font-size:12px}.row{display:flex;gap:8px;align-items:center}label{color:#e6b76c;font-weight:600;margin-top:8px;margin-bottom:6px;display:block}input[type=text],input[type=password]{width:100%;box-sizing:border-box;background:rgba(26,26,26,.8);color:#e9efff;border:1px solid #3a3a3a;border-radius:6px;padding:10px 12px}.btn{padding:10px 14px;color:#fff;border-radius:8px;border:1px solid rgba(138,155,182,.35);background:#2f3b52;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn-save{background:#176529;border-color:#2b7d3d}.btn-danger{background:#8a1a1a;border-color:#992c2c}.help{color:#9fb1c9;font-size:12px;margin-top:4px}.custom-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pill{font-size:11px;color:#9fb1c9;border:1px solid #4a4a4a;border-radius:999px;padding:2px 6px}@media (max-width:980px){.cards,.custom-list{grid-template-columns:1fr}}
+main{padding:10px 5px 5px}.grid{display:grid;grid-template-columns:1fr;gap:16px}.section{border:1px solid #3a3a3a;border-radius:10px;background:linear-gradient(180deg,rgba(42,42,42,.95),rgba(34,34,34,.98));padding:14px}.section-head{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}.section-title{margin:0;color:#e6b76c;font-family:'MagicCards',serif}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.card{border:1px solid #3a3a3a;border-radius:10px;padding:12px;background:rgba(26,26,26,.8)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.card-title{font-weight:600}.small{color:#9fb1c9;font-size:12px}.links a{color:#e6b76c;text-decoration:underline;font-size:12px}.row{display:flex;gap:8px;align-items:center}label{color:#e6b76c;font-weight:600;margin-top:8px;margin-bottom:6px;display:block}input[type=text],input[type=password]{width:100%;box-sizing:border-box;background:rgba(26,26,26,.8);color:#e9efff;border:1px solid #3a3a3a;border-radius:6px;padding:10px 12px}.btn{padding:10px 14px;color:#fff;border-radius:8px;border:1px solid rgba(138,155,182,.35);background:#2f3b52;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn-save{background:#176529;border-color:#2b7d3d}.btn-danger{background:#8a1a1a;border-color:#992c2c}.help{color:#9fb1c9;font-size:12px;margin-top:4px}.custom-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.pill{font-size:11px;color:#9fb1c9;border:1px solid #4a4a4a;border-radius:999px;padding:2px 6px}@media (max-width:980px){.cards,.custom-list{grid-template-columns:1fr}}
 </style>
 <style>
-.page-header {
-    background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-    padding: 20px;
-    border-radius: 10px;
-    border: 1px solid #3a3a3a;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-    text-align: center;
-    margin-bottom: 30px;
-}
-.page-header h1.api-title { margin-bottom: 8px; }
-.page-subtitle { color: #bbb; font-size: 1.1em; margin: 0; }
-h1.api-title {
-    margin: 0 0 20px 0;
-    font-family: 'MagicCards', serif;
-    word-spacing: 8px;
-    font-size: 2.2em;
-    color: #e6b76c;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-    text-align: center;
-}
+/* Page header is the shared compact inline row (.stobe-page-head in main.css). */
 </style>
 <main class="d-flex flex-column">
-    <div class="page-header">
-        <h1 class="api-title">API Keys</h1>
-        <p class="page-subtitle">Configure API key badges used by LLM and TTS connectors</p>
+    <div class="page-header stobe-page-head">
+        <h1 class="api-title stobe-page-head-title">API Keys</h1>
+        <p class="page-subtitle stobe-page-head-note">Configure API key badges used by LLM and TTS connectors</p>
     </div>
 
     <?php if (isset($_GET['err']) && $_GET['err'] === 'reserved_label'): ?>

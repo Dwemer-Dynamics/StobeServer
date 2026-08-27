@@ -34,7 +34,7 @@ $whereByFilter = [
     'dialogue' => "LOWER(type) IN ('inputtext', 'inputtext_s', 'outputtext', 'outputtext_s', 'npc_say', 'player_say', 'dialogue')",
     'actions' => "LOWER(type) IN ('infoaction', 'action', 'npc_action', 'roleplay_action')",
     'travel' => "LOWER(type) IN ('location', 'locationchange', 'location_change', 'travel', 'travel_location')",
-    'combat' => "LOWER(type) IN ('combat', 'combatstart', 'combatend', 'death', 'limblost', 'limb_loss', 'knockout', 'healed', 'healing')",
+    'combat' => "LOWER(type) IN ('combat', 'combatstart', 'combatend', 'combat_start', 'combat_end', 'major_damage', 'death', 'limblost', 'limb_loss', 'knockout', 'healed', 'healing')",
     'trade' => "LOWER(type) IN ('trade', 'buy', 'sell', 'purchase', 'sale', 'item_transfer')",
 ];
 if ($filter !== 'default' && !isset($whereByFilter[$filter])) {

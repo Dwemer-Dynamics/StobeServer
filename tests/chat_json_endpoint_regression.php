@@ -225,6 +225,16 @@ try {
     chatJsonAssert(is_array(getNpcData($nearby)), 'JSON endpoint should ingest nearby NPC snapshot profile');
 
     $GLOBALS['db']->exec('DELETE FROM eventlog');
+    $moodResponse = chatJsonPostJson($port, [
+        'npc' => $target, 'player' => $speaker, 'message' => 'Good morning',
+        'mode' => 'shout', 'player_mood' => 'happy',
+    ]);
+    chatJsonAssertSameInt(200, intval($moodResponse['status']), 'mood request should succeed');
+    $moodRows = chatJsonEventRows();
+    chatJsonAssertSame($speaker . ': Good morning [Player tone: speaks in a happy tone.] (talking to: ' . $target . ')', strval($moodRows[0]['data'] ?? ''), 'JSON path should store the mood cue');
+    chatJsonAssertSame(strval($moodRows[0]['data']), strval($moodRows[1]['data'] ?? ''), 'mirrored JSON dialogue should retain the mood cue');
+
+    $GLOBALS['db']->exec('DELETE FROM eventlog');
     storeNpcProfile('UT_JSON_DEAD_SPEAKER', []);
     $statePayload = json_encode(['character_state' => 'dead'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $GLOBALS['db']->exec(

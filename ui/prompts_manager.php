@@ -236,8 +236,8 @@ if (!$isEmbed) {
 <style>
     /* Override main container styles */
     main {
-        padding-top: 30px;
-        padding-bottom: 40px;
+        padding-top: 10px;
+        padding-bottom: 24px;
         padding-left: 5px;
         padding-right: 5px;
         width: 100%;
@@ -261,41 +261,22 @@ if (!$isEmbed) {
         font-style: normal;
     }
 
-    /* Header Styling */
-    .page-header {
-        text-align: center;
-        margin-bottom: 30px;
-        padding: 20px;
-        background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-        border-radius: 10px;
-        border: 1px solid #3a3a3a;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-    }
-
-    .page-header h1.api-title { margin-bottom: 8px; }
+    /* Header Styling - layout comes from .stobe-page-head in main.css.
+       Only StobeServer's white title/subtitle treatment stays page-local. */
     .page-subtitle {
         color: #ffffff !important;
-        font-size: 1.1em;
-        margin: 0;
         font-family: var(--stobe-title-font) !important;
     }
-    h1.api-title {
-        margin: 0 0 20px 0;
-        font-family: var(--stobe-title-font) !important;
-        word-spacing: 8px;
-        font-size: 2.2em;
+    h1.api-title,
+    h1.api-title * {
         color: #ffffff !important;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        text-align: center;
-    }
-    h1.api-title, h1.api-title * {
         font-family: var(--stobe-title-font) !important;
     }
 
     /* Info boxes */
     .info-box, .warning-box {
-        margin-bottom: 25px;
-        padding: 20px;
+        margin-bottom: 10px;
+        padding: 12px 14px;
         border-radius: 10px;
         border: 1px solid;
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.02);
@@ -318,8 +299,25 @@ if (!$isEmbed) {
     }
 
     .info-box p, .warning-box p {
-        margin: 8px 0;
+        margin: 6px 0;
         color: #d0d0d0;
+    }
+
+    /* Guidance sits inside the export/import row as its own responsive column. */
+    .prompt-guidance {
+        min-width: 0;
+        margin: 0;
+        padding: 10px 12px;
+    }
+
+    .prompt-guidance p {
+        margin: 0 0 6px;
+        font-size: 0.82em;
+        line-height: 1.4;
+    }
+
+    .prompt-guidance p:last-child {
+        margin-bottom: 0;
     }
 
     /* Table container */
@@ -327,7 +325,7 @@ if (!$isEmbed) {
         background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
         border-radius: 10px;
         border: 1px solid #3a3a3a;
-        max-height: calc(100vh - 320px);
+        max-height: calc(100vh - 250px);
         overflow-y: auto;
         overflow-x: auto;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
@@ -505,13 +503,13 @@ if (!$isEmbed) {
     .import-export-section {
         background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
         border-radius: 10px;
-        padding: 20px;
-        margin-bottom: 25px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
         border: 1px solid #3a3a3a;
-        display: flex;
-        gap: 20px;
-        align-items: center;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: minmax(190px, 0.8fr) minmax(300px, 1.2fr) minmax(280px, 1.3fr);
+        gap: 14px;
+        align-items: start;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
         transition: border-color 0.3s ease, box-shadow 0.3s ease;
     }
@@ -525,18 +523,22 @@ if (!$isEmbed) {
         color: #e6b76c;
         font-family: 'MagicCards', serif;
         margin: 0;
-        flex: 1 0 100%;
     }
 
     .export-section, .import-section {
-        flex: 1;
-        min-width: 300px;
+        min-width: 0;
     }
 
     .export-section p, .import-section p {
         color: #b0b0b0;
-        margin: 10px 0;
+        margin: 4px 0 8px;
         font-size: 0.9em;
+    }
+
+    .export-section > p:first-child,
+    .import-section > p:first-child {
+        margin-top: 0;
+        color: #e6b76c;
     }
 
     .file-input-wrapper {
@@ -773,12 +775,26 @@ if (!$isEmbed) {
     }
 
     /* Responsive */
+    @media (max-width: 1100px) {
+        .import-export-section {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .prompt-guidance {
+            grid-column: 1 / -1;
+        }
+    }
+
     @media (max-width: 768px) {
         main {
             padding-left: 2%;
             padding-right: 2%;
         }
-        
+
+        .import-export-section {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
         .prompts-table {
             font-size: 0.9em;
         }
@@ -792,7 +808,7 @@ if (!$isEmbed) {
 
 <?php if ($isEmbed): ?>
 <style>
-    main { padding-top: 20px; }
+    main { padding-top: 10px; }
 </style>
 <?php endif; ?>
 
@@ -801,18 +817,12 @@ if (!$isEmbed) {
         <span class="message"></span>
     </div>
 
-    <div class="page-header">
-        <h1 class="api-title">Prompts Manager</h1>
-        <p class="page-subtitle">Manage system and custom prompts used throughout StobeServer</p>
+    <div class="page-header stobe-page-head">
+        <h1 class="api-title stobe-page-head-title">Prompts Manager</h1>
+        <p class="page-subtitle stobe-page-head-note">Manage system and custom prompts used throughout StobeServer</p>
     </div>
 
-    <div class="info-box">
-        <p><strong>Note:</strong> Recommend for advanced users only. Changing prompts can cause unexpected behavior that may worsen the roleplay experience.</p>
-        <p><strong>Default Prompt:</strong> System-maintained baseline that updates with StobeServer. <strong>Custom Prompt:</strong> Your personalized override that takes precedence when set.</p>
-        <p>Click <strong>Edit</strong> to view and modify prompts. Click <strong>Clear</strong> to revert to default.</p>
-    </div>
-
-    <div class="import-export-section">      
+    <div class="import-export-section">
         <div class="export-section">
             <p><strong>📤 Export Custom Prompts</strong></p>
             <p>Download all your custom prompts as a CSV file to share with others.</p>
@@ -832,6 +842,12 @@ if (!$isEmbed) {
                 <br>
                 <button type="submit" class="btn-import" id="importBtn" disabled>⬆️ Import Custom Prompts</button>
             </form>
+        </div>
+
+        <div class="info-box prompt-guidance">
+            <p><strong>Note:</strong> Recommended for advanced users only. Changing prompts can cause unexpected behavior that may worsen the roleplay experience.</p>
+            <p><strong>Default Prompt:</strong> System-maintained baseline that updates with StobeServer. <strong>Custom Prompt:</strong> Your personalized override that takes precedence when set.</p>
+            <p>Click <strong>Edit</strong> to view and modify prompts. Click <strong>Clear</strong> to revert to default.</p>
         </div>
     </div>
 

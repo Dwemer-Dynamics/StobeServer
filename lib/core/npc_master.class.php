@@ -156,6 +156,17 @@ class NpcMaster
         if (array_key_exists('extended_data', $input)) {
             $mapped['extended_data'] = self::parseJsonValue($input['extended_data']);
         }
+        if (array_key_exists('individual_memory_enabled', $input)) {
+            $enabled = self::toBool($input['individual_memory_enabled']);
+            $mapped['individual_memory_enabled'] = $enabled;
+            if (array_key_exists('extended_data', $mapped)) {
+                if ($enabled) {
+                    $mapped['extended_data']['individual_memory_enabled'] = 1;
+                } else {
+                    unset($mapped['extended_data']['individual_memory_enabled']);
+                }
+            }
+        }
         if (array_key_exists('limbs', $input)) {
             $mapped['limbs'] = self::parseJsonValue($input['limbs']);
         }
@@ -334,6 +345,16 @@ class NpcMaster
         if ($name === '') {
             $this->lastError = 'NPC name is required';
             return 0;
+        }
+        if (array_key_exists('individual_memory_enabled', $mapped)) {
+            $extendedData = $mapped['extended_data'] ?? [];
+            if ($mapped['individual_memory_enabled']) {
+                $extendedData['individual_memory_enabled'] = 1;
+            } else {
+                unset($extendedData['individual_memory_enabled']);
+            }
+            $mapped['extended_data'] = $extendedData;
+            unset($mapped['individual_memory_enabled']);
         }
 
         try {

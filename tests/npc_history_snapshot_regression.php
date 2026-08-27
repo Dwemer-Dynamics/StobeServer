@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../lib/bootstrap.php';
 require_once __DIR__ . '/../debug/db_updates.php';
+require_once __DIR__ . '/../lib/core/npc_master.class.php';
 
 $db = $GLOBALS['db'];
 
@@ -149,6 +150,7 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         'extended_data' => [
             'relationships' => $initialRelationships,
             'environment' => ['town_name' => 'The Hub'],
+            'individual_memory_enabled' => 1,
         ],
     ]);
 
@@ -164,10 +166,31 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         ($genericExtended['relationships'] ?? null) === $initialRelationships,
         'Generic NPC updates should preserve relationship affinities'
     );
+    historyAssertTrue(
+        intval($genericExtended['individual_memory_enabled'] ?? 0) === 1,
+        'Generic NPC updates should preserve the Individual Memory Bank setting'
+    );
+
+    $npcMaster = new NpcMaster();
+    historyAssertTrue(
+        $npcMaster->update($npcId, ['individual_memory_enabled' => 0]),
+        'Explicit Individual Memory Bank disable should succeed'
+    );
+    $disabledRow = $GLOBALS['db']->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$npcId]);
+    $disabledExtended = normalizeCoreNpcExtendedData($disabledRow['extended_data'] ?? '{}');
+    historyAssertTrue(
+        !array_key_exists('individual_memory_enabled', $disabledExtended),
+        'Explicit Individual Memory Bank disable should remove the stored key'
+    );
+    historyAssertTrue(
+        $npcMaster->update($npcId, ['individual_memory_enabled' => 1]),
+        'Explicit Individual Memory Bank enable should succeed'
+    );
 
     $updatedRelationships = [
         'Beep' => ['aff' => 40, 'type' => 'trusted'],
     ];
+    unset($genericExtended['individual_memory_enabled']);
     $genericExtended['relationships'] = $updatedRelationships;
     stobeRunWithRelationshipExtendedDataWrite(
         static function () use ($npcId, $genericExtended): void {
@@ -192,6 +215,29 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         'Relationship history should contain the edited affinities'
     );
 
+    require_once __DIR__ . '/../lib/eventlog_helper.php';
+    $relationshipRows = $GLOBALS['db']->fetchAll(
+        stobeRelationshipHistoryTimelineCte('npc_id = $1') . ' SELECT ' . stobeMergedTimelineRelationshipSelectSql() . ' FROM stobe_visible_relationship_history ORDER BY history_id DESC',
+        [$npcId]
+    );
+    historyAssertTrue(count($relationshipRows) === 2, 'Initial and changed relationships should appear even with ordinary snapshot reasons');
+    historyAssertTrue(abs(time() - intval($relationshipRows[0]['localts'])) < 30, 'History timestamps should use the database timezone before merging with UTC event times');
+    $changes = stobeBuildRelationshipChangeDetails($relationshipRows[0]);
+    historyAssertTrue(count($changes) === 1 && $changes[0]['delta'] === 15, 'Relationship history should show the real affinity delta');
+    historyAssertTrue($changes[0]['target'] === 'Beep' && $changes[0]['type_changed'], 'Relationship history should name the target and type change');
+    historyAssertTrue(stobeRelationshipTimelineStamp($npcId), 'Repeated relationship stamp should succeed');
+    $noteOnlySnapshot = stobeFetchNpcRowForHistoryById($npcId);
+    $noteOnlyExtended = normalizeCoreNpcExtendedData($noteOnlySnapshot['extended_data']);
+    $noteOnlyExtended['relationships']['Beep']['custom_info'] = 'Player-authored note';
+    $noteOnlyExtended['relationships']['Beep']['updated_at'] = time();
+    $noteOnlySnapshot['extended_data'] = json_encode($noteOnlyExtended);
+    historyAssertTrue(stobeInsertNpcHistorySnapshotFromRow($noteOnlySnapshot, 'relationship'), 'Note-only fixture should be recorded');
+    $countRow = $GLOBALS['db']->fetchOne(
+        stobeRelationshipHistoryTimelineCte('npc_id = $1') . ' SELECT COUNT(*) AS total FROM stobe_visible_relationship_history',
+        [$npcId]
+    );
+    historyAssertTrue(intval($countRow['total']) === 2, 'Repeated states, timestamps and player notes must not create visible affinity changes');
+
     historyAssertTrue(storeNpcSnapshot([
         'name' => $name,
         'storage_id' => $storageId,
@@ -206,8 +252,11 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         ($snapshotExtended['relationships'] ?? null) === $updatedRelationships,
         'Game snapshots should not replace relationship affinities'
     );
+    historyAssertTrue(
+        intval($snapshotExtended['individual_memory_enabled'] ?? 0) === 1,
+        'Game snapshots should not disable the Individual Memory Bank setting'
+    );
 });
 
 echo 'All npc history snapshot regression tests passed.' . PHP_EOL;
 exit(0);
-
