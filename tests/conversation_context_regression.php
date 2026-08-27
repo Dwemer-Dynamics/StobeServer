@@ -403,6 +403,39 @@ contextFlowAssertSameInt(
     'enabled compact chat history should remove the role-separated recent history'
 );
 
+contextFlowAssert(!getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', false), 'Compact Prompt Info defaults off');
+$xmlPrompt = "<world>\r\n<location>The Hub</location>\r\n</world>\r\n"
+    . "<character>\n<skills>\n<group name=\"Combat\">\n"
+    . "<skill name=\"Melee Attack\">Expert</skill>\n</group>\n</skills>\n"
+    . "<character_state>\n<health>Healthy</health>\n</character_state>\n</character>\n"
+    . "<nearby_actors>\n#NEARBY ACTORS/NPC IN THE SCENE\n##Beep (1234)\n</nearby_actors>\n"
+    . "<general_instructions>\n<rule>Keep action JSON unchanged.</rule>\n"
+    . "* Be brief.\nUse <speech_style> for reference.\n</general_instructions>\n"
+    . "<nearby_context_json>\n{\"actor\":\"Beep\",\"id\":1234}\n</nearby_context_json>";
+contextFlowAssertSame($xmlPrompt, stobeFormatPromptHeadSection($xmlPrompt, false), 'off preserves exact XML and line endings');
+$markdownPrompt = stobeFormatPromptHeadSection($xmlPrompt, true);
+foreach ([
+    '# World', '- Location: The Hub', '# Character', '## Skills', '### Combat',
+    '- Melee Attack: Expert', '## Character State', '- Health: Healthy',
+    '# Nearby Actors', '- Beep (1234)', '- Keep action JSON unchanged.', '- Be brief.',
+    'Use `Speech Style` for reference.', '{"actor":"Beep","id":1234}',
+] as $expected) {
+    contextFlowAssert(strpos($markdownPrompt, $expected) !== false, 'Markdown retains ' . $expected);
+}
+contextFlowAssert(strpos($markdownPrompt, '<') === false, 'Markdown removes section tags including named skills');
+contextFlowAssert(strpos($markdownPrompt, 'NEARBY ACTORS/NPC IN THE SCENE') === false, 'duplicate legacy heading removed');
+foreach ([false, true] as $compactEnabled) {
+    $off = stobeApplyCompactChatHistory($xmlPrompt, $compactSourceMessages, 'Doran', $compactEnabled);
+    $explicitOff = stobeApplyCompactChatHistory($xmlPrompt, $compactSourceMessages, 'Doran', $compactEnabled, false);
+    contextFlowAssert($off === $explicitOff, 'missing and false Markdown flag are identical');
+    $on = stobeApplyCompactChatHistory($xmlPrompt, $compactSourceMessages, 'Doran', $compactEnabled, true);
+    contextFlowAssert($on['history_messages'] === $off['history_messages'], 'Markdown does not change history routing');
+    $expectedSystem = $compactEnabled
+        ? rtrim($markdownPrompt) . "\n\n# Conversation History\n\n" . preg_replace('/^# /m', '- ', $compactBlock)
+        : $markdownPrompt;
+    contextFlowAssertSame($expectedSystem, $on['system_prompt'], 'Markdown works independently of Compact Chat');
+}
+
 $baseSnapshot = stobeNormalizePlayerBaseSnapshot([
     'inside' => true,
     'base_id' => 'test-base',

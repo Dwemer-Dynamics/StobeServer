@@ -55,7 +55,12 @@ try {
             [
                 'id' => 'COMPACT_CHAT_HISTORY_ENABLED',
                 'value' => 'false',
-                'description' => 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
+                'description' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
+            ],
+            [
+                'id' => 'PROMPT_HEAD_MARKDOWN_ENABLED',
+                'value' => 'false',
+                'description' => 'Use Markdown headings instead of XML tags for all prompt sections.',
             ],
             [
                 'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
@@ -309,7 +314,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'PROMPT_HEAD_MARKDOWN_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -347,6 +352,19 @@ function stobeGroupSortWeight(string $group): int
     return $weights[$group] ?? 999;
 }
 
+function stobeSettingHelpText(string $id, string $storedDescription): string
+{
+    // Display-only help copy. Overrides stale stored descriptions without
+    // touching any saved value or the stored description itself.
+    static $helpText = [
+        'COMPACT_CHAT_HISTORY_ENABLED' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
+        'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Use Markdown headings instead of XML tags for all prompt sections.',
+    ];
+
+    $idUpper = strtoupper(trim($id));
+    return $helpText[$idUpper] ?? $storedDescription;
+}
+
 function stobeSettingWarningMessage(string $id): string
 {
     $idUpper = strtoupper(trim($id));
@@ -374,6 +392,7 @@ function stobePrettySettingLabel(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
         'SPEAKER_RECHAT' => 'Speaker Rechat',
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Compact Chat History',
+        'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Compact Prompt Info',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => 'Speak Player Dialogue',
         'PROMPT_HEAD' => 'Prompt Head',
         'EMOTEMOODS' => 'Emote Moods',
@@ -402,6 +421,7 @@ function stobeIconForSetting(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
         'SPEAKER_RECHAT' => '🗣️',
         'COMPACT_CHAT_HISTORY_ENABLED' => '📝',
+        'PROMPT_HEAD_MARKDOWN_ENABLED' => '🧾',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => '🔊',
         'MEMORY_ENABLED' => '🧠',
         'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
@@ -592,9 +612,10 @@ foreach ($grouped as $groupName => $rows) {
             'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
             'COMPACT_CHAT_HISTORY_ENABLED' => 19,
-            'RECHAT_MODE' => 20,
-            'ENFORCE_STRICT_RECHAT_RESPONSE' => 21,
-            'SPEAKER_RECHAT' => 22,
+            'PROMPT_HEAD_MARKDOWN_ENABLED' => 20,
+            'RECHAT_MODE' => 21,
+            'ENFORCE_STRICT_RECHAT_RESPONSE' => 22,
+            'SPEAKER_RECHAT' => 23,
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
@@ -1074,7 +1095,7 @@ if (isset($grouped['LLM & API'])) {
                             <?php
                                 $id = strval($row['id'] ?? '');
                                 $value = strval($row['value'] ?? '');
-                                $description = strval($row['description'] ?? '');
+                                $description = stobeSettingHelpText($id, strval($row['description'] ?? ''));
                                 $warning = stobeSettingWarningMessage($id);
                                 $type = stobeSettingType($id, $value);
                                 $inputId = 'setting_' . preg_replace('/[^a-zA-Z0-9_]+/', '_', $id);
