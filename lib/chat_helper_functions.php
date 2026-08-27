@@ -5576,24 +5576,32 @@ function stobeParseStructuredDialogueResponse(string $rawResponse, string $event
     $fallbackActionTag = '';
     $decoded = stobeDecodeStructuredDialoguePayload($rawResponse);
     if (is_array($decoded) && count($decoded) > 0) {
-        // Normalize wrapper payloads like {"response":{...}} or {"data":"{...}"}.
+        // Unwrap one response object, including provider arrays, without choosing from multiple replies.
         $unwrapKeys = ['response', 'data', 'output', 'result', 'payload'];
-        foreach ($unwrapKeys as $unwrapKey) {
-            if (!array_key_exists($unwrapKey, $decoded)) {
+        for ($depth = 0; $depth < 4; $depth++) {
+            if (count($decoded) === 1 && isset($decoded[0]) && is_array($decoded[0])) {
+                $decoded = $decoded[0];
                 continue;
             }
-            $nestedRaw = $decoded[$unwrapKey];
-            if (is_array($nestedRaw) && count($nestedRaw) > 0) {
-                $decoded = $nestedRaw;
-                break;
-            }
-            if (is_string($nestedRaw) && trim($nestedRaw) !== '') {
-                $nestedDecoded = stobeDecodeStructuredDialoguePayload($nestedRaw);
-                if (count($nestedDecoded) > 0) {
-                    $decoded = $nestedDecoded;
+            $nested = [];
+            foreach ($unwrapKeys as $unwrapKey) {
+                if (!array_key_exists($unwrapKey, $decoded)) {
+                    continue;
+                }
+                $nestedRaw = $decoded[$unwrapKey];
+                if (is_array($nestedRaw)) {
+                    $nested = $nestedRaw;
+                } elseif (is_string($nestedRaw) && trim($nestedRaw) !== '') {
+                    $nested = stobeDecodeStructuredDialoguePayload($nestedRaw);
+                }
+                if (count($nested) > 0) {
                     break;
                 }
             }
+            if (count($nested) === 0) {
+                break;
+            }
+            $decoded = $nested;
         }
     }
     if (!is_array($decoded) || count($decoded) === 0) {
