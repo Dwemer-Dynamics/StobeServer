@@ -2805,6 +2805,8 @@ function stobeApplySpeechDeliveryUpdates(array $updates): array {
 }
 
 function stobeNormalizeDialogueForMirrorDedupe(string $rawMessage): string {
+    // The game echoes literal speech without the server's non-spoken mood cue.
+    $rawMessage = preg_replace('/\s*\[Player tone: [^\]]*\]\s*$/u', '', $rawMessage) ?? $rawMessage;
     $normalized = strtolower(trim(stobeSanitizeDialogueMessageForLog($rawMessage)));
     // Common corruption tail: stray trailing digits (for example "...join us6").
     $normalized = preg_replace('/(?<=\p{L})\d{1,2}\s*$/u', '', $normalized) ?? $normalized;
@@ -2879,6 +2881,12 @@ function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventL
 }
 
 function stobeSanitizeDialogueMessageForLog(string $message): string {
+    $moodCue = '';
+    if (preg_match('/\s*(\[Player tone: [^\]]*\])\s*$/u', $message, $match) === 1) {
+        // Mood text is already normalized; do not treat Unicode custom cues as game corruption.
+        $moodCue = ' ' . $match[1];
+        $message = substr($message, 0, -strlen($match[0]));
+    }
     $clean = sanitizeForKenshi(strval($message));
     $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
     $clean = trim($clean);
@@ -2897,7 +2905,7 @@ function stobeSanitizeDialogueMessageForLog(string $message): string {
     $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
     $clean = preg_replace('/\s{2,}/u', ' ', $clean) ?? $clean;
 
-    return trim($clean);
+    return trim($clean) . $moodCue;
 }
 
 function stobeChooseIndefiniteArticle(string $value): string {

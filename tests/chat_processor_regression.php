@@ -258,4 +258,35 @@ chatProcessorAssertSame(
     'autochat fallback should store the NPC reply after the speaker line'
 );
 
+chatProcessorAssertSame('', stobeResolvePlayerMoodCue(['player_mood' => ['happy']], 'talk', 'Player'), 'array mood should fail cleanly');
+chatProcessorAssertSame('', stobeResolvePlayerMoodCue(['player_mood' => 'unknown'], 'talk', 'Player'), 'unknown mood should be omitted');
+chatProcessorAssertSame('', stobeResolvePlayerMoodCue(['player_mood' => 'custom', 'custom_mood' => " \n"], 'talk', 'Player'), 'empty custom mood should be omitted');
+chatProcessorAssertSame(str_repeat('é', 80), stobeNormalizeCustomPlayerMood(str_repeat('é', 90)), 'custom mood should be capped by Unicode characters');
+foreach (['narrator', 'inject', 'inject_chat', 'cheat', 'autochat'] as $modeWithoutMood) {
+    chatProcessorAssertSame('', stobeResolvePlayerMoodCue(['player_mood' => 'happy'], $modeWithoutMood, 'Player'), 'non-dialogue mode should ignore mood');
+}
+foreach (['inputtext', 'inputtext_s'] as $moodInputType) {
+    chatProcessorClearEventlog();
+    chatProcessorRun($moodInputType, 'UT_MOOD_PLAYER: Hello there', [
+        'profile' => 'UT_MOOD_TARGET', 'mode' => 'whisper',
+        'player_mood' => 'custom', 'custom_mood' => " très\ncalmly ",
+    ], '["UT_MOOD_PLAYER","UT_MOOD_TARGET"]');
+    $moodRows = chatProcessorEventRows();
+    chatProcessorAssertSame(
+        'UT_MOOD_PLAYER: Hello there [Player tone: speaks très calmly.] (talking to: UT_MOOD_TARGET)',
+        strval($moodRows[0]['data'] ?? ''), 'typed and speech inputs should retain a readable custom mood'
+    );
+    $beforeEcho = count($moodRows);
+    storeEvent('chat', time(), 0, 'UT_MOOD_PLAYER: Hello there (talking to: UT_MOOD_TARGET)');
+    chatProcessorAssertSameInt($beforeEcho, count(chatProcessorEventRows()), 'literal game echo must not duplicate mood-tagged input');
+}
+
+$moodPromptCount = $GLOBALS['db']->fetchOne("SELECT COUNT(*) AS total FROM prompts WHERE prompt_key LIKE 'player_mood_%_prompt'");
+chatProcessorAssertSameInt(11, intval($moodPromptCount['total']), 'migration should seed every mood prompt');
+$GLOBALS['db']->exec("UPDATE prompts SET custom_prompt = 'A quiet smile from {PLAYER_NAME}.' WHERE prompt_key = 'player_mood_happy_prompt'");
+unset($GLOBALS['__stobe_db_updates_ran']);
+stobeRunDatabaseUpdates();
+chatProcessorAssertSame(' [Player tone: A quiet smile from Player.]', stobeResolvePlayerMoodCue(['player_mood' => 'happy'], 'talk', 'Player'), 'migration reruns should preserve custom mood templates');
+$GLOBALS['db']->exec("UPDATE prompts SET custom_prompt = '' WHERE prompt_key = 'player_mood_happy_prompt'");
+
 echo "All chat processor regression tests passed.\n";
