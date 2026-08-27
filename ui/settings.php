@@ -59,7 +59,7 @@ try {
             ],
             [
                 'id' => 'PROMPT_HEAD_MARKDOWN_ENABLED',
-                'value' => 'false',
+                'value' => 'true',
                 'description' => 'Use Markdown headings instead of XML tags for all prompt sections.',
             ],
             [

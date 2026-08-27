@@ -403,7 +403,15 @@ contextFlowAssertSameInt(
     'enabled compact chat history should remove the role-separated recent history'
 );
 
-contextFlowAssert(!getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', false), 'Compact Prompt Info defaults off');
+$GLOBALS['db']->exec('BEGIN');
+try {
+    $GLOBALS['db']->exec("DELETE FROM general_settings WHERE id = 'PROMPT_HEAD_MARKDOWN_ENABLED'");
+    contextFlowAssert(getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true), 'Compact Prompt Info defaults on when missing');
+    setSetting('PROMPT_HEAD_MARKDOWN_ENABLED', 'false');
+    contextFlowAssert(!getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true), 'Explicitly disabled Compact Prompt Info stays off');
+} finally {
+    $GLOBALS['db']->exec('ROLLBACK');
+}
 $xmlPrompt = "<world>\r\n<location>The Hub</location>\r\n</world>\r\n"
     . "<character>\n<skills>\n<group name=\"Combat\">\n"
     . "<skill name=\"Melee Attack\">Expert</skill>\n</group>\n</skills>\n"
