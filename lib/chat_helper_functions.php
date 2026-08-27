@@ -9738,6 +9738,7 @@ function stobeNormalizeRelationshipMap(mixed $rawMap): array {
             $canonicalNames[$key] = $target;
         }
         $canonical = $canonicalNames[$key];
+        $existingCustomInfo = $normalized[$canonical]['custom_info'] ?? '';
         $normalized[$canonical] = [
             'aff' => $affinity,
             'type' => $type,
@@ -9745,6 +9746,11 @@ function stobeNormalizeRelationshipMap(mixed $rawMap): array {
             'note' => $note,
             'updated_at' => intval(time()),
         ];
+        if ($existingCustomInfo !== '') {
+            $normalized[$canonical]['custom_info'] = $existingCustomInfo;
+        } elseif (is_array($value) && is_string($value['custom_info'] ?? null) && $value['custom_info'] !== '') {
+            $normalized[$canonical]['custom_info'] = $value['custom_info'];
+        }
     };
 
     $isList = array_keys($source) === range(0, count($source) - 1);
@@ -9947,6 +9953,10 @@ function stobeBuildNpcRelationshipsText(string $speakerName, string $conversatio
         }
         if ($note !== '') {
             $line .= ' | ' . $note;
+        }
+        if (is_string($entry['custom_info'] ?? null) && $entry['custom_info'] !== '') {
+            $customInfo = preg_replace('/[\p{C}\s]+/u', ' ', $entry['custom_info']) ?? '';
+            $line .= ' | Player note: ' . mb_substr(trim($customInfo), 0, 1000, 'UTF-8');
         }
         $lines[] = $line;
         if (count($lines) >= 16) {
@@ -10330,6 +10340,9 @@ function stobeApplyRelationshipUpdatesMap(array $relationshipMap, array $updates
             'note' => $newNote,
             'updated_at' => intval(time()),
         ];
+        if (is_string($existing['custom_info'] ?? null) && $existing['custom_info'] !== '') {
+            $relationshipMap[$existingKey]['custom_info'] = $existing['custom_info'];
+        }
 
         $applied[] = [
             'target' => $existingKey,
@@ -10345,6 +10358,30 @@ function stobeApplyRelationshipUpdatesMap(array $relationshipMap, array $updates
         'applied' => $applied,
         'updated' => count($applied),
     ];
+}
+
+// AI may change relationship state, but only the player can replace or remove their own notes.
+function stobePreserveRelationshipCustomInfo(array $existing, array $incoming): array {
+    foreach ($incoming as &$relationship) {
+        if (is_array($relationship)) {
+            unset($relationship['custom_info']);
+        }
+    }
+    unset($relationship);
+    foreach ($existing as $target => $relationship) {
+        if (!is_array($relationship) || !is_string($relationship['custom_info'] ?? null) || $relationship['custom_info'] === '') {
+            continue;
+        }
+        $key = stobeFindRelationshipEntryKey($incoming, strval($target));
+        if ($key === '') {
+            $incoming[$target] = $relationship;
+        } elseif (!is_array($incoming[$key])) {
+            $incoming[$key] = $relationship;
+        } else {
+            $incoming[$key]['custom_info'] = $relationship['custom_info'];
+        }
+    }
+    return $incoming;
 }
 
 function stobePersistNpcRelationshipMap(string $speakerName, array $relationshipMap, array|false $npcData = false): bool {
@@ -10365,12 +10402,16 @@ function stobePersistNpcRelationshipMap(string $speakerName, array $relationship
     }
 
     $normalizedMap = stobeNormalizeRelationshipMap($relationshipMap);
-    $serializedMap = count($normalizedMap) > 0 ? normalizeJsonString($normalizedMap) : '';
-    $serializedJsonbMap = count($normalizedMap) > 0 ? normalizeJsonString($normalizedMap) : '{}';
-
     $db = $GLOBALS["db"];
     $updated = stobeRunWithRelationshipExtendedDataWrite(
-        static function () use ($db, $serializedMap, $serializedJsonbMap, $npcId) {
+        static function () use ($db, $normalizedMap, $npcId) {
+            $current = getNpcById($npcId);
+            if (!$current) {
+                return false;
+            }
+            $map = stobePreserveRelationshipCustomInfo(stobeGetNpcRelationshipMap($current), $normalizedMap);
+            $serializedMap = count($map) > 0 ? normalizeJsonString($map) : '';
+            $serializedJsonbMap = count($map) > 0 ? normalizeJsonString($map) : '{}';
             $result = $db->exec(
                 "UPDATE core_npc
                  SET relationships = $1,

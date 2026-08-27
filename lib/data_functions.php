@@ -7830,11 +7830,14 @@ function stobeReleaseNpcRelationshipLock(?int $lockId): void {
     $GLOBALS['db']->exec('SELECT pg_advisory_unlock($1)', [$lockId]);
 }
 
-function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcId = 0): mixed {
+function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcId = 0, bool $allowCustomInfo = false): mixed {
     $hadPrevious = array_key_exists('STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE', $GLOBALS);
     $previous = $hadPrevious ? $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] : null;
+    $hadCustomInfo = array_key_exists('STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE', $GLOBALS);
+    $previousCustomInfo = $GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'] ?? null;
     $lockId = stobeAcquireNpcRelationshipLock($npcId);
     $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = true;
+    $GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'] = $allowCustomInfo;
 
     try {
         return $callback();
@@ -7843,6 +7846,11 @@ function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcI
             $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = $previous;
         } else {
             unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE']);
+        }
+        if ($hadCustomInfo) {
+            $GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'] = $previousCustomInfo;
+        } else {
+            unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE']);
         }
         stobeReleaseNpcRelationshipLock($lockId);
     }
@@ -11575,6 +11583,16 @@ function deleteNpc(int $id): void {
 function updateNpcById(int $id, array $fields): bool {
     $db = $GLOBALS["db"];
     $historyRowBefore = stobeFetchNpcRowForHistoryById($id);
+    if (!empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])
+        && empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'])
+        && array_key_exists('extended_data', $fields)) {
+        $extended = normalizeCoreNpcExtendedData($fields['extended_data']);
+        $extended['relationships'] = stobePreserveRelationshipCustomInfo(
+            stobeGetNpcRelationshipMap($historyRowBefore ?: []),
+            is_array($extended['relationships'] ?? null) ? $extended['relationships'] : []
+        );
+        $fields['extended_data'] = $extended;
+    }
     $hasIndividualMemoryUpdate = array_key_exists('individual_memory_enabled', $fields);
     $individualMemoryEnabled = $hasIndividualMemoryUpdate
         ? coerceBoolean($fields['individual_memory_enabled'])
@@ -11747,6 +11765,17 @@ function updateNpcById(int $id, array $fields): bool {
         $setClauses[] = "{$column} = $" . $paramIndex;
         $params[] = strval($fields[$column]);
         $paramIndex++;
+    }
+
+    if (!empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'])
+        && array_key_exists('extended_data', $fields)) {
+        $extended = normalizeCoreNpcExtendedData($fields['extended_data']);
+        if (array_key_exists('relationships', $extended)) {
+            // Keep the legacy copy in sync so deliberately deleted notes cannot return.
+            $setClauses[] = 'relationships = $' . $paramIndex;
+            $params[] = normalizeJsonString($extended['relationships']);
+            $paramIndex++;
+        }
     }
 
     if ($hasIndividualMemoryUpdate && !array_key_exists('extended_data', $fields)) {

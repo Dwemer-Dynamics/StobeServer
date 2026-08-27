@@ -46,7 +46,7 @@ relAssertTrue(
 );
 
 $baseMap = stobeNormalizeRelationshipMap([
-    'Whistler' => ['aff' => 12, 'type' => 'neutral', 'note' => 'known drifter'],
+    'Whistler' => ['aff' => 12, 'type' => 'neutral', 'note' => 'known drifter', 'custom_info' => 'My saved note'],
 ]);
 relAssertTrue(isset($baseMap['Whistler']), 'normalized map should contain Whistler');
 
@@ -64,6 +64,44 @@ relAssertTrue(isset($updatedMap['Whistler']), 'updated map should still contain 
 relAssertSameInt(19, intval($updatedMap['Whistler']['aff'] ?? 0), 'affinity should increment by parsed delta');
 relAssertSame('admirer', strval($updatedMap['Whistler']['type'] ?? ''), 'type should update from parsed delta');
 relAssertSame('Acquaintance', strval($updatedMap['Whistler']['tier'] ?? ''), 'tier should match updated affinity');
+relAssertSame('My saved note', $updatedMap['Whistler']['custom_info'] ?? '', 'normalization and AI delta updates should retain the player note');
+
+$mergedNotes = stobePreserveRelationshipCustomInfo($baseMap, [
+    'whistler' => ['aff' => 20, 'custom_info' => 'AI replacement'],
+    'Someone' => ['aff' => 0, 'custom_info' => 'AI invented note'],
+]);
+relAssertSame('My saved note', $mergedNotes['whistler']['custom_info'] ?? '', 'AI rebuilds must preserve notes across target casing');
+relAssertTrue(!isset($mergedNotes['Someone']['custom_info']), 'AI must not create player notes');
+relAssertSame('My saved note', stobePreserveRelationshipCustomInfo($baseMap, [])['Whistler']['custom_info'] ?? '', 'AI rebuilds must retain omitted annotated relationships');
+
+storeNpcProfile('UT_RELATIONSHIP_NOTES', []);
+$noteNpc = getNpcData('UT_RELATIONSHIP_NOTES');
+$noteNpcId = intval($noteNpc['id']);
+stobeRunWithRelationshipExtendedDataWrite(
+    static fn(): bool => updateNpcById($noteNpcId, ['extended_data' => ['relationships' => $baseMap]]),
+    $noteNpcId,
+    true
+);
+stobeRunWithRelationshipExtendedDataWrite(
+    static fn(): bool => updateNpcById($noteNpcId, ['extended_data' => ['relationships' => ['Whistler' => ['aff' => 30, 'custom_info' => 'AI replacement']]]]),
+    $noteNpcId
+);
+relAssertSame('My saved note', stobeGetNpcRelationshipMap(getNpcById($noteNpcId))['Whistler']['custom_info'] ?? '', 'NPC writes must preserve stored player notes');
+relAssertTrue(stobePersistNpcRelationshipMap('UT_RELATIONSHIP_NOTES', ['Whistler' => ['aff' => 40]]), 'dialogue relationship write should succeed');
+relAssertSame('My saved note', stobeGetNpcRelationshipMap(getNpcById($noteNpcId))['Whistler']['custom_info'] ?? '', 'dialogue writes must preserve the latest stored note');
+relAssertTrue(str_contains(stobeBuildNpcRelationshipsText('UT_RELATIONSHIP_NOTES', 'Whistler', getNpcById($noteNpcId)), 'Player note: My saved note'), 'saved player notes should reach relationship context');
+stobeRunWithRelationshipExtendedDataWrite(
+    static fn(): bool => updateNpcById($noteNpcId, ['extended_data' => ['relationships' => ['Whistler' => ['aff' => 40]]]]),
+    $noteNpcId,
+    true
+);
+relAssertTrue(!isset(stobeGetNpcRelationshipMap(getNpcById($noteNpcId))['Whistler']['custom_info']), 'the player must be able to deliberately clear a note');
+stobeRunWithRelationshipExtendedDataWrite(
+    static fn(): bool => updateNpcById($noteNpcId, ['extended_data' => ['relationships' => []]]),
+    $noteNpcId,
+    true
+);
+relAssertTrue(!isset(stobeGetNpcRelationshipMap(getNpcById($noteNpcId))['Whistler']), 'deleted relationships must not return from the legacy copy');
 
 relAssertSame('Neutral', stobeRelationshipTierLabel(0), 'tier helper should classify neutral score');
 relAssertSame('Friendly', stobeRelationshipTierLabel(40), 'tier helper should classify friendly score');

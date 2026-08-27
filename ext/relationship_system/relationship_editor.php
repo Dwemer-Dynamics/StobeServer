@@ -188,10 +188,14 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
                             $worst = $data['worst'] ?? '';
                             $bestDelta = $data['best_delta'] ?? 0;
                             $worstDelta = $data['worst_delta'] ?? 0;
+                            $customInfo = isset($data['custom_info']) && is_scalar($data['custom_info'])
+                                ? strval($data['custom_info'])
+                                : '';
                             $tier = RelationshipManager::getTierLabel($aff);
                             $tierColor = $tierColors[$tier] ?? '#e5e7eb';
                             $typeIcon = $typeIcons[$type] ?? '&#x2796;';
-                            $hasExtended = !empty($relation) || !empty($note) || !empty($best) || !empty($worst);
+                            $hasExtended = !empty($relation) || !empty($note) || !empty($best)
+                                || !empty($worst) || $customInfo !== '';
                         ?>
                         <tr class="rel-row" data-target="<?= htmlspecialchars($target) ?>"
                             data-relation="<?= htmlspecialchars($relation) ?>"
@@ -200,6 +204,7 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
                             data-worst="<?= htmlspecialchars($worst) ?>"
                             data-best-delta="<?= $bestDelta ?>"
                             data-worst-delta="<?= $worstDelta ?>"
+                            data-custom-info="<?= htmlspecialchars($customInfo) ?>"
                             style="border-bottom:1px solid #333;">
                             <td style="padding:8px;">
                                 <input type="text" class="rel-target" value="<?= htmlspecialchars($target) ?>"
@@ -380,6 +385,18 @@ $typeIcons = array_merge($defaultTypes, $customTypes);
                                style="width:100%; margin-top:4px; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px;">
                     </div>
 
+                    <!-- Player-authored note: AI builds never rewrite this -->
+                    <div style="margin-bottom:10px;">
+                        <label for="details-custom-info" style="color:#93c5fd; font-size:0.85em;">Your note</label>
+                        <textarea id="details-custom-info" rows="3" oninput="this.value=clampCustomInfo(this.value)"
+                                  aria-describedby="details-custom-info-help"
+                                  placeholder="What you want remembered about this relationship"
+                                  style="width:100%; margin-top:4px; background:#262626; border:1px solid #4a4a4a; border-radius:4px; color:#e9efff; padding:8px; resize:vertical; font-family:inherit; font-size:1em;"></textarea>
+                        <p id="details-custom-info-help" style="margin:4px 0 0; color:#888; font-size:0.78em;">
+                            AI updates will not change this note. Leave it empty to clear it. Up to 1000 characters.
+                        </p>
+                    </div>
+
                     <!-- Hidden field to track which row we're editing -->
                     <input type="hidden" id="details-row-target">
 
@@ -556,6 +573,7 @@ function addRelRow() {
     row.dataset.worst = '';
     row.dataset.bestDelta = '0';
     row.dataset.worstDelta = '0';
+    row.dataset.customInfo = '';
     row.style.borderBottom = '1px solid #333';
     row.innerHTML = `
         <td style="padding:8px;">
@@ -596,6 +614,51 @@ function addRelRow() {
     syncRelationshipsToHidden();
 }
 
+// The note is player-authored, so cap it by Unicode characters rather than UTF-16 units.
+const CUSTOM_INFO_MAX_CHARS = 1000;
+
+function clampCustomInfo(value) {
+    const text = String(value === null || value === undefined ? '' : value);
+    const characters = Array.from(text);
+    return characters.length > CUSTOM_INFO_MAX_CHARS
+        ? characters.slice(0, CUSTOM_INFO_MAX_CHARS).join('')
+        : text;
+}
+
+function readCustomInfo(entry) {
+    if (!entry || typeof entry !== 'object' || typeof entry.custom_info !== 'string') {
+        return '';
+    }
+    return entry.custom_info;
+}
+
+// An AI build may rewrite any AI-managed field, but never the player's own note.
+function mergeAiRelationships(current, incoming) {
+    const merged = { ...(current || {}) };
+    const existingNotes = {};
+    const existingTargets = {};
+    Object.entries(current || {}).forEach(([target, data]) => {
+        existingTargets[String(target).trim().toLowerCase()] = target;
+        const note = readCustomInfo(data);
+        if (note) {
+            existingNotes[String(target).trim().toLowerCase()] = note;
+        }
+    });
+
+    Object.entries(incoming || {}).forEach(([target, data]) => {
+        const entry = { ...(data && typeof data === 'object' ? data : {}) };
+        const note = existingNotes[String(target).trim().toLowerCase()] || '';
+        if (note) {
+            entry.custom_info = clampCustomInfo(note);
+        } else {
+            delete entry.custom_info;
+        }
+        merged[existingTargets[String(target).trim().toLowerCase()] || target] = entry;
+    });
+
+    return merged;
+}
+
 function syncRelationshipsToHidden() {
     const rows = document.querySelectorAll('.rel-row');
     const relationships = {};
@@ -615,6 +678,7 @@ function syncRelationshipsToHidden() {
             const worst = row.dataset.worst || '';
             const bestDelta = parseInt(row.dataset.bestDelta) || 0;
             const worstDelta = parseInt(row.dataset.worstDelta) || 0;
+            const customInfo = clampCustomInfo(row.dataset.customInfo || '');
 
             if (relation) rel.relation = relation;
             if (note) rel.note = note;
@@ -626,6 +690,8 @@ function syncRelationshipsToHidden() {
                 rel.worst = worst;
                 if (worstDelta) rel.worst_delta = worstDelta;
             }
+            // Player-authored: an empty value deliberately clears the note.
+            if (customInfo) rel.custom_info = customInfo;
 
             relationships[target] = rel;
         }
@@ -690,6 +756,7 @@ function openDetailsModal(btn) {
     document.getElementById('details-note').value = row.dataset.note || '';
     document.getElementById('details-best').value = row.dataset.best || '';
     document.getElementById('details-worst').value = row.dataset.worst || '';
+    document.getElementById('details-custom-info').value = row.dataset.customInfo || '';
 
     // Hide suggestions when opening
     document.getElementById('relation-suggestions').style.display = 'none';
@@ -727,16 +794,18 @@ function saveDetailsToRow(row) {
     const note = document.getElementById('details-note').value.trim();
     const best = document.getElementById('details-best').value.trim();
     const worst = document.getElementById('details-worst').value.trim();
+    const customInfo = clampCustomInfo(document.getElementById('details-custom-info').value.trim());
 
     // Update row data attributes
     row.dataset.relation = relation;
     row.dataset.note = note;
     row.dataset.best = best;
     row.dataset.worst = worst;
+    row.dataset.customInfo = customInfo;
 
     // Update the details button color to indicate data exists
     const detailsBtn = row.querySelector('.rel-details');
-    const hasData = relation || note || best || worst;
+    const hasData = relation || note || best || worst || customInfo;
     detailsBtn.style.color = hasData ? '#fde68a' : '#666';
 
     // Sync to hidden field
@@ -864,10 +933,10 @@ async function buildWithAI() {
         const result = await response.json();
 
         if (result.ok && result.relationships) {
-            const mergedRelationships = {
-                ...getCurrentRelationshipsFromHidden(),
-                ...result.relationships
-            };
+            const mergedRelationships = mergeAiRelationships(
+                getCurrentRelationshipsFromHidden(),
+                result.relationships
+            );
 
             // Update the hidden field
             document.getElementById('relationships_jsonb').value = JSON.stringify(mergedRelationships);
@@ -939,9 +1008,10 @@ function rebuildRelTable(relationships) {
         const worst = data.worst || '';
         const bestDelta = data.best_delta || 0;
         const worstDelta = data.worst_delta || 0;
+        const customInfo = readCustomInfo(data);
         const tier = getTierLabel(aff);
         const tierColor = tierColors[tier] || '#e5e7eb';
-        const hasExtended = relation || note || best || worst;
+        const hasExtended = relation || note || best || worst || customInfo;
         const detailsColor = hasExtended ? '#fde68a' : '#666';
 
         html += `
@@ -952,6 +1022,7 @@ function rebuildRelTable(relationships) {
                 data-worst="${escapeHtml(worst)}"
                 data-best-delta="${bestDelta}"
                 data-worst-delta="${worstDelta}"
+                data-custom-info="${escapeHtml(customInfo)}"
                 style="border-bottom:1px solid #333;">
                 <td style="padding:8px;">
                     <input type="text" class="rel-target" value="${escapeHtml(target)}"
