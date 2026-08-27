@@ -687,9 +687,10 @@ if ($dialogueMode === 'autochat') {
 }
 
 $message = $sanitizeChatMessage($message);
+$playerMoodCue = stobeResolvePlayerMoodCue($_GET, $dialogueMode, $speaker);
 $eventData = $injectionMode
     ? $formatInjectedEventData($speaker, $targetNpc, $message)
-    : $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
+    : $speaker . ': ' . $message . $playerMoodCue . ' (talking to: ' . $targetNpc . ')';
 storeEvent($injectionMode ? 'injection' : $eventType, $timestamp, $gamets, $eventData);
 if (!$narratorMode && !$injectionMode) {
     // Mirror player input as chat immediately so timeline order is stable even
@@ -864,7 +865,7 @@ $userContent = $injectionChatMode
         . "  <event>" . stobePromptXmlEscape($message) . "</event>\n"
         . "  <instruction>Treat this as an established event that just happened. It is not dialogue spoken by the observer.</instruction>\n"
         . "</injected_event>"
-    : stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
+    : stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message . $playerMoodCue);
 if ($manualActionActive) {
     $userContent .= "\n<manual_action_event>\n"
         . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"

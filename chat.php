@@ -300,7 +300,8 @@ if ($mode === 'autochat') {
 
 $eventType = 'inputtext';
 $message = $sanitizeChatMessage($message);
-$eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
+$playerMoodCue = stobeResolvePlayerMoodCue($payload, $mode, $speaker);
+$eventData = $speaker . ': ' . $message . $playerMoodCue . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, time(), $gamets, $eventData);
 if (!$narratorMode) {
     // Mirror player input as chat immediately so timeline order is stable even
@@ -347,7 +348,7 @@ if ($deliveryStyleInstruction !== '') {
         . "  <instruction>" . stobePromptXmlEscape($deliveryStyleInstruction) . "</instruction>\n"
         . "</speech_mode>";
 }
-$userMessage = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
+$userMessage = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message . $playerMoodCue);
 if ($mode === 'cheat') {
     $priorityInstruction = "PRIORITY INSTRUCTION - {$targetNpc} must do this, even if it breaks character roleplay: {$message}";
     $systemPrompt .= "\n\n<cheatmode>\n"

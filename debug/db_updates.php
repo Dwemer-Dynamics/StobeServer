@@ -14,6 +14,7 @@ if ($useLegacy) {
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'player_mood_prompts.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -2789,6 +2790,16 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  )
                  ON CONFLICT (id) DO NOTHING"
             );
+        });
+
+        $applyPatch('prompts', 202608260001, static function () use ($db): void {
+            foreach (stobePlayerMoodPromptCatalog() as $mood => $prompt) {
+                $db->exec(
+                    "INSERT INTO prompts (prompt_key, default_prompt, description)
+                     VALUES ($1, $2, $3) ON CONFLICT (prompt_key) DO NOTHING",
+                    ['player_mood_' . $mood . '_prompt', $prompt, 'Player tone for ' . $mood . ' dialogue. Not spoken aloud.']
+                );
+            }
         });
 
         try {
