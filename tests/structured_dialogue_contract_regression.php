@@ -142,6 +142,16 @@ contractAssertSame('Esata the Stone Golem', trim(strval($legacyStyle['character'
 contractAssertSame('Herika', trim(strval($legacyStyle['listener'] ?? '')), 'Legacy Stobe JSON should preserve listener');
 contractAssertSame('State your purpose. Now.', trim(strval($legacyStyle['message'] ?? '')), 'Legacy Stobe JSON should preserve message');
 
+$arrayReply = ['character' => 'Beep', 'message' => 'Stay close.', 'listener' => 'Drifter', 'action' => 'FOLLOW', 'target' => 'Drifter'];
+$objectReply = stobeParseStructuredDialogueResponse(json_encode($arrayReply), 'chat');
+foreach ([[$arrayReply], ['response' => [$arrayReply]], [['data' => json_encode($arrayReply)]]] as $wrappedReply) {
+    $parsedReply = stobeParseStructuredDialogueResponse(json_encode($wrappedReply), 'chat');
+    contractAssertTrue($parsedReply === $objectReply, 'A single wrapped reply should preserve dialogue, listener and validated action');
+}
+$multipleReplies = stobeParseStructuredDialogueResponse(json_encode([$arrayReply, $arrayReply]), 'chat');
+contractAssertSame('', $multipleReplies['message'], 'Multiple replies must not silently select a speaker');
+contractAssertSame('', $multipleReplies['action_tag'], 'Multiple replies must not execute an arbitrary action');
+
 $partialStructured = stobeParseStructuredDialogueResponse(
     '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler',
     'chat'
