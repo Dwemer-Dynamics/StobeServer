@@ -115,5 +115,71 @@ relAssertTrue(!stobeShouldRunAutomaticRelationshipEvaluation(25, 26), 'roll abov
 relAssertTrue(!stobeShouldRunAutomaticRelationshipEvaluation(-5, 1), 'chance should clamp at zero');
 relAssertTrue(stobeShouldRunAutomaticRelationshipEvaluation(105, 100), 'chance should clamp at 100');
 
+
+require __DIR__ . '/../lib/eventlog_helper.php';
+
+// Relationship history timeline derivation: affinity/type/note movement only.
+$relSnapshot = static function (array $current, ?array $previous): array {
+    return [
+        'extended_data' => json_encode(['relationships' => $current]),
+        'previous_extended_data' => $previous === null ? null : json_encode(['relationships' => $previous]),
+        'owner_name' => 'Nomi',
+    ];
+};
+
+$affinityChange = stobeBuildRelationshipChangeDetails($relSnapshot(
+    ['Whistler' => ['aff' => 60, 'type' => 'ally', 'note' => 'shared water rations']],
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => 'known drifter']]
+));
+relAssertSameInt(1, count($affinityChange), 'one target should be reported as changed');
+relAssertSameInt(25, intval($affinityChange[0]['delta'] ?? 0), 'affinity delta should be derived');
+relAssertSame('Friendly', strval($affinityChange[0]['tier_from'] ?? ''), 'previous tier should be derived');
+relAssertSame('Fond', strval($affinityChange[0]['tier_to'] ?? ''), 'new tier should be derived');
+relAssertSame('shared water rations', strval($affinityChange[0]['note'] ?? ''), 'rewritten note should surface');
+relAssertTrue(
+    strpos(stobeRelationshipChangeText('Nomi', $affinityChange), 'Nomi - Whistler: +25 (35 to 60), Friendly to Fond') === 0,
+    'change text should lead with the owner and signed delta'
+);
+
+// A re-save that only moves the volatile updated_at/tier fields is not a change.
+$volatileOnly = stobeBuildRelationshipChangeDetails($relSnapshot(
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => 'known drifter', 'tier' => 'Friendly', 'updated_at' => 200]],
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => 'known drifter', 'tier' => 'Friendly', 'updated_at' => 100]]
+));
+relAssertSameInt(0, count($volatileOnly), 'volatile-only differences should not be reported');
+
+// The first snapshot for a target is a real change, not an empty diff.
+$firstSnapshot = stobeBuildRelationshipChangeDetails($relSnapshot(
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => '']],
+    null
+));
+relAssertSameInt(1, count($firstSnapshot), 'a newly tracked target should be reported');
+relAssertSame('added', strval($firstSnapshot[0]['state'] ?? ''), 'a newly tracked target should be marked added');
+relAssertSameInt(0, intval($firstSnapshot[0]['delta'] ?? -1), 'a newly tracked target should not report a delta');
+
+$emptyBoth = stobeBuildRelationshipChangeDetails($relSnapshot([], null));
+relAssertSameInt(0, count($emptyBoth), 'an empty initial map should not be reported');
+
+$typeOnly = stobeBuildRelationshipChangeDetails($relSnapshot(
+    ['Whistler' => ['aff' => 35, 'type' => 'rival', 'note' => 'known drifter']],
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => 'known drifter']]
+));
+relAssertSameInt(1, count($typeOnly), 'a type-only change should be reported');
+relAssertSame('Nomi - Whistler: type ally to rival', stobeRelationshipChangeText('Nomi', $typeOnly), 'type-only text should omit a delta');
+
+$cleared = stobeBuildRelationshipChangeDetails($relSnapshot(
+    [],
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => 'known drifter']]
+));
+relAssertSameInt(1, count($cleared), 'a removed target should be reported');
+relAssertSame('Nomi - Whistler: relationship cleared', stobeRelationshipChangeText('Nomi', $cleared), 'removal text should read as cleared');
+
+$decorated = stobeDecorateRelationshipTimelineRow($relSnapshot(
+    ['Whistler' => ['aff' => 47, 'type' => 'ally', 'note' => '']],
+    ['Whistler' => ['aff' => 35, 'type' => 'ally', 'note' => '']]
+));
+relAssertSame('relationship', strval($decorated['type'] ?? ''), 'decorated rows should use the relationship type');
+relAssertSame('|Nomi|Whistler|', strval($decorated['people'] ?? ''), 'decorated rows should list owner then targets');
+
 echo "PASS: relationship command parsing/apply regression\n";
 

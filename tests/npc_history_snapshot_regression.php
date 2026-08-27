@@ -215,6 +215,29 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         'Relationship history should contain the edited affinities'
     );
 
+    require_once __DIR__ . '/../lib/eventlog_helper.php';
+    $relationshipRows = $GLOBALS['db']->fetchAll(
+        stobeRelationshipHistoryTimelineCte('npc_id = $1') . ' SELECT ' . stobeMergedTimelineRelationshipSelectSql() . ' FROM stobe_visible_relationship_history ORDER BY history_id DESC',
+        [$npcId]
+    );
+    historyAssertTrue(count($relationshipRows) === 2, 'Initial and changed relationships should appear even with ordinary snapshot reasons');
+    historyAssertTrue(abs(time() - intval($relationshipRows[0]['localts'])) < 30, 'History timestamps should use the database timezone before merging with UTC event times');
+    $changes = stobeBuildRelationshipChangeDetails($relationshipRows[0]);
+    historyAssertTrue(count($changes) === 1 && $changes[0]['delta'] === 15, 'Relationship history should show the real affinity delta');
+    historyAssertTrue($changes[0]['target'] === 'Beep' && $changes[0]['type_changed'], 'Relationship history should name the target and type change');
+    historyAssertTrue(stobeRelationshipTimelineStamp($npcId), 'Repeated relationship stamp should succeed');
+    $noteOnlySnapshot = stobeFetchNpcRowForHistoryById($npcId);
+    $noteOnlyExtended = normalizeCoreNpcExtendedData($noteOnlySnapshot['extended_data']);
+    $noteOnlyExtended['relationships']['Beep']['custom_info'] = 'Player-authored note';
+    $noteOnlyExtended['relationships']['Beep']['updated_at'] = time();
+    $noteOnlySnapshot['extended_data'] = json_encode($noteOnlyExtended);
+    historyAssertTrue(stobeInsertNpcHistorySnapshotFromRow($noteOnlySnapshot, 'relationship'), 'Note-only fixture should be recorded');
+    $countRow = $GLOBALS['db']->fetchOne(
+        stobeRelationshipHistoryTimelineCte('npc_id = $1') . ' SELECT COUNT(*) AS total FROM stobe_visible_relationship_history',
+        [$npcId]
+    );
+    historyAssertTrue(intval($countRow['total']) === 2, 'Repeated states, timestamps and player notes must not create visible affinity changes');
+
     historyAssertTrue(storeNpcSnapshot([
         'name' => $name,
         'storage_id' => $storageId,
@@ -237,4 +260,3 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
 
 echo 'All npc history snapshot regression tests passed.' . PHP_EOL;
 exit(0);
-
