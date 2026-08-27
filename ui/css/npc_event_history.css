@@ -41,6 +41,8 @@
 .npc-event-history-delete { border:1px solid #74424a; border-radius:5px; background:#442a2e; color:#f5c3c7; cursor:pointer; padding:5px 8px; }
 .npc-event-history-delete:hover { border-color:#bd5d68; }
 .npc-event-history-data { white-space:pre-wrap; overflow-wrap:anywhere; }
+.npc-event-history-table tbody tr.npc-event-history-relationship td:first-child { box-shadow:inset 3px 0 0 #e6b76c; }
+.npc-event-history-readonly { color:#7f8792; font-size:.72rem; white-space:nowrap; }
 .npc-event-history-audience { color:#929dab; }
 .npc-event-history-empty { margin:0; padding:12px; color:#888; text-align:center; }
 @media (max-width:700px) {

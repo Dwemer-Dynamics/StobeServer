@@ -74,73 +74,136 @@ function stobeNpcHistoryAllowedTypesSql(array $types, int $startAt = 2): array
     return ['sql' => implode(',', $placeholders), 'params' => array_values($types)];
 }
 
+// Count the NPC's own relationship snapshots so the filter can offer the derived type.
+function stobeNpcHistoryRelationshipTotal(int $npcId): int
+{
+    if ($npcId <= 0) {
+        return 0;
+    }
+
+    $row = $GLOBALS['db']->fetchOne(
+        stobeRelationshipHistoryTimelineCte('npc_id = $1')
+        . ' SELECT COUNT(*) AS total FROM stobe_visible_relationship_history',
+        [$npcId]
+    );
+    return max(0, intval($row['total'] ?? 0));
+}
+
+function stobeNpcHistoryFormatTimelineRow(array $row): array
+{
+    $isRelationship = strval($row['timeline_source'] ?? 'event') === 'relationship';
+    if ($isRelationship) {
+        $row = stobeDecorateRelationshipTimelineRow($row);
+    }
+
+    $gamets = intval($row['gamets'] ?? 0);
+    $localts = intval($row['localts'] ?? 0);
+    return [
+        'source' => $isRelationship ? 'relationship' : 'event',
+        'rowid' => $isRelationship ? 0 : intval($row['event_rowid'] ?? 0),
+        'history_id' => $isRelationship ? intval($row['history_id'] ?? 0) : 0,
+        'deletable' => !$isRelationship,
+        'type' => strval($row['type'] ?? ''),
+        'data' => strval($row['data'] ?? ''),
+        'recipients' => $isRelationship
+            ? array_values((array)($row['participants'] ?? []))
+            : stobeParseEventPeople($row['people'] ?? ''),
+        'changes' => $isRelationship ? array_values((array)($row['changes'] ?? [])) : [],
+        'gamets' => $gamets,
+        'kenshi_time' => $gamets > 0 ? stobeGametsDateLabel($gamets) : '',
+        'local_time' => $localts > 0 ? gmdate('Y-m-d H:i:s', $localts) : '',
+        'manual_injection' => !$isRelationship
+            && strtolower(strval($row['type'] ?? '')) === 'inputtext'
+            && strval($row['sess'] ?? '') === 'npc_editor',
+    ];
+}
+
 function stobeNpcHistoryRead(array $input): array
 {
     $npc = stobeNpcHistoryFindNpc($input);
+    $npcId = intval($npc['id'] ?? 0);
     $npcName = trim(strval($npc['npc_name'] ?? ''));
     $limit = max(1, min(100, intval($input['limit'] ?? 100)));
     $selectedType = trim(strval($input['event_type'] ?? ''));
     $allowedTypes = stobeAdventureEventTypes();
-    if ($selectedType !== '' && !in_array($selectedType, $allowedTypes, true)) {
+    $relationshipType = stobeRelationshipTimelineEventType();
+    $isRelationshipFilter = ($selectedType === $relationshipType);
+    if ($selectedType !== '' && !$isRelationshipFilter && !in_array($selectedType, $allowedTypes, true)) {
         return [
-            'npc' => ['id' => intval($npc['id']), 'name' => $npcName],
+            'npc' => ['id' => $npcId, 'name' => $npcName],
             'events' => [],
             'filters' => ['selected_event_type' => $selectedType, 'event_types' => []],
         ];
     }
 
-    $allowed = stobeNpcHistoryAllowedTypesSql($allowedTypes, 2);
-    $peopleWhere = stobeBuildNpcEventPeopleWhereClause('$1', 'a.people');
-    $visibilityWhere = stobeBuildEventlogDeliveryVisibilitySql('a');
-    $params = array_merge([$npcName], $allowed['params']);
-    $selectedWhere = '';
-    if ($selectedType !== '') {
-        $params[] = $selectedType;
-        $selectedWhere = ' AND a.type = $' . strval(count($params));
+    // Relationship rows are derived from the NPC's own history snapshots, so they
+    // are scoped by npc_id and never by the relationship target.
+    $includeEvents = !$isRelationshipFilter;
+    $includeRelationships = ($selectedType === '' || $isRelationshipFilter);
+
+    $params = [];
+    $bind = static function (mixed $value) use (&$params): string {
+        $params[] = $value;
+        return '$' . strval(count($params));
+    };
+
+    $unionParts = [];
+    if ($includeEvents) {
+        $namePlaceholder = $bind($npcName);
+        $typePlaceholders = [];
+        foreach ($allowedTypes as $allowedType) {
+            $typePlaceholders[] = $bind($allowedType);
+        }
+        $selectedWhere = '';
+        if ($selectedType !== '') {
+            $selectedWhere = ' AND a.type = ' . $bind($selectedType);
+        }
+        $unionParts[] = 'SELECT ' . stobeMergedTimelineEventSelectSql('a') . "
+             FROM eventlog a
+             WHERE a.type IN (" . implode(',', $typePlaceholders) . ')
+               AND ' . stobeBuildEventlogDeliveryVisibilitySql('a') . '
+               AND ' . stobeBuildNpcEventPeopleWhereClause($namePlaceholder, 'a.people') . $selectedWhere;
+    }
+
+    $cte = '';
+    if ($includeRelationships) {
+        $cte = stobeRelationshipHistoryTimelineCte('npc_id = ' . $bind($npcId));
+        $unionParts[] = 'SELECT ' . stobeMergedTimelineRelationshipSelectSql()
+            . ' FROM stobe_visible_relationship_history';
     }
 
     $rows = $GLOBALS['db']->fetchAll(
-        "SELECT a.rowid, a.type, a.data, a.people, a.gamets, a.localts, a.ts, a.sess
-         FROM eventlog a
-         WHERE a.type IN ({$allowed['sql']})
-           AND {$visibilityWhere}
-           AND {$peopleWhere}{$selectedWhere}
-         ORDER BY COALESCE(NULLIF(a.localts, 0), a.ts, 0) DESC, a.ts DESC, a.rowid DESC
-         LIMIT {$limit}",
+        $cte . ' SELECT * FROM (' . implode(' UNION ALL ', $unionParts) . ') stobe_npc_timeline '
+        . stobeMergedTimelineOrderSql() . ' LIMIT ' . strval($limit),
         $params
     );
-    $eventTypes = $GLOBALS['db']->fetchAll(
+
+    $eventTypes = [];
+    $countAllowed = stobeNpcHistoryAllowedTypesSql($allowedTypes, 2);
+    $typeRows = $GLOBALS['db']->fetchAll(
         "SELECT a.type, COUNT(*) AS total
          FROM eventlog a
-         WHERE a.type IN ({$allowed['sql']})
-           AND {$visibilityWhere}
-           AND {$peopleWhere}
+         WHERE a.type IN ({$countAllowed['sql']})
+           AND " . stobeBuildEventlogDeliveryVisibilitySql('a') . '
+           AND ' . stobeBuildNpcEventPeopleWhereClause('$1', 'a.people') . '
          GROUP BY a.type
-         ORDER BY a.type ASC",
-        array_merge([$npcName], $allowed['params'])
+         ORDER BY a.type ASC',
+        array_merge([$npcName], $countAllowed['params'])
     );
+    foreach ($typeRows as $typeRow) {
+        $eventTypes[] = ['type' => strval($typeRow['type'] ?? ''), 'total' => intval($typeRow['total'] ?? 0)];
+    }
+    $relationshipTotal = stobeNpcHistoryRelationshipTotal($npcId);
+    if ($relationshipTotal > 0) {
+        $eventTypes[] = ['type' => $relationshipType, 'total' => $relationshipTotal];
+    }
 
     return [
-        'npc' => ['id' => intval($npc['id']), 'name' => $npcName],
-        'events' => array_map(static function (array $row): array {
-            $gamets = intval($row['gamets'] ?? 0);
-            return [
-                'rowid' => intval($row['rowid'] ?? 0),
-                'type' => strval($row['type'] ?? ''),
-                'data' => strval($row['data'] ?? ''),
-                'recipients' => stobeParseEventPeople($row['people'] ?? ''),
-                'gamets' => $gamets,
-                'kenshi_time' => $gamets > 0 ? stobeGametsDateLabel($gamets) : '',
-                'local_time' => !empty($row['localts']) ? gmdate('Y-m-d H:i:s', intval($row['localts'])) : '',
-                'manual_injection' => strtolower(strval($row['type'] ?? '')) === 'inputtext'
-                    && strval($row['sess'] ?? '') === 'npc_editor',
-            ];
-        }, $rows),
+        'npc' => ['id' => $npcId, 'name' => $npcName],
+        'events' => array_map('stobeNpcHistoryFormatTimelineRow', $rows),
         'filters' => [
             'selected_event_type' => $selectedType,
-            'event_types' => array_map(static function (array $row): array {
-                return ['type' => strval($row['type'] ?? ''), 'total' => intval($row['total'] ?? 0)];
-            }, $eventTypes),
+            'event_types' => $eventTypes,
         ],
     ];
 }

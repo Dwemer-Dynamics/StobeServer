@@ -46,14 +46,14 @@
                 </section>
                 <section class="npc-event-history-section">
                     <div class="npc-event-history-heading">
-                        <div><h3>Recent Events</h3><p>The latest Adventure Log events routed to this NPC. Deleting a shared event removes it for every listed recipient.</p></div>
+                        <div><h3>Recent Events</h3><p>The latest Adventure Log events routed to this NPC, merged with this NPC's recorded relationship changes. Deleting a shared event removes it for every listed recipient.</p></div>
                         <button type="button" class="btn-cancel" data-history-refresh>Refresh</button>
                     </div>
                     <div class="npc-event-history-filterbar">
                         <label>Event type
                             <select data-history-event-type><option value="">All visible events</option></select>
                         </label>
-                        <span class="npc-event-history-filter-note">Using the Adventure Log narrative event list.</span>
+                        <span class="npc-event-history-filter-note">Using the Adventure Log narrative event list. Relationship changes are read-only.</span>
                     </div>
                     <div class="npc-event-history-list" data-history-list><p class="npc-event-history-empty">Open this tab to load recent events.</p></div>
                 </section>
@@ -136,7 +136,9 @@
             eventTypeSelect.replaceChildren(new Option('All visible events', ''));
             types.forEach(function (entry) {
                 const type = String(entry.type || '');
-                if (type) eventTypeSelect.appendChild(new Option(type + ' (' + Number(entry.total || 0) + ')', type));
+                if (!type) return;
+                const label = type === 'relationship' ? 'relationship changes' : type;
+                eventTypeSelect.appendChild(new Option(label + ' (' + Number(entry.total || 0) + ')', type));
             });
             eventTypeSelect.value = selected;
             selectedEventType = eventTypeSelect.value;
@@ -158,12 +160,22 @@
             thead.appendChild(headerRow);
             const tbody = document.createElement('tbody');
             events.forEach(function (event) {
+                // Relationship rows are derived from NPC history snapshots, so they are read-only.
+                const isRelationship = String(event.source || 'event') === 'relationship';
                 const row = document.createElement('tr');
+                if (isRelationship) row.className = 'npc-event-history-relationship';
                 row.appendChild(element('td', 'npc-event-history-type', event.type || 'Event'));
                 row.appendChild(element('td', 'npc-event-history-data', event.data || ''));
                 row.appendChild(element('td', 'npc-event-history-audience', Array.isArray(event.recipients) ? event.recipients.join(', ') : ''));
                 row.appendChild(element('td', '', event.kenshi_time || ''));
                 row.appendChild(element('td', '', event.local_time || ''));
+                if (isRelationship || event.deletable === false) {
+                    const readOnly = element('td', 'npc-event-history-readonly', 'Read-only');
+                    readOnly.title = 'Relationship changes are recorded from NPC history snapshots and cannot be deleted here.';
+                    row.appendChild(readOnly);
+                    tbody.appendChild(row);
+                    return;
+                }
                 const deleteButton = element('button', 'npc-event-history-delete', 'Delete');
                 deleteButton.type = 'button';
                 deleteButton.addEventListener('click', async function () {
