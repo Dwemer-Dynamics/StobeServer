@@ -2157,6 +2157,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['import_from_bio'])) {
 </style>
 <form method="post" onsubmit='return false' style='display:block'>
 <?php } else { ?>
+<script>
+// Ensure consolidation() exists so the full-page editor submit never aborts on a missing hook.
+if (typeof window.consolidation !== 'function') { window.consolidation = function(){ return true; }; }
+</script>
 <form method="post" onsubmit='return consolidation()' style='<?= $editItem!=null?"":"display:none"?>'>
 <?php } ?>
     <style>

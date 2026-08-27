@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../lib/bootstrap.php';
 require_once __DIR__ . '/../debug/db_updates.php';
+require_once __DIR__ . '/../lib/core/npc_master.class.php';
 
 $db = $GLOBALS['db'];
 
@@ -149,6 +150,7 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         'extended_data' => [
             'relationships' => $initialRelationships,
             'environment' => ['town_name' => 'The Hub'],
+            'individual_memory_enabled' => 1,
         ],
     ]);
 
@@ -164,10 +166,31 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
         ($genericExtended['relationships'] ?? null) === $initialRelationships,
         'Generic NPC updates should preserve relationship affinities'
     );
+    historyAssertTrue(
+        intval($genericExtended['individual_memory_enabled'] ?? 0) === 1,
+        'Generic NPC updates should preserve the Individual Memory Bank setting'
+    );
+
+    $npcMaster = new NpcMaster();
+    historyAssertTrue(
+        $npcMaster->update($npcId, ['individual_memory_enabled' => 0]),
+        'Explicit Individual Memory Bank disable should succeed'
+    );
+    $disabledRow = $GLOBALS['db']->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$npcId]);
+    $disabledExtended = normalizeCoreNpcExtendedData($disabledRow['extended_data'] ?? '{}');
+    historyAssertTrue(
+        !array_key_exists('individual_memory_enabled', $disabledExtended),
+        'Explicit Individual Memory Bank disable should remove the stored key'
+    );
+    historyAssertTrue(
+        $npcMaster->update($npcId, ['individual_memory_enabled' => 1]),
+        'Explicit Individual Memory Bank enable should succeed'
+    );
 
     $updatedRelationships = [
         'Beep' => ['aff' => 40, 'type' => 'trusted'],
     ];
+    unset($genericExtended['individual_memory_enabled']);
     $genericExtended['relationships'] = $updatedRelationships;
     stobeRunWithRelationshipExtendedDataWrite(
         static function () use ($npcId, $genericExtended): void {
@@ -205,6 +228,10 @@ historyRunInRollbackTransaction('relationship state survives generic writes and 
     historyAssertTrue(
         ($snapshotExtended['relationships'] ?? null) === $updatedRelationships,
         'Game snapshots should not replace relationship affinities'
+    );
+    historyAssertTrue(
+        intval($snapshotExtended['individual_memory_enabled'] ?? 0) === 1,
+        'Game snapshots should not disable the Individual Memory Bank setting'
     );
 });
 

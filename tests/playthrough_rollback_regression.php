@@ -78,6 +78,7 @@ $baseDropId = 'ut-rollback-base-drop-' . $seed;
 $baseLegacyId = 'ut-rollback-base-legacy-' . $seed;
 $lockedRelationshipNpc = $prefix . '_LOCKED_REL';
 $futureRelationshipNpc = $prefix . '_FUTURE_REL';
+$individualMemoryNpc = $prefix . '_INDIVIDUAL_MEMORY';
 $presenceBackup = $db->fetchOne(
     "SELECT scope_key, session_id, observer_serial, observer_name, inside, base_id, game_ts, observed_at
      FROM player_base_presence
@@ -355,6 +356,64 @@ try {
         'Clearing future affinities should preserve unrelated extended data'
     );
 
+    storeNpcProfile($individualMemoryNpc, [
+        'race' => 'Greenlander',
+        'faction' => 'Tech Hunters',
+        'gender' => 'female',
+        'extended_data' => ['environment' => ['town_name' => 'The Hub']],
+    ]);
+    $individualMemoryRow = $db->fetchOne('SELECT * FROM core_npc WHERE name = $1 LIMIT 1', [$individualMemoryNpc]);
+    $individualMemoryNpcId = intval($individualMemoryRow['id'] ?? 0);
+    ptAssert($individualMemoryNpcId > 0, 'Individual Memory rollback test NPC should exist');
+    $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$individualMemoryNpcId]);
+    $db->exec(
+        "UPDATE core_npc
+         SET gamets_last_updated = 1000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString(['environment' => ['town_name' => 'The Hub']]), $individualMemoryNpcId]
+    );
+    $individualMemoryBaseline = stobeFetchNpcRowForHistoryById($individualMemoryNpcId);
+    ptAssert(is_array($individualMemoryBaseline), 'Individual Memory rollback baseline row should resolve');
+    ptAssert(
+        stobeInsertNpcHistorySnapshotFromRow($individualMemoryBaseline, 'rollback_test_baseline'),
+        'Individual Memory rollback baseline should be stored'
+    );
+    $individualMemoryHistory = $db->fetchOne(
+        'SELECT * FROM core_npc_master_history WHERE npc_id = $1 ORDER BY history_id DESC LIMIT 1',
+        [$individualMemoryNpcId]
+    );
+    $db->exec(
+        "UPDATE core_npc
+         SET gamets_last_updated = 2000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString([
+            'environment' => ['town_name' => 'Stack'],
+            'individual_memory_enabled' => 1,
+        ]), $individualMemoryNpcId]
+    );
+    ptAssert(
+        is_array($individualMemoryHistory)
+            && stobePlaythroughRestoreNpcFromHistory($individualMemoryNpcId, $individualMemoryHistory),
+        'Individual Memory rollback restore should succeed'
+    );
+    $individualMemoryAfterRestore = $db->fetchOne(
+        'SELECT extended_data FROM core_npc WHERE id = $1 LIMIT 1',
+        [$individualMemoryNpcId]
+    );
+    $individualMemoryExtended = normalizeCoreNpcExtendedData($individualMemoryAfterRestore['extended_data'] ?? '{}');
+    ptAssert(
+        strval($individualMemoryExtended['environment']['town_name'] ?? '') === 'The Hub',
+        'Rollback should still restore timeline-owned extended data'
+    );
+    ptAssert(
+        intval($individualMemoryExtended['individual_memory_enabled'] ?? 0) === 1,
+        'Rollback should preserve the current Individual Memory Bank setting'
+    );
+
     // Pure threshold helper checks.
     ptAssert(stobeDragonBreakDaysRollback(200000, 200000) === 0, 'Equal gamets should be zero rollback days');
     ptAssert(stobeDragonBreakDaysRollback(200000, 199999) === 0, 'Sub-day rollback should be zero days');
@@ -435,8 +494,8 @@ try {
         [$baseKeepId, $baseDropId, $baseLegacyId]
     );
     $relationshipTestRows = $db->fetchAll(
-        'SELECT id FROM core_npc WHERE name IN ($1, $2)',
-        [$lockedRelationshipNpc, $futureRelationshipNpc]
+        'SELECT id FROM core_npc WHERE name IN ($1, $2, $3)',
+        [$lockedRelationshipNpc, $futureRelationshipNpc, $individualMemoryNpc]
     );
     foreach ($relationshipTestRows as $relationshipTestRow) {
         $relationshipTestNpcId = intval($relationshipTestRow['id'] ?? 0);
