@@ -69,6 +69,8 @@ foreach ($trackedConfKeys as $key) {
 
 $dragonBreakEnabledBackup = $GLOBALS['DRAGON_BREAK_AUTOSNAPSHOT'] ?? null;
 $dragonBreakMinDaysBackup = $GLOBALS['DRAGON_BREAK_MIN_DAYS'] ?? null;
+$preserveRelationshipsBackup = getSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
+setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
 
 $createdSnapshotIds = [];
 $zoneKeepName = 'UT_ROLLBACK_ZONE_KEEP_' . $seed;
@@ -324,6 +326,15 @@ try {
         ]), $futureNpcId]
     );
 
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'true');
+    $preserved = stobePlaythroughRestoreRelationshipStates(1500);
+    ptAssert($preserved['restored'] === 0 && $preserved['cleared'] === 0, 'Enabled preservation should skip affinity rewind and clearing');
+    $lockedPreserved = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$lockedNpcId]);
+    $lockedPreservedData = normalizeCoreNpcExtendedData($lockedPreserved['extended_data']);
+    ptAssert(intval($lockedPreservedData['relationships']['Beep']['aff'] ?? 0) === 80, 'Enabled preservation should retain current locked affinity');
+    $futurePreserved = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$futureNpcId]);
+    ptAssert(array_key_exists('relationships', normalizeCoreNpcExtendedData($futurePreserved['extended_data'])), 'Enabled preservation should keep future-only affinities');
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
     $relationshipRestore = stobePlaythroughRestoreRelationshipStates(1500);
     ptAssert(intval($relationshipRestore['errors'] ?? 0) === 0, 'Relationship-only rollback should succeed');
     ptAssert(intval($relationshipRestore['restored'] ?? 0) >= 1, 'Locked NPC relationship state should be restored');
@@ -414,6 +425,32 @@ try {
         'Rollback should preserve the current Individual Memory Bank setting'
     );
 
+    // Full profile restoration must retain relationships but still rewind unrelated fields.
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'true');
+    $db->exec('UPDATE core_npc SET extended_data = $1::jsonb, gamets_last_updated = 2000 WHERE id = $2', [
+        normalizeJsonString([
+            'environment' => ['town_name' => 'Stack'],
+            'individual_memory_enabled' => 1,
+            'relationships' => ['Beep' => ['aff' => 85, 'custom_info' => 'Trusted friend']],
+            'relationships_model' => 'test-model',
+        ]), $individualMemoryNpcId,
+    ]);
+    $db->exec('UPDATE core_npc SET lock_profile = FALSE, gamets_last_updated = 2000 WHERE id = $1', [$futureNpcId]);
+    $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$futureNpcId]);
+    $restorePreserved = stobePlaythroughRestoreUnlockedNpcs(1500);
+    ptAssert($restorePreserved['errors'] === 0, 'Preserving full rollback should succeed');
+    ptAssert((bool)$db->fetchOne('SELECT id FROM core_npc WHERE id = $1', [$futureNpcId]), 'Enabled preservation must not delete future-only NPCs');
+    $fullPreserved = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$individualMemoryNpcId]);
+    $fullPreservedData = normalizeCoreNpcExtendedData($fullPreserved['extended_data']);
+    ptAssert(intval($fullPreservedData['relationships']['Beep']['aff'] ?? 0) === 85, 'Full rollback should keep current affinity');
+    ptAssert(($fullPreservedData['relationships']['Beep']['custom_info'] ?? '') === 'Trusted friend', 'Full rollback should keep relationship notes');
+    ptAssert(($fullPreservedData['relationships_model'] ?? '') === 'test-model', 'Full rollback should keep relationship metadata');
+    ptAssert(($fullPreservedData['environment']['town_name'] ?? '') === 'The Hub', 'Preservation must not keep unrelated future context');
+    ptAssert(intval($fullPreservedData['individual_memory_enabled'] ?? 0) === 1, 'Preservation must retain the Individual Memory setting');
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
+    stobePlaythroughRestoreUnlockedNpcs(1500);
+    ptAssert(!$db->fetchOne('SELECT id FROM core_npc WHERE id = $1', [$futureNpcId]), 'Disabled preservation must retain future-only NPC deletion');
+
     // Pure threshold helper checks.
     ptAssert(stobeDragonBreakDaysRollback(200000, 200000) === 0, 'Equal gamets should be zero rollback days');
     ptAssert(stobeDragonBreakDaysRollback(200000, 199999) === 0, 'Sub-day rollback should be zero days');
@@ -447,6 +484,7 @@ try {
 
     echo 'All playthrough rollback regression tests passed.' . PHP_EOL;
 } finally {
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', $preserveRelationshipsBackup);
     // Cleanup created snapshots.
     foreach ($createdSnapshotIds as $snapshotId) {
         if ($snapshotId > 0) {

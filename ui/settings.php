@@ -25,6 +25,11 @@ try {
                 'description' => 'Enable relationship system analysis and updates for NPC interactions.',
             ],
             [
+                'id' => 'NEVER_CLEAR_RELATIONSHIP_DATA',
+                'value' => 'false',
+                'description' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',
+            ],
+            [
                 'id' => 'PLAYER_FACTION_CUSTOM_NAME',
                 'value' => '',
                 'description' => 'Optional custom display name for the player faction in prompts.',
@@ -333,6 +338,7 @@ function stobeInferGroup(string $id): string
         'RELATIONSHIP_SYSTEM',
         'RELATIONSHIP_SYSTEM_ENABLED',
         'RELATION_SYSTEM_ENABLED',
+        'NEVER_CLEAR_RELATIONSHIP_DATA',
         'PLAYER_FACTION_CUSTOM_NAME',
         'PLAYER_FACTION_PROMPT'
     ], true)) {
@@ -365,6 +371,7 @@ function stobeSettingHelpText(string $id, string $storedDescription): string
     static $helpText = [
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Use Markdown headings instead of XML tags for all prompt sections.',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',
     ];
 
     $idUpper = strtoupper(trim($id));
@@ -388,6 +395,7 @@ function stobePrettySettingLabel(string $id): string
         'RELATIONSHIP_SYSTEM' => 'Relationship System',
         'RELATION_SYSTEM_ENABLED' => 'Relationship System',
         'RELATIONSHIP_SYSTEM_ENABLED' => 'Relationship System',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => 'Never Clear Relationship Data',
         'PLAYER_FACTION_CUSTOM_NAME' => 'Player Faction Custom Name',
         'PLAYER_FACTION_PROMPT' => 'Player Faction Prompt',
         'ALWAYS_INSERT_RACE' => 'Always Insert Race Knowledge',
@@ -436,6 +444,7 @@ function stobeIconForSetting(string $id): string
         'RELATIONSHIP_SYSTEM' => '💞',
         'RELATIONSHIP_SYSTEM_ENABLED' => '💞',
         'RELATION_SYSTEM_ENABLED' => '💞',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => '🛡️',
         'PLAYER_FACTION_CUSTOM_NAME' => '🏴',
         'PLAYER_FACTION_PROMPT' => '📜',
         'AUTO_LOCK_PROFILE' => '🔒',
@@ -625,8 +634,9 @@ foreach ($grouped as $groupName => $rows) {
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
-            'PLAYER_FACTION_CUSTOM_NAME' => 3,
-            'PLAYER_FACTION_PROMPT' => 4,
+            'NEVER_CLEAR_RELATIONSHIP_DATA' => 3,
+            'PLAYER_FACTION_CUSTOM_NAME' => 4,
+            'PLAYER_FACTION_PROMPT' => 5,
             'PLAYER_DIALOGUE_AUDIO_ENABLED' => 5,
             'DYNAMIC_PROFILE_INTERVAL_HOURS' => 6,
             'HTTP_TIMEOUT' => 99,
@@ -1130,6 +1140,7 @@ if (isset($grouped['LLM & API'])) {
                                                 <input
                                                     type="checkbox"
                                                     id="<?= h($inputId) ?>"
+                                                    aria-label="<?= h($label) ?>"
                                                     name="settings[<?= h($id) ?>]"
                                                     value="true"
                                                     <?= $checked ? 'checked' : '' ?>
