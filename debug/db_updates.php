@@ -2802,6 +2802,13 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             }
         });
 
+        $applyPatch('stobe_settings_presets', 202608280701, static function () use ($db): void {
+            $sql = file_get_contents(dirname(__DIR__) . '/data/settings_presets.sql');
+            if ($sql === false || $db->exec($sql) === false) {
+                throw new RuntimeException('Could not create settings preset store.');
+            }
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);

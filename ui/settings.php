@@ -2,6 +2,8 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+require_once($path . 'lib/settings_presets.php');
+$presetToken = stobePresetToken();
 try {
     require_once($path . "debug/db_updates.php");
 } catch (Throwable $exception) {
@@ -220,6 +222,10 @@ function stobeSettingLooksBoolean(string $value): bool
 function stobeSettingType(string $id, string $value): string
 {
     $idUpper = strtoupper($id);
+    $presetRule = stobePresetCatalog('global')[$idUpper] ?? null;
+    if ($presetRule !== null) {
+        return $presetRule['type'] === 'enum' ? 'select' : $presetRule['type'];
+    }
     if ($idUpper === 'TXTAI_URL') {
         return 'url';
     }
@@ -1056,6 +1062,11 @@ if (isset($grouped['LLM & API'])) {
         <div class="status-banner"><?= h($statusMessage) ?></div>
     <?php endif; ?>
 
+    <?php
+        $presetScope = 'global';
+        $presetFormId = 'stobeSettingsForm';
+        include __DIR__ . '/tmpl/settings_presets.php';
+    ?>
     <div class="settings-tabs" role="tablist" aria-label="Global settings categories">
         <?php foreach ($settingsTabs as $tabId => $tabLabel): ?>
             <button

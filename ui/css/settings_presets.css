@@ -1,0 +1,21 @@
+.stobe-presets { margin: 0 0 12px; padding: 10px 12px; background: #202020; border: 1px solid #454038; border-radius: 8px; color: #ddd; }
+.stobe-preset-row, .stobe-preset-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.stobe-presets label { margin: 0; font-weight: 600; font-size: 13px; }
+.stobe-presets select, .stobe-presets input[type=text] { width: auto; min-width: 0; max-width: 100%; background: #171717; color: #eee; border: 1px solid #666; border-radius: 5px; padding: 7px 9px; }
+.stobe-presets select { flex: 1 1 150px; max-width: 300px; }
+.stobe-presets button, .stobe-presets summary { padding: 7px 10px; border: 1px solid #766146; border-radius: 5px; background: #302a21; color: #eed2a5; font-size: 13px; cursor: pointer; }
+.stobe-presets button:disabled { opacity: .45; cursor: default; }
+.stobe-presets :is(button, select, input, summary):focus-visible { outline: 2px solid #efba70; outline-offset: 2px; }
+.stobe-preset-manage[open] { flex-basis: 100%; }
+.stobe-preset-manage summary { width: fit-content; }
+.stobe-preset-tools { margin-top: 8px; }
+.stobe-preset-help, .stobe-preset-status { font-size: 12px; margin: 7px 0 0; overflow-wrap: anywhere; }
+.stobe-preset-help { color: #bdb8b0; }
+.stobe-preset-status:empty { display: none; }
+.stobe-preset-status[data-error=true] { color: #ffb8b8; }
+.stobe-preset-changed { outline: 1px solid #e6b76c; outline-offset: 2px; }
+@media (max-width: 600px) {
+    .stobe-preset-row > label { flex-basis: 100%; }
+    .stobe-presets select { max-width: none; }
+    .stobe-preset-tools > label, .stobe-preset-tools > input[type=text] { flex-basis: 100%; width: 100%; box-sizing: border-box; }
+}
