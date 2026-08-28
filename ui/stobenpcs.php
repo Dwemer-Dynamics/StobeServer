@@ -68,6 +68,80 @@ function stobeUiResolveMtmOverride(array $metadata, array $extended): ?bool
     return null;
 }
 
+function stobeUiResolveShortTermMaxOverride(array $metadata): ?int
+{
+    if (!array_key_exists('SHORT_TERM_MEMORY_MAX', $metadata)) {
+        return null;
+    }
+    $raw = $metadata['SHORT_TERM_MEMORY_MAX'];
+    if ($raw === '' || $raw === null || !is_numeric($raw)) {
+        return null;
+    }
+    return max(1, min(50, intval($raw)));
+}
+
+function stobeUiShortTermProfileDefaults(array $profileMetadata): array
+{
+    $enabled = $profileMetadata['SHORT_TERM_MEMORY_ENABLED'] ?? null;
+    $max = $profileMetadata['SHORT_TERM_MEMORY_MAX'] ?? null;
+    return [
+        'enabled' => coerceBoolean($enabled),
+        'max' => (is_numeric($max) ? max(1, min(50, intval($max))) : 10),
+    ];
+}
+
+/**
+ * Merge the posted Short-Term Memory selects into an NPC metadata array.
+ * Blank posted values remove the override so the profile value applies again.
+ */
+function stobeUiApplyShortTermMemoryOverrides(array $meta, array $post): array
+{
+    if (array_key_exists('short_term_memory_enabled', $post)) {
+        $raw = $post['short_term_memory_enabled'];
+        $raw = is_scalar($raw) ? trim((string)$raw) : '';
+        if ($raw === '') {
+            unset($meta['SHORT_TERM_MEMORY_ENABLED']);
+        } else {
+            $meta['SHORT_TERM_MEMORY_ENABLED'] = coerceBoolean($raw);
+        }
+    }
+    if (array_key_exists('short_term_memory_max', $post)) {
+        $raw = $post['short_term_memory_max'];
+        $raw = is_scalar($raw) ? trim((string)$raw) : '';
+        if ($raw === '' || preg_match('/^\d+$/', $raw) !== 1) {
+            unset($meta['SHORT_TERM_MEMORY_MAX']);
+        } else {
+            $meta['SHORT_TERM_MEMORY_MAX'] = max(1, min(50, intval($raw)));
+        }
+    }
+    return $meta;
+}
+
+/**
+ * Apply the Short-Term Memory selects to $_POST['metadata'] for the plain
+ * (non-AJAX) create/update submits, which post the metadata textarea as-is.
+ */
+function stobeUiSyncShortTermMemoryPostMetadata(): void
+{
+    if (!array_key_exists('short_term_memory_enabled', $_POST)
+        && !array_key_exists('short_term_memory_max', $_POST)) {
+        return;
+    }
+    $meta = [];
+    $postedMeta = isset($_POST['metadata']) ? trim((string)$_POST['metadata']) : '';
+    if ($postedMeta !== '') {
+        $decoded = json_decode($postedMeta, true);
+        if (is_array($decoded)) {
+            $meta = $decoded;
+        } else {
+            // Unparseable metadata: leave it untouched rather than dropping data.
+            return;
+        }
+    }
+    $meta = stobeUiApplyShortTermMemoryOverrides($meta, $_POST);
+    $_POST['metadata'] = json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
 function stobeUiResolveIndividualMemoryEnabled(array $extended): bool
 {
     if (!array_key_exists('individual_memory_enabled', $extended)) {
@@ -998,6 +1072,7 @@ if (!function_exists('stobeUiSortNpcRows')) {
 // Handle Create
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
     $relationshipSave = stobeUiPrepareRelationshipSavePayload();
+    stobeUiSyncShortTermMemoryPostMetadata();
     if (stobeUiAutoLockProfileEnabled()) {
         $_POST['lock_profile'] = 1;
     }
@@ -1014,6 +1089,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
 // Handle Update
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["update"])) {
     $relationshipSave = stobeUiPrepareRelationshipSavePayload();
+    stobeUiSyncShortTermMemoryPostMetadata();
     if (stobeUiAutoLockProfileEnabled()) {
         $_POST['lock_profile'] = 1;
     }
@@ -1094,6 +1170,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["inline_update_npc"]))
                     $meta['AUTO_DIARY_ENABLED'] = coerceBoolean($autoDiaryVal);
                 }
             }
+            $meta = stobeUiApplyShortTermMemoryOverrides($meta, $_POST);
             $_POST['metadata'] = json_encode($meta);
         } catch (Throwable $e) {
             if (!isset($_POST['metadata']) || trim((string)$_POST['metadata']) === '') {
@@ -2249,6 +2326,10 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
     /* Header-style checkbox next to label title */
     .label-with-toggle { display:flex; align-items:center; gap:10px; }
     .label-with-toggle input[type="checkbox"] { accent-color:#176529; transform: scale(1.8); transform-origin:center; cursor:pointer; }
+    .stm-override-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .stm-override-row select { flex:1 1 180px; min-width:0; }
+    .stm-override-row .stm-max-label { font-weight:700; color:#e6b76c; }
+    .stm-override-row input[type="number"] { width:74px; background:#2a2a2a; color:#e9efff; border:1px solid #4a4a4a; border-radius:6px; padding:8px 10px; text-align:right; }
     .span-2 { grid-column: 1 / -1; margin-bottom:12px; }
     .checkbox-inline { display:flex; align-items:center; gap:8px; }
     .npc-faction-source { color:#cfd9ea; font-size:13px; }
@@ -2390,12 +2471,15 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
             $mtmVal = isset($meta['MIDDLE_TERM_MEMORY_ENABLED']) ? $meta['MIDDLE_TERM_MEMORY_ENABLED'] : null;
             $blcVal = isset($meta['BACKGROUND_LIFE_COMMANDS']) ? $meta['BACKGROUND_LIFE_COMMANDS'] : null;
             $gpsVal = isset($meta['GPS_TRACK']) ? $meta['GPS_TRACK'] : null;
+            $stmDefaults = stobeUiShortTermProfileDefaults($meta);
             return [
                 'id' => (string)($pr['id'] ?? ''),
                 'dyn' => ($dynVal === '1' || $dynVal === 1 || $dynVal === true),
                 'mtm' => ($mtmVal === '1' || $mtmVal === 1 || $mtmVal === true),
                 'blc' => ($blcVal === '1' || $blcVal === 1 || $blcVal === true),
-                'gps' => ($gpsVal === '1' || $gpsVal === 1 || $gpsVal === true)
+                'gps' => ($gpsVal === '1' || $gpsVal === 1 || $gpsVal === true),
+                'stm' => $stmDefaults['enabled'],
+                'stmMax' => $stmDefaults['max']
             ];
         }, $profileConnRows ?? []), JSON_UNESCAPED_SLASHES) ?>;
         
@@ -2426,6 +2510,21 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
                     hint.innerHTML = base + (profile.mtm ? ' <strong style="color:#e6b76c;">(Inherited from profile)</strong>' : '');
                 }
             }
+
+            // Update Short Term Memory inherit label / Max placeholder
+            const stmSel = document.getElementById('short_term_memory_enabled');
+            if (stmSel) {
+                stmSel.setAttribute('data-profile-default', profile.stm ? '1' : '0');
+                const inheritOption = stmSel.querySelector('option[value=""]');
+                if (inheritOption) {
+                    inheritOption.textContent = 'Inherit from profile (' + (profile.stm ? 'On' : 'Off') + ')';
+                }
+            }
+            const stmMax = document.getElementById('short_term_memory_max');
+            if (stmMax) { stmMax.setAttribute('placeholder', String(profile.stmMax)); }
+            document.querySelectorAll('[data-stm-profile-max]').forEach(function(node){
+                node.textContent = String(profile.stmMax);
+            });
         }
     })();
     </script>
@@ -2479,7 +2578,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
 <script>
 (function(){
     const fieldSections = {
-        general: new Set(['npc_name','profile_id','lock_profile','npc_favorite','gender','race','base','refid','oghma_knowledge_tags','worldknowledge_tags','world_knowledge_tags','voiceid','faction','dynamic_profile','middle_term_enabled','individual_memory_enabled','auto_diary_enabled','auto_diary_wait_enabled','salutation_after_a_while','prompt_head']),
+        general: new Set(['npc_name','profile_id','lock_profile','npc_favorite','gender','race','base','refid','oghma_knowledge_tags','worldknowledge_tags','world_knowledge_tags','voiceid','faction','dynamic_profile','middle_term_enabled','short_term_memory_enabled','short_term_memory_max','individual_memory_enabled','auto_diary_enabled','auto_diary_wait_enabled','salutation_after_a_while','prompt_head']),
         bios: new Set(['core','npc_static_bio','appearance','personality','occupation','skills','speechstyle','goals']),
         relationships: new Set(['relationships','relationships_jsonb','middle_term_latest']),
         info: new Set(['emote_moods','metadata','extended_data'])
@@ -2666,6 +2765,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
         $profileDynEnabled = false;
         $profileMtmEnabled = false;
         $profileAutoDiaryEnabled = false;
+        $profileStmDefaults = stobeUiShortTermProfileDefaults([]);
         $currentProfileId = (string)(is_array($editItem) ? ($editItem['profile_id'] ?? '') : '');
         if ($currentProfileId !== '') {
             foreach (($profileConnRows ?? []) as $prow) {
@@ -2683,6 +2783,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
                     $profileDynEnabled = ($dynVal === '1' || $dynVal === 1 || $dynVal === true);
                     $profileMtmEnabled = ($mtmVal === '1' || $mtmVal === 1 || $mtmVal === true);
                     $profileAutoDiaryEnabled = ($autoDiaryVal === '1' || $autoDiaryVal === 1 || $autoDiaryVal === true);
+                    $profileStmDefaults = stobeUiShortTermProfileDefaults($pmeta);
                     break;
                 }
             }
@@ -2702,6 +2803,8 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
         // Middle Term Memory: check extended_data override or fall back to profile default
         $mtmChecked = $profileMtmEnabled;
         $mtmFromProfile = false;
+        $stmOverride = null;
+        $stmMaxOverride = null;
         $imbChecked = false;
         $autoDiaryChecked = $profileAutoDiaryEnabled;
         $autoDiaryFromProfile = false;
@@ -2717,6 +2820,10 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
                 if (is_array($tmpMeta) && array_key_exists('AUTO_DIARY_ENABLED', $tmpMeta) && $tmpMeta['AUTO_DIARY_ENABLED'] !== null && $tmpMeta['AUTO_DIARY_ENABLED'] !== '') {
                     $autoDiaryChecked = coerceBoolean($tmpMeta['AUTO_DIARY_ENABLED']);
                     $hasAutoDiaryOverride = true;
+                }
+                if (is_array($tmpMeta)) {
+                    $stmOverride = stobeUiResolveMetadataToggleOverride($tmpMeta, 'SHORT_TERM_MEMORY_ENABLED');
+                    $stmMaxOverride = stobeUiResolveShortTermMaxOverride($tmpMeta);
                 }
             }
             if (is_array($editItem) && !empty($editItem['extended_data'])) {
@@ -2751,6 +2858,20 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
                 <input type="checkbox" id="middle_term_enabled" name="middle_term_enabled" value="1" <?= $mtmChecked ? "checked" : "" ?> data-profile-default="<?= $profileMtmEnabled ? '1' : '0' ?>">
             </label>
             <small class="hint">Saves a list of recent events after every 10 memory summaries. Will be used for NPC context.<?= $mtmFromProfile ? ' <strong style="color:#e6b76c;">(Inherited from profile)</strong>' : '' ?></small>
+        </div>
+
+        <div class="form-item">
+            <label for="short_term_memory_enabled">Short Term Memory</label>
+            <div class="stm-override-row">
+                <select id="short_term_memory_enabled" name="short_term_memory_enabled" data-profile-default="<?= $profileStmDefaults['enabled'] ? '1' : '0' ?>" aria-describedby="short_term_memory_hint" title="Inherit uses the assigned profile setting. On or Off overrides it for this NPC only.">
+                    <option value="" <?= $stmOverride === null ? 'selected' : '' ?>>Inherit from profile (<?= $profileStmDefaults['enabled'] ? 'On' : 'Off' ?>)</option>
+                    <option value="1" <?= $stmOverride === true ? 'selected' : '' ?>>On</option>
+                    <option value="0" <?= $stmOverride === false ? 'selected' : '' ?>>Off</option>
+                </select>
+                <label for="short_term_memory_max" class="stm-max-label">Max</label>
+                <input type="number" id="short_term_memory_max" name="short_term_memory_max" min="1" max="50" step="1" inputmode="numeric" value="<?= $stmMaxOverride === null ? '' : htmlspecialchars((string)$stmMaxOverride) ?>" placeholder="<?= htmlspecialchars((string)$profileStmDefaults['max']) ?>" aria-describedby="short_term_memory_hint" title="Most completed summaries injected for this NPC (1-50). Leave blank to use the profile value.">
+            </div>
+            <small class="hint" id="short_term_memory_hint">Injects already completed memory summaries into this NPC's context. Leave Max blank to use the profile value (<span data-stm-profile-max><?= htmlspecialchars((string)$profileStmDefaults['max']) ?></span>).</small>
         </div>
 
         <div class="form-item">
@@ -6419,4 +6540,3 @@ $title = $TITLE;
 $buffer = preg_replace('/(<title>)(.*?)(<\/title>)/i', '$1' . $title . '$3', $buffer);
 echo $buffer;
 ?>
-

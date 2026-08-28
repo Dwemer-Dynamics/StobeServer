@@ -4178,7 +4178,8 @@ function stobeBuildRecentContextMessages(
     array $eventHistory,
     int $currentGamets = 0,
     int $maxMessages = 64,
-    string $assistantPerspectiveNpc = ''
+    string $assistantPerspectiveNpc = '',
+    bool $includeGamets = false
 ): array {
     $messages = [];
     $messageTypes = [];
@@ -4191,10 +4192,10 @@ function stobeBuildRecentContextMessages(
 
     $rows = array_reverse($eventHistory);
     foreach ($rows as $row) {
+        $rowGamets = max(0, intval($row['gamets'] ?? 0));
         $location = trim(strval($row['location'] ?? ''));
         if ($location !== '' && strcasecmp($location, $lastLocation) !== 0) {
             $line = 'LOCATION CHANGE to ' . $location;
-            $rowGamets = max(0, intval($row['gamets'] ?? 0));
             if ($safeCurrentGamets > 0 && $rowGamets > 0) {
                 $hoursAgo = round(max(0.0, ($safeCurrentGamets - $rowGamets) * 0.0000024), 0);
                 $line .= ', timeline mark: ' . strval($hoursAgo) . ' hours ago';
@@ -4203,6 +4204,9 @@ function stobeBuildRecentContextMessages(
                 'role' => 'user',
                 'content' => $line,
             ];
+            if ($includeGamets) {
+                $messages[count($messages) - 1]['_stobe_gamets'] = $rowGamets;
+            }
             $messageTypes[] = 'location';
             $messageKeys[] = stobeBuildRecentContextDedupeKey('location', $line);
             $messageDialogueMeta[] = [];
@@ -4238,6 +4242,9 @@ function stobeBuildRecentContextMessages(
         $dialogueMeta = stobeBuildRecentContextDialogueMeta($historyType, $historyData);
         $transferTradeMeta = stobeParseRecentContextTransferTradeMeta($historyType, $historyData);
         $messages[] = stobeBuildRecentContextMessagePayload($historyData, $dialogueMeta, $assistantPerspectiveNpc);
+        if ($includeGamets) {
+            $messages[count($messages) - 1]['_stobe_gamets'] = $rowGamets;
+        }
 
         $singletonTypeKey = stobeRecentContextSingletonTypeKey($historyType);
         if ($singletonTypeKey !== '' && array_key_exists($singletonTypeKey, $singletonTypeIndexes)) {
@@ -4263,6 +4270,7 @@ function stobeBuildRecentContextMessages(
         $priorIndex = $lastIndex - 1;
 
         if ($priorIndex >= 0) {
+            $priorGamets = intval($messages[$priorIndex]['_stobe_gamets'] ?? 0);
             $previousKey = strval($messageKeys[$priorIndex] ?? '');
             if ($previousKey !== '' && $previousKey === $dedupeKey) {
                 array_pop($messages);
@@ -4298,6 +4306,9 @@ function stobeBuildRecentContextMessages(
                         $mergedDialogueMeta,
                         $assistantPerspectiveNpc
                     );
+                    if ($includeGamets) {
+                        $messages[$priorIndex]['_stobe_gamets'] = min($priorGamets, $rowGamets);
+                    }
                     $messageTypes[$priorIndex] = $mergedType !== '' ? $mergedType : $historyType;
                     $messageKeys[$priorIndex] = stobeBuildRecentContextDedupeKey(
                         $messageTypes[$priorIndex],
@@ -4325,6 +4336,9 @@ function stobeBuildRecentContextMessages(
                         'role' => 'user',
                         'content' => " (...\n" . $mergedTransferLine . "\n...)",
                     ];
+                    if ($includeGamets) {
+                        $messages[$priorIndex]['_stobe_gamets'] = min($priorGamets, $rowGamets);
+                    }
                     $messageTypes[$priorIndex] = 'trade';
                     $messageKeys[$priorIndex] = stobeBuildRecentContextDedupeKey('trade', $mergedTransferLine);
                     $messageDialogueMeta[$priorIndex] = stobeBuildRecentContextDialogueMeta('trade', $mergedTransferLine);

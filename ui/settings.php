@@ -314,7 +314,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'PROMPT_HEAD_MARKDOWN_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'PROMPT_HEAD_MARKDOWN_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -358,6 +358,7 @@ function stobeSettingHelpText(string $id, string $storedDescription): string
     // touching any saved value or the stored description itself.
     static $helpText = [
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
+        'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 'When compact chat history is on, allow short-term memory summaries for NPCs that have it enabled. Plain (non-compact) history is unaffected.',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Use Markdown headings instead of XML tags for all prompt sections.',
     ];
 
@@ -392,6 +393,7 @@ function stobePrettySettingLabel(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
         'SPEAKER_RECHAT' => 'Speaker Rechat',
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Compact Chat History',
+        'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 'Short-Term Memory in Compact Chat',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Compact Prompt Info',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => 'Speak Player Dialogue',
         'PROMPT_HEAD' => 'Prompt Head',
@@ -421,6 +423,7 @@ function stobeIconForSetting(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
         'SPEAKER_RECHAT' => '🗣️',
         'COMPACT_CHAT_HISTORY_ENABLED' => '📝',
+        'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => '🧠',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => '🧾',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => '🔊',
         'MEMORY_ENABLED' => '🧠',
@@ -612,6 +615,7 @@ foreach ($grouped as $groupName => $rows) {
             'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
             'COMPACT_CHAT_HISTORY_ENABLED' => 19,
+            'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 19,
             'PROMPT_HEAD_MARKDOWN_ENABLED' => 20,
             'RECHAT_MODE' => 21,
             'ENFORCE_STRICT_RECHAT_RESPONSE' => 22,

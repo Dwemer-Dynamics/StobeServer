@@ -12732,6 +12732,8 @@ function getDefaultCoreProfileMetadata(): array {
     return [
         'DYNAMIC_PROFILE_ENABLED' => false,
         'MIDDLE_TERM_MEMORY_ENABLED' => false,
+        'SHORT_TERM_MEMORY_ENABLED' => false,
+        'SHORT_TERM_MEMORY_MAX' => 10,
         'AUTO_DIARY_ENABLED' => false,
         'LATEST_DIARY_CONTEXT_ENABLED' => false,
         'DIARY_DAYS' => 1,
