@@ -3,6 +3,26 @@
 // Portable behavior settings only. Never infer safety from a setting's name or stored value.
 function stobePresetCatalog(string $scope): array
 {
+    if ($scope === 'profile') {
+        $defaults = getDefaultCoreProfileMetadata();
+        $catalog = [];
+        foreach (['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'] as $key) {
+            $catalog[$key] = ['type' => 'bool', 'default' => $defaults[$key]];
+        }
+        foreach ([
+            'RECHAT_RESPONSES' => [0, 10], 'RECHAT_PROBABILITY' => [0, 100],
+            'BORED_EVENT_CHANCE' => [0, 100], 'RELATIONSHIP_UPDATE_CHANCE' => [0, 100],
+            'CONTEXT_HISTORY' => [0, 300], 'CONTEXT_HISTORY_DIARY' => [0, 300],
+            'CONTEXT_HISTORY_DYNAMIC_PROFILE' => [0, 300], 'DIARY_DAYS' => [0, 60],
+            'AUTO_DIARY_MIN_EVENTS' => [1, 500], 'AUTO_DIARY_HOUR' => [0, 23],
+            'DIARY_COOLDOWN' => [0, 3600],
+        ] as $key => [$min, $max]) {
+            $catalog[$key] = ['type' => 'int', 'default' => $defaults[$key], 'min' => $min, 'max' => $max];
+        }
+        $catalog['DYNAMIC_PROFILE_FIELDS'] = ['type' => 'set', 'default' => $defaults['DYNAMIC_PROFILE_FIELDS'],
+            'choices' => ['personality', 'occupation', 'speechstyle', 'goals']];
+        return $catalog;
+    }
     if ($scope !== 'global') {
         throw new InvalidArgumentException('Unknown preset scope.');
     }
@@ -27,6 +47,21 @@ function stobePresetCatalog(string $scope): array
 function stobeBuiltinPresets(string $scope): array
 {
     $defaults = array_map(static fn(array $rule) => $rule['default'], stobePresetCatalog($scope));
+    if ($scope === 'profile') {
+        return [
+            ['name' => 'Default', 'builtin' => true, 'description' => 'Restore Stobe behavior defaults. Profile roles and connectors stay unchanged.', 'settings' => $defaults],
+            ['name' => 'Local LLM', 'builtin' => true, 'description' => 'Shorter context and fewer automatic calls. Does not configure a local model.',
+                'settings' => array_replace($defaults, ['CONTEXT_HISTORY' => 25, 'CONTEXT_HISTORY_DIARY' => 50,
+                    'CONTEXT_HISTORY_DYNAMIC_PROFILE' => 25, 'RECHAT_RESPONSES' => 1, 'RECHAT_PROBABILITY' => 25,
+                    'BORED_EVENT_CHANCE' => 10, 'RELATIONSHIP_UPDATE_CHANCE' => 10])],
+            ['name' => 'Follower', 'builtin' => true, 'description' => 'Enable diary, middle-term memory and dynamic profiles. Requires their task connectors; does not assign a follower or player-faction role.',
+                'settings' => array_replace($defaults, ['DYNAMIC_PROFILE_ENABLED' => true, 'MIDDLE_TERM_MEMORY_ENABLED' => true,
+                    'AUTO_DIARY_ENABLED' => true, 'LATEST_DIARY_CONTEXT_ENABLED' => true])],
+            ['name' => 'Passive', 'builtin' => true, 'description' => 'Limit rechats to one reply; disable bored dialogue and automatic diary/profile updates. Direct conversations and inline relationship commands remain available.',
+                'settings' => array_replace($defaults, ['RECHAT_RESPONSES' => 1, 'RECHAT_PROBABILITY' => 0,
+                    'BORED_EVENT_CHANCE' => 0, 'RELATIONSHIP_UPDATE_CHANCE' => 0])],
+        ];
+    }
     return [
         ['name' => 'Default', 'builtin' => true, 'description' => 'Restore the portable settings to Stobe defaults.', 'settings' => $defaults],
         ['name' => 'Local LLM', 'builtin' => true, 'description' => 'Compact history and smaller knowledge context. Models and connectors stay unchanged.',
@@ -64,6 +99,16 @@ function stobeNormalizePreset(string $scope, mixed $settings): array
                 throw new InvalidArgumentException('Setting is outside its allowed range: ' . $key);
             }
             $value = (int)$value;
+        } elseif ($rule['type'] === 'set') {
+            if (!is_array($value) || $value === [] || !array_is_list($value)) {
+                throw new InvalidArgumentException('Choose at least one dynamic profile field.');
+            }
+            foreach ($value as $field) {
+                if (!is_string($field) || !in_array($field, $rule['choices'], true)) {
+                    throw new InvalidArgumentException('Invalid dynamic profile field.');
+                }
+            }
+            $value = array_values(array_unique($value));
         } elseif (!in_array($value, $rule['choices'], true)) {
             throw new InvalidArgumentException('Invalid choice: ' . $key);
         }
