@@ -14,4 +14,12 @@ if (!str_contains($sql, $expected)) {
     exit(1);
 }
 
-fwrite(STDOUT, "PASS: schema clone preserves GENERATED ALWAYS identity values\n");
+require_once __DIR__ . '/../lib/playthrough_schema.php';
+if (!pts_clone_function_is_current($sql)
+    || pts_clone_function_is_current(str_replace('STOBE_TABLE_ONLY_SNAPSHOTS', '', $sql))
+    || pts_clone_function_is_current($sql . ' CREATE OR REPLACE VIEW')) {
+    fwrite(STDERR, "FAIL: installed clone function must support identity values and omit view cloning\n");
+    exit(1);
+}
+
+fwrite(STDOUT, "PASS: schema clone preserves identity values and rejects legacy view cloning\n");
