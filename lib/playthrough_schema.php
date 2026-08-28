@@ -82,12 +82,14 @@ WITH RECURSIVE dependencies AS (
 SELECT c.relname, pg_get_viewdef(c.oid) AS definition, pg_get_userbyid(c.relowner) AS owner,
        COALESCE(array_to_string(c.reloptions, ', '), '') AS options,
        COALESCE((SELECT json_agg(grants) FROM (
-           SELECT NULL::text AS column_name, a.grantee, a.privilege_type, a.is_grantable,
-                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS role
+           SELECT NULL::text AS column_name, a.grantee, a.grantor, a.privilege_type, a.is_grantable,
+                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS role,
+                  pg_get_userbyid(a.grantor) AS grantor_role
            FROM aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
            UNION ALL
-           SELECT col.attname, a.grantee, a.privilege_type, a.is_grantable,
-                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+           SELECT col.attname, a.grantee, a.grantor, a.privilege_type, a.is_grantable,
+                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,
+                  pg_get_userbyid(a.grantor)
            FROM pg_attribute col CROSS JOIN LATERAL aclexplode(col.attacl) a
            WHERE col.attrelid = c.oid AND col.attnum > 0
        ) grants), '[]'::json) AS grants
@@ -98,7 +100,18 @@ SQL);
     if ($result === false) {
         throw new RuntimeException('Could not read runtime view definitions');
     }
-    return pg_fetch_all($result);
+    $views = pg_fetch_all($result);
+    // Replaying delegated grants as the owner would change later REVOKE ... CASCADE behavior.
+    foreach ($views as $view) {
+        foreach (json_decode($view['grants'], true, 512, JSON_THROW_ON_ERROR) as $grant) {
+            if (strval($grant['grantor_role'] ?? '') !== strval($view['owner'] ?? '')) {
+                throw new RuntimeException(
+                    'Delegated access grants are not supported for runtime view ' . strval($view['relname'] ?? '')
+                );
+            }
+        }
+    }
+    return $views;
 }
 
 // Restore views and their access rules atomically with the playthrough's saved tables.
