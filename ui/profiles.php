@@ -1,6 +1,8 @@
 <?php
 $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'bootstrap.php');
+require_once($enginePath . 'lib/settings_presets.php');
+$presetToken = stobePresetToken();
 
 function h(mixed $value): string { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 function is_embed(): bool {
@@ -388,6 +390,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
     $decoded = json_decode($rawJson, true);
     if (!is_array($decoded)) {
         header('Location: ' . page_url(['error' => 'Invalid JSON file']));
+        exit;
+    }
+    if (($decoded['format'] ?? '') === 'stobe-settings-preset') {
+        header('Location: ' . page_url(['error' => 'This is a settings preset. Open a profile and use Manage presets > Import preset.']));
         exit;
     }
     $profileData = $decoded['profile'] ?? $decoded;
@@ -911,6 +917,11 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                         </form>
                     </div>
                 </div>
+                <?php
+                    $presetScope = 'profile';
+                    $presetFormId = 'profile_form';
+                    include __DIR__ . '/tmpl/settings_presets.php';
+                ?>
                 <form method="post" action="profiles.php" id="profile_form">
                     <?php if ($isEmbed): ?><input type="hidden" name="embed" value="1"><?php endif; ?>
                     <input type="hidden" name="save_profile" value="1">

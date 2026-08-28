@@ -7,6 +7,7 @@
     const status = root.querySelector('[role=status]');
     const name = root.querySelector('#stobePresetName');
     const file = root.querySelector('#stobePresetFile');
+    const saveLabel = config.scope === 'profile' ? 'Save Profile' : 'Save All';
     let presets = [], catalog = {}, busy = false, pending = false;
 
     function tell(message, error = false) {
@@ -37,11 +38,25 @@
         }));
     }
     function field(key) {
-        return Array.from(form.elements).find(el => el.name === `settings[${key}]` && el.type !== 'hidden');
+        const prefix = config.scope === 'profile' ? 'meta_vis' : 'settings';
+        return Array.from(form.elements).find(el => el.name === `${prefix}[${key}]` && el.type !== 'hidden');
+    }
+    function setFields(key) {
+        return Array.from(form.elements).filter(el => el.name === `meta_vis[${key}][]` && el.type === 'checkbox');
+    }
+    function profileMetadata() {
+        const data = JSON.parse(document.getElementById('metadata').value || '{}');
+        if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('Metadata must be a JSON object.');
+        return data;
     }
     function currentSettings() {
         const settings = {};
+        if (config.scope === 'profile') profileMetadata();
         for (const key of Object.keys(catalog)) {
+            if (catalog[key].type === 'set') {
+                settings[key] = setFields(key).filter(input => input.checked).map(input => input.value);
+                continue;
+            }
             const input = field(key);
             if (input) settings[key] = input.type === 'checkbox' ? input.checked : input.value;
         }
@@ -49,8 +64,20 @@
     }
     function apply(settings) {
         const changed = [];
+        const metadata = config.scope === 'profile' ? profileMetadata() : null;
+        const before = currentSettings();
+        // Check the complete form before changing any field; a stale page must not apply partially.
+        for (const key of Object.keys(settings)) {
+            if (!Object.hasOwn(catalog, key) || (catalog[key].type === 'set' ? !setFields(key).length : !field(key))) {
+                throw new Error('A preset setting is unavailable. Reload the page.');
+            }
+        }
         for (const [key, value] of Object.entries(settings)) {
-            if (!Object.hasOwn(catalog, key)) continue;
+            if (catalog[key].type === 'set') {
+                setFields(key).forEach(input => { input.checked = value.includes(input.value); });
+                if (JSON.stringify(before[key]) !== JSON.stringify(value)) changed.push(key.replaceAll('_', ' ').toLowerCase());
+                continue;
+            }
             const input = field(key);
             if (!input) throw new Error('A preset setting is unavailable. Reload the page.');
             const previous = input.type === 'checkbox' ? input.checked : input.value;
@@ -58,13 +85,18 @@
             else input.value = String(value);
             if (String(previous) !== String(value)) {
                 changed.push(key.replaceAll('_', ' ').toLowerCase());
-                input.closest('.provider-card')?.classList.add('stobe-preset-changed');
+                input.closest('.setting-row, .toggle-card, .provider-card')?.classList.add('stobe-preset-changed');
             }
             input.dispatchEvent(new Event('input', {bubbles: true}));
             input.dispatchEvent(new Event('change', {bubbles: true}));
         }
+        if (metadata) {
+            Object.assign(metadata, settings);
+            // Merge only portable keys, preserving custom metadata, prompts and future settings.
+            document.getElementById('metadata').value = JSON.stringify(metadata, null, 2);
+        }
         pending = pending || changed.length > 0;
-        tell(`${changed.length} setting(s) changed${changed.length ? ': ' + changed.join(', ') : ''}. Review them, then Save All.`);
+        tell(`${changed.length} setting(s) changed${changed.length ? ': ' + changed.join(', ') : ''}. Review them, then ${saveLabel}.`);
     }
     function envelope(preset) {
         return {format: 'stobe-settings-preset', version: 1, scope: config.scope, name: preset.name, settings: preset.settings};
