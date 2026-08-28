@@ -929,6 +929,31 @@ if (!function_exists('stobeUiNpcIsInPlayerFaction')) {
     }
 }
 
+if (!function_exists('stobeUiFactionCardLabel')) {
+    // Format the stored faction for cards, using the cached player-faction alias when set.
+    function stobeUiFactionCardLabel(array $npcRow): string {
+        $identity = function_exists('stobeUiExtractFactionIdentityFromRow')
+            ? stobeUiExtractFactionIdentityFromRow($npcRow)
+            : ['name' => '', 'id' => ''];
+        $name = trim(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            return 'Unknown';
+        }
+
+        if (function_exists('stobeResolvePlayerFactionPromptDisplayName')) {
+            try {
+                $aliased = trim(stobeResolvePlayerFactionPromptDisplayName($name, $identity));
+                if ($aliased !== '') {
+                    return $aliased;
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+
+        return $name;
+    }
+}
+
 if (!function_exists('stobeUiSortNpcRows')) {
     function stobeUiSortNpcRows(array $rows, string $alpha = 'asc'): array {
         $direction = strtolower(trim($alpha)) === 'desc' ? 'desc' : 'asc';
@@ -1760,6 +1785,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                 <div class="npc-fields">
                     <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
+                    <div class="npc-line"><span class="npc-muted">Faction:</span> <span class="npc-faction-name"><?= htmlspecialchars(stobeUiFactionCardLabel($row)) ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"><?= htmlspecialchars($row["voiceid"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"><?= htmlspecialchars($profLabel) ?></span></div>
                     <div class="npc-line npc-bounty-line"<?= $bountyAmountText === '0' ? ' style="display:none"' : '' ?>><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText === '0' ? '' : $bountyAmountText) ?></span></div>
@@ -3400,6 +3426,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
 .npc-fields { display:flex; flex-direction:column; gap:8px; }
 .npc-line { color:#e0e0e0; font-size:13px; line-height:1.35; }
 .npc-muted { color:#e6b76c; }
+.npc-faction-name { overflow-wrap:anywhere; }
 .npc-bounty-section {
     margin-top: 4px;
     padding: 8px 10px;
@@ -4155,6 +4182,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
             <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
+                <div class="npc-line"><span class="npc-muted">Faction:</span> <span class="npc-faction-name"><?= htmlspecialchars(stobeUiFactionCardLabel($row)) ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"><?= htmlspecialchars($row["voiceid"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"><?= htmlspecialchars($profLabel) ?></span></div>
                 <div class="npc-line npc-bounty-line"<?= $bountyAmountText === '0' ? ' style="display:none"' : '' ?>><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText === '0' ? '' : $bountyAmountText) ?></span></div>
@@ -4371,6 +4399,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
   const PLAYER_FACTION_NAME = <?= json_encode(strtolower($playerFactionName), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
   const PLAYER_FACTION_ID = <?= json_encode(strtolower($playerFactionId), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
   const PLAYER_FACTION_MEMBERS = <?= json_encode(array_values(stobeUiGetPlayerFactionMemberSet()), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_ALIAS = <?= json_encode(function_exists('stobeGetPlayerFactionCustomNameSetting') ? stobeGetPlayerFactionCustomNameSetting() : '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE) ?>;
   const PLAYER_FACTION_MEMBER_SET = (() => {
     const set = Object.create(null);
     (PLAYER_FACTION_MEMBERS || []).forEach((name) => {
@@ -4451,6 +4480,43 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
     }
 
     return { name: factionName, id: factionId };
+  }
+  // Mirrors stobeUiFactionCardLabel()/stobeResolvePlayerFactionPromptDisplayName() so an
+  // inline card update shows the same clean faction name as a server-rendered card.
+  function stobeFactionIdentityIsPlayerFaction(identity){
+    const factionId = String((identity && identity.id) || '').trim().toLowerCase();
+    const factionName = String((identity && identity.name) || '').trim().toLowerCase();
+    const playerFactionId = String(PLAYER_FACTION_ID || '').trim();
+    const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
+    if (playerFactionId && factionId) {
+      return playerFactionId === factionId;
+    }
+    if (playerFactionName && factionName) {
+      return playerFactionName === factionName;
+    }
+    return false;
+  }
+  function stobeFactionCardLabel(payload){
+    const identity = stobeExtractFactionIdentityFromPayload(payload);
+    const factionName = String(identity.name || '').trim();
+    if (!factionName) {
+      return 'Unknown';
+    }
+    const alias = String(PLAYER_FACTION_ALIAS || '').trim();
+    if (!alias) {
+      return factionName;
+    }
+    if (stobeFactionIdentityIsPlayerFaction(identity)) {
+      return alias;
+    }
+    if (factionName.toLowerCase() !== 'nameless') {
+      return factionName;
+    }
+    const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
+    if (!playerFactionName || playerFactionName === 'nameless') {
+      return alias;
+    }
+    return factionName;
   }
   function stobePayloadIsPlayerFaction(payload){
     const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
@@ -5763,6 +5829,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
               <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"></span></div>
+                <div class="npc-line"><span class="npc-muted">Faction:</span> <span class="npc-faction-name"></span></div>
                 <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"></span></div>
                 <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"></span></div>
                 <div class="npc-line npc-bounty-line" style="display:none"><span class="npc-muted">Bounty:</span> <span class="npc-bounty"></span></div>
@@ -5785,6 +5852,17 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
         setText('.npc-name', data.npc_name);
         setText('.npc-gender', data.gender);
         setText('.npc-race', data.race);
+        // Only relabel the faction when the save payload actually carries faction data, so a
+        // partial payload cannot replace a server-rendered name with "Unknown".
+        const factionEl = card.querySelector('.npc-faction-name');
+        if (factionEl) {
+          const factionMetadata = stobePayloadMetadataObject(data);
+          const hasFactionData = Object.prototype.hasOwnProperty.call(data, 'faction')
+            || Object.prototype.hasOwnProperty.call(factionMetadata, 'faction');
+          if (hasFactionData || String(factionEl.textContent || '').trim() === '') {
+            factionEl.textContent = stobeFactionCardLabel(data);
+          }
+        }
         setText('.npc-voiceid', data.voiceid);
         stobeApplyPlayerFactionCardState(card, data);
         stobeApplyCardActionState(card, data);
