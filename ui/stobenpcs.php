@@ -93,6 +93,46 @@ function stobeUiPrepareRelationshipSavePayload(): bool
     return true;
 }
 
+/**
+ * Formats one directed faction standing for display. Returns a signed number, keeps a real
+ * zero as "0", and reports "Unknown" when the snapshot carried no numeric value.
+ */
+function stobeUiFormatFactionStanding($relation): string
+{
+    if ($relation === null || !is_numeric($relation)) {
+        return 'Unknown';
+    }
+    $rounded = round(floatval($relation), 2);
+    if (abs($rounded - round($rounded)) < 0.005) {
+        $text = strval(intval(round($rounded)));
+    } else {
+        $text = rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
+    }
+    if ($rounded > 0 && strncmp($text, '-', 1) !== 0) {
+        $text = '+' . $text;
+    }
+    return $text;
+}
+
+/**
+ * Collects the status labels a faction standing row explicitly declares. Only the stored
+ * alliance/war/coexists flags are used; no status is inferred from the numeric standing.
+ */
+function stobeUiFactionStandingFlags(array $relation): array
+{
+    $flags = [];
+    if (!empty($relation['alliance'])) {
+        $flags[] = 'Alliance';
+    }
+    if (!empty($relation['war'])) {
+        $flags[] = 'War';
+    }
+    if (!empty($relation['coexists'])) {
+        $flags[] = 'Coexists';
+    }
+    return $flags;
+}
+
 function stobeUiAutoLockProfileEnabled(): bool
 {
     if (function_exists('getSettingBool')) {
@@ -886,6 +926,31 @@ if (!function_exists('stobeUiNpcIsInPlayerFaction')) {
         }
         $members = stobeUiGetPlayerFactionMemberSet();
         return isset($members[strtolower($npcName)]);
+    }
+}
+
+if (!function_exists('stobeUiFactionCardLabel')) {
+    // Format the stored faction for cards, using the cached player-faction alias when set.
+    function stobeUiFactionCardLabel(array $npcRow): string {
+        $identity = function_exists('stobeUiExtractFactionIdentityFromRow')
+            ? stobeUiExtractFactionIdentityFromRow($npcRow)
+            : ['name' => '', 'id' => ''];
+        $name = trim(strval($identity['name'] ?? ''));
+        if ($name === '') {
+            return 'Unknown';
+        }
+
+        if (function_exists('stobeResolvePlayerFactionPromptDisplayName')) {
+            try {
+                $aliased = trim(stobeResolvePlayerFactionPromptDisplayName($name, $identity));
+                if ($aliased !== '') {
+                    return $aliased;
+                }
+            } catch (Throwable $exception) {
+            }
+        }
+
+        return $name;
     }
 }
 
@@ -1720,6 +1785,7 @@ if (isset($_GET['list']) && $_GET['list'] === '1') {
                 <div class="npc-fields">
                     <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
+                    <div class="npc-line"><span class="npc-muted">Faction:</span> <span class="npc-faction-name"><?= htmlspecialchars(stobeUiFactionCardLabel($row)) ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"><?= htmlspecialchars($row["voiceid"] ?? "") ?></span></div>
                     <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"><?= htmlspecialchars($profLabel) ?></span></div>
                     <div class="npc-line npc-bounty-line"<?= $bountyAmountText === '0' ? ' style="display:none"' : '' ?>><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText === '0' ? '' : $bountyAmountText) ?></span></div>
@@ -2185,6 +2251,71 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
     .label-with-toggle input[type="checkbox"] { accent-color:#176529; transform: scale(1.8); transform-origin:center; cursor:pointer; }
     .span-2 { grid-column: 1 / -1; margin-bottom:12px; }
     .checkbox-inline { display:flex; align-items:center; gap:8px; }
+    .npc-faction-source { color:#cfd9ea; font-size:13px; }
+    .npc-faction-empty { margin:4px 0 0; color:#9fb1c9; font-size:13px; line-height:1.4; }
+    .npc-faction-note { margin:6px 0 0; color:#9fb1c9; font-size:11px; }
+    .npc-faction-scroll {
+        max-width:100%;
+        max-height:320px;
+        overflow:auto;
+        border:1px solid #4a4a4a;
+        border-radius:8px;
+        background:#1a1a1a;
+    }
+    .npc-faction-scroll:focus-visible { outline:2px solid #e6b76c; outline-offset:2px; }
+    .npc-faction-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:12px; }
+    .npc-faction-table th, .npc-faction-table td {
+        padding:5px 8px;
+        text-align:left;
+        vertical-align:top;
+        border-bottom:1px solid #333;
+        overflow-wrap:anywhere;
+    }
+    .npc-faction-table thead th {
+        position:sticky;
+        top:0;
+        z-index:1;
+        background:#262626;
+        color:#e6b76c;
+        font-weight:700;
+        white-space:nowrap;
+        box-shadow:inset 0 -1px 0 #4a4a4a;
+    }
+    .npc-faction-table tbody th { font-weight:600; color:#e9efff; width:46%; }
+    .npc-faction-table tbody tr:last-child th, .npc-faction-table tbody tr:last-child td { border-bottom:0; }
+    .npc-faction-standing { width:22%; color:#cfd9ea; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .npc-faction-status { width:32%; }
+    .npc-faction-flag {
+        display:inline-block;
+        margin:0 4px 2px 0;
+        padding:1px 6px;
+        border:1px solid #4a4a4a;
+        border-radius:10px;
+        background:#242424;
+        color:#cfd9ea;
+        font-size:11px;
+        font-weight:600;
+        white-space:nowrap;
+    }
+    .npc-faction-flag-alliance { border-color:#3f7a4a; color:#8fd3a0; }
+    .npc-faction-flag-war { border-color:#8a3b3b; color:#f0a3a3; }
+    .npc-faction-flag-coexists { border-color:#4a4a4a; color:#cfd9ea; }
+    .npc-faction-flag-none { border-style:dashed; color:#9fb1c9; }
+    .npc-faction-caption {
+        position:absolute;
+        width:1px;
+        height:1px;
+        padding:0;
+        margin:-1px;
+        overflow:hidden;
+        clip:rect(0 0 0 0);
+        white-space:nowrap;
+        border:0;
+    }
+    @media (max-width: 420px) {
+        .npc-faction-table { font-size:11px; }
+        .npc-faction-table th, .npc-faction-table td { padding:4px 6px; }
+    }
     </style>
     <?php if ($editItem): ?>
         <input type="hidden" name="id" value="<?= htmlspecialchars($editItem["id"]) ?>">
@@ -2304,13 +2435,14 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
     <button type="button" class="npc-editor-tab is-active" role="tab" aria-selected="true" data-npc-editor-tab="general">🧭 General</button>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="bios">📖 Roleplay</button>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="relationships">🤝 Relationships</button>
+    <?php if ($editItem): ?><button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="factions">⚖️ Factions</button><?php endif; ?>
     <button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="info">🛠️ Info</button>
     <?php if ($editItem): ?><button type="button" class="npc-editor-tab" role="tab" aria-selected="false" data-npc-editor-tab="history">📜 History</button><?php endif; ?>
 </div>
 <style>
 .npc-editor-tabs {
     display:grid;
-    grid-template-columns:repeat(<?= $editItem ? 5 : 4 ?>, minmax(0, 1fr));
+    grid-template-columns:repeat(<?= $editItem ? 6 : 4 ?>, minmax(0, 1fr));
     gap:8px;
     margin-bottom:14px;
     padding:8px;
@@ -2363,6 +2495,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
 
             const panels = {};
             const sections = ['general','bios','relationships','info'];
+            if (tablist.querySelector('[data-npc-editor-tab="factions"]')) sections.splice(3, 0, 'factions');
             if (tablist.querySelector('[data-npc-editor-tab="history"]')) sections.push('history');
             sections.forEach(function(section){
                 const panel = document.createElement('div');
@@ -2389,6 +2522,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
 
             function sectionFor(unit){
                 if (unit.id === 'relationship-editor-section' || unit.querySelector('#relationship-editor-section')) return 'relationships';
+                if (unit.id === 'npc-faction-standings-section' || unit.querySelector('#npc-faction-standings-section')) return 'factions';
                 const label = unit.querySelector('label:not([for])');
                 if (label && label.textContent.replace(/\s+/g, ' ').trim() === 'Relationships') return 'relationships';
                 const tokens = tokensFor(unit);
@@ -2400,13 +2534,14 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
 
             function isFieldUnit(unit){
                 if (!(unit instanceof Element)) return false;
-                if (unit.matches('.form-item,#relationship-editor-section,input,textarea,select,details')) return true;
-                return Boolean(unit.querySelector('input,textarea,select,details,#relationship-editor-section'));
+                if (unit.matches('.form-item,#relationship-editor-section,#npc-faction-standings-section,input,textarea,select,details')) return true;
+                return Boolean(unit.querySelector('input,textarea,select,details,#relationship-editor-section,#npc-faction-standings-section'));
             }
 
             function moveUnit(unit){
                 if (!isFieldUnit(unit)) return;
-                panels[sectionFor(unit)].appendChild(unit);
+                const panel = panels[sectionFor(unit)] || panels.info;
+                panel.appendChild(unit);
             }
 
             Array.from(grid.children).forEach(function(unit){
@@ -2901,6 +3036,89 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
             </details>
         </div>
 
+        <?php
+        // Directed faction standings for this NPC's own faction, taken from the last game
+        // snapshot. Resolved once per editor render and never for list rows.
+        $factionStandings = null;
+        if (is_array($editItem) && function_exists('stobeGetNpcFactionStandings')) {
+            try {
+                $factionStandings = stobeGetNpcFactionStandings($editItem);
+            } catch (Throwable $exception) {
+                $factionStandings = null;
+            }
+        }
+        if (is_array($editItem)):
+            $factionStatus = is_array($factionStandings) ? strval($factionStandings['status'] ?? 'unavailable') : 'unavailable';
+            $factionSourceName = is_array($factionStandings) ? trim(strval($factionStandings['faction_name'] ?? '')) : '';
+            $factionRows = (is_array($factionStandings) && is_array($factionStandings['relations'] ?? null))
+                ? $factionStandings['relations']
+                : [];
+            $factionTruncated = is_array($factionStandings) && !empty($factionStandings['truncated']);
+            // An "ok" response with nothing stored is still an empty state, not a table.
+            if ($factionStatus === 'ok' && count($factionRows) === 0) {
+                $factionStatus = 'empty';
+            }
+            $factionEmptyMessage = '';
+            if ($factionStatus === 'unknown_faction') {
+                $factionEmptyMessage = 'This NPC has no known faction.';
+            } elseif ($factionStatus === 'empty') {
+                $factionEmptyMessage = 'No faction standings received yet. Open Kenshi with Stobe to sync them.';
+            } elseif ($factionStatus !== 'ok') {
+                $factionEmptyMessage = 'Faction standings are unavailable.';
+            }
+        ?>
+        <div class="form-item span-2" id="npc-faction-standings-section">
+            <label>Faction Standings</label>
+            <?php if ($factionSourceName !== ''): ?>
+                <div class="npc-faction-source">Source faction: <strong><?= htmlspecialchars($factionSourceName) ?></strong></div>
+            <?php endif; ?>
+            <small class="hint">Last synced game standings. Shared by members of this faction.</small>
+            <?php if ($factionEmptyMessage !== ''): ?>
+                <p class="npc-faction-empty"><?= htmlspecialchars($factionEmptyMessage) ?></p>
+            <?php else: ?>
+                <div class="npc-faction-scroll" tabindex="0" role="region" aria-label="Faction standings table, scrollable">
+                    <table class="npc-faction-table">
+                        <caption class="npc-faction-caption">Last synced standings of <?= htmlspecialchars($factionSourceName !== '' ? $factionSourceName : 'this faction') ?> toward other factions.</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Faction</th>
+                                <th scope="col" class="npc-faction-standing">Standing</th>
+                                <th scope="col" class="npc-faction-status">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($factionRows as $factionRow): ?>
+                                <?php
+                                if (!is_array($factionRow)) {
+                                    continue;
+                                }
+                                $factionRowName = trim(strval($factionRow['name'] ?? ''));
+                                $factionRowFlags = stobeUiFactionStandingFlags($factionRow);
+                                ?>
+                                <tr>
+                                    <th scope="row"><?= htmlspecialchars($factionRowName !== '' ? $factionRowName : 'Unknown') ?></th>
+                                    <td class="npc-faction-standing"><?= htmlspecialchars(stobeUiFormatFactionStanding($factionRow['relation'] ?? null)) ?></td>
+                                    <td class="npc-faction-status">
+                                        <?php if (count($factionRowFlags) === 0): ?>
+                                            <span aria-label="No recorded alliance, war, or coexistence">&mdash;</span>
+                                        <?php else: ?>
+                                            <?php foreach ($factionRowFlags as $factionRowFlag): ?>
+                                                <span class="npc-faction-flag npc-faction-flag-<?= htmlspecialchars(strtolower($factionRowFlag)) ?>"><?= htmlspecialchars($factionRowFlag) ?></span>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php if ($factionTruncated): ?>
+                    <p class="npc-faction-note">Showing the first 200 factions from the snapshot.</p>
+                <?php endif; ?>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
         <div class="form-item span-2">
             <label for="metadata">Metadata (JSON)</label>
             <textarea id="metadata" name="metadata" placeholder="{}"><?= htmlspecialchars($editItem["metadata"] ?? "") ?></textarea>
@@ -3208,6 +3426,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
 .npc-fields { display:flex; flex-direction:column; gap:8px; }
 .npc-line { color:#e0e0e0; font-size:13px; line-height:1.35; }
 .npc-muted { color:#e6b76c; }
+.npc-faction-name { overflow-wrap:anywhere; }
 .npc-bounty-section {
     margin-top: 4px;
     padding: 8px 10px;
@@ -3963,6 +4182,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
             <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"><?= htmlspecialchars($row["gender"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"><?= htmlspecialchars($row["race"] ?? "") ?></span></div>
+                <div class="npc-line"><span class="npc-muted">Faction:</span> <span class="npc-faction-name"><?= htmlspecialchars(stobeUiFactionCardLabel($row)) ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"><?= htmlspecialchars($row["voiceid"] ?? "") ?></span></div>
                 <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"><?= htmlspecialchars($profLabel) ?></span></div>
                 <div class="npc-line npc-bounty-line"<?= $bountyAmountText === '0' ? ' style="display:none"' : '' ?>><span class="npc-muted">Bounty:</span> <span class="npc-bounty"><?= htmlspecialchars($bountyAmountText === '0' ? '' : $bountyAmountText) ?></span></div>
@@ -4179,6 +4399,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
   const PLAYER_FACTION_NAME = <?= json_encode(strtolower($playerFactionName), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
   const PLAYER_FACTION_ID = <?= json_encode(strtolower($playerFactionId), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
   const PLAYER_FACTION_MEMBERS = <?= json_encode(array_values(stobeUiGetPlayerFactionMemberSet()), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;
+  const PLAYER_FACTION_ALIAS = <?= json_encode(function_exists('stobeGetPlayerFactionCustomNameSetting') ? stobeGetPlayerFactionCustomNameSetting() : '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE) ?>;
   const PLAYER_FACTION_MEMBER_SET = (() => {
     const set = Object.create(null);
     (PLAYER_FACTION_MEMBERS || []).forEach((name) => {
@@ -4259,6 +4480,43 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
     }
 
     return { name: factionName, id: factionId };
+  }
+  // Mirrors stobeUiFactionCardLabel()/stobeResolvePlayerFactionPromptDisplayName() so an
+  // inline card update shows the same clean faction name as a server-rendered card.
+  function stobeFactionIdentityIsPlayerFaction(identity){
+    const factionId = String((identity && identity.id) || '').trim().toLowerCase();
+    const factionName = String((identity && identity.name) || '').trim().toLowerCase();
+    const playerFactionId = String(PLAYER_FACTION_ID || '').trim();
+    const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
+    if (playerFactionId && factionId) {
+      return playerFactionId === factionId;
+    }
+    if (playerFactionName && factionName) {
+      return playerFactionName === factionName;
+    }
+    return false;
+  }
+  function stobeFactionCardLabel(payload){
+    const identity = stobeExtractFactionIdentityFromPayload(payload);
+    const factionName = String(identity.name || '').trim();
+    if (!factionName) {
+      return 'Unknown';
+    }
+    const alias = String(PLAYER_FACTION_ALIAS || '').trim();
+    if (!alias) {
+      return factionName;
+    }
+    if (stobeFactionIdentityIsPlayerFaction(identity)) {
+      return alias;
+    }
+    if (factionName.toLowerCase() !== 'nameless') {
+      return factionName;
+    }
+    const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
+    if (!playerFactionName || playerFactionName === 'nameless') {
+      return alias;
+    }
+    return factionName;
   }
   function stobePayloadIsPlayerFaction(payload){
     const playerFactionName = String(PLAYER_FACTION_NAME || '').trim();
@@ -5571,6 +5829,7 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
               <div class="npc-fields">
                 <div class="npc-line"><span class="npc-muted">Gender:</span> <span class="npc-gender"></span></div>
                 <div class="npc-line"><span class="npc-muted">Race:</span> <span class="npc-race"></span></div>
+                <div class="npc-line"><span class="npc-muted">Faction:</span> <span class="npc-faction-name"></span></div>
                 <div class="npc-line"><span class="npc-muted">Voice:</span> <span class="npc-voiceid"></span></div>
                 <div class="npc-line"><span class="npc-muted">Profile:</span> <span class="npc-profile"></span></div>
                 <div class="npc-line npc-bounty-line" style="display:none"><span class="npc-muted">Bounty:</span> <span class="npc-bounty"></span></div>
@@ -5593,6 +5852,17 @@ if (typeof window.consolidation !== 'function') { window.consolidation = functio
         setText('.npc-name', data.npc_name);
         setText('.npc-gender', data.gender);
         setText('.npc-race', data.race);
+        // Only relabel the faction when the save payload actually carries faction data, so a
+        // partial payload cannot replace a server-rendered name with "Unknown".
+        const factionEl = card.querySelector('.npc-faction-name');
+        if (factionEl) {
+          const factionMetadata = stobePayloadMetadataObject(data);
+          const hasFactionData = Object.prototype.hasOwnProperty.call(data, 'faction')
+            || Object.prototype.hasOwnProperty.call(factionMetadata, 'faction');
+          if (hasFactionData || String(factionEl.textContent || '').trim() === '') {
+            factionEl.textContent = stobeFactionCardLabel(data);
+          }
+        }
         setText('.npc-voiceid', data.voiceid);
         stobeApplyPlayerFactionCardState(card, data);
         stobeApplyCardActionState(card, data);
