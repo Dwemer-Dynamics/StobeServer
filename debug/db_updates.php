@@ -433,6 +433,14 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 SET description = EXCLUDED.description,
                     updated_at = NOW()");
         });
+        $applyPatch('short_term_memory_settings', 202608280501, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'true',
+                    'Include short-term memory for enabled NPCs when Compact Chat History is on. Plain chat is unaffected.', NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
         $applyPatch('core_narrator', 202603250301, static function () use ($db): void {
             $db->exec("CREATE TABLE IF NOT EXISTS core_narrator (
                 id TEXT PRIMARY KEY,

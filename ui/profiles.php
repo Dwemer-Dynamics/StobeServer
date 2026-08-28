@@ -72,6 +72,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         'RECHAT_PROBABILITY',
         'CONTEXT_HISTORY_DIARY',
         'CONTEXT_HISTORY_DYNAMIC_PROFILE',
+        'SHORT_TERM_MEMORY_MAX',
     ];
     foreach ($intKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
@@ -87,6 +88,8 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
             $value = max(0, min(23, $value));
         } elseif ($key === 'RELATIONSHIP_UPDATE_CHANCE') {
             $value = max(0, min(100, $value));
+        } elseif ($key === 'SHORT_TERM_MEMORY_MAX') {
+            $value = max(1, min(50, $value));
         }
         $base[$key] = $value;
     }
@@ -94,7 +97,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'SHORT_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
@@ -194,7 +197,8 @@ $db = $GLOBALS['db'];
 $isEmbed = is_embed();
 $webRoot = web_root();
 $profileSyncableMetadataKeys = [
-    'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
+    'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'SHORT_TERM_MEMORY_ENABLED', 'SHORT_TERM_MEMORY_MAX',
+    'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
     'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE', 'RELATIONSHIP_UPDATE_CHANCE',
     'CONTEXT_HISTORY', 'CONTEXT_HISTORY_DIARY', 'CONTEXT_HISTORY_DYNAMIC_PROFILE',
     'DIARY_DAYS', 'AUTO_DIARY_MIN_EVENTS', 'AUTO_DIARY_HOUR', 'DIARY_COOLDOWN',
@@ -637,6 +641,8 @@ $metaBoredEventChance = array_key_exists('BORED_EVENT_CHANCE', $metaData)
             ? intval($metaData['BORED_EVENT'])
             : intval($metaDefaults['BORED_EVENT_CHANCE'] ?? ($metaDefaults['BORED_EVENT'] ?? 50))
     );
+$shortTermMemoryMax = parseIntLike($metaData['SHORT_TERM_MEMORY_MAX'] ?? ($metaDefaults['SHORT_TERM_MEMORY_MAX'] ?? 10), 10);
+$shortTermMemoryMax = max(1, min(50, $shortTermMemoryMax));
 $dynamicFieldOptions = ['personality', 'occupation', 'speechstyle', 'goals'];
 $dynamicFieldCurrent = $metaData['DYNAMIC_PROFILE_FIELDS'] ?? ($metaDefaults['DYNAMIC_PROFILE_FIELDS'] ?? []);
 $dynamicFieldCurrent = is_array($dynamicFieldCurrent) ? array_values(array_map('strval', $dynamicFieldCurrent)) : [];
@@ -716,6 +722,9 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card .toggle-title { color:#dfe6f4; font-weight:700; font-size:12px; }
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
 .toggle-card-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.toggle-card-num-row { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }
+.toggle-card-num-row label { color:#dfe6f4; font-size:12px; font-weight:700; margin:0; }
+.toggle-card-num-row input[type='number'] { width:72px; min-width:72px; text-align:right; }
 body .profile-setting-sync-btn {
     display:inline-flex;
     flex:0 0 auto;
@@ -950,6 +959,19 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                                                 <span class="toggle-title">Middle Term Memory</span>
                                             </label><?= profile_setting_sync_button('MIDDLE_TERM_MEMORY_ENABLED', 'Middle Term Memory') ?></div>
                                             <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <div class="toggle-card-title-row"><label title="Adds completed memory summaries to roleplay context for NPCs on this profile.">
+                                                <input type="hidden" name="meta_vis[SHORT_TERM_MEMORY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[SHORT_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('SHORT_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Short Term Memory</span>
+                                            </label><?= profile_setting_sync_button('SHORT_TERM_MEMORY_ENABLED', 'Short Term Memory') ?></div>
+                                            <div class="toggle-desc">Injects already completed memory summaries into roleplay context.</div>
+                                            <div class="toggle-card-num-row">
+                                                <label for="meta_short_term_memory_max" title="Most completed summaries injected per prompt (1-50).">Max summaries</label>
+                                                <input type="number" id="meta_short_term_memory_max" name="meta_vis[SHORT_TERM_MEMORY_MAX]" min="1" max="50" step="1" value="<?= h($shortTermMemoryMax) ?>" title="Most completed summaries injected per prompt (1-50).">
+                                                <?= profile_setting_sync_button('SHORT_TERM_MEMORY_MAX', 'Short Term Memory Max') ?>
+                                            </div>
                                         </div>
                                     </div>
                                 </section>

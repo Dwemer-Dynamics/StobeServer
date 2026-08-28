@@ -636,7 +636,8 @@ $historyMessages = stobeBuildRecentContextMessages(
     $eventHistory,
     intval($gamets),
     64,
-    $narratorMode ? '' : $targetNpc
+    $narratorMode ? '' : $targetNpc,
+    true
 );
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
@@ -890,11 +891,23 @@ if ($dialogueMode === 'cheat') {
         . "  <request>" . stobePromptXmlEscape($message) . "</request>\n"
         . "</cheat_request>";
 }
+$compactHistoryEnabled = stobeShouldCompactChatHistory($targetNpc);
+$shortTermMemory = stobeBuildShortTermMemoryContext(
+    $npcData,
+    $targetNpc,
+    $historyMessages,
+    intval($gamets),
+    $compactHistoryEnabled,
+    $systemPrompt
+);
+if ($shortTermMemory !== '') {
+    $systemPrompt .= "\n\n" . $shortTermMemory;
+}
 $compactHistory = stobeApplyCompactChatHistory(
     $systemPrompt,
     $historyMessages,
     $targetNpc,
-    stobeShouldCompactChatHistory($targetNpc),
+    $compactHistoryEnabled,
     getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true)
 );
 $systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
