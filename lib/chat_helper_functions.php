@@ -7555,6 +7555,89 @@ function stobeFactionRelationStateTableAvailable(): bool {
     return boolval($available);
 }
 
+// Read the selected NPC faction's synced standings without copying them into its profile.
+function stobeGetNpcFactionStandings(array $npcData): array {
+    $identity = getNpcFactionIdentityFromProfile($npcData);
+    $name = trim(strval($identity['name'] ?? ''));
+    $factionId = trim(strval($identity['id'] ?? ''));
+    $result = ['faction_name' => $name, 'status' => 'unknown_faction', 'relations' => [], 'truncated' => false];
+    if ($name === '' && $factionId === '') {
+        return $result;
+    }
+    $result['faction_name'] = $name !== '' ? $name : $factionId;
+    $result['status'] = 'unavailable';
+    if (!stobeFactionRelationStateTableAvailable()) {
+        return $result;
+    }
+
+    // Prefer stable identity; a known but unmatched ID must not borrow a namesake's standings.
+    if ($factionId !== '') {
+        $where = 'LOWER(source_string_id) = LOWER($1)';
+        $params = [$factionId];
+        if (ctype_digit($factionId) && intval($factionId) > 0) {
+            $where .= ' OR source_numeric_id = $2';
+            $params[] = intval($factionId);
+        }
+    } else {
+        $where = 'LOWER(source_name) = LOWER($1)';
+        $params = [$name];
+    }
+
+    try {
+        $queryResult = $GLOBALS['db']->exec(
+            "SELECT * FROM (
+                SELECT DISTINCT ON (target_key) * FROM (
+                    SELECT source_name, source_string_id, target_name, target_string_id, target_numeric_id,
+                           relation, alliance, war, coexists, game_ts, updated_at, id,
+                           CASE WHEN target_string_id <> '' THEN 'sid:' || LOWER(target_string_id)
+                                WHEN target_numeric_id > 0 THEN 'id:' || target_numeric_id::text
+                                ELSE 'name:' || LOWER(target_name) END AS target_key
+                    FROM faction_relation_state WHERE " . $where . "
+                ) matches
+                ORDER BY target_key, game_ts DESC, updated_at DESC, id DESC
+            ) latest ORDER BY LOWER(target_name), target_key LIMIT 202",
+            $params
+        );
+        if ($queryResult === false) {
+            stobeLogWarn('NPC faction standings query failed');
+            return $result;
+        }
+        $rows = pg_fetch_all($queryResult) ?: [];
+        foreach ($rows as $row) {
+            $targetIdentity = [
+                'name' => trim(strval($row['target_name'] ?? '')),
+                'id' => trim(strval($row['target_string_id'] ?? '')),
+            ];
+            $sourceIdentity = ['name' => strval($row['source_name'] ?? $name), 'id' => strval($row['source_string_id'] ?? $factionId)];
+            if (stobeFactionIdentityMatches($sourceIdentity, $targetIdentity)) {
+                continue;
+            }
+            $result['faction_name'] = stobeResolvePlayerFactionPromptDisplayName($sourceIdentity['name'], $sourceIdentity);
+            $targetName = stobeResolvePlayerFactionPromptDisplayName($targetIdentity['name'], $targetIdentity);
+            if ($targetName === '') {
+                $targetName = $targetIdentity['id'] !== '' ? $targetIdentity['id'] : 'Unknown faction';
+            }
+            $value = $row['relation'] ?? null;
+            $result['relations'][] = [
+                'name' => $targetName,
+                'relation' => is_numeric($value) && is_finite(floatval($value)) ? floatval($value) : null,
+                'alliance' => coerceBoolean($row['alliance'] ?? false),
+                'war' => coerceBoolean($row['war'] ?? false),
+                'coexists' => coerceBoolean($row['coexists'] ?? false),
+            ];
+        }
+        usort($result['relations'], static fn(array $left, array $right): int => strcasecmp($left['name'], $right['name']));
+        $result['truncated'] = count($result['relations']) > 200;
+        $result['relations'] = array_slice($result['relations'], 0, 200);
+        $result['status'] = count($result['relations']) > 0 ? 'ok' : 'empty';
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to read NPC faction standings');
+        $result['relations'] = [];
+        $result['status'] = 'unavailable';
+    }
+    return $result;
+}
+
 function stobeFactionIdentityMatches(array $leftIdentity, array $rightIdentity): bool {
     $leftId = trim(strval($leftIdentity['id'] ?? ''));
     $rightId = trim(strval($rightIdentity['id'] ?? ''));
