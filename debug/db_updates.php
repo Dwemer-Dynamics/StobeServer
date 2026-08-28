@@ -2792,7 +2792,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
-        $applyPatch('general_settings', 202608280703, static function () use ($db): void {
+        $applyPatch('relationship_preservation_settings', 202608280703, static function () use ($db): void {
             $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
                 ('NEVER_CLEAR_RELATIONSHIP_DATA','false','Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',NOW())
                 ON CONFLICT (id) DO NOTHING");
