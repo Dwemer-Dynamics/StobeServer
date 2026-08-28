@@ -117,7 +117,7 @@ function formatUtcFromTs(mixed $ts): string
 
 function buildWordCloudData(array $rows): array
 {
-    $processedText = [];
+    $wordFrequencies = [];
     foreach ($rows as $row) {
         $text = (string)($row['data'] ?? '');
         if ($text === '') {
@@ -160,16 +160,16 @@ function buildWordCloudData(array $rows): array
             return strlen($word) > 2 && !in_array($word, $stopWords, true);
         });
 
-        if (!empty($words)) {
-            $processedText = array_merge($processedText, $words);
+        // Count in place instead of copying all previous words for every row.
+        foreach ($words as $word) {
+            $wordFrequencies[$word] = ($wordFrequencies[$word] ?? 0) + 1;
         }
     }
 
-    if (empty($processedText)) {
+    if (empty($wordFrequencies)) {
         return [];
     }
 
-    $wordFrequencies = array_count_values($processedText);
     arsort($wordFrequencies);
     $wordFrequencies = array_slice($wordFrequencies, 0, 100, true);
 
@@ -225,11 +225,11 @@ foreach ($versionCandidates as $versionPath) {
     }
 }
 if ($serverVersionDisplay === '') {
-    $serverVersionDisplay = '1.2.0';
+    $serverVersionDisplay = '1.2.1';
 }
 $serverReleaseDate = readVersionFile(dirname(__DIR__) . DIRECTORY_SEPARATOR . 'release_date.txt');
 if ($serverReleaseDate === '') {
-    $serverReleaseDate = '2026-08-27';
+    $serverReleaseDate = '2026-08-28';
 }
 
 $pluginVersionDisplay = 'N/A';

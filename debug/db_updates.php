@@ -433,6 +433,14 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 SET description = EXCLUDED.description,
                     updated_at = NOW()");
         });
+        $applyPatch('short_term_memory_settings', 202608280501, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'true',
+                    'Include short-term memory for enabled NPCs when Compact Chat History is on. Plain chat is unaffected.', NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
+        });
         $applyPatch('core_narrator', 202603250301, static function () use ($db): void {
             $db->exec("CREATE TABLE IF NOT EXISTS core_narrator (
                 id TEXT PRIMARY KEY,
@@ -2792,6 +2800,12 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('relationship_preservation_settings', 202608280703, static function () use ($db): void {
+            $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
+                ('NEVER_CLEAR_RELATIONSHIP_DATA','false','Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',NOW())
+                ON CONFLICT (id) DO NOTHING");
+        });
+
         $applyPatch('prompts', 202608260001, static function () use ($db): void {
             foreach (stobePlayerMoodPromptCatalog() as $mood => $prompt) {
                 $db->exec(
@@ -2799,6 +2813,13 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      VALUES ($1, $2, $3) ON CONFLICT (prompt_key) DO NOTHING",
                     ['player_mood_' . $mood . '_prompt', $prompt, 'Player tone for ' . $mood . ' dialogue. Not spoken aloud.']
                 );
+            }
+        });
+
+        $applyPatch('stobe_settings_presets', 202608280701, static function () use ($db): void {
+            $sql = file_get_contents(dirname(__DIR__) . '/data/settings_presets.sql');
+            if ($sql === false || $db->exec($sql) === false) {
+                throw new RuntimeException('Could not create settings preset store.');
             }
         });
 

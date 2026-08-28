@@ -73,6 +73,26 @@ $eventHistory = [
 $messages = stobeBuildRecentContextMessages($eventHistory, 600, 64);
 $contents = contextFlowMessageContents($messages);
 
+// Short-term memory needs the surviving history floor without leaking internal timestamps.
+$timedMessages = stobeBuildRecentContextMessages($eventHistory, 600, 64, '', true);
+contextFlowAssertSameInt(497, min(array_column($timedMessages, '_stobe_gamets')), 'history retains its oldest surviving timestamp');
+contextFlowAssertSame('', stobeBuildShortTermMemoryContext(false, 'Unknown NPC', $timedMessages, 600, false), 'unknown NPCs do not receive summaries');
+contextFlowAssert($timedMessages === $messages, 'short-term memory strips timestamps without changing live dialogue');
+
+$rollingEvents = [];
+for ($index = 1; $index <= 20; $index++) {
+    $rollingEvents[] = [
+        'type' => 'chat',
+        'data' => ($index % 2 ? 'Beep' : 'Ruka') . ': Message ' . $index,
+        'gamets' => 600 + $index,
+    ];
+}
+$rollingEvents = array_reverse($rollingEvents);
+$rollingTimed = stobeBuildRecentContextMessages($rollingEvents, 700, 8, 'Beep', true);
+contextFlowAssertSameInt(613, $rollingTimed[0]['_stobe_gamets'], 'summary boundary follows the surviving window after cropping');
+stobeBuildShortTermMemoryContext(false, 'Unknown NPC', $rollingTimed, 700, true);
+contextFlowAssert($rollingTimed === stobeBuildRecentContextMessages($rollingEvents, 700, 8, 'Beep'), 'timestamp tracking preserves cropped dialogue');
+
 contextFlowAssert(count($contents) === 4, 'recent context builder should emit location transitions plus deduped narrative rows');
 contextFlowAssert(
     strpos($contents[0] ?? '', 'LOCATION CHANGE to Squin') !== false,

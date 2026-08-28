@@ -158,6 +158,11 @@ try {
     $createdSchemas[] = strval($first['schema_name'] ?? '');
 
     ptStorageAssert(ptStorageSchemaExists(strval($first['schema_name'] ?? '')), 'first snapshot schema should exist');
+    $snapshotViews = $db->fetchOne(
+        'SELECT count(*) AS count FROM pg_views WHERE schemaname = $1',
+        [strval($first['schema_name'])]
+    );
+    ptStorageAssert(intval($snapshotViews['count'] ?? -1) === 0, 'snapshot views must not retain references to live tables');
     ptStorageAssert(
         ptStorageSchemaContainsValue(strval($first['schema_name'] ?? ''), 'autonomy_decision', 'decision_id', $autonomyDecisionId),
         'playthrough snapshot should clone autonomy decision rows'

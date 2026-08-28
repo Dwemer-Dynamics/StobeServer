@@ -634,13 +634,14 @@ function stobePlaythroughHistoryColumns(): array
     return $columns;
 }
 
-function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): bool
+function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow, ?bool $preserveRelationships = null): bool
 {
     $db = $GLOBALS['db'] ?? null;
     if (!$db || $npcId <= 0) {
         return false;
     }
 
+    $preserveRelationships ??= getSettingBool('NEVER_CLEAR_RELATIONSHIP_DATA', false);
     $fields = stobePlaythroughMapHistoryRowToCoreNpcFields($historyRow);
 
     if (trim(strval($fields['name'] ?? '')) === '') {
@@ -652,14 +653,15 @@ function stobePlaythroughRestoreNpcFromHistory(int $npcId, array $historyRow): b
     $params = [];
     $paramIndex = 1;
 
-    $appendField = static function (string $column, mixed $value, string $type = 'text') use (&$setClauses, &$params, &$paramIndex): void {
+    $appendField = static function (string $column, mixed $value, string $type = 'text') use (&$setClauses, &$params, &$paramIndex, $preserveRelationships): void {
         if ($type === 'json') {
             $incomingExpression = '$' . $paramIndex . '::jsonb';
             if ($column === 'extended_data') {
-                $setClauses[] = $column . ' = ' . stobeIndividualMemoryPreservingExtendedDataSql(
-                    $incomingExpression,
-                    $column
-                );
+                // Keep current affinities atomically while other profile fields rewind.
+                $expression = $preserveRelationships
+                    ? stobeRelationshipPreservingExtendedDataSql($incomingExpression, $column)
+                    : stobeIndividualMemoryPreservingExtendedDataSql($incomingExpression, $column);
+                $setClauses[] = $column . ' = ' . $expression;
             } else {
                 $setClauses[] = $column . ' = ' . $incomingExpression;
             }
@@ -864,6 +866,7 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
     }
 
     $cutoff = max(0, intval($cutoffGamets));
+    $preserveRelationships = getSettingBool('NEVER_CLEAR_RELATIONSHIP_DATA', false);
 
     $currentRows = $db->fetchAll(
         'SELECT * FROM core_npc WHERE COALESCE(lock_profile, FALSE) = FALSE ORDER BY id ASC'
@@ -965,6 +968,11 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
 
         $rowGamets = intval($row['gamets_last_updated'] ?? 0);
         if ($rowGamets > $cutoff) {
+            // Deleting a future-only NPC would also delete its preserved relationships.
+            if ($preserveRelationships) {
+                $skipped++;
+                continue;
+            }
             if (function_exists('stobeInsertNpcHistorySnapshotFromRow')) {
                 stobeInsertNpcHistorySnapshotFromRow($row, 'rollback_delete_future_npc');
             }
@@ -1015,7 +1023,7 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
             stobeInsertNpcHistorySnapshotFromRow($row, 'rollback_pre_restore');
         }
 
-        $ok = stobePlaythroughRestoreNpcFromHistory($npcId, $historyRow);
+        $ok = stobePlaythroughRestoreNpcFromHistory($npcId, $historyRow, $preserveRelationships);
         if (!$ok) {
             $errors++;
             continue;
@@ -1042,6 +1050,9 @@ function stobePlaythroughRestoreUnlockedNpcs(int $cutoffGamets): array
 // Restore only relationship-owned keys so profile locks do not retain future affinity state.
 function stobePlaythroughRestoreRelationshipStates(int $cutoffGamets): array
 {
+    if (getSettingBool('NEVER_CLEAR_RELATIONSHIP_DATA', false)) {
+        return ['restored' => 0, 'cleared' => 0, 'errors' => 0, 'sample_names' => ''];
+    }
     $db = $GLOBALS['db'] ?? null;
     if (!$db || !function_exists('stobeRelationshipExtendedDataKeys')) {
         return ['restored' => 0, 'cleared' => 0, 'errors' => 1, 'sample_names' => ''];

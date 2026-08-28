@@ -9,17 +9,26 @@
 
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
 
+// Existing installations must refresh the stored SQL function, not just the source file.
+function pts_clone_function_is_current($definition): bool {
+    return is_string($definition)
+        && str_contains($definition, 'OVERRIDING SYSTEM VALUE')
+        && str_contains($definition, 'STOBE_TABLE_ONLY_SNAPSHOTS')
+        && stripos($definition, 'CREATE OR REPLACE VIEW') === false;
+}
+
 /**
  * Ensure the clone_schema SQL functions exist in the database.
  * Safe to call multiple times (idempotent).
  */
 function pts_ensure_functions($conn): bool {
-    // Check if functions already exist in stobe_meta schema
-    $checkQuery = "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'clone_schema' AND n.nspname = 'stobe_meta' LIMIT 1";
+    $checkQuery = "SELECT pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'clone_schema' AND n.nspname = 'stobe_meta' AND p.proargtypes = '25 25'::oidvector LIMIT 1";
     $checkResult = @pg_query($conn, $checkQuery);
     if ($checkResult && pg_num_rows($checkResult) > 0) {
-        // Functions already exist
-        return true;
+        $installed = pg_fetch_assoc($checkResult);
+        if (pts_clone_function_is_current($installed['definition'] ?? null)) {
+            return true;
+        }
     }
     
     $sqlFile = __DIR__ . DIRECTORY_SEPARATOR . 'schema_clone_function.sql';
@@ -44,13 +53,101 @@ function pts_ensure_functions($conn): bool {
     
     // Verify functions were created
     $verifyResult = @pg_query($conn, $checkQuery);
-    if (!$verifyResult || pg_num_rows($verifyResult) === 0) {
+    $verified = $verifyResult ? pg_fetch_assoc($verifyResult) : false;
+    if (!pts_clone_function_is_current($verified['definition'] ?? null)) {
         Logger::error("Schema clone functions were not created successfully");
         return false;
     }
     
     Logger::info("Schema clone functions installed successfully");
     return true;
+}
+
+// Capture runtime views in dependency order before public is replaced by saved tables.
+function pts_capture_public_views($conn): array {
+    $result = pg_query($conn, <<<'SQL'
+WITH RECURSIVE dependencies AS (
+    SELECT c.oid AS root, c.oid AS current_view, ARRAY[c.oid] AS path
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'v'
+    UNION
+    SELECT deps.root, child.oid, deps.path || child.oid
+    FROM dependencies deps
+    JOIN pg_rewrite r ON r.ev_class = deps.current_view
+    JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+    JOIN pg_class child ON d.refclassid = 'pg_class'::regclass AND child.oid = d.refobjid
+    JOIN pg_namespace n ON n.oid = child.relnamespace
+    WHERE n.nspname = 'public' AND child.relkind = 'v' AND NOT child.oid = ANY(deps.path)
+)
+SELECT c.relname, pg_get_viewdef(c.oid) AS definition, pg_get_userbyid(c.relowner) AS owner,
+       COALESCE(array_to_string(c.reloptions, ', '), '') AS options,
+       COALESCE((SELECT json_agg(grants) FROM (
+           SELECT NULL::text AS column_name, a.grantee, a.grantor, a.privilege_type, a.is_grantable,
+                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS role,
+                  pg_get_userbyid(a.grantor) AS grantor_role
+           FROM aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
+           UNION ALL
+           SELECT col.attname, a.grantee, a.grantor, a.privilege_type, a.is_grantable,
+                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,
+                  pg_get_userbyid(a.grantor)
+           FROM pg_attribute col CROSS JOIN LATERAL aclexplode(col.attacl) a
+           WHERE col.attrelid = c.oid AND col.attnum > 0
+       ) grants), '[]'::json) AS grants
+FROM dependencies deps JOIN pg_class c ON c.oid = deps.root
+GROUP BY c.oid
+ORDER BY MAX(cardinality(deps.path)), c.relname
+SQL);
+    if ($result === false) {
+        throw new RuntimeException('Could not read runtime view definitions');
+    }
+    $views = pg_fetch_all($result);
+    // Replaying delegated grants as the owner would change later REVOKE ... CASCADE behavior.
+    foreach ($views as $view) {
+        foreach (json_decode($view['grants'], true, 512, JSON_THROW_ON_ERROR) as $grant) {
+            if (strval($grant['grantor_role'] ?? '') !== strval($view['owner'] ?? '')) {
+                throw new RuntimeException(
+                    'Delegated access grants are not supported for runtime view ' . strval($view['relname'] ?? '')
+                );
+            }
+        }
+    }
+    return $views;
+}
+
+// Restore views and their access rules atomically with the playthrough's saved tables.
+function pts_restore_public_views($conn, array $views): void {
+    foreach ($views as $view) {
+        $name = 'public.' . pg_escape_identifier($conn, $view['relname']);
+        $options = $view['options'] !== '' ? ' WITH (' . $view['options'] . ')' : '';
+        if (!pg_query($conn, 'CREATE VIEW ' . $name . $options . ' AS ' . $view['definition'])) {
+            throw new RuntimeException('Could not recreate runtime view ' . $view['relname']);
+        }
+        // New views may inherit default grants that the previous view had revoked.
+        $newGrants = pg_query_params($conn,
+            "SELECT DISTINCT a.grantee, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS role
+             FROM pg_class c CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
+             WHERE c.oid = $1::regclass", [$name]);
+        if (!$newGrants) {
+            throw new RuntimeException('Could not read recreated view access rules');
+        }
+        $statements = [];
+        foreach (pg_fetch_all($newGrants) as $grant) {
+            $role = intval($grant['grantee']) === 0 ? 'PUBLIC' : pg_escape_identifier($conn, $grant['role']);
+            $statements[] = 'REVOKE ALL ON ' . $name . ' FROM ' . $role;
+        }
+        $statements[] = 'ALTER VIEW ' . $name . ' OWNER TO ' . pg_escape_identifier($conn, $view['owner']);
+        foreach (json_decode($view['grants'], true, 512, JSON_THROW_ON_ERROR) as $grant) {
+            $role = intval($grant['grantee']) === 0 ? 'PUBLIC' : pg_escape_identifier($conn, $grant['role']);
+            $column = $grant['column_name'] !== null ? ' (' . pg_escape_identifier($conn, $grant['column_name']) . ')' : '';
+            $statements[] = 'GRANT ' . $grant['privilege_type'] . $column . ' ON ' . $name . ' TO ' . $role
+                . ($grant['is_grantable'] ? ' WITH GRANT OPTION' : '');
+        }
+        foreach ($statements as $statement) {
+            if (!pg_query($conn, $statement)) {
+                throw new RuntimeException('Could not restore runtime view access rules');
+            }
+        }
+    }
 }
 
 /**

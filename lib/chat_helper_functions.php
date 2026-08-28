@@ -4178,7 +4178,8 @@ function stobeBuildRecentContextMessages(
     array $eventHistory,
     int $currentGamets = 0,
     int $maxMessages = 64,
-    string $assistantPerspectiveNpc = ''
+    string $assistantPerspectiveNpc = '',
+    bool $includeGamets = false
 ): array {
     $messages = [];
     $messageTypes = [];
@@ -4191,10 +4192,10 @@ function stobeBuildRecentContextMessages(
 
     $rows = array_reverse($eventHistory);
     foreach ($rows as $row) {
+        $rowGamets = max(0, intval($row['gamets'] ?? 0));
         $location = trim(strval($row['location'] ?? ''));
         if ($location !== '' && strcasecmp($location, $lastLocation) !== 0) {
             $line = 'LOCATION CHANGE to ' . $location;
-            $rowGamets = max(0, intval($row['gamets'] ?? 0));
             if ($safeCurrentGamets > 0 && $rowGamets > 0) {
                 $hoursAgo = round(max(0.0, ($safeCurrentGamets - $rowGamets) * 0.0000024), 0);
                 $line .= ', timeline mark: ' . strval($hoursAgo) . ' hours ago';
@@ -4203,6 +4204,9 @@ function stobeBuildRecentContextMessages(
                 'role' => 'user',
                 'content' => $line,
             ];
+            if ($includeGamets) {
+                $messages[count($messages) - 1]['_stobe_gamets'] = $rowGamets;
+            }
             $messageTypes[] = 'location';
             $messageKeys[] = stobeBuildRecentContextDedupeKey('location', $line);
             $messageDialogueMeta[] = [];
@@ -4238,6 +4242,9 @@ function stobeBuildRecentContextMessages(
         $dialogueMeta = stobeBuildRecentContextDialogueMeta($historyType, $historyData);
         $transferTradeMeta = stobeParseRecentContextTransferTradeMeta($historyType, $historyData);
         $messages[] = stobeBuildRecentContextMessagePayload($historyData, $dialogueMeta, $assistantPerspectiveNpc);
+        if ($includeGamets) {
+            $messages[count($messages) - 1]['_stobe_gamets'] = $rowGamets;
+        }
 
         $singletonTypeKey = stobeRecentContextSingletonTypeKey($historyType);
         if ($singletonTypeKey !== '' && array_key_exists($singletonTypeKey, $singletonTypeIndexes)) {
@@ -4263,6 +4270,7 @@ function stobeBuildRecentContextMessages(
         $priorIndex = $lastIndex - 1;
 
         if ($priorIndex >= 0) {
+            $priorGamets = intval($messages[$priorIndex]['_stobe_gamets'] ?? 0);
             $previousKey = strval($messageKeys[$priorIndex] ?? '');
             if ($previousKey !== '' && $previousKey === $dedupeKey) {
                 array_pop($messages);
@@ -4298,6 +4306,9 @@ function stobeBuildRecentContextMessages(
                         $mergedDialogueMeta,
                         $assistantPerspectiveNpc
                     );
+                    if ($includeGamets) {
+                        $messages[$priorIndex]['_stobe_gamets'] = min($priorGamets, $rowGamets);
+                    }
                     $messageTypes[$priorIndex] = $mergedType !== '' ? $mergedType : $historyType;
                     $messageKeys[$priorIndex] = stobeBuildRecentContextDedupeKey(
                         $messageTypes[$priorIndex],
@@ -4325,6 +4336,9 @@ function stobeBuildRecentContextMessages(
                         'role' => 'user',
                         'content' => " (...\n" . $mergedTransferLine . "\n...)",
                     ];
+                    if ($includeGamets) {
+                        $messages[$priorIndex]['_stobe_gamets'] = min($priorGamets, $rowGamets);
+                    }
                     $messageTypes[$priorIndex] = 'trade';
                     $messageKeys[$priorIndex] = stobeBuildRecentContextDedupeKey('trade', $mergedTransferLine);
                     $messageDialogueMeta[$priorIndex] = stobeBuildRecentContextDialogueMeta('trade', $mergedTransferLine);
@@ -7553,6 +7567,89 @@ function stobeFactionRelationStateTableAvailable(): bool {
 
     $available = is_array($row) && trim(strval($row['rel'] ?? '')) !== '';
     return boolval($available);
+}
+
+// Read the selected NPC faction's synced standings without copying them into its profile.
+function stobeGetNpcFactionStandings(array $npcData): array {
+    $identity = getNpcFactionIdentityFromProfile($npcData);
+    $name = trim(strval($identity['name'] ?? ''));
+    $factionId = trim(strval($identity['id'] ?? ''));
+    $result = ['faction_name' => $name, 'status' => 'unknown_faction', 'relations' => [], 'truncated' => false];
+    if ($name === '' && $factionId === '') {
+        return $result;
+    }
+    $result['faction_name'] = $name !== '' ? $name : $factionId;
+    $result['status'] = 'unavailable';
+    if (!stobeFactionRelationStateTableAvailable()) {
+        return $result;
+    }
+
+    // Prefer stable identity; a known but unmatched ID must not borrow a namesake's standings.
+    if ($factionId !== '') {
+        $where = 'LOWER(source_string_id) = LOWER($1)';
+        $params = [$factionId];
+        if (ctype_digit($factionId) && intval($factionId) > 0) {
+            $where .= ' OR source_numeric_id = $2';
+            $params[] = intval($factionId);
+        }
+    } else {
+        $where = 'LOWER(source_name) = LOWER($1)';
+        $params = [$name];
+    }
+
+    try {
+        $queryResult = $GLOBALS['db']->exec(
+            "SELECT * FROM (
+                SELECT DISTINCT ON (target_key) * FROM (
+                    SELECT source_name, source_string_id, target_name, target_string_id, target_numeric_id,
+                           relation, alliance, war, coexists, game_ts, updated_at, id,
+                           CASE WHEN target_string_id <> '' THEN 'sid:' || LOWER(target_string_id)
+                                WHEN target_numeric_id > 0 THEN 'id:' || target_numeric_id::text
+                                ELSE 'name:' || LOWER(target_name) END AS target_key
+                    FROM faction_relation_state WHERE " . $where . "
+                ) matches
+                ORDER BY target_key, game_ts DESC, updated_at DESC, id DESC
+            ) latest ORDER BY LOWER(target_name), target_key LIMIT 202",
+            $params
+        );
+        if ($queryResult === false) {
+            stobeLogWarn('NPC faction standings query failed');
+            return $result;
+        }
+        $rows = pg_fetch_all($queryResult) ?: [];
+        foreach ($rows as $row) {
+            $targetIdentity = [
+                'name' => trim(strval($row['target_name'] ?? '')),
+                'id' => trim(strval($row['target_string_id'] ?? '')),
+            ];
+            $sourceIdentity = ['name' => strval($row['source_name'] ?? $name), 'id' => strval($row['source_string_id'] ?? $factionId)];
+            if (stobeFactionIdentityMatches($sourceIdentity, $targetIdentity)) {
+                continue;
+            }
+            $result['faction_name'] = stobeResolvePlayerFactionPromptDisplayName($sourceIdentity['name'], $sourceIdentity);
+            $targetName = stobeResolvePlayerFactionPromptDisplayName($targetIdentity['name'], $targetIdentity);
+            if ($targetName === '') {
+                $targetName = $targetIdentity['id'] !== '' ? $targetIdentity['id'] : 'Unknown faction';
+            }
+            $value = $row['relation'] ?? null;
+            $result['relations'][] = [
+                'name' => $targetName,
+                'relation' => is_numeric($value) && is_finite(floatval($value)) ? floatval($value) : null,
+                'alliance' => coerceBoolean($row['alliance'] ?? false),
+                'war' => coerceBoolean($row['war'] ?? false),
+                'coexists' => coerceBoolean($row['coexists'] ?? false),
+            ];
+        }
+        usort($result['relations'], static fn(array $left, array $right): int => strcasecmp($left['name'], $right['name']));
+        $result['truncated'] = count($result['relations']) > 200;
+        $result['relations'] = array_slice($result['relations'], 0, 200);
+        $result['status'] = count($result['relations']) > 0 ? 'ok' : 'empty';
+    } catch (Throwable $exception) {
+        stobeLogException($exception, 'Failed to read NPC faction standings');
+        $result['relations'] = [];
+        $result['status'] = 'unavailable';
+    }
+    return $result;
 }
 
 function stobeFactionIdentityMatches(array $leftIdentity, array $rightIdentity): bool {

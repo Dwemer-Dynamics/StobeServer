@@ -52,17 +52,17 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 }
 
 $tabs = [
-    ['id' => 'npcs', 'group' => 'characters', 'icon' => '&#x2B50;', 'label' => 'Stobe NPCs', 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'settings', 'group' => 'characters', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'profiles', 'group' => 'characters', 'icon' => '&#x1F4C2;', 'label' => 'Profiles', 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'npcs', 'group' => 'characters', 'icon' => '&#x2B50;', 'label' => 'Stobe NPCs', 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'narrator', 'group' => 'characters', 'icon' => '&#x1F5E3;&#xFE0F;', 'label' => 'Narrator', 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'bio', 'group' => 'characters', 'icon' => '&#x1FAAA;', 'label' => 'NPC Biographies', 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'llm', 'group' => 'ai-voice', 'icon' => '&#x1F9E0;', 'label' => 'LLM', 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'tts', 'group' => 'ai-voice', 'icon' => '&#x1F4E2;', 'label' => 'TTS', 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'stt', 'group' => 'ai-voice', 'icon' => '&#x1F3A4;', 'label' => 'STT', 'page' => 'stt_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'voice', 'group' => 'ai-voice', 'icon' => '&#x1F399;&#xFE0F;', 'label' => 'TTS Studio / Voices', 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'keys', 'group' => 'ai-voice', 'icon' => '&#x1F511;', 'label' => 'API Keys', 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'settings', 'group' => 'world-behavior', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'rename_names', 'group' => 'world-behavior', 'icon' => '&#x1F3F7;&#xFE0F;', 'label' => 'Rename Names', 'page' => 'rename_names.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'bio', 'group' => 'world-behavior', 'icon' => '&#x1FAAA;', 'label' => 'NPC Biographies', 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'world', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'desc', 'group' => 'world-behavior', 'icon' => '&#x1F4DC;', 'label' => 'Descriptions', 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'actions', 'group' => 'world-behavior', 'icon' => '&#x2694;&#xFE0F;', 'label' => 'Action Editor', 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
@@ -70,7 +70,7 @@ $tabs = [
 ];
 
 $tabGroups = [
-    'characters' => 'Characters',
+    'characters' => 'Settings',
     'ai-voice' => 'AI & Voice',
     'world-behavior' => 'World & Behavior',
 ];

@@ -589,7 +589,10 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
             $autosaveId = intval($autoSnapshot['id'] ?? 0);
         }
 
-        @pg_query($adminConn, 'BEGIN');
+        if (!pg_query($adminConn, 'BEGIN')) {
+            return ['success' => false, 'error' => 'begin_restore_failed'];
+        }
+        $runtimeViews = pts_capture_public_views($adminConn);
 
         if (!pts_recreate_public_schema($adminConn)) {
             @pg_query($adminConn, 'ROLLBACK');
@@ -602,6 +605,8 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
             return ['success' => false, 'error' => 'clone_to_public_failed: ' . strval($clone['error'] ?? '')];
         }
 
+        pts_restore_public_views($adminConn, $runtimeViews);
+
         @pg_query($adminConn, 'UPDATE stobe_meta.playthrough_profiles SET is_active = FALSE');
         $mark = @pg_query_params(
             $adminConn,
@@ -613,7 +618,9 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
             return ['success' => false, 'error' => 'mark_active_failed'];
         }
 
-        @pg_query($adminConn, 'COMMIT');
+        if (!pg_query($adminConn, 'COMMIT')) {
+            throw new RuntimeException('Could not commit playthrough restore');
+        }
 
         stobeLogInfo('PLAYTHROUGH: Switched active snapshot to profile', [
             'profile_id' => $profileId,
