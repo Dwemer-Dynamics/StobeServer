@@ -860,6 +860,11 @@ if ($tentativeStreamListener === '') {
 if ($tentativeStreamListener === '') {
     $tentativeStreamListener = $playerName;
 }
+$suppressInitiatorTts = stobeShouldSuppressRechatInitiatorTts(
+    $respondingNpc,
+    $resolvedInitiatorName,
+    getSettingBool('PLAYER_DIALOGUE_AUDIO_ENABLED', true)
+);
 
 $streamResult = stobeStreamDialogueViaLlm(
     $respondingNpc,
@@ -874,6 +879,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'stream_event_type' => 'rechat',
         'stream_listener' => $tentativeStreamListener,
         'stream_gamets' => $gamets,
+        'suppress_tts' => $suppressInitiatorTts,
         'response_format' => stobeBuildStructuredDialogueResponseFormat(
             $respondingNpc,
             $npcData,
@@ -1007,6 +1013,7 @@ if ($alreadyStreamed) {
         $responseActions,
         'rechat',
         $replyTarget,
-        intval($gamets)
+        intval($gamets),
+        ['suppress_tts' => $suppressInitiatorTts]
     );
 }
