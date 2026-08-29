@@ -4548,6 +4548,25 @@ function stobeIsStrictRechatResponseEnabled(): bool
     return getSettingBool('ENFORCE_STRICT_RECHAT_RESPONSE', false);
 }
 
+// Keep the selected squadmate silent when rechat gives them another turn.
+function stobeShouldSuppressRechatInitiatorTts(
+    string $respondingNpc,
+    string $initiatorName,
+    bool $playerDialogueAudioEnabled
+): bool {
+    if ($playerDialogueAudioEnabled) {
+        return false;
+    }
+
+    $normalizedResponder = normalizeParticipantNameToken($respondingNpc);
+    $normalizedInitiator = normalizeParticipantNameToken($initiatorName);
+    if ($normalizedResponder === '' || $normalizedInitiator === '') {
+        return false;
+    }
+
+    return strcasecmp($normalizedResponder, $normalizedInitiator) === 0;
+}
+
 function stobeBuildRechatResponderCandidates(
     string $rechatMode,
     string $speakerName,
@@ -12438,7 +12457,8 @@ function stobeStreamDialogueResponse(
     array $actions = [],
     string $eventType = 'chat',
     string $listener = '',
-    int $gamets = 0
+    int $gamets = 0,
+    array $options = []
 ): void {
     $mode = stobeGetInlineNarrationMode();
     $applies = stobeInlineNarrationApplies($actor, $eventType);
@@ -12454,7 +12474,7 @@ function stobeStreamDialogueResponse(
 
     if (!$applies || empty($parts['has_narration'])) {
         $clean = stobeStripParentheticalDialogueText($message);
-        streamResponse($actor, 'ScriptQueue', $clean, $actorData, [], $eventType, $listener, $gamets);
+        streamResponse($actor, 'ScriptQueue', $clean, $actorData, [], $eventType, $listener, $gamets, $options);
         return;
     }
 
@@ -12490,13 +12510,18 @@ function stobeStreamDialogueResponse(
             );
         }
         if ($dialogue !== '') {
-            streamResponse($actor, 'ScriptQueue', $dialogue, $actorData, [], $eventType, $listener, $gamets);
+            streamResponse($actor, 'ScriptQueue', $dialogue, $actorData, [], $eventType, $listener, $gamets, $options);
         }
         return;
     }
 
     $displayText = trim(implode(' ', $narrationDisplay) . ' ' . $dialogue);
     if ($mode === 'text_only') {
+        $textOnlyOptions = array_merge($options, [
+            'tts_text' => $dialogue,
+            'suppress_tts' => boolval($options['suppress_tts'] ?? false) || $dialogue === '',
+            'single_segment' => true,
+        ]);
         streamResponse(
             $actor,
             'ScriptQueue',
@@ -12506,11 +12531,7 @@ function stobeStreamDialogueResponse(
             $eventType,
             $listener,
             $gamets,
-            [
-                'tts_text' => $dialogue,
-                'suppress_tts' => $dialogue === '',
-                'single_segment' => true,
-            ]
+            $textOnlyOptions
         );
         return;
     }
@@ -12519,6 +12540,10 @@ function stobeStreamDialogueResponse(
         static fn($value): string => trim(strval($value), '* '),
         $narrations
     )) . ' ' . $dialogue);
+    $npcSpeechOptions = array_merge($options, [
+        'tts_text' => $npcSpeech,
+        'single_segment' => true,
+    ]);
     streamResponse(
         $actor,
         'ScriptQueue',
@@ -12528,7 +12553,7 @@ function stobeStreamDialogueResponse(
         $eventType,
         $listener,
         $gamets,
-        ['tts_text' => $npcSpeech, 'single_segment' => true]
+        $npcSpeechOptions
     );
 }
 
@@ -12580,6 +12605,11 @@ function stobeStreamDialogueViaLlm(
     }
     $streamListener = normalizeParticipantNameToken(strval($meta['stream_listener'] ?? ''));
     $streamGamets = max(0, intval($meta['stream_gamets'] ?? 0));
+    $streamOptions = [];
+    if (boolval($meta['suppress_tts'] ?? false)) {
+        $streamOptions['suppress_tts'] = true;
+    }
+    unset($streamMeta['suppress_tts']);
     if ($streamListener === '') {
         $streamListener = trim(strval($meta['stream_listener'] ?? ''));
     }
@@ -12644,7 +12674,8 @@ function stobeStreamDialogueViaLlm(
             $actorData,
             $streamEventType,
             $streamListener,
-            $streamGamets
+            $streamGamets,
+            $streamOptions
         ): void {
             if ($deltaText !== '') {
                 $messageStreamBuffer .= $deltaText;
@@ -12671,7 +12702,7 @@ function stobeStreamDialogueViaLlm(
                     if ($sentenceChunk === '') {
                         continue;
                     }
-                    streamResponse($actor, 'ScriptQueue', $sentenceChunk, $actorData, [], $streamEventType, $streamListener, $streamGamets);
+                    streamResponse($actor, 'ScriptQueue', $sentenceChunk, $actorData, [], $streamEventType, $streamListener, $streamGamets, $streamOptions);
                     $chunksEmitted++;
                 }
             }
@@ -12696,7 +12727,7 @@ function stobeStreamDialogueViaLlm(
                 if ($remainingChunk === '') {
                     continue;
                 }
-                streamResponse($actor, 'ScriptQueue', $remainingChunk, $actorData, [], $streamEventType, $streamListener, $streamGamets);
+                streamResponse($actor, 'ScriptQueue', $remainingChunk, $actorData, [], $streamEventType, $streamListener, $streamGamets, $streamOptions);
                 $chunksEmitted++;
             }
         };
@@ -12817,7 +12848,7 @@ function stobeStreamDialogueViaLlm(
     $streamed = stobeCallLLMStream(
         $messages,
         $llmConfig,
-        function (string $delta) use (&$rawResponse, &$streamBuffer, &$chunksEmitted, $actor, $actorData, $eventType, $actionConfig, &$streamActionSeen, &$rawActions, $streamEventType, $streamListener, $streamGamets): void {
+        function (string $delta) use (&$rawResponse, &$streamBuffer, &$chunksEmitted, $actor, $actorData, $eventType, $actionConfig, &$streamActionSeen, &$rawActions, $streamEventType, $streamListener, $streamGamets, $streamOptions): void {
             if ($delta === '') {
                 return;
             }
@@ -12856,13 +12887,13 @@ function stobeStreamDialogueViaLlm(
                         $seenKey = strtolower($normalizedChunkAction);
                         if (!isset($streamActionSeen[$seenKey])) {
                             $streamActionSeen[$seenKey] = true;
-                            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedChunkAction], $streamEventType, $streamListener, $streamGamets);
+                            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedChunkAction], $streamEventType, $streamListener, $streamGamets, $streamOptions);
                         }
                     }
                     $chunkText = sanitizeForKenshi(trim(strval($chunkExtraction['text'] ?? $chunk)));
                     $chunkText = stobeStripParentheticalDialogueText($chunkText);
                     if ($chunkText !== '') {
-                        streamResponse($actor, 'ScriptQueue', $chunkText, $actorData, [], $streamEventType, $streamListener, $streamGamets);
+                        streamResponse($actor, 'ScriptQueue', $chunkText, $actorData, [], $streamEventType, $streamListener, $streamGamets, $streamOptions);
                         $chunksEmitted++;
                     }
                 }
@@ -12924,13 +12955,13 @@ function stobeStreamDialogueViaLlm(
             $seenKey = strtolower($normalizedRemainingAction);
             if (!isset($streamActionSeen[$seenKey])) {
                 $streamActionSeen[$seenKey] = true;
-                streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedRemainingAction], $streamEventType, $streamListener, $streamGamets);
+                streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedRemainingAction], $streamEventType, $streamListener, $streamGamets, $streamOptions);
             }
         }
         $remainingText = sanitizeForKenshi(trim(strval($remainingExtraction['text'] ?? '')));
         $remainingText = stobeStripParentheticalDialogueText($remainingText);
         if ($remainingText !== '') {
-            streamResponse($actor, 'ScriptQueue', $remainingText, $actorData, [], $streamEventType, $streamListener, $streamGamets);
+            streamResponse($actor, 'ScriptQueue', $remainingText, $actorData, [], $streamEventType, $streamListener, $streamGamets, $streamOptions);
             $chunksEmitted++;
         }
     }
@@ -12944,7 +12975,7 @@ function stobeStreamDialogueViaLlm(
         $seenKey = strtolower($normalizedAction);
         if (!isset($streamActionSeen[$seenKey])) {
             $streamActionSeen[$seenKey] = true;
-            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedAction], $streamEventType, $streamListener, $streamGamets);
+            streamResponse($actor, 'ScriptQueue', '', $actorData, [$normalizedAction], $streamEventType, $streamListener, $streamGamets, $streamOptions);
         }
     }
 
