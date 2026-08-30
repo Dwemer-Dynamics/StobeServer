@@ -152,6 +152,73 @@ $multipleReplies = stobeParseStructuredDialogueResponse(json_encode([$arrayReply
 contractAssertSame('', $multipleReplies['message'], 'Multiple replies must not silently select a speaker');
 contractAssertSame('', $multipleReplies['action_tag'], 'Multiple replies must not execute an arbitrary action');
 
+$stopAttackTag = stobeBuildActionTagFromStructuredPayload(
+    'StopAttack',
+    'RANGROO',
+    '',
+    'It was a misunderstanding. Stand down.',
+    'RANGROO'
+);
+contractAssertSame(
+    'STOP_ATTACK@RANGROO',
+    $stopAttackTag,
+    'StopAttack should target the opposing faction through a named nearby actor'
+);
+contractAssertSame(
+    '',
+    stobeBuildActionTagFromStructuredPayload('StopAttack', '', '', 'Stand down.', 'RANGROO'),
+    'StopAttack should be rejected when no opposing target is provided'
+);
+contractAssertSame(
+    'STOP_ATTACK@RANGROO',
+    normalizeActionTagToken('STOPATTACK@RANGROO', ['allowlist' => ['STOP_ATTACK']]),
+    'StopAttack aliases should normalize to the targeted STOP_ATTACK command'
+);
+contractAssertSame(
+    '',
+    normalizeActionTagToken(
+        'STOP_ATTACK@RANGROO',
+        ['allowlist' => ['STOP_ATTACK'], 'disallow_stop_attack' => true]
+    ),
+    'StopAttack should be rejected outside combat'
+);
+$nonCombatContract = stobeResolveStructuredDialogueContractParts(
+    'Gate Guard',
+    ['metadata' => ['is_in_combat' => false, 'is_attacking' => false]],
+    false,
+    'chat'
+);
+contractAssertTrue(
+    !in_array('StopAttack', $nonCombatContract['actions'] ?? [], true),
+    'StopAttack should not be exposed to an NPC outside combat'
+);
+$combatContract = stobeResolveStructuredDialogueContractParts(
+    'Gate Guard',
+    ['metadata' => ['is_in_combat' => true]],
+    false,
+    'chat'
+);
+contractAssertTrue(
+    in_array('StopAttack', $combatContract['actions'] ?? [], true),
+    'StopAttack should be exposed to an NPC in combat'
+);
+$combatPrompt = stobeBuildOutputContractUserPrompt(
+    'Gate Guard',
+    false,
+    false,
+    false,
+    'chat',
+    '',
+    ['metadata' => ['is_in_combat' => true]]
+);
+contractAssertTrue(
+    str_contains($combatPrompt, 'action MUST be StopAttack'),
+    'Combat dialogue prompt should forbid claiming a ceasefire without StopAttack'
+);
+contractAssertTrue(
+    str_contains($combatPrompt, 'If this NPC refuses the ceasefire'),
+    'Combat dialogue prompt should preserve the NPC choice to refuse a ceasefire'
+);
 $partialStructured = stobeParseStructuredDialogueResponse(
     '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler',
     'chat'

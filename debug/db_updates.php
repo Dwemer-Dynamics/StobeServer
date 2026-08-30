@@ -2800,6 +2800,19 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('core_action', 202608300001, static function () use ($db): void {
+            $description = 'End hostilities between your entire faction and the target actor\'s faction after agreeing to a ceasefire or recognizing a misunderstanding. Target a nearby actor from the opposing faction. Stops current combat on both sides and makes the two factions no longer enemies. Does not clear crimes or bounties.';
+            $db->exec(
+                "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                 VALUES ('STOP_ATTACK', 'StopAttack', $1, TRUE, NOW())
+                 ON CONFLICT (command) DO UPDATE SET
+                    action_name = EXCLUDED.action_name,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [$description]
+            );
+        });
+
         $applyPatch('relationship_preservation_settings', 202608280703, static function () use ($db): void {
             $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
                 ('NEVER_CLEAR_RELATIONSHIP_DATA','false','Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',NOW())
