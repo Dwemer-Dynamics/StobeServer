@@ -15,6 +15,7 @@ require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATO
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'player_mood_prompts.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'tts_pronunciation.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -2813,6 +2814,12 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      VALUES ($1, $2, $3) ON CONFLICT (prompt_key) DO NOTHING",
                     ['player_mood_' . $mood . '_prompt', $prompt, 'Player tone for ' . $mood . ' dialogue. Not spoken aloud.']
                 );
+            }
+        });
+
+        $applyPatch('core_tts_pronunciation', 202608300001, static function (): void {
+            if (!stobeEnsureTtsPronunciationDictionary()) {
+                throw new RuntimeException('Could not create the TTS pronunciation dictionary.');
             }
         });
 
