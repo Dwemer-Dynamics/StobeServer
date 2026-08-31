@@ -3438,6 +3438,7 @@ ON CONFLICT (name, type) DO NOTHING;
 
 INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.', TRUE),
+('STOP_ATTACK', 'StopAttack', 'End hostilities between your entire faction and the target actor''s faction after agreeing to a ceasefire or recognizing a misunderstanding. Target a nearby actor from the opposing faction. Stops current combat on both sides and makes the two factions no longer enemies. Does not clear crimes or bounties.', TRUE),
 ('SUICIDE', 'Suicide', 'Die immediately on the spot.', TRUE),
 ('FOLLOW', 'Follow', 'Move to and follow the specified target actor.', TRUE),
 ('STOP_FOLLOW', 'StopFollow', 'Stop following and return to normal behavior.', TRUE),

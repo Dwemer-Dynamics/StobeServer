@@ -13,6 +13,7 @@ function stobeAutonomyPlannerActionContracts(): array
         'SUICIDE' => [],
         'FOLLOW' => $target,
         'STOP_FOLLOW' => [],
+        'STOP_ATTACK' => $target,
         'JOIN_PARTY' => [],
         'LEAVE' => [],
         'IDLE' => ['duration_ms'],
@@ -213,6 +214,10 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
         if ($command === 'FLEE' && count($hostiles) === 0) {
             continue;
         }
+        if ($command === 'STOP_ATTACK' &&
+            (!stobeAutonomyBool($status['in_combat'] ?? false) || count($hostiles) === 0)) {
+            continue;
+        }
         if ($command === 'FIRST_AID' &&
             (!$hasMedicalSupplies || ($selfAidNeed <= 0.05 && count($patientActors) === 0))) {
             continue;
@@ -317,6 +322,11 @@ function stobeAutonomyPlannerBuildAllowlist(array $session, array $snapshot, arr
                 if ($selfName !== '') {
                     $validTargets[] = $selfName;
                 }
+            } elseif ($command === 'STOP_ATTACK') {
+                $validTargets = array_values(array_map(
+                    static fn(array $actor): string => strval($actor['name'] ?? ''),
+                    $hostiles
+                ));
             } elseif ($command === 'ATTACK') {
                 $validTargets = array_values(array_map(
                     static fn(array $actor): string => strval($actor['name'] ?? ''),

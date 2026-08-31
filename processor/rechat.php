@@ -831,7 +831,8 @@ $messages[] = [
         false,
         npcIsInPlayerFaction($npcData),
         'rechat',
-        $strictRechatListener
+        $strictRechatListener,
+        $npcData
     ),
 ];
 
