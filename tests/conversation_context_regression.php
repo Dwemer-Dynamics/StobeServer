@@ -43,6 +43,49 @@ function contextFlowMessageContents(array $messages): array
     return $contents;
 }
 
+$historyAliases = stobeResolveNpcEventHistoryAliases(
+    ['original_name' => 'Dust Boss Hotlongs'],
+    'Fenth [Dust Boss Hotlongs]'
+);
+contextFlowAssertSame(
+    'Dust Boss Hotlongs',
+    strval($historyAliases[0] ?? ''),
+    'renamed NPC history should retain the original game name as an event alias'
+);
+
+$recentCombatHistory = [
+    [
+        'type' => 'major_damage',
+        'data' => 'Fenth [Dust Boss Hotlongs]: took a major hit from Herika using Short Cleaver',
+        'gamets' => 1950,
+        'localts' => time(),
+    ],
+    [
+        'type' => 'major_damage',
+        'data' => 'Fenth [Dust Boss Hotlongs]: took an old hit',
+        'gamets' => 500,
+        'localts' => time() - 600,
+    ],
+];
+$recentCombatEvents = stobeBuildRecentCombatPromptEvents($recentCombatHistory, 2000);
+contextFlowAssertSameInt(1, count($recentCombatEvents), 'combat prompt should retain only recent severe events');
+contextFlowAssert(
+    str_contains(strval($recentCombatEvents[0]['line'] ?? ''), 'Herika using Short Cleaver'),
+    'combat prompt event should preserve attacker and weapon details'
+);
+$combatNpcData = stobeAttachRecentCombatPromptEvents(
+    ['name' => 'Fenth [Dust Boss Hotlongs]', 'metadata' => []],
+    $recentCombatHistory,
+    2000
+);
+$combatPriorityBlock = stobeBuildCombatPriorityPromptBlock($combatNpcData, 'Fenth [Dust Boss Hotlongs]');
+contextFlowAssert(
+    str_contains($combatPriorityBlock, '<combat_priority>')
+        && str_contains($combatPriorityBlock, '<recent_event type="major_damage">')
+        && str_contains($combatPriorityBlock, 'never detached or analytical'),
+    'recent major damage should activate an urgent combat prompt with concrete evidence'
+);
+
 $eventHistory = [
     [
         'type' => 'chat',
