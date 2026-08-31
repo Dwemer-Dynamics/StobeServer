@@ -54,11 +54,11 @@ try {
 
     preg_match_all('/data-setting-id="([^"]+)"/', $html, $settingMatches);
     $settingIds = $settingMatches[1];
-    $compactIndex = array_search('compact_chat_history_enabled', $settingIds, true);
-    settingsOrderAssert($compactIndex !== false, 'Compact Chat should render');
+    $promptHeadIndex = array_search('prompt_head_markdown_enabled', $settingIds, true);
+    settingsOrderAssert($promptHeadIndex !== false, 'Compact Prompt Info should render');
     settingsOrderAssert(
-        ($settingIds[$compactIndex + 1] ?? '') === 'prompt_head_markdown_enabled',
-        'Compact Prompt Info should render directly below Compact Chat'
+        ($settingIds[$promptHeadIndex + 1] ?? '') === 'compact_chat_history_enabled',
+        'Compact Chat should render directly below Compact Prompt Info'
     );
     settingsOrderAssert(
         str_contains($html, 'Use Markdown headings instead of XML tags for all prompt sections.'),

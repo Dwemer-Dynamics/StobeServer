@@ -374,7 +374,7 @@ contextFlowAssert(
     'compact chat history should remove ambient user-message wrappers'
 );
 
-$priorCompactSetting = getSetting('COMPACT_CHAT_HISTORY_ENABLED', 'false');
+$priorCompactSetting = getSetting('COMPACT_CHAT_HISTORY_ENABLED', 'true');
 try {
     setSetting('COMPACT_CHAT_HISTORY_ENABLED', 'true');
     contextFlowAssert(
@@ -429,6 +429,10 @@ try {
     contextFlowAssert(getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true), 'Compact Prompt Info defaults on when missing');
     setSetting('PROMPT_HEAD_MARKDOWN_ENABLED', 'false');
     contextFlowAssert(!getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true), 'Explicitly disabled Compact Prompt Info stays off');
+    $GLOBALS['db']->exec("DELETE FROM general_settings WHERE id = 'COMPACT_CHAT_HISTORY_ENABLED'");
+    contextFlowAssert(stobeShouldCompactChatHistory('Doran'), 'Compact Chat History defaults on when missing');
+    setSetting('COMPACT_CHAT_HISTORY_ENABLED', 'false');
+    contextFlowAssert(!stobeShouldCompactChatHistory('Doran'), 'Explicitly disabled Compact Chat History stays off');
 } finally {
     $GLOBALS['db']->exec('ROLLBACK');
 }
