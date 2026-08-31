@@ -27,7 +27,7 @@ function stobeShouldCompactChatHistory(string $actorName): bool
         return false;
     }
     return function_exists('getSettingBool')
-        && getSettingBool('COMPACT_CHAT_HISTORY_ENABLED', false);
+        && getSettingBool('COMPACT_CHAT_HISTORY_ENABLED', true);
 }
 
 function stobeCompactHistoryDialogue(string $content, string $fallbackSpeaker = ''): string

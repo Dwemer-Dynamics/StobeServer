@@ -7,8 +7,8 @@ function stobePresetCatalog(string $scope): array
         throw new InvalidArgumentException('Unknown preset scope.');
     }
     return [
-        'COMPACT_CHAT_HISTORY_ENABLED' => ['type' => 'bool', 'default' => false],
         'PROMPT_HEAD_MARKDOWN_ENABLED' => ['type' => 'bool', 'default' => true],
+        'COMPACT_CHAT_HISTORY_ENABLED' => ['type' => 'bool', 'default' => true],
         'RECHAT_MODE' => ['type' => 'enum', 'default' => 'random', 'choices' => ['tight', 'conversational', 'group', 'random']],
         'SPEAKER_RECHAT' => ['type' => 'bool', 'default' => false],
         'ENFORCE_STRICT_RECHAT_RESPONSE' => ['type' => 'bool', 'default' => false],

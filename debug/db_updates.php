@@ -2477,7 +2477,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 "INSERT INTO general_settings (id, value, description, updated_at)
                  VALUES (
                     'COMPACT_CHAT_HISTORY_ENABLED',
-                    'false',
+                    'true',
                     'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
                     NOW()
                  )

@@ -60,14 +60,14 @@ try {
                 'description' => 'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.',
             ],
             [
-                'id' => 'COMPACT_CHAT_HISTORY_ENABLED',
-                'value' => 'false',
-                'description' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
-            ],
-            [
                 'id' => 'PROMPT_HEAD_MARKDOWN_ENABLED',
                 'value' => 'true',
                 'description' => 'Use Markdown headings instead of XML tags for all prompt sections.',
+            ],
+            [
+                'id' => 'COMPACT_CHAT_HISTORY_ENABLED',
+                'value' => 'true',
+                'description' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
             ],
             [
                 'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
@@ -629,9 +629,9 @@ foreach ($grouped as $groupName => $rows) {
             'GENERAL_INSTRUCTIONS' => 3,
             'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
+            'PROMPT_HEAD_MARKDOWN_ENABLED' => 18,
             'COMPACT_CHAT_HISTORY_ENABLED' => 19,
             'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 19,
-            'PROMPT_HEAD_MARKDOWN_ENABLED' => 20,
             'RECHAT_MODE' => 21,
             'ENFORCE_STRICT_RECHAT_RESPONSE' => 22,
             'SPEAKER_RECHAT' => 23,
