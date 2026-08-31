@@ -74,6 +74,50 @@ function rechatFlowRunProcessor(string $eventType, string $eventData, array $que
     return trim(strval($output));
 }
 
+rechatFlowAssert(
+    stobeShouldSuppressRechatInitiatorTts('Ruka', 'ruka', false),
+    'disabled player dialogue audio should suppress a case-insensitive initiator rechat match'
+);
+rechatFlowAssert(
+    !stobeShouldSuppressRechatInitiatorTts('Ruka', 'Ruka', true),
+    'enabled player dialogue audio should keep initiator rechat TTS eligible'
+);
+rechatFlowAssert(
+    !stobeShouldSuppressRechatInitiatorTts('Beep', 'Ruka', false),
+    'disabled player dialogue audio should not suppress a different NPC responder'
+);
+rechatFlowAssert(
+    !stobeShouldSuppressRechatInitiatorTts('Ruka', '', false),
+    'missing initiator identity should not suppress NPC response audio'
+);
+
+$oldGet = $_GET;
+$_GET = array_merge($_GET, ['tts_enabled' => '1']);
+ob_start();
+ob_start();
+stobeStreamDialogueResponse(
+    'UT_RECHAT_AUDIO_INITIATOR',
+    false,
+    'Silent rechat line.',
+    [],
+    'rechat',
+    'UT_RECHAT_AUDIO_LISTENER',
+    0,
+    ['suppress_tts' => true]
+);
+$innerOutput = ob_get_clean();
+$outerOutput = ob_get_clean();
+$_GET = $oldGet;
+$silentRechatOutput = strval($outerOutput . $innerOutput);
+rechatFlowAssert(
+    strpos($silentRechatOutput, 'UT_RECHAT_AUDIO_INITIATOR|ScriptQueue|Silent rechat line.') !== false,
+    'suppressed initiator rechat should preserve streamed dialogue text'
+);
+rechatFlowAssert(
+    strpos($silentRechatOutput, '|tts=') === false && strpos($silentRechatOutput, '|ttsd=') === false,
+    'suppressed initiator rechat should omit TTS metadata'
+);
+
 $participants = extractParticipantIdentities([
     'people' => '["Beep|101","Agnu","Beep","Agnu|202"]',
     'profile' => 'Ruka',

@@ -953,7 +953,9 @@ $messages[] = [
             $dialogueMode === 'cheat',
             false,
             npcIsInPlayerFaction($npcData),
-            'chat'
+            'chat',
+            '',
+            $npcData
         ),
 ];
 

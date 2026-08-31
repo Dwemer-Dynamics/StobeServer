@@ -420,7 +420,7 @@ $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
         ? 'Output contract: return only a direct conversational reply to the current speaker. Do not include scene narration, atmospheric description, third-person prose, or action tags.'
-        : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat', false, null, 'chat'),
+        : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat', false, null, 'chat', '', $npcData),
 ];
 
 $llmConfig = getLlmConfigForNpc($npcData);

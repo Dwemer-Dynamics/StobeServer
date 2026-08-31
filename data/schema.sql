@@ -1356,6 +1356,28 @@ CREATE TABLE IF NOT EXISTS core_tts_connector (
     config JSONB DEFAULT '{}'
 );
 
+-- Empty-by-default TTS pronunciation dictionary managed from TTS Studio.
+CREATE TABLE IF NOT EXISTS core_tts_pronunciation (
+    id BIGSERIAL PRIMARY KEY,
+    source_text VARCHAR(120) NOT NULL,
+    spoken_text VARCHAR(240) NOT NULL,
+    npc_names VARCHAR(512) NOT NULL DEFAULT '',
+    races VARCHAR(512) NOT NULL DEFAULT '',
+    oghma_tags VARCHAR(512) NOT NULL DEFAULT '',
+    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT core_tts_pronunciation_source_not_blank CHECK (BTRIM(source_text) <> ''),
+    CONSTRAINT core_tts_pronunciation_spoken_not_blank CHECK (BTRIM(spoken_text) <> '')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS core_tts_pronunciation_unique_entry
+    ON core_tts_pronunciation (
+        LOWER(source_text),
+        MD5(LOWER(npc_names) || E'\x1f' || LOWER(races) || E'\x1f' || LOWER(oghma_tags)),
+        is_builtin
+    );
+
 DO $$
 BEGIN
     IF EXISTS (
@@ -3416,6 +3438,7 @@ ON CONFLICT (name, type) DO NOTHING;
 
 INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.', TRUE),
+('STOP_ATTACK', 'StopAttack', 'End hostilities between your entire faction and the target actor''s faction after agreeing to a ceasefire or recognizing a misunderstanding. Target a nearby actor from the opposing faction. Stops current combat on both sides and makes the two factions no longer enemies. Does not clear crimes or bounties.', TRUE),
 ('SUICIDE', 'Suicide', 'Die immediately on the spot.', TRUE),
 ('FOLLOW', 'Follow', 'Move to and follow the specified target actor.', TRUE),
 ('STOP_FOLLOW', 'StopFollow', 'Stop following and return to normal behavior.', TRUE),

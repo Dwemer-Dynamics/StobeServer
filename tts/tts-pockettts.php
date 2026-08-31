@@ -1,5 +1,7 @@
 <?php
 
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'tts_pronunciation.php';
+
 function stobePocketTtsDefaultSettings(): array {
     return [
         'stream_chunk_size' => 20,
@@ -1660,6 +1662,17 @@ if (!function_exists('stobeSynthesizeViaPocketTts')) {
 }
 
 function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcData = false): array {
+    $pronunciationRows = stobeTtsPronunciationRows();
+    if (!empty($pronunciationRows)) {
+        $pronunciationScope = stobeTtsPronunciationSpeakerScope($npcName, $npcData);
+        $line = stobeApplyTtsPronunciationDictionary(
+            $line,
+            $pronunciationRows,
+            $pronunciationScope['knowledge_tags'],
+            $pronunciationScope['npc_name'],
+            $pronunciationScope['race']
+        );
+    }
     $speechText = stobeNormalizeSpeechTextForTts($line);
     if ($speechText === '') {
         return [];

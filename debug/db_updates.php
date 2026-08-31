@@ -15,6 +15,7 @@ require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATO
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'player_mood_prompts.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'tts_pronunciation.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -2800,6 +2801,19 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             );
         });
 
+        $applyPatch('core_action', 202608300001, static function () use ($db): void {
+            $description = 'End hostilities between your entire faction and the target actor\'s faction after agreeing to a ceasefire or recognizing a misunderstanding. Target a nearby actor from the opposing faction. Stops current combat on both sides and makes the two factions no longer enemies. Does not clear crimes or bounties.';
+            $db->exec(
+                "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                 VALUES ('STOP_ATTACK', 'StopAttack', $1, TRUE, NOW())
+                 ON CONFLICT (command) DO UPDATE SET
+                    action_name = EXCLUDED.action_name,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [$description]
+            );
+        });
+
         $applyPatch('relationship_preservation_settings', 202608280703, static function () use ($db): void {
             $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
                 ('NEVER_CLEAR_RELATIONSHIP_DATA','false','Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',NOW())
@@ -2813,6 +2827,12 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      VALUES ($1, $2, $3) ON CONFLICT (prompt_key) DO NOTHING",
                     ['player_mood_' . $mood . '_prompt', $prompt, 'Player tone for ' . $mood . ' dialogue. Not spoken aloud.']
                 );
+            }
+        });
+
+        $applyPatch('core_tts_pronunciation', 202608300001, static function (): void {
+            if (!stobeEnsureTtsPronunciationDictionary()) {
+                throw new RuntimeException('Could not create the TTS pronunciation dictionary.');
             }
         });
 
