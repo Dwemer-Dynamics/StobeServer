@@ -714,8 +714,12 @@ $contextHistory = getNpcProfileIntegerSetting(
     10,
     250
 );
-$eventHistory = DataEventLog($contextHistory, $respondingNpc, $campaign);
+$historyAliases = stobeResolveNpcEventHistoryAliases($npcData, $respondingNpc);
+$eventHistory = DataEventLog($contextHistory, $respondingNpc, $campaign, $historyAliases);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $respondingNpc, 'rechat');
+if (is_array($npcData)) {
+    $npcData = stobeAttachRecentCombatPromptEvents($npcData, $eventHistory, intval($gamets));
+}
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);

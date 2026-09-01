@@ -620,10 +620,16 @@ $contextHistory = getNpcProfileIntegerSetting(
     10,
     250
 );
+$historyAliases = $narratorMode
+    ? []
+    : stobeResolveNpcEventHistoryAliases($npcData, $targetNpc);
 $eventHistory = $narratorMode
     ? DataEventLog($contextHistory)
-    : DataEventLog($contextHistory, $targetNpc);
+    : DataEventLog($contextHistory, $targetNpc, '', $historyAliases);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $dialogueMode, $speaker);
+if (!$narratorMode && is_array($npcData)) {
+    $npcData = stobeAttachRecentCombatPromptEvents($npcData, $eventHistory, intval($gamets));
+}
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
