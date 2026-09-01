@@ -9455,6 +9455,34 @@ function stobeBuildNpcAppearanceText(array $npcData): string {
     return 'No detailed appearance record. Known race: ' . $race . '.';
 }
 
+// Gives an NPC the stored appearance of the character currently speaking to them.
+function stobeBuildConversationSpeakerAppearanceBlock(string $speakerName, string $listenerName): string {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'appearance')) {
+        return '';
+    }
+
+    $speaker = normalizeParticipantNameToken($speakerName);
+    $listener = normalizeParticipantNameToken($listenerName);
+    if ($speaker === '' || ($listener !== '' && strcasecmp($speaker, $listener) === 0)) {
+        return '';
+    }
+
+    $speakerData = getNpcData($speaker);
+    if (!is_array($speakerData) || count($speakerData) === 0) {
+        return '';
+    }
+
+    $appearance = trim(strval($speakerData['appearance'] ?? ''));
+    if ($appearance === '') {
+        return '';
+    }
+
+    return "<speaker_context>\n"
+        . '  <name>' . stobePromptXmlEscape($speaker) . "</name>\n"
+        . '  <appearance>' . stobePromptXmlEscape(truncatePromptValue($appearance, 280)) . "</appearance>\n"
+        . '</speaker_context>';
+}
+
 function stobeBuildNpcConditionText(array $npcData, array $metadata): string {
     if (!stobePromptContextOptionEnabled('enabled_state_subsections', 'current_condition')) {
         return '';
@@ -11522,6 +11550,11 @@ function buildSystemPrompt(
         $prompt .= "\n\n" . $playerBaseBlock;
     }
     $prompt = stobePromptCleanupBaseTemplateBlocks($prompt);
+
+    $speakerAppearanceBlock = stobeBuildConversationSpeakerAppearanceBlock($playerName, $npcName);
+    if ($speakerAppearanceBlock !== '') {
+        $prompt .= "\n\n" . $speakerAppearanceBlock;
+    }
 
     if ($inPlayerFaction && stobePromptContextOptionEnabled('enabled_sections', 'player_faction_funds')) {
         $prompt .= "\n\n<player_faction_funds>\n"

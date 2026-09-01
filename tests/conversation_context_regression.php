@@ -436,6 +436,39 @@ try {
 } finally {
     $GLOBALS['db']->exec('ROLLBACK');
 }
+
+$GLOBALS['db']->exec('BEGIN');
+try {
+    setSetting('PROMPT_CONTEXT_OPTIONS', json_encode(stobeGetDefaultPromptContextOptions()));
+    $speakerAppearanceName = 'UT_PROMPT_SPEAKER_APPEARANCE';
+    storeNpcProfile($speakerAppearanceName, [
+        'appearance' => 'A weathered face, a shaved head, and a bright crimson scarf.',
+    ]);
+    $speakerAppearancePrompt = buildSystemPrompt(
+        'UT_PROMPT_APPEARANCE_LISTENER',
+        [
+            'race' => 'Greenlander',
+            'faction' => 'Drifters',
+            'metadata' => [],
+            'extended_data' => [],
+        ],
+        $speakerAppearanceName,
+        'Look at me.',
+        false,
+        'chat'
+    );
+    contextFlowAssert(
+        strpos($speakerAppearancePrompt, '<name>' . $speakerAppearanceName . '</name>') !== false,
+        'speaker appearance context should identify the NPC currently talking to the listener'
+    );
+    contextFlowAssert(
+        strpos($speakerAppearancePrompt, 'A weathered face, a shaved head, and a bright crimson scarf.') !== false,
+        'speaker appearance context should include the speaking NPC profile appearance'
+    );
+} finally {
+    $GLOBALS['db']->exec('ROLLBACK');
+}
+
 $xmlPrompt = "<world>\r\n<location>The Hub</location>\r\n</world>\r\n"
     . "<character>\n<skills>\n<group name=\"Combat\">\n"
     . "<skill name=\"Melee Attack\">Expert</skill>\n</group>\n</skills>\n"
