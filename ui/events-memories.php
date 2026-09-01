@@ -125,7 +125,7 @@ if (!isset($tabMap[$activeTab])) {
 <main class="container-fluid">
     <div class="tab-container">
         <div class="config-navigation roleplay-hub-nav" aria-label="Roleplay sections">
-            <div class="tab-groups">
+            <div class="tab-groups two-groups">
                 <?php foreach ($tabGroups as $groupId => $groupLabel): ?>
                     <section class="tab-group <?= ($tabMap[$activeTab]['group'] ?? '') === $groupId ? 'active' : '' ?>" data-category="<?= h($groupId) ?>">
                         <div class="tab-group-label"><?= h($groupLabel) ?></div>
