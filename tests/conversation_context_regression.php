@@ -485,8 +485,9 @@ try {
     setSetting('PROMPT_CONTEXT_OPTIONS', json_encode(stobeGetDefaultPromptContextOptions()));
     $nearbyAppearanceOne = 'UT_NEARBY_APPEARANCE_ONE';
     $nearbyAppearanceTwo = 'UT_NEARBY_APPEARANCE_TWO';
+    $longNearbyAppearance = 'A weathered face, a shaved head, and a bright crimson scarf, with a long burn scar crossing the left cheek, pale green eyes, a chipped front tooth, and dust-stained leather wraps around both forearms.';
     storeNpcProfile($nearbyAppearanceOne, [
-        'appearance' => 'A weathered face, a shaved head, and a bright crimson scarf.',
+        'appearance' => $longNearbyAppearance,
     ]);
     storeNpcProfile($nearbyAppearanceTwo, [
         'appearance' => 'Tall and broad-shouldered with a distinctive silver eyepatch.',
@@ -514,8 +515,8 @@ try {
         ],
     ], 'UT_NEARBY_APPEARANCE_LISTENER');
     contextFlowAssert(
-        strpos($nearbyAppearancePrompt, 'Appearance: A weathered face, a shaved head, and a bright crimson scarf.') !== false,
-        'nearby actor context should include the first NPC profile appearance'
+        strpos($nearbyAppearancePrompt, 'Appearance: ' . $longNearbyAppearance) !== false,
+        'nearby actor context should include the complete long NPC profile appearance'
     );
     contextFlowAssert(
         strpos($nearbyAppearancePrompt, 'Appearance: Tall and broad-shouldered with a distinctive silver eyepatch.') !== false,
