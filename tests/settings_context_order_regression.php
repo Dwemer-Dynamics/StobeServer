@@ -37,7 +37,7 @@ try {
     );
 
     $sectionMatches = [];
-    preg_match_all('/<section class="content-section" data-group="([^"]+)">/', $html, $sectionMatches);
+    preg_match_all('/<section\b[^>]*\bdata-group="([^"]+)"/s', $html, $sectionMatches);
     $orderedGroups = $sectionMatches[1] ?? [];
 
     settingsOrderAssert(count($orderedGroups) > 0, 'settings page should render grouped content sections');
@@ -50,6 +50,19 @@ try {
     settingsOrderAssert(
         intval($contextIndex) === (intval($worldIndex) + 1),
         'context selections should render immediately after world knowledge'
+    );
+
+    preg_match_all('/data-setting-id="([^"]+)"/', $html, $settingMatches);
+    $settingIds = $settingMatches[1];
+    $promptHeadIndex = array_search('prompt_head_markdown_enabled', $settingIds, true);
+    settingsOrderAssert($promptHeadIndex !== false, 'Compact Prompt Info should render');
+    settingsOrderAssert(
+        ($settingIds[$promptHeadIndex + 1] ?? '') === 'compact_chat_history_enabled',
+        'Compact Chat should render directly below Compact Prompt Info'
+    );
+    settingsOrderAssert(
+        str_contains($html, 'Use Markdown headings instead of XML tags for all prompt sections.'),
+        'Compact Prompt Info should use the agreed help text'
     );
 
     echo "PASS: settings context order regression\n";

@@ -14,6 +14,8 @@ if ($useLegacy) {
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'rename_name_pool_functions.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'player_mood_prompts.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'tts_pronunciation.php';
 
 if (!function_exists('stobeRunDatabaseUpdates')) {
     function stobeRunDatabaseUpdates(): void
@@ -291,6 +293,7 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
             'CONTEXT_HISTORY_DIARY' => 100,
             'CONTEXT_HISTORY_DYNAMIC_PROFILE' => 50,
             'BORED_EVENT_CHANCE' => 50,
+            'RELATIONSHIP_UPDATE_CHANCE' => 50,
         ], JSON_UNESCAPED_UNICODE);
         if (!is_string($defaultMetadata) || trim($defaultMetadata) === '') {
             $defaultMetadata = '{}';
@@ -430,6 +433,14 @@ if (!function_exists('stobeRunDatabaseUpdates')) {
                 ON CONFLICT (id) DO UPDATE
                 SET description = EXCLUDED.description,
                     updated_at = NOW()");
+        });
+        $applyPatch('short_term_memory_settings', 202608280501, static function () use ($db): void {
+            $db->exec(
+                "INSERT INTO general_settings (id, value, description, updated_at)
+                 VALUES ('SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'true',
+                    'Include short-term memory for enabled NPCs when Compact Chat History is on. Plain chat is unaffected.', NOW())
+                 ON CONFLICT (id) DO NOTHING"
+            );
         });
         $applyPatch('core_narrator', 202603250301, static function () use ($db): void {
             $db->exec("CREATE TABLE IF NOT EXISTS core_narrator (
@@ -2466,7 +2477,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                 "INSERT INTO general_settings (id, value, description, updated_at)
                  VALUES (
                     'COMPACT_CHAT_HISTORY_ENABLED',
-                    'false',
+                    'true',
                     'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
                     NOW()
                  )
@@ -2538,11 +2549,11 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                     model, max_tokens, temperature, is_default, config
                  ) VALUES
                  (
-                    'GLM 4.7', 'openrouterjson',
+                    'DeepSeek V4 Flash', 'openrouterjson',
                     (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
-                    '', 'https://openrouter.ai/api/v1/chat/completions', 'z-ai/glm-4.7',
-                    750, 1.0, FALSE,
-                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
+                    '', 'https://openrouter.ai/api/v1/chat/completions', 'deepseek/deepseek-v4-flash',
+                    750, 0.6, FALSE,
+                    '{\"service\":\"openrouter\",\"provider\":\"openrouter\",\"reasoning_model\":true,\"enforce_json\":true,\"json_schema\":true,\"prefill_json\":false}'::jsonb
                  ),
                  (
                     'GLM 5.2', 'openrouterjson',
@@ -2565,6 +2576,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  SET llm_primary_id = COALESCE(
                         llm_primary_id,
                         response_connector,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
                         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
                         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
                      ),
@@ -2589,6 +2601,7 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                      response_connector = COALESCE(
                         response_connector,
                         llm_primary_id,
+                        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
                         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
                      ),
                      updated_at = NOW()
@@ -2786,6 +2799,54 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  )
                  ON CONFLICT (id) DO NOTHING"
             );
+        });
+
+        $applyPatch('core_action', 202608300001, static function () use ($db): void {
+            $description = 'End hostilities between your entire faction and the target actor\'s faction after agreeing to a ceasefire or recognizing a misunderstanding. Target a nearby actor from the opposing faction. Stops current combat on both sides and makes the two factions no longer enemies. Does not clear crimes or bounties.';
+            $db->exec(
+                "INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                 VALUES ('STOP_ATTACK', 'StopAttack', $1, TRUE, NOW())
+                 ON CONFLICT (command) DO UPDATE SET
+                    action_name = EXCLUDED.action_name,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()",
+                [$description]
+            );
+        });
+
+        $applyPatch('relationship_preservation_settings', 202608280703, static function () use ($db): void {
+            $db->exec("INSERT INTO general_settings (id, value, description, updated_at) VALUES
+                ('NEVER_CLEAR_RELATIONSHIP_DATA','false','Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',NOW())
+                ON CONFLICT (id) DO NOTHING");
+        });
+
+        $applyPatch('prompts', 202608260001, static function () use ($db): void {
+            foreach (stobePlayerMoodPromptCatalog() as $mood => $prompt) {
+                $db->exec(
+                    "INSERT INTO prompts (prompt_key, default_prompt, description)
+                     VALUES ($1, $2, $3) ON CONFLICT (prompt_key) DO NOTHING",
+                    ['player_mood_' . $mood . '_prompt', $prompt, 'Player tone for ' . $mood . ' dialogue. Not spoken aloud.']
+                );
+            }
+        });
+
+        $applyPatch('core_tts_pronunciation', 202608300001, static function (): void {
+            if (!stobeEnsureTtsPronunciationDictionary()) {
+                throw new RuntimeException('Could not create the TTS pronunciation dictionary.');
+            }
+        });
+
+        $applyPatch('core_tts_pronunciation', 202609010001, static function (): void {
+            if (!stobeEnsureTtsPronunciationDictionary() || !stobeUnhyphenateBuiltinTtsPronunciations()) {
+                throw new RuntimeException('Could not enable editable pronunciation defaults.');
+            }
+        });
+
+        $applyPatch('stobe_settings_presets', 202608280701, static function () use ($db): void {
+            $sql = file_get_contents(dirname(__DIR__) . '/data/settings_presets.sql');
+            if ($sql === false || $db->exec($sql) === false) {
+                throw new RuntimeException('Could not create settings preset store.');
+            }
         });
 
         try {

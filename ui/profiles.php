@@ -65,12 +65,14 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         'AUTO_DIARY_MIN_EVENTS',
         'AUTO_DIARY_HOUR',
         'BORED_EVENT_CHANCE',
+        'RELATIONSHIP_UPDATE_CHANCE',
         'DIARY_COOLDOWN',
         'CONTEXT_HISTORY',
         'RECHAT_RESPONSES',
         'RECHAT_PROBABILITY',
         'CONTEXT_HISTORY_DIARY',
         'CONTEXT_HISTORY_DYNAMIC_PROFILE',
+        'SHORT_TERM_MEMORY_MAX',
     ];
     foreach ($intKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
@@ -84,6 +86,10 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         $value = intval($raw);
         if ($key === 'AUTO_DIARY_HOUR') {
             $value = max(0, min(23, $value));
+        } elseif ($key === 'RELATIONSHIP_UPDATE_CHANCE') {
+            $value = max(0, min(100, $value));
+        } elseif ($key === 'SHORT_TERM_MEMORY_MAX') {
+            $value = max(1, min(50, $value));
         }
         $base[$key] = $value;
     }
@@ -91,7 +97,7 @@ function apply_visual_metadata_merge(array $base, array $metaVis): array {
         unset($base['BORED_EVENT']);
     }
 
-    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
+    $boolKeys = ['DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'SHORT_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED'];
     foreach ($boolKeys as $key) {
         if (!array_key_exists($key, $metaVis)) {
             continue;
@@ -191,8 +197,9 @@ $db = $GLOBALS['db'];
 $isEmbed = is_embed();
 $webRoot = web_root();
 $profileSyncableMetadataKeys = [
-    'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
-    'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE',
+    'DYNAMIC_PROFILE_ENABLED', 'MIDDLE_TERM_MEMORY_ENABLED', 'SHORT_TERM_MEMORY_ENABLED', 'SHORT_TERM_MEMORY_MAX',
+    'AUTO_DIARY_ENABLED', 'LATEST_DIARY_CONTEXT_ENABLED',
+    'DIARY_PROMPT', 'RECHAT_RESPONSES', 'RECHAT_PROBABILITY', 'BORED_EVENT_CHANCE', 'RELATIONSHIP_UPDATE_CHANCE',
     'CONTEXT_HISTORY', 'CONTEXT_HISTORY_DIARY', 'CONTEXT_HISTORY_DYNAMIC_PROFILE',
     'DIARY_DAYS', 'AUTO_DIARY_MIN_EVENTS', 'AUTO_DIARY_HOUR', 'DIARY_COOLDOWN',
     'DYNAMIC_PROFILE_FIELDS',
@@ -634,6 +641,8 @@ $metaBoredEventChance = array_key_exists('BORED_EVENT_CHANCE', $metaData)
             ? intval($metaData['BORED_EVENT'])
             : intval($metaDefaults['BORED_EVENT_CHANCE'] ?? ($metaDefaults['BORED_EVENT'] ?? 50))
     );
+$shortTermMemoryMax = parseIntLike($metaData['SHORT_TERM_MEMORY_MAX'] ?? ($metaDefaults['SHORT_TERM_MEMORY_MAX'] ?? 10), 10);
+$shortTermMemoryMax = max(1, min(50, $shortTermMemoryMax));
 $dynamicFieldOptions = ['personality', 'occupation', 'speechstyle', 'goals'];
 $dynamicFieldCurrent = $metaData['DYNAMIC_PROFILE_FIELDS'] ?? ($metaDefaults['DYNAMIC_PROFILE_FIELDS'] ?? []);
 $dynamicFieldCurrent = is_array($dynamicFieldCurrent) ? array_values(array_map('strval', $dynamicFieldCurrent)) : [];
@@ -643,16 +652,13 @@ ob_start();
 include(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'tmpl' . DIRECTORY_SEPARATOR . 'head.html');
 ?>
 <style>
-main { padding: 30px 5px 5px; }
+main { padding: 10px 5px 5px; }
 .layout { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; position: relative; isolation: isolate; }
 @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
 .cardx { border: 1px solid #3a3a3a; border-radius: 10px; background: linear-gradient(180deg, rgba(42,42,42,.95), rgba(34,34,34,.98)); padding: 12px; }
 .profiles-list-panel { position: relative; z-index: 2; }
 .profile-editor-panel { min-width: 0; }
-.page-header { background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98)); padding: 20px; border-radius: 10px; border: 1px solid #3a3a3a; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03); text-align: center; margin-bottom: 30px; }
-.page-header h1.api-title { margin-bottom: 8px; }
-.page-subtitle { color: #bbb; font-size: 1.1em; margin: 0; }
-h1.api-title { margin: 0 0 20px 0; font-family: 'MagicCards', serif; word-spacing: 8px; font-size: 2.2em; color: #e6b76c; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); text-align: center; }
+/* Page header is the shared compact inline row (.stobe-page-head in main.css). */
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .toolbar form { margin: 0; }
 .toolbar .btn-save,
@@ -716,6 +722,9 @@ textarea.meta { min-height: 220px; font-family: Consolas, 'Courier New', monospa
 .toggle-card .toggle-title { color:#dfe6f4; font-weight:700; font-size:12px; }
 .toggle-card .toggle-desc { color:#9fb1c9; font-size:12px; margin-top:4px; line-height:1.35; }
 .toggle-card-title-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.toggle-card-num-row { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }
+.toggle-card-num-row label { color:#dfe6f4; font-size:12px; font-weight:700; margin:0; }
+.toggle-card-num-row input[type='number'] { width:72px; min-width:72px; text-align:right; }
 body .profile-setting-sync-btn {
     display:inline-flex;
     flex:0 0 auto;
@@ -826,9 +835,9 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
 @media (max-width: 840px) { .profile-test-summary { grid-template-columns:repeat(2, minmax(0, 1fr)); } .profile-test-slots { grid-template-columns:1fr; } .profile-test-slot { grid-template-columns:1fr; } }
 </style>
 <main class="container-fluid">
-    <div class="page-header">
-        <h1 class="api-title">Profiles</h1>
-        <p class="page-subtitle">Configure profile prompts, connectors, and metadata for AI dialogue generation</p>
+    <div class="page-header stobe-page-head">
+        <h1 class="api-title stobe-page-head-title">Profiles</h1>
+        <p class="page-subtitle stobe-page-head-note">Configure profile prompts, connectors, and metadata for AI dialogue generation</p>
     </div>
 
     <?php if ($notice !== ''): ?><div class="notice ok"><?= h($notice) ?></div><?php endif; ?>
@@ -950,6 +959,19 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                                                 <span class="toggle-title">Middle Term Memory</span>
                                             </label><?= profile_setting_sync_button('MIDDLE_TERM_MEMORY_ENABLED', 'Middle Term Memory') ?></div>
                                             <div class="toggle-desc">Allows middle-term memory to be injected into roleplay context.</div>
+                                        </div>
+                                        <div class="toggle-card">
+                                            <div class="toggle-card-title-row"><label title="Adds completed memory summaries to roleplay context for NPCs on this profile.">
+                                                <input type="hidden" name="meta_vis[SHORT_TERM_MEMORY_ENABLED]" value="">
+                                                <input type="checkbox" name="meta_vis[SHORT_TERM_MEMORY_ENABLED]" value="1" <?= $metaBool('SHORT_TERM_MEMORY_ENABLED') ? 'checked' : '' ?>>
+                                                <span class="toggle-title">Short Term Memory</span>
+                                            </label><?= profile_setting_sync_button('SHORT_TERM_MEMORY_ENABLED', 'Short Term Memory') ?></div>
+                                            <div class="toggle-desc">Injects already completed memory summaries into roleplay context.</div>
+                                            <div class="toggle-card-num-row">
+                                                <label for="meta_short_term_memory_max" title="Most completed summaries injected per prompt (1-50).">Max summaries</label>
+                                                <input type="number" id="meta_short_term_memory_max" name="meta_vis[SHORT_TERM_MEMORY_MAX]" min="1" max="50" step="1" value="<?= h($shortTermMemoryMax) ?>" title="Most completed summaries injected per prompt (1-50).">
+                                                <?= profile_setting_sync_button('SHORT_TERM_MEMORY_MAX', 'Short Term Memory Max') ?>
+                                            </div>
                                         </div>
                                     </div>
                                 </section>
@@ -1125,6 +1147,16 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                                     <div class="range-pair">
                                         <input type="range" id="meta_bored_event_chance_range" min="0" max="100" step="1" value="<?= h($metaBoredEventChance) ?>">
                                         <input type="number" id="meta_bored_event_chance_num" name="meta_vis[BORED_EVENT_CHANCE]" min="0" max="100" step="1" value="<?= h($metaBoredEventChance) ?>">
+                                    </div>
+                                </div>
+                                <div class="setting-row">
+                                    <div>
+                                        <div class="setting-key"><span>RELATIONSHIP_UPDATE_CHANCE</span><?= profile_setting_sync_button('RELATIONSHIP_UPDATE_CHANCE', 'Relationship Update Chance') ?></div>
+                                        <div class="setting-desc">Chance an eligible turn runs an extra relationship LLM evaluation on the relationship connector (0-100). 0 disables the extra call; inline relationship commands in replies still apply.</div>
+                                    </div>
+                                    <div class="range-pair">
+                                        <input type="range" id="meta_relationship_update_chance_range" min="0" max="100" step="1" value="<?= h($metaInt('RELATIONSHIP_UPDATE_CHANCE')) ?>">
+                                        <input type="number" id="meta_relationship_update_chance_num" name="meta_vis[RELATIONSHIP_UPDATE_CHANCE]" min="0" max="100" step="1" value="<?= h($metaInt('RELATIONSHIP_UPDATE_CHANCE')) ?>">
                                     </div>
                                 </div>
                             </div>
@@ -1658,6 +1690,7 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
         ['meta_rechat_responses_range', 'meta_rechat_responses_num', 0, 10],
         ['meta_rechat_probability_range', 'meta_rechat_probability_num', 0, 100],
         ['meta_bored_event_chance_range', 'meta_bored_event_chance_num', 0, 100],
+        ['meta_relationship_update_chance_range', 'meta_relationship_update_chance_num', 0, 100],
         ['meta_context_history_range', 'meta_context_history_num', 0, 300],
         ['meta_context_history_diary_range', 'meta_context_history_diary_num', 0, 300],
         ['meta_context_history_dyn_range', 'meta_context_history_dyn_num', 0, 300],

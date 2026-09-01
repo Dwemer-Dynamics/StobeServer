@@ -17,6 +17,7 @@ try {
     stobeLogException($exception, "Quickstart db update check failed");
 }
 require_once($path . "lib/core/stt_connector.class.php");
+require_once(__DIR__ . DIRECTORY_SEPARATOR . "includes" . DIRECTORY_SEPARATOR . "local_llm_setup.php");
 
 function h(mixed $value): string
 {
@@ -656,7 +657,10 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
     if ($profileId <= 0) {
         return;
     }
-    $standardDefault = stobeQuickstartConnectorIdByName($db, 'GLM 4.7');
+    $standardDefault = stobeQuickstartConnectorIdByName($db, 'DeepSeek V4 Flash');
+    if ($standardDefault <= 0) {
+        $standardDefault = stobeQuickstartConnectorIdByName($db, 'GLM 4.7');
+    }
     if ($standardDefault <= 0) {
         $standardDefault = stobeQuickstartConnectorIdByName($db, 'Gemini 2.5 Flash');
     }
@@ -695,13 +699,23 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
     $dynamicDefault = $standardDefault;
     $relationshipDefault = $standardDefault;
 
+    // Saving voice/onboarding settings must not undo an explicitly applied local dialogue model.
+    $localDialogue = $db->fetchOne(
+        "SELECT CASE WHEN primary_llm.config ? 'quickstart_local_provider' THEN p.llm_primary_id END AS primary_id,
+                CASE WHEN response_llm.config ? 'quickstart_local_provider' THEN p.response_connector END AS response_id
+         FROM core_profiles p
+         LEFT JOIN core_llm_connector primary_llm ON primary_llm.id = p.llm_primary_id
+         LEFT JOIN core_llm_connector response_llm ON response_llm.id = p.response_connector
+         WHERE p.id = $1",
+        [$profileId]
+    );
     $db->exec(
         "UPDATE core_profiles
-          SET llm_primary_id = $1,
+          SET llm_primary_id = COALESCE($12::INT, $1),
               llm_secondary_id = $2,
               llm_tertiary_id = $3,
               llm_quaternary_id = $4,
-              response_connector = $1,
+              response_connector = COALESCE($13::INT, $1),
              diary_connector = $5,
              autochat_connector = $6,
              middleterm_connector = $7,
@@ -721,7 +735,9 @@ function stobeQuickstartRestoreDefaultLlm(sql $db, int $profileId): void
             $backgroundlifeDefault,
             $dynamicDefault,
             $relationshipDefault,
-            $profileId
+            $profileId,
+            $localDialogue['primary_id'] ?? null,
+            $localDialogue['response_id'] ?? null
         ]
     );
 }
@@ -753,6 +769,10 @@ function stobeQuickstartProfileUsesPlayer2(array $profileRow, int $player2Connec
 }
 
 $db = $GLOBALS["db"];
+
+// Handles action=local_llm_probe|local_llm_test|local_llm_apply and issues a
+// fresh CSRF token; must run before any markup is emitted.
+$localLlmSetupAvailable = stobeLocalLlmSetupBoot($db);
 
 if (isset($_GET['tts_probe']) && strval($_GET['tts_probe']) === '1') {
     header('Content-Type: application/json; charset=utf-8');
@@ -965,6 +985,9 @@ $deepgramApiKey = strval($apiKeyMap['deepgram'] ?? '');
 $quickstartSttConnector = new STTConnector();
 $quickstartSttRow = $quickstartSttConnector->getActive() ?: [];
 $quickstartSttDriver = $quickstartSttConnector->normalizeDriverValue($quickstartSttRow['driver'] ?? 'parakeet');
+$localLlmProviders = stobeLocalLlmSetupProviders();
+$localLlmCsrfToken = stobeLocalLlmSetupCsrfToken();
+$localLlmReady = $localLlmSetupAvailable && $localLlmCsrfToken !== '';
 $player2ConnectorId = stobeQuickstartEnsurePlayer2ConnectorId($db);
 $usePlayer2AllLlm = count($targetProfileRows) > 0;
 foreach ($targetProfileRows as $profileRow) {
@@ -1034,7 +1057,7 @@ foreach ($targetProfileRows as $profileRow) {
         }
         .qs-inline { display: flex; align-items: center; gap: 8px; }
         .qs-inline input { flex: 1 1 auto; min-width: 0; }
-        .qs-inline button {
+        .qs-inline button, .qs-btn-row button {
             border: 1px solid rgba(138, 155, 182, 0.35);
             background: #2f3b52;
             color: #fff;
@@ -1088,6 +1111,13 @@ foreach ($targetProfileRows as $profileRow) {
             width: 18px;
             height: 18px;
         }
+        .qs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+        .qs-btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .qs-btn-row button:disabled { opacity: 0.55; cursor: not-allowed; }
+        .qs-btn-row button.qs-apply { border-color: #2b7d3d; background: #176529; font-weight: 600; }
+        .qs-hint { color: #9fb1c9; font-size: 0.85rem; margin: 6px 0 0 0; }
+        .qs-callout code, .qs-hint code { color: #f0c98a; background: rgba(0, 0, 0, 0.28); padding: 1px 4px; border-radius: 4px; }
+        .qs-callout summary { cursor: pointer; }
     </style>
 </head>
 <body>
@@ -1246,6 +1276,82 @@ foreach ($targetProfileRows as $profileRow) {
             <button id="qs-save-btn" type="button" class="btn-stobe-save" onclick="saveQuickstart()">Save and Continue</button>
         </div>
     </form>
+
+    <?php if ($localLlmSetupAvailable): ?>
+    <form id="local-llm-form" class="qs-section" autocomplete="off" onsubmit="return false;">
+        <h2>Local LLM (Optional)</h2>
+        <p class="qs-help">Use a local model for dialogue. Probe, test, then apply it separately from Quickstart.</p>
+
+        <div class="qs-callout">
+            The address must be reachable from StobeServer. In WSL, <code>127.0.0.1</code> points to WSL. For a Windows model server, use its private LAN IP.
+            <details><summary>Connection help</summary>Enable network access in your model server and allow its port through Windows Firewall. Use <code>0.0.0.0</code> as the listening address, not as the endpoint. This setup accepts localhost and private LAN IPs only.</details>
+        </div>
+
+        <div class="qs-grid">
+            <div class="qs-field">
+                <label for="local_llm_provider">Provider</label>
+                <select id="local_llm_provider" name="provider">
+                    <?php $localLlmFirstProvider = true; ?>
+                    <?php foreach ($localLlmProviders as $providerKey => $providerInfo): ?>
+                        <option value="<?= h($providerKey) ?>" data-url="<?= h($providerInfo['base_url']) ?>"
+                            data-model-hint="<?= h($providerInfo['model_hint']) ?>"
+                            data-bind-hint="<?= h($providerInfo['bind_hint']) ?>"<?= $localLlmFirstProvider ? ' selected' : '' ?>><?= h($providerInfo['label']) ?></option>
+                        <?php $localLlmFirstProvider = false; ?>
+                    <?php endforeach; ?>
+                </select>
+                <p class="qs-hint" id="local_llm_bind_hint"></p>
+            </div>
+            <div class="qs-field">
+                <label for="local_llm_base_url">Endpoint URL</label>
+                <input id="local_llm_base_url" type="text" name="base_url" value="" placeholder="http://127.0.0.1:1234/v1/chat/completions" spellcheck="false">
+                <p class="qs-hint">The full OpenAI-compatible chat completions path, including the port.</p>
+            </div>
+        </div>
+
+        <div class="qs-grid">
+            <div class="qs-field">
+                <label for="local_llm_model">Model</label>
+                <input id="local_llm_model" type="text" name="model" list="local_llm_model_options" value="" placeholder="Probe for models, or type a model id" spellcheck="false" autocomplete="off">
+                <datalist id="local_llm_model_options"></datalist>
+                <p class="qs-hint" id="local_llm_model_hint"></p>
+            </div>
+            <div class="qs-field">
+                <label for="local_llm_api_key">API Key (optional)</label>
+                <div class="qs-inline">
+                    <input id="local_llm_api_key" type="password" name="api_key" value="" placeholder="Leave blank if not required" autocomplete="new-password">
+                    <button type="button" onclick="toggleApiInput(this)">Show</button>
+                </div>
+                <p class="qs-hint">Most local runtimes ignore this. It is never displayed back on this page.</p>
+            </div>
+        </div>
+
+        <div class="qs-field">
+            <label for="local_llm_target">Apply to</label>
+            <select id="local_llm_target" name="target">
+                <option value="both">Default Profile and Player Faction</option>
+                <option value="default">Default Profile only</option>
+                <option value="player_faction">Player Faction only</option>
+            </select>
+        </div>
+
+        <p class="qs-note">Only selected profiles' primary dialogue changes. Existing connectors and background tasks stay unchanged. Saving Quickstart keeps local dialogue selected; choose Player2 or change the profile connector to replace it.</p>
+
+        <div class="qs-btn-row">
+            <button type="button" id="local_llm_probe_btn" onclick="localLlmProbe()"<?= $localLlmReady ? '' : ' disabled' ?>>Probe models</button>
+            <button type="button" id="local_llm_test_btn" onclick="localLlmTest()"<?= $localLlmReady ? '' : ' disabled' ?>>Send test message</button>
+            <button type="button" id="local_llm_apply_btn" class="qs-apply" onclick="localLlmApply()" aria-describedby="local_llm_apply_hint" disabled>Apply to dialogue</button>
+        </div>
+        <p class="qs-hint" id="local_llm_apply_hint">Apply unlocks after a successful test with the current provider, endpoint, model, and key.</p>
+
+        <div id="local_llm_status" class="qs-status" role="status" aria-live="polite"></div>
+
+        <?php if (!$localLlmReady): ?>
+            <div class="qs-callout">Local LLM setup is unavailable because no setup token was issued. Reload this page, or configure the connector from Configuration &gt; LLM.</div>
+        <?php endif; ?>
+
+        <input type="hidden" name="csrf_token" id="local_llm_csrf" value="<?= h($localLlmCsrfToken) ?>">
+    </form>
+    <?php endif; ?>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
@@ -1434,6 +1540,249 @@ async function saveQuickstart() {
     }
 }
 
+const LOCAL_LLM_ENABLED = <?= $localLlmSetupAvailable ? 'true' : 'false' ?>;
+const LOCAL_LLM_READY = <?= $localLlmReady ? 'true' : 'false' ?>;
+const LOCAL_LLM_CHECK_IDS = ['local_llm_probe_btn', 'local_llm_test_btn'];
+const LOCAL_LLM_SETTING_IDS = ['local_llm_provider', 'local_llm_base_url', 'local_llm_model', 'local_llm_api_key'];
+let localLlmTestedSettings = '';
+
+function localLlmEl(id) {
+    return document.getElementById(id);
+}
+
+function localLlmValue(id) {
+    const el = localLlmEl(id);
+    return el ? String(el.value || '').trim() : '';
+}
+
+function localLlmSetStatus(text, state) {
+    const status = localLlmEl('local_llm_status');
+    if (!status) return;
+    status.textContent = String(text == null ? '' : text);
+    status.classList.remove('ok', 'err');
+    if (state === 'ok' || state === 'err') status.classList.add(state);
+}
+
+// The backend refuses an apply unless these exact settings just passed a test.
+function localLlmSettingsKey() {
+    return LOCAL_LLM_SETTING_IDS.map(localLlmValue).join('\u0000');
+}
+
+function localLlmApplyAllowed() {
+    return LOCAL_LLM_READY && localLlmTestedSettings !== '' && localLlmTestedSettings === localLlmSettingsKey();
+}
+
+function localLlmRefreshApplyButton() {
+    const button = localLlmEl('local_llm_apply_btn');
+    if (button) button.disabled = !localLlmApplyAllowed();
+}
+
+function localLlmSetBusy(busy) {
+    LOCAL_LLM_CHECK_IDS.forEach(function (id) {
+        const button = localLlmEl(id);
+        if (button) button.disabled = busy ? true : !LOCAL_LLM_READY;
+    });
+    const applyButton = localLlmEl('local_llm_apply_btn');
+    if (applyButton) applyButton.disabled = busy ? true : !localLlmApplyAllowed();
+}
+
+function localLlmSelectedOption(id) {
+    const select = localLlmEl(id);
+    if (!select || select.selectedIndex < 0) return null;
+    return select.options[select.selectedIndex];
+}
+
+function localLlmSyncProviderFields(resetUrl) {
+    const option = localLlmSelectedOption('local_llm_provider');
+    const urlInput = localLlmEl('local_llm_base_url');
+    const modelHint = localLlmEl('local_llm_model_hint');
+    const bindHint = localLlmEl('local_llm_bind_hint');
+    const defaultUrl = option ? String(option.getAttribute('data-url') || '') : '';
+
+    if (urlInput && (resetUrl || String(urlInput.value || '').trim() === '')) {
+        urlInput.value = defaultUrl;
+    }
+    if (urlInput) urlInput.placeholder = defaultUrl;
+    if (modelHint) modelHint.textContent = option ? String(option.getAttribute('data-model-hint') || '') : '';
+    if (bindHint) bindHint.textContent = option ? String(option.getAttribute('data-bind-hint') || '') : '';
+}
+
+function localLlmSetModelOptions(models) {
+    const list = localLlmEl('local_llm_model_options');
+    if (!list) return 0;
+    list.textContent = '';
+    const values = Array.isArray(models) ? models : [];
+    let count = 0;
+    values.forEach(function (model) {
+        const value = String(model == null ? '' : model).trim();
+        if (value === '') return;
+        const option = document.createElement('option');
+        option.value = value;
+        list.appendChild(option);
+        count += 1;
+    });
+    return count;
+}
+
+function localLlmOnProviderChange() {
+    const select = localLlmEl('local_llm_provider');
+    const presets = select ? Array.from(select.options)
+        .map(function (option) { return String(option.getAttribute('data-url') || '').trim(); }) : [];
+    const current = localLlmValue('local_llm_base_url');
+    const isPreset = (current === '' || presets.indexOf(current) !== -1);
+    localLlmSyncProviderFields(isPreset);
+    localLlmSetModelOptions([]);
+    localLlmTestedSettings = '';
+    localLlmRefreshApplyButton();
+    localLlmSetStatus(isPreset ? '' : 'Endpoint URL kept as you entered it. Clear the field to use this provider default.');
+}
+
+function localLlmValidEndpoint() {
+    const url = localLlmValue('local_llm_base_url');
+    if (url === '') {
+        localLlmSetStatus('Enter the endpoint URL first.', 'err');
+        return false;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+        localLlmSetStatus('Use a full http:// or https:// endpoint URL.', 'err');
+        return false;
+    }
+    return true;
+}
+
+async function localLlmRequest(action, extraFields) {
+    const payload = new FormData();
+    payload.append('action', action);
+    payload.append('csrf_token', localLlmValue('local_llm_csrf'));
+    payload.append('provider', localLlmValue('local_llm_provider'));
+    payload.append('base_url', localLlmValue('local_llm_base_url'));
+    payload.append('api_key', localLlmValue('local_llm_api_key'));
+    Object.keys(extraFields || {}).forEach(function (key) {
+        payload.append(key, String(extraFields[key] == null ? '' : extraFields[key]));
+    });
+
+    const response = await fetch(SAVE_URL, {
+        method: 'POST',
+        body: payload,
+        cache: 'no-store',
+        credentials: 'same-origin'
+    });
+    const result = await response.json();
+    return (result && typeof result === 'object') ? result : {};
+}
+
+function localLlmResultMessage(result, fallback) {
+    const message = String((result && result.message) ? result.message : '').trim();
+    return message !== '' ? message : fallback;
+}
+
+async function localLlmProbe() {
+    if (!LOCAL_LLM_READY || !localLlmValidEndpoint()) return;
+    localLlmSetBusy(true);
+    localLlmSetStatus('Probing endpoint for models...');
+    try {
+        const result = await localLlmRequest('local_llm_probe', {});
+        const count = localLlmSetModelOptions(result.models);
+        const message = localLlmResultMessage(result, result.success ? 'Endpoint reachable.' : 'Probe failed.');
+        if (!result.success) {
+            localLlmSetStatus(message, 'err');
+            return;
+        }
+        const modelInput = localLlmEl('local_llm_model');
+        const list = localLlmEl('local_llm_model_options');
+        if (modelInput && String(modelInput.value || '').trim() === '' && list && list.firstElementChild) {
+            modelInput.value = list.firstElementChild.value;
+        }
+        localLlmSetStatus(message + ' ' + count + (count === 1 ? ' model listed.' : ' models listed.'), 'ok');
+    } catch (_error) {
+        localLlmSetStatus('Probe request failed. Check that the server can reach the endpoint.', 'err');
+    } finally {
+        localLlmSetBusy(false);
+    }
+}
+
+async function localLlmTest() {
+    if (!LOCAL_LLM_READY || !localLlmValidEndpoint()) return;
+    if (localLlmValue('local_llm_model') === '') {
+        localLlmSetStatus('Probe for models or type a model id before testing.', 'err');
+        return;
+    }
+    const attempted = localLlmSettingsKey();
+    localLlmTestedSettings = '';
+    localLlmSetBusy(true);
+    localLlmSetStatus('Sending a short test message...');
+    try {
+        const result = await localLlmRequest('local_llm_test', { model: localLlmValue('local_llm_model') });
+        const message = localLlmResultMessage(result, result.success ? 'Test completed.' : 'Test failed.');
+        localLlmSetStatus(message, result.success ? 'ok' : 'err');
+        if (result.success) {
+            localLlmTestedSettings = attempted;
+        }
+    } catch (_error) {
+        localLlmSetStatus('Test request failed. Check that the server can reach the endpoint.', 'err');
+    } finally {
+        localLlmSetBusy(false);
+    }
+}
+
+async function localLlmApply() {
+    if (!localLlmApplyAllowed()) {
+        localLlmSetStatus('Run a successful test with these settings before applying them.', 'err');
+        return;
+    }
+    const targetOption = localLlmSelectedOption('local_llm_target');
+    const targetLabel = targetOption ? String(targetOption.textContent || '').trim() : 'the selected profiles';
+    const confirmed = window.confirm(
+        'Set the primary dialogue connector for ' + targetLabel + '? '
+        + 'Background slots and your existing connectors are left unchanged.'
+    );
+    if (!confirmed) return;
+
+    localLlmSetBusy(true);
+    localLlmSetStatus('Applying local LLM to dialogue...');
+    try {
+        const result = await localLlmRequest('local_llm_apply', {
+            model: localLlmValue('local_llm_model'),
+            target: localLlmValue('local_llm_target')
+        });
+        const message = localLlmResultMessage(result, result.success ? 'Local LLM applied.' : 'Apply failed.');
+        if (!result.success) {
+            localLlmSetStatus(message, 'err');
+            return;
+        }
+        const connectorId = Number(result.connector_id);
+        const suffix = (Number.isFinite(connectorId) && connectorId > 0) ? ' Connector #' + connectorId + '.' : '';
+        localLlmSetStatus(message + suffix, 'ok');
+    } catch (_error) {
+        localLlmSetStatus('Could not confirm the save. Check the selected profiles before trying again.', 'err');
+    } finally {
+        localLlmSetBusy(false);
+    }
+}
+
+function initLocalLlmSetup() {
+    if (!LOCAL_LLM_ENABLED) return;
+    const providerSelect = localLlmEl('local_llm_provider');
+    if (providerSelect) {
+        providerSelect.addEventListener('change', localLlmOnProviderChange);
+    }
+    const form = localLlmEl('local-llm-form');
+    if (form) {
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            localLlmProbe();
+        });
+    }
+    LOCAL_LLM_SETTING_IDS.forEach(function (id) {
+        const field = localLlmEl(id);
+        if (field) {
+            field.addEventListener('input', localLlmRefreshApplyButton);
+        }
+    });
+    localLlmSyncProviderFields(true);
+    localLlmRefreshApplyButton();
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     const sttSelect = document.getElementById('stt_driver');
     const deepgramBlock = document.getElementById('deepgram-api-block');
@@ -1453,6 +1802,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updatePlayer2QuickstartUI();
     updateConditionalApiFields();
     checkMiniMeEndpoint();
+    initLocalLlmSetup();
 });
 </script>
 </body>

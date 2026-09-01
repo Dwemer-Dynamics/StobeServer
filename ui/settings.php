@@ -2,6 +2,8 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+require_once($path . 'lib/settings_presets.php');
+$presetToken = stobePresetToken();
 try {
     require_once($path . "debug/db_updates.php");
 } catch (Throwable $exception) {
@@ -21,6 +23,11 @@ try {
                 'id' => 'RELATIONSHIP_SYSTEM_ENABLED',
                 'value' => 'true',
                 'description' => 'Enable relationship system analysis and updates for NPC interactions.',
+            ],
+            [
+                'id' => 'NEVER_CLEAR_RELATIONSHIP_DATA',
+                'value' => 'false',
+                'description' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',
             ],
             [
                 'id' => 'PLAYER_FACTION_CUSTOM_NAME',
@@ -53,9 +60,14 @@ try {
                 'description' => 'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.',
             ],
             [
+                'id' => 'PROMPT_HEAD_MARKDOWN_ENABLED',
+                'value' => 'true',
+                'description' => 'Use Markdown headings instead of XML tags for all prompt sections.',
+            ],
+            [
                 'id' => 'COMPACT_CHAT_HISTORY_ENABLED',
-                'value' => 'false',
-                'description' => 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.',
+                'value' => 'true',
+                'description' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
             ],
             [
                 'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
@@ -215,6 +227,10 @@ function stobeSettingLooksBoolean(string $value): bool
 function stobeSettingType(string $id, string $value): string
 {
     $idUpper = strtoupper($id);
+    $presetRule = stobePresetCatalog('global')[$idUpper] ?? null;
+    if ($presetRule !== null) {
+        return $presetRule['type'] === 'enum' ? 'select' : $presetRule['type'];
+    }
     if ($idUpper === 'TXTAI_URL') {
         return 'url';
     }
@@ -309,7 +325,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'PROMPT_HEAD_MARKDOWN_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -322,6 +338,7 @@ function stobeInferGroup(string $id): string
         'RELATIONSHIP_SYSTEM',
         'RELATIONSHIP_SYSTEM_ENABLED',
         'RELATION_SYSTEM_ENABLED',
+        'NEVER_CLEAR_RELATIONSHIP_DATA',
         'PLAYER_FACTION_CUSTOM_NAME',
         'PLAYER_FACTION_PROMPT'
     ], true)) {
@@ -347,6 +364,21 @@ function stobeGroupSortWeight(string $group): int
     return $weights[$group] ?? 999;
 }
 
+function stobeSettingHelpText(string $id, string $storedDescription): string
+{
+    // Display-only help copy. Overrides stale stored descriptions without
+    // touching any saved value or the stored description itself.
+    static $helpText = [
+        'COMPACT_CHAT_HISTORY_ENABLED' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
+        'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 'When compact chat history is on, allow short-term memory summaries for NPCs that have it enabled. Plain (non-compact) history is unaffected.',
+        'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Use Markdown headings instead of XML tags for all prompt sections.',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',
+    ];
+
+    $idUpper = strtoupper(trim($id));
+    return $helpText[$idUpper] ?? $storedDescription;
+}
+
 function stobeSettingWarningMessage(string $id): string
 {
     $idUpper = strtoupper(trim($id));
@@ -364,6 +396,7 @@ function stobePrettySettingLabel(string $id): string
         'RELATIONSHIP_SYSTEM' => 'Relationship System',
         'RELATION_SYSTEM_ENABLED' => 'Relationship System',
         'RELATIONSHIP_SYSTEM_ENABLED' => 'Relationship System',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => 'Never Clear Relationship Data',
         'PLAYER_FACTION_CUSTOM_NAME' => 'Player Faction Custom Name',
         'PLAYER_FACTION_PROMPT' => 'Player Faction Prompt',
         'ALWAYS_INSERT_RACE' => 'Always Insert Race Knowledge',
@@ -374,6 +407,8 @@ function stobePrettySettingLabel(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => 'Strict Rechat Targeting',
         'SPEAKER_RECHAT' => 'Speaker Rechat',
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Compact Chat History',
+        'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 'Short-Term Memory in Compact Chat',
+        'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Compact Prompt Info',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => 'Speak Player Dialogue',
         'PROMPT_HEAD' => 'Prompt Head',
         'EMOTEMOODS' => 'Emote Moods',
@@ -402,6 +437,8 @@ function stobeIconForSetting(string $id): string
         'ENFORCE_STRICT_RECHAT_RESPONSE' => '🎯',
         'SPEAKER_RECHAT' => '🗣️',
         'COMPACT_CHAT_HISTORY_ENABLED' => '📝',
+        'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => '🧠',
+        'PROMPT_HEAD_MARKDOWN_ENABLED' => '🧾',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => '🔊',
         'MEMORY_ENABLED' => '🧠',
         'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
@@ -410,6 +447,7 @@ function stobeIconForSetting(string $id): string
         'RELATIONSHIP_SYSTEM' => '💞',
         'RELATIONSHIP_SYSTEM_ENABLED' => '💞',
         'RELATION_SYSTEM_ENABLED' => '💞',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => '🛡️',
         'PLAYER_FACTION_CUSTOM_NAME' => '🏴',
         'PLAYER_FACTION_PROMPT' => '📜',
         'AUTO_LOCK_PROFILE' => '🔒',
@@ -591,15 +629,18 @@ foreach ($grouped as $groupName => $rows) {
             'GENERAL_INSTRUCTIONS' => 3,
             'ACTIONS_ALLOWLIST' => 4,
             'BRACKET_ORIGINAL_NAME' => 0,
+            'PROMPT_HEAD_MARKDOWN_ENABLED' => 18,
             'COMPACT_CHAT_HISTORY_ENABLED' => 19,
-            'RECHAT_MODE' => 20,
-            'ENFORCE_STRICT_RECHAT_RESPONSE' => 21,
-            'SPEAKER_RECHAT' => 22,
+            'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 19,
+            'RECHAT_MODE' => 21,
+            'ENFORCE_STRICT_RECHAT_RESPONSE' => 22,
+            'SPEAKER_RECHAT' => 23,
             'RELATIONSHIP_SYSTEM' => 2,
             'RELATIONSHIP_SYSTEM_ENABLED' => 2,
             'RELATION_SYSTEM_ENABLED' => 2,
-            'PLAYER_FACTION_CUSTOM_NAME' => 3,
-            'PLAYER_FACTION_PROMPT' => 4,
+            'NEVER_CLEAR_RELATIONSHIP_DATA' => 3,
+            'PLAYER_FACTION_CUSTOM_NAME' => 4,
+            'PLAYER_FACTION_PROMPT' => 5,
             'PLAYER_DIALOGUE_AUDIO_ENABLED' => 5,
             'DYNAMIC_PROFILE_INTERVAL_HOURS' => 6,
             'HTTP_TIMEOUT' => 99,
@@ -683,20 +724,18 @@ if (isset($grouped['LLM & API'])) {
             color: #f8f9fa;
         }
         main.page-wrap {
-            padding-top: 40px;
-            padding-bottom: 40px;
-            padding-left: 10%;
-            padding-right: 10%;
+            /* Compact responsive gutter instead of a fixed 10% on every viewport. */
+            padding: 10px clamp(10px, 2.5vw, 34px) 24px;
             width: 100%;
             margin: 0;
         }
         .page-header {
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            padding: 18px 20px;
+            padding: 8px 14px;
             border-radius: 10px;
             border: 1px solid #3a3a3a;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-            margin-bottom: 18px;
+            margin-bottom: 10px;
         }
         .page-header-row {
             display: flex;
@@ -727,10 +766,11 @@ if (isset($grouped['LLM & API'])) {
         h1.api-title {
             margin: 0;
             font-family: "MagicCards", serif;
-            word-spacing: 8px;
-            font-size: 2.2em;
+            letter-spacing: 0.5px;
+            font-size: 1.3rem;
+            line-height: 1.25;
             color: #e6b76c;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            text-shadow: none;
             text-align: left;
         }
         .btn-save-green {
@@ -1001,11 +1041,6 @@ if (isset($grouped['LLM & API'])) {
                 grid-template-columns: 1fr;
             }
 
-            main.page-wrap {
-                padding-left: 5%;
-                padding-right: 5%;
-            }
-
             .page-header-row {
                 align-items: flex-start;
             }
@@ -1041,6 +1076,11 @@ if (isset($grouped['LLM & API'])) {
         <div class="status-banner"><?= h($statusMessage) ?></div>
     <?php endif; ?>
 
+    <?php
+        $presetScope = 'global';
+        $presetFormId = 'stobeSettingsForm';
+        include __DIR__ . '/tmpl/settings_presets.php';
+    ?>
     <div class="settings-tabs" role="tablist" aria-label="Global settings categories">
         <?php foreach ($settingsTabs as $tabId => $tabLabel): ?>
             <button
@@ -1080,7 +1120,7 @@ if (isset($grouped['LLM & API'])) {
                             <?php
                                 $id = strval($row['id'] ?? '');
                                 $value = strval($row['value'] ?? '');
-                                $description = strval($row['description'] ?? '');
+                                $description = stobeSettingHelpText($id, strval($row['description'] ?? ''));
                                 $warning = stobeSettingWarningMessage($id);
                                 $type = stobeSettingType($id, $value);
                                 $inputId = 'setting_' . preg_replace('/[^a-zA-Z0-9_]+/', '_', $id);
@@ -1104,6 +1144,7 @@ if (isset($grouped['LLM & API'])) {
                                                 <input
                                                     type="checkbox"
                                                     id="<?= h($inputId) ?>"
+                                                    aria-label="<?= h($label) ?>"
                                                     name="settings[<?= h($id) ?>]"
                                                     value="true"
                                                     <?= $checked ? 'checked' : '' ?>

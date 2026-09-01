@@ -10,6 +10,103 @@
  * - Recall relevant summaries with vector search for prompt injection.
  */
 
+// Bridge the digest and surviving dialogue with completed summaries, never trimming live messages.
+function stobeBuildShortTermMemoryContext(
+    array|false $npcData,
+    string $npcName,
+    array &$historyMessages,
+    int $currentGamets,
+    bool $compactHistory,
+    string $systemPrompt = ''
+): string {
+    $historyFloor = $currentGamets;
+    foreach ($historyMessages as &$message) {
+        // Internal timestamps must never reach a provider, including on disabled paths.
+        $historyFloor = min($historyFloor, intval($message['_stobe_gamets'] ?? 0));
+        unset($message['_stobe_gamets']);
+    }
+    unset($message);
+
+    $safeNpc = normalizeParticipantNameToken($npcName);
+    if (!is_array($npcData) || $safeNpc === '' || stobeIsNarratorName($safeNpc) || $historyFloor <= 0) {
+        return '';
+    }
+    $profile = getCoreProfileMetadataForNpc($npcData);
+    $overrides = stobeGetNpcRuntimeOverrideMap($npcData);
+    $settings = ['SHORT_TERM_MEMORY_ENABLED' => false, 'SHORT_TERM_MEMORY_MAX' => 10];
+    foreach ($settings as $key => $default) {
+        foreach ([$profile, $overrides] as $layer) {
+            if (array_key_exists($key, $layer) && $layer[$key] !== null && $layer[$key] !== '') {
+                $settings[$key] = $layer[$key];
+            }
+        }
+    }
+    // Party/squad membership is not an exclusion: every non-Narrator NPC can opt in.
+    if (!coerceBoolean($settings['SHORT_TERM_MEMORY_ENABLED'])
+        || ($compactHistory && !getSettingBool('SHORT_TERM_MEMORY_IN_COMPACT_CHAT', true))) {
+        return '';
+    }
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !stobeRegularMemorySummaryTableAvailable()) {
+        return '';
+    }
+
+    $afterGamets = 0;
+    $middleTermBlock = stobePromptCollapseBlankLines(stobeBuildMiddleTermMemoryPromptBlock($npcData, $safeNpc));
+    if ($middleTermBlock !== '' && str_contains($systemPrompt, $middleTermBlock)) {
+        $afterGamets = stobeMiddleTermLastGametsFromExtended($npcData);
+    }
+    if ($afterGamets >= $historyFloor) {
+        return '';
+    }
+
+    $maxSummaries = max(1, min(50, parseIntLike($settings['SHORT_TERM_MEMORY_MAX'], 10)));
+    $quotedNpc = json_encode($safeNpc, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
+    $params = [$safeNpc, $quotedNpc, $afterGamets, $historyFloor];
+    $scopeClause = '';
+    $individual = stobeRegularMemoryIndividualEnabledForNpc($npcData);
+    if (stobeRegularMemorySummaryScopeColumnAvailable()) {
+        if ($individual) {
+            $scopeClause = 'AND LOWER(COALESCE(scope, \'\')) = LOWER($5)';
+            $params[] = $safeNpc;
+        } else {
+            $scopeClause = "AND (scope IS NULL OR BTRIM(scope) = '' OR LOWER(BTRIM(scope)) = 'global')";
+        }
+    } elseif ($individual) {
+        // Old installations without scoped summaries cannot provide an individual bank safely.
+        return '';
+    }
+    $rows = $db->fetchAll(
+        "SELECT summary, gamets_end
+         FROM memory_summary
+         WHERE summary IS NOT NULL AND BTRIM(summary) <> ''
+           AND (LOWER(people) = LOWER($1) OR POSITION(LOWER($2) IN LOWER(COALESCE(people, ''))) > 0)
+           AND (COALESCE(gamets_start, 0) > $3 OR $3 = 0)
+           AND gamets_end > $3 AND gamets_end < $4
+           AND gamets_end >= COALESCE(gamets_start, 0)
+           {$scopeClause}
+         ORDER BY gamets_end DESC, id DESC
+         LIMIT " . $maxSummaries,
+        $params
+    );
+    $entries = [];
+    $seen = [];
+    foreach (array_reverse($rows) as $row) {
+        $summary = trim(sanitizeForKenshi(strval($row['summary'] ?? '')));
+        if ($summary === '' || isset($seen[$summary])) {
+            continue;
+        }
+        $seen[$summary] = true;
+        $entries[] = 'Memory entry, ' . stobeGametsDateLabel(intval($row['gamets_end'])) . "\n"
+            . stobePromptXmlEscape(truncatePromptValue($summary, 1400));
+    }
+    if ($entries === []) {
+        return '';
+    }
+    return "<short_term_memory>\nRecent past events (before the live conversation):\n"
+        . implode("\n\n", $entries) . "\n</short_term_memory>";
+}
+
 function stobeRegularMemoryNormalizeKeyToken(string $value): string
 {
     $normalized = strtolower(trim($value));
@@ -48,6 +145,7 @@ function stobeRegularMemoryAllowedEventType(string $eventType): bool
         'location',
         'combat_start',
         'combat_end',
+        'major_damage',
         'limb_loss',
         'horn_cut',
         'knockout',

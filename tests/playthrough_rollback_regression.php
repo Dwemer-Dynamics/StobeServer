@@ -69,6 +69,8 @@ foreach ($trackedConfKeys as $key) {
 
 $dragonBreakEnabledBackup = $GLOBALS['DRAGON_BREAK_AUTOSNAPSHOT'] ?? null;
 $dragonBreakMinDaysBackup = $GLOBALS['DRAGON_BREAK_MIN_DAYS'] ?? null;
+$preserveRelationshipsBackup = getSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
+setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
 
 $createdSnapshotIds = [];
 $zoneKeepName = 'UT_ROLLBACK_ZONE_KEEP_' . $seed;
@@ -78,6 +80,7 @@ $baseDropId = 'ut-rollback-base-drop-' . $seed;
 $baseLegacyId = 'ut-rollback-base-legacy-' . $seed;
 $lockedRelationshipNpc = $prefix . '_LOCKED_REL';
 $futureRelationshipNpc = $prefix . '_FUTURE_REL';
+$individualMemoryNpc = $prefix . '_INDIVIDUAL_MEMORY';
 $presenceBackup = $db->fetchOne(
     "SELECT scope_key, session_id, observer_serial, observer_name, inside, base_id, game_ts, observed_at
      FROM player_base_presence
@@ -323,6 +326,15 @@ try {
         ]), $futureNpcId]
     );
 
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'true');
+    $preserved = stobePlaythroughRestoreRelationshipStates(1500);
+    ptAssert($preserved['restored'] === 0 && $preserved['cleared'] === 0, 'Enabled preservation should skip affinity rewind and clearing');
+    $lockedPreserved = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$lockedNpcId]);
+    $lockedPreservedData = normalizeCoreNpcExtendedData($lockedPreserved['extended_data']);
+    ptAssert(intval($lockedPreservedData['relationships']['Beep']['aff'] ?? 0) === 80, 'Enabled preservation should retain current locked affinity');
+    $futurePreserved = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$futureNpcId]);
+    ptAssert(array_key_exists('relationships', normalizeCoreNpcExtendedData($futurePreserved['extended_data'])), 'Enabled preservation should keep future-only affinities');
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
     $relationshipRestore = stobePlaythroughRestoreRelationshipStates(1500);
     ptAssert(intval($relationshipRestore['errors'] ?? 0) === 0, 'Relationship-only rollback should succeed');
     ptAssert(intval($relationshipRestore['restored'] ?? 0) >= 1, 'Locked NPC relationship state should be restored');
@@ -354,6 +366,90 @@ try {
         strval($futureExtended['environment']['town_name'] ?? '') === 'Stack',
         'Clearing future affinities should preserve unrelated extended data'
     );
+
+    storeNpcProfile($individualMemoryNpc, [
+        'race' => 'Greenlander',
+        'faction' => 'Tech Hunters',
+        'gender' => 'female',
+        'extended_data' => ['environment' => ['town_name' => 'The Hub']],
+    ]);
+    $individualMemoryRow = $db->fetchOne('SELECT * FROM core_npc WHERE name = $1 LIMIT 1', [$individualMemoryNpc]);
+    $individualMemoryNpcId = intval($individualMemoryRow['id'] ?? 0);
+    ptAssert($individualMemoryNpcId > 0, 'Individual Memory rollback test NPC should exist');
+    $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$individualMemoryNpcId]);
+    $db->exec(
+        "UPDATE core_npc
+         SET gamets_last_updated = 1000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString(['environment' => ['town_name' => 'The Hub']]), $individualMemoryNpcId]
+    );
+    $individualMemoryBaseline = stobeFetchNpcRowForHistoryById($individualMemoryNpcId);
+    ptAssert(is_array($individualMemoryBaseline), 'Individual Memory rollback baseline row should resolve');
+    ptAssert(
+        stobeInsertNpcHistorySnapshotFromRow($individualMemoryBaseline, 'rollback_test_baseline'),
+        'Individual Memory rollback baseline should be stored'
+    );
+    $individualMemoryHistory = $db->fetchOne(
+        'SELECT * FROM core_npc_master_history WHERE npc_id = $1 ORDER BY history_id DESC LIMIT 1',
+        [$individualMemoryNpcId]
+    );
+    $db->exec(
+        "UPDATE core_npc
+         SET gamets_last_updated = 2000,
+             extended_data = $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2",
+        [normalizeJsonString([
+            'environment' => ['town_name' => 'Stack'],
+            'individual_memory_enabled' => 1,
+        ]), $individualMemoryNpcId]
+    );
+    ptAssert(
+        is_array($individualMemoryHistory)
+            && stobePlaythroughRestoreNpcFromHistory($individualMemoryNpcId, $individualMemoryHistory),
+        'Individual Memory rollback restore should succeed'
+    );
+    $individualMemoryAfterRestore = $db->fetchOne(
+        'SELECT extended_data FROM core_npc WHERE id = $1 LIMIT 1',
+        [$individualMemoryNpcId]
+    );
+    $individualMemoryExtended = normalizeCoreNpcExtendedData($individualMemoryAfterRestore['extended_data'] ?? '{}');
+    ptAssert(
+        strval($individualMemoryExtended['environment']['town_name'] ?? '') === 'The Hub',
+        'Rollback should still restore timeline-owned extended data'
+    );
+    ptAssert(
+        intval($individualMemoryExtended['individual_memory_enabled'] ?? 0) === 1,
+        'Rollback should preserve the current Individual Memory Bank setting'
+    );
+
+    // Full profile restoration must retain relationships but still rewind unrelated fields.
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'true');
+    $db->exec('UPDATE core_npc SET extended_data = $1::jsonb, gamets_last_updated = 2000 WHERE id = $2', [
+        normalizeJsonString([
+            'environment' => ['town_name' => 'Stack'],
+            'individual_memory_enabled' => 1,
+            'relationships' => ['Beep' => ['aff' => 85, 'custom_info' => 'Trusted friend']],
+            'relationships_model' => 'test-model',
+        ]), $individualMemoryNpcId,
+    ]);
+    $db->exec('UPDATE core_npc SET lock_profile = FALSE, gamets_last_updated = 2000 WHERE id = $1', [$futureNpcId]);
+    $db->exec('DELETE FROM core_npc_master_history WHERE npc_id = $1', [$futureNpcId]);
+    $restorePreserved = stobePlaythroughRestoreUnlockedNpcs(1500);
+    ptAssert($restorePreserved['errors'] === 0, 'Preserving full rollback should succeed');
+    ptAssert((bool)$db->fetchOne('SELECT id FROM core_npc WHERE id = $1', [$futureNpcId]), 'Enabled preservation must not delete future-only NPCs');
+    $fullPreserved = $db->fetchOne('SELECT extended_data FROM core_npc WHERE id = $1', [$individualMemoryNpcId]);
+    $fullPreservedData = normalizeCoreNpcExtendedData($fullPreserved['extended_data']);
+    ptAssert(intval($fullPreservedData['relationships']['Beep']['aff'] ?? 0) === 85, 'Full rollback should keep current affinity');
+    ptAssert(($fullPreservedData['relationships']['Beep']['custom_info'] ?? '') === 'Trusted friend', 'Full rollback should keep relationship notes');
+    ptAssert(($fullPreservedData['relationships_model'] ?? '') === 'test-model', 'Full rollback should keep relationship metadata');
+    ptAssert(($fullPreservedData['environment']['town_name'] ?? '') === 'The Hub', 'Preservation must not keep unrelated future context');
+    ptAssert(intval($fullPreservedData['individual_memory_enabled'] ?? 0) === 1, 'Preservation must retain the Individual Memory setting');
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', 'false');
+    stobePlaythroughRestoreUnlockedNpcs(1500);
+    ptAssert(!$db->fetchOne('SELECT id FROM core_npc WHERE id = $1', [$futureNpcId]), 'Disabled preservation must retain future-only NPC deletion');
 
     // Pure threshold helper checks.
     ptAssert(stobeDragonBreakDaysRollback(200000, 200000) === 0, 'Equal gamets should be zero rollback days');
@@ -388,6 +484,7 @@ try {
 
     echo 'All playthrough rollback regression tests passed.' . PHP_EOL;
 } finally {
+    setSetting('NEVER_CLEAR_RELATIONSHIP_DATA', $preserveRelationshipsBackup);
     // Cleanup created snapshots.
     foreach ($createdSnapshotIds as $snapshotId) {
         if ($snapshotId > 0) {
@@ -435,8 +532,8 @@ try {
         [$baseKeepId, $baseDropId, $baseLegacyId]
     );
     $relationshipTestRows = $db->fetchAll(
-        'SELECT id FROM core_npc WHERE name IN ($1, $2)',
-        [$lockedRelationshipNpc, $futureRelationshipNpc]
+        'SELECT id FROM core_npc WHERE name IN ($1, $2, $3)',
+        [$lockedRelationshipNpc, $futureRelationshipNpc, $individualMemoryNpc]
     );
     foreach ($relationshipTestRows as $relationshipTestRow) {
         $relationshipTestNpcId = intval($relationshipTestRow['id'] ?? 0);

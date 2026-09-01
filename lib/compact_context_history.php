@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/prompt_formatting.php';
+
 /**
  * Compact Markdown formatting for recent NPC chat history.
  *
@@ -25,7 +27,7 @@ function stobeShouldCompactChatHistory(string $actorName): bool
         return false;
     }
     return function_exists('getSettingBool')
-        && getSettingBool('COMPACT_CHAT_HISTORY_ENABLED', false);
+        && getSettingBool('COMPACT_CHAT_HISTORY_ENABLED', true);
 }
 
 function stobeCompactHistoryDialogue(string $content, string $fallbackSpeaker = ''): string
@@ -173,8 +175,10 @@ function stobeApplyCompactChatHistory(
     string $systemPrompt,
     array $historyMessages,
     string $actorName,
-    bool $enabled
+    bool $enabled,
+    bool $markdownEnabled = false
 ): array {
+    $systemPrompt = stobeFormatPromptHeadSection($systemPrompt, $markdownEnabled);
     if (!$enabled) {
         return [
             'system_prompt' => $systemPrompt,
@@ -188,6 +192,10 @@ function stobeApplyCompactChatHistory(
             'system_prompt' => $systemPrompt,
             'history_messages' => [],
         ];
+    }
+
+    if ($markdownEnabled) {
+        $historyBlock = "# Conversation History\n\n" . preg_replace('/^# /m', '- ', $historyBlock);
     }
 
     return [

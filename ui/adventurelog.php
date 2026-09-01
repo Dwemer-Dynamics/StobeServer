@@ -6,6 +6,7 @@
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
+require_once($path . "lib/eventlog_helper.php");
 
 date_default_timezone_set("UTC");
 
@@ -22,24 +23,7 @@ function sanitizeInt(mixed $value, int $default): int
 
 function eventTypeFilterList(): array
 {
-    return [
-        "im_alive",
-        "chat",
-        "infoaction",
-        "rpg_word",
-        "rpg_lvlup",
-        "rechat",
-        "quest",
-        "itemfound",
-        "inputtext",
-        "injection",
-        "goodnight",
-        "goodmorning",
-        "ginputtext",
-        "death",
-        "combatendmighty",
-        "combatend",
-    ];
+    return stobeAdventureEventTypes();
 }
 
 function buildInClausePlaceholders(array $values, int $offset = 1): string

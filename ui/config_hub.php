@@ -52,17 +52,17 @@ function buildTabTargetSrc(array $tab, string $webRoot): string
 }
 
 $tabs = [
-    ['id' => 'npcs', 'group' => 'characters', 'icon' => '&#x2B50;', 'label' => 'Stobe NPCs', 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'settings', 'group' => 'characters', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'profiles', 'group' => 'characters', 'icon' => '&#x1F4C2;', 'label' => 'Profiles', 'page' => 'profiles.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'npcs', 'group' => 'characters', 'icon' => '&#x2B50;', 'label' => 'Stobe NPCs', 'page' => 'stobenpcs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'narrator', 'group' => 'characters', 'icon' => '&#x1F5E3;&#xFE0F;', 'label' => 'Narrator', 'page' => 'narrator_management.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'bio', 'group' => 'characters', 'icon' => '&#x1FAAA;', 'label' => 'NPC Biographies', 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'llm', 'group' => 'ai-voice', 'icon' => '&#x1F9E0;', 'label' => 'LLM', 'page' => 'llm_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'tts', 'group' => 'ai-voice', 'icon' => '&#x1F4E2;', 'label' => 'TTS', 'page' => 'tts_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'stt', 'group' => 'ai-voice', 'icon' => '&#x1F3A4;', 'label' => 'STT', 'page' => 'stt_connectors.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'voice', 'group' => 'ai-voice', 'icon' => '&#x1F399;&#xFE0F;', 'label' => 'TTS Studio / Voices', 'page' => 'voice_manager.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'keys', 'group' => 'ai-voice', 'icon' => '&#x1F511;', 'label' => 'API Keys', 'page' => 'api_badges.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'settings', 'group' => 'world-behavior', 'icon' => '&#x1F310;', 'label' => 'Global Settings', 'page' => 'settings.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'rename_names', 'group' => 'world-behavior', 'icon' => '&#x1F3F7;&#xFE0F;', 'label' => 'Rename Names', 'page' => 'rename_names.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'bio', 'group' => 'world-behavior', 'icon' => '&#x1FAAA;', 'label' => 'NPC Biographies', 'page' => 'npc_bios.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'world', 'group' => 'world-behavior', 'icon' => '&#x1F4D6;', 'label' => 'World', 'page' => 'world_knowledge.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'desc', 'group' => 'world-behavior', 'icon' => '&#x1F4DC;', 'label' => 'Descriptions', 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'actions', 'group' => 'world-behavior', 'icon' => '&#x2694;&#xFE0F;', 'label' => 'Action Editor', 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
@@ -70,7 +70,7 @@ $tabs = [
 ];
 
 $tabGroups = [
-    'characters' => 'Characters',
+    'characters' => 'Settings',
     'ai-voice' => 'AI & Voice',
     'world-behavior' => 'World & Behavior',
 ];
@@ -112,13 +112,15 @@ if (!isset($tabMap[$activeTab])) {
     <link rel="stylesheet" href="css/hub-navigation.css?v=<?= filemtime(__DIR__ . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'hub-navigation.css') ?>">
     <style>
         body {
-            padding-top: 80px;
+            /* Match the fixed navbar height instead of a hard-coded 80px band. */
+            padding-top: var(--hub-navbar-offset);
         }
 
         main {
-            padding-top: 20px;
-            padding-bottom: 40px;
+            padding-top: 0;
+            padding-bottom: 8px;
             padding-left: 10px;
+            padding-right: 10px;
         }
 
         @font-face {
@@ -134,7 +136,7 @@ if (!isset($tabMap[$activeTab])) {
         }
 
         .tab-container {
-            margin: 20px 0;
+            margin: 0 0 6px;
         }
 
         .tab-buttons {
@@ -186,7 +188,7 @@ if (!isset($tabMap[$activeTab])) {
         .tab-content {
             display: none;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            padding: 20px;
+            padding: 10px 12px 12px;
             border-radius: 8px;
             border-top-left-radius: 0;
             border: 1px solid #3a3a3a;
@@ -200,7 +202,7 @@ if (!isset($tabMap[$activeTab])) {
 
         .embed-wrap {
             width: 100%;
-            min-height: calc(100vh - 260px);
+            min-height: calc(100vh - 200px);
             border: 1px solid #4a4a4a;
             border-radius: 8px;
             overflow: hidden;
@@ -209,7 +211,7 @@ if (!isset($tabMap[$activeTab])) {
 
         .embed {
             width: 100%;
-            min-height: calc(100vh - 260px);
+            min-height: calc(100vh - 200px);
             border: 0;
             background: transparent;
         }

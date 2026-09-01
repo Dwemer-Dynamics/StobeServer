@@ -88,6 +88,7 @@ require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'data_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'world_state_runtime.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'memory_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'chat_helper_functions.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'player_mood_prompts.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'compact_context_history.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'diary_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'middleterm_helper_functions.php');

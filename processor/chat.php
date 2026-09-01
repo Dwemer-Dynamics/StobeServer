@@ -620,10 +620,16 @@ $contextHistory = getNpcProfileIntegerSetting(
     10,
     250
 );
+$historyAliases = $narratorMode
+    ? []
+    : stobeResolveNpcEventHistoryAliases($npcData, $targetNpc);
 $eventHistory = $narratorMode
     ? DataEventLog($contextHistory)
-    : DataEventLog($contextHistory, $targetNpc);
+    : DataEventLog($contextHistory, $targetNpc, '', $historyAliases);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $dialogueMode, $speaker);
+if (!$narratorMode && is_array($npcData)) {
+    $npcData = stobeAttachRecentCombatPromptEvents($npcData, $eventHistory, intval($gamets));
+}
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
@@ -636,7 +642,8 @@ $historyMessages = stobeBuildRecentContextMessages(
     $eventHistory,
     intval($gamets),
     64,
-    $narratorMode ? '' : $targetNpc
+    $narratorMode ? '' : $targetNpc,
+    true
 );
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
@@ -687,9 +694,10 @@ if ($dialogueMode === 'autochat') {
 }
 
 $message = $sanitizeChatMessage($message);
+$playerMoodCue = stobeResolvePlayerMoodCue($_GET, $dialogueMode, $speaker);
 $eventData = $injectionMode
     ? $formatInjectedEventData($speaker, $targetNpc, $message)
-    : $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
+    : $speaker . ': ' . $message . $playerMoodCue . ' (talking to: ' . $targetNpc . ')';
 storeEvent($injectionMode ? 'injection' : $eventType, $timestamp, $gamets, $eventData);
 if (!$narratorMode && !$injectionMode) {
     // Mirror player input as chat immediately so timeline order is stable even
@@ -864,7 +872,7 @@ $userContent = $injectionChatMode
         . "  <event>" . stobePromptXmlEscape($message) . "</event>\n"
         . "  <instruction>Treat this as an established event that just happened. It is not dialogue spoken by the observer.</instruction>\n"
         . "</injected_event>"
-    : stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
+    : stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message . $playerMoodCue);
 if ($manualActionActive) {
     $userContent .= "\n<manual_action_event>\n"
         . "  <type>" . stobePromptXmlEscape($manualActionType !== '' ? $manualActionType : 'manual_action') . "</type>\n"
@@ -889,11 +897,24 @@ if ($dialogueMode === 'cheat') {
         . "  <request>" . stobePromptXmlEscape($message) . "</request>\n"
         . "</cheat_request>";
 }
+$compactHistoryEnabled = stobeShouldCompactChatHistory($targetNpc);
+$shortTermMemory = stobeBuildShortTermMemoryContext(
+    $npcData,
+    $targetNpc,
+    $historyMessages,
+    intval($gamets),
+    $compactHistoryEnabled,
+    $systemPrompt
+);
+if ($shortTermMemory !== '') {
+    $systemPrompt .= "\n\n" . $shortTermMemory;
+}
 $compactHistory = stobeApplyCompactChatHistory(
     $systemPrompt,
     $historyMessages,
     $targetNpc,
-    stobeShouldCompactChatHistory($targetNpc)
+    $compactHistoryEnabled,
+    getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true)
 );
 $systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
 $historyMessages = is_array($compactHistory['history_messages'] ?? null)
@@ -938,7 +959,9 @@ $messages[] = [
             $dialogueMode === 'cheat',
             false,
             npcIsInPlayerFaction($npcData),
-            'chat'
+            'chat',
+            '',
+            $npcData
         ),
 ];
 

@@ -714,8 +714,12 @@ $contextHistory = getNpcProfileIntegerSetting(
     10,
     250
 );
-$eventHistory = DataEventLog($contextHistory, $respondingNpc, $campaign);
+$historyAliases = stobeResolveNpcEventHistoryAliases($npcData, $respondingNpc);
+$eventHistory = DataEventLog($contextHistory, $respondingNpc, $campaign, $historyAliases);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $respondingNpc, 'rechat');
+if (is_array($npcData)) {
+    $npcData = stobeAttachRecentCombatPromptEvents($npcData, $eventHistory, intval($gamets));
+}
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine($row, true);
@@ -789,7 +793,8 @@ $compactHistory = stobeApplyCompactChatHistory(
     $systemPrompt,
     $historyMessages,
     $respondingNpc,
-    stobeShouldCompactChatHistory($respondingNpc)
+    stobeShouldCompactChatHistory($respondingNpc),
+    getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true)
 );
 $systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
 $historyMessages = is_array($compactHistory['history_messages'] ?? null)
@@ -830,7 +835,8 @@ $messages[] = [
         false,
         npcIsInPlayerFaction($npcData),
         'rechat',
-        $strictRechatListener
+        $strictRechatListener,
+        $npcData
     ),
 ];
 
@@ -859,6 +865,11 @@ if ($tentativeStreamListener === '') {
 if ($tentativeStreamListener === '') {
     $tentativeStreamListener = $playerName;
 }
+$suppressInitiatorTts = stobeShouldSuppressRechatInitiatorTts(
+    $respondingNpc,
+    $resolvedInitiatorName,
+    getSettingBool('PLAYER_DIALOGUE_AUDIO_ENABLED', true)
+);
 
 $streamResult = stobeStreamDialogueViaLlm(
     $respondingNpc,
@@ -873,6 +884,7 @@ $streamResult = stobeStreamDialogueViaLlm(
         'stream_event_type' => 'rechat',
         'stream_listener' => $tentativeStreamListener,
         'stream_gamets' => $gamets,
+        'suppress_tts' => $suppressInitiatorTts,
         'response_format' => stobeBuildStructuredDialogueResponseFormat(
             $respondingNpc,
             $npcData,
@@ -1006,6 +1018,7 @@ if ($alreadyStreamed) {
         $responseActions,
         'rechat',
         $replyTarget,
-        intval($gamets)
+        intval($gamets),
+        ['suppress_tts' => $suppressInitiatorTts]
     );
 }

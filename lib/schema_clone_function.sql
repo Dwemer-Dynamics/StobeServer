@@ -1,5 +1,5 @@
 -- Schema cloning function for fast playthrough snapshots
--- This function clones an entire PostgreSQL schema including tables, data, sequences, and views
+-- Clone tables, data and sequences. Views are runtime definitions, not saved data.
 -- Functions are created in stobe_meta schema so they survive public schema drops
 
 CREATE SCHEMA IF NOT EXISTS stobe_meta;
@@ -162,22 +162,8 @@ BEGIN
         END;
     END LOOP;
 
-    -- Clone views (optional - captures query definitions)
-    FOR obj IN
-        SELECT table_name, view_definition 
-        FROM information_schema.views 
-        WHERE table_schema = source_schema
-    LOOP
-        BEGIN
-            -- Replace schema references in view definition
-            EXECUTE format('CREATE OR REPLACE VIEW %I.%I AS %s',
-                          dest_schema, obj.table_name, 
-                          replace(obj.view_definition, source_schema || '.', dest_schema || '.'));
-        EXCEPTION WHEN others THEN
-            -- Skip views that fail (e.g., complex views with dependencies)
-            RAISE NOTICE 'Could not clone view %: %', obj.table_name, SQLERRM;
-        END;
-    END LOOP;
+    -- STOBE_TABLE_ONLY_SNAPSHOTS: unqualified view definitions can bind to live tables.
+    -- The profile switch preserves current public views in its restore transaction.
     
     RAISE NOTICE 'Schema cloning complete: % -> %', source_schema, dest_schema;
 

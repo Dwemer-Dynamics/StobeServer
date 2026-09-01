@@ -18,7 +18,6 @@
 
 // Ensure Logger is available
 require_once $GLOBALS["ENGINE_PATH"] . "lib/logger.php";
-require_once __DIR__ . "/event_baseline.php";
 
 class RelationshipLLM {
 
@@ -299,6 +298,10 @@ class RelationshipLLM {
             return ['ok' => true, 'skipped' => true, 'reason' => 'Already has relationships'];
         }
 
+        if (trim(strval($npc['relationships'] ?? '')) === '') {
+            return ['ok' => true, 'skipped' => true, 'reason' => 'No stored relationships'];
+        }
+
         // Build the analysis
         return $this->runAnalysis($npc);
     }
@@ -307,27 +310,36 @@ class RelationshipLLM {
      * Run the actual LLM analysis for an NPC
      */
     private function runAnalysis($npc) {
-        if (!$this->isAvailable()) {
-            return ['ok' => false, 'error' => 'LLM not available'];
-        }
-
-        $npcName = stobeRelBaselineNormalizeName(strval($npc['npc_name'] ?? ''));
+        $npcName = normalizeParticipantNameToken(strval($npc['npc_name'] ?? ''));
         if ($npcName === '') {
             return ['ok' => false, 'error' => 'NPC name missing'];
         }
 
-        $baseline = stobeRelBuildEventBaseline($npcName, 200);
-        if (empty($baseline['ok'])) {
+        $relationshipsText = trim(strval($npc['relationships'] ?? ''));
+        $storedRelationships = stobeNormalizeRelationshipMap($relationshipsText);
+        if (count($storedRelationships) > 0) {
+            $saved = $this->saveRelationships($npc['id'], $storedRelationships, 'stored_relationships');
+            if ($saved === false) {
+                return ['ok' => false, 'error' => 'Failed to save stored relationships'];
+            }
+
+            Logger::info("[REL-LLM] Imported " . count($storedRelationships) . " stored relationships for {$npcName}");
             return [
                 'ok' => true,
-                'skipped' => true,
-                'reason' => strval($baseline['error'] ?? 'No event history'),
+                'npc_name' => $npcName,
+                'relationships' => $storedRelationships,
+                'count' => count($storedRelationships),
+                'source' => 'stored_relationships',
+                'model' => 'stored_relationships',
             ];
         }
 
-        $eventHistory = strval($baseline['history'] ?? '');
-        $eventCount = intval($baseline['event_count'] ?? 0);
-        $counterparts = is_array($baseline['counterparts'] ?? null) ? $baseline['counterparts'] : [];
+        if (!$this->isAvailable()) {
+            return ['ok' => false, 'error' => 'LLM not available'];
+        }
+
+        // Retain compatibility with older prose relationship summaries.
+        $relationshipsText = str_ireplace('#PLAYER_NAME#', '', $relationshipsText);
 
         // Build NPC context
         $npcContext = "";
@@ -351,18 +363,15 @@ class RelationshipLLM {
         if (!empty($npcContext)) {
             $userPrompt .= "NPC Context:\n{$npcContext}\n";
         }
-        if (!empty($counterparts)) {
-            $userPrompt .= "Observed Counterparts: " . implode(', ', $counterparts) . "\n\n";
-        }
-        $userPrompt .= "Recent Event History (oldest to newest, {$eventCount} entries):\n{$eventHistory}\n\n";
-        $userPrompt .= "Analyze this history and infer any faction/group biases from context. Return JSON.";
+        $userPrompt .= "Relationship Descriptions:\n{$relationshipsText}\n\n";
+        $userPrompt .= "Analyze these relationships and infer any faction/group biases from context. Return JSON.";
 
         $contextData = [
             ['role' => 'system', 'content' => $systemPrompt],
             ['role' => 'user', 'content' => $userPrompt]
         ];
 
-        Logger::info("[REL-LLM] Analyzing {$npcName} using {$this->modelName} (events={$eventCount})");
+        Logger::info("[REL-LLM] Analyzing stored relationship descriptions for {$npcName} using {$this->modelName}");
 
         // Make LLM request with scoped global swapping
         // This prevents corrupting the main chat connector's globals
@@ -384,7 +393,10 @@ class RelationshipLLM {
         }
 
         // Save to NPC
-        $this->saveRelationships($npc['id'], $relationships);
+        $saved = $this->saveRelationships($npc['id'], $relationships);
+        if ($saved === false) {
+            return ['ok' => false, 'error' => 'Failed to save relationships'];
+        }
 
         Logger::info("[REL-LLM] Saved " . count($relationships) . " relationships for {$npcName}");
 
@@ -393,7 +405,7 @@ class RelationshipLLM {
             'npc_name' => $npcName,
             'relationships' => $relationships,
             'count' => count($relationships),
-            'event_count' => $eventCount,
+            'source' => 'relationship_descriptions',
             'model' => $this->modelName
         ];
     }
@@ -404,7 +416,7 @@ class RelationshipLLM {
      */
     private function getAnalysisPrompt() {
         $fallback = <<<'PROMPT'
-You are a relationship analyzer for Skyrim NPCs. Analyze recent event history and output JSON relationships.
+You are a relationship analyzer for Kenshi NPCs. Analyze relationship descriptions and output JSON relationships.
 
 AFFINITY SCALE (-100 to +100, bell curve - extremes are RARE):
 +91 to +100: Bonded (soulmates, unbreakable)
@@ -501,7 +513,7 @@ PROMPT;
     /**
      * Save relationships to NPC's extended_data
      */
-    private function saveRelationships($npcId, $relationships) {
+    private function saveRelationships($npcId, $relationships, ?string $modelName = null) {
         require_once $GLOBALS['ENGINE_PATH'] . "lib/core/npc_master.class.php";
 
         // Advisory lock to prevent race conditions
@@ -526,7 +538,7 @@ PROMPT;
 
             $extended['relationships'] = $relationships;
             $extended['relationships_analyzed'] = date('Y-m-d H:i:s');
-            $extended['relationships_model'] = $this->modelName;
+            $extended['relationships_model'] = $modelName ?? $this->modelName;
 
             $extendedJson = json_encode($extended, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $result = stobeRunWithRelationshipExtendedDataWrite(
@@ -558,22 +570,11 @@ PROMPT;
             'details' => []
         ];
 
-        // Get NPCs with event history that can be baseline-analyzed
-        $excludeTypes = "'prechat','setconf','status_msg','user_input','npc_snapshot','playerinfo'";
-        $query = "SELECT id, name AS npc_name, extended_data
+        // Match the UI batch scope: only migrate NPCs with stored relationships.
+        $query = "SELECT id, name AS npc_name, relationships, extended_data
                   FROM core_npc_master
-                  WHERE COALESCE(TRIM(name), '') <> ''
+                  WHERE COALESCE(TRIM(relationships), '') <> ''
                     AND LOWER(name) <> 'the narrator'
-                    AND EXISTS (
-                        SELECT 1
-                        FROM eventlog e
-                        WHERE e.type NOT IN ({$excludeTypes})
-                          AND (
-                               POSITION(LOWER(core_npc_master.name) IN LOWER(COALESCE(e.people, ''))) > 0
-                               OR POSITION(LOWER(core_npc_master.name) IN LOWER(COALESCE(e.data, ''))) > 0
-                          )
-                        LIMIT 1
-                    )
                   ORDER BY id
                   LIMIT " . intval($limit);
 

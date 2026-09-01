@@ -874,42 +874,16 @@ $tokenRows = $db->fetchAll(
     <link rel="stylesheet" href="css/navbar.css">
     <style>
         main {
-            padding-top: 30px;
-            padding-bottom: 40px;
+            padding-top: 10px;
+            padding-bottom: 24px;
             padding-left: 5px;
             padding-right: 5px;
             width: 100%;
             margin: 0;
         }
-        .page-header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding: 20px;
-            background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
-            border-radius: 10px;
-            border: 1px solid #3a3a3a;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
-        }
-        .page-header h1.api-title {
-            margin-bottom: 8px;
-        }
-        h1.api-title {
-            margin: 0 0 20px 0;
-            font-family: "MagicCards", serif;
-            word-spacing: 8px;
-            font-size: 2.2em;
-            color: #e6b76c;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-            text-align: center;
-        }
+        /* Page header is the shared compact inline row (.stobe-page-head in main.css). */
         h1.api-title, h1.api-title * {
             font-family: "MagicCards", serif !important;
-        }
-        .page-subtitle {
-            margin: 0;
-            color: #bbb;
-            font-size: 1.1em;
-            line-height: 1.6;
         }
         .content-section {
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -1157,7 +1131,6 @@ $tokenRows = $db->fetchAll(
             min-width: 1px;
         }
         @media (max-width: 1000px) {
-            main { padding-left: 4%; padding-right: 4%; }
             .grid-two { grid-template-columns: 1fr; }
             .content-grid { grid-template-columns: 1fr; }
         }
@@ -1195,9 +1168,9 @@ $tokenRows = $db->fetchAll(
 <?php endif; ?>
 
 <main>
-    <div class="page-header">
-        <h1 class="api-title">NPC Biographies</h1>
-        <p class="page-subtitle">Configure random and unique biography pools plus rename eligibility tokens for NPC imports</p>
+    <div class="page-header stobe-page-head">
+        <h1 class="api-title stobe-page-head-title">NPC Biographies</h1>
+        <p class="page-subtitle stobe-page-head-note">Configure random and unique biography pools plus rename eligibility tokens for NPC imports</p>
     </div>
 
     <div class="content-section">

@@ -936,7 +936,8 @@ CREATE TABLE IF NOT EXISTS core_profiles (
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
         "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
-        "BORED_EVENT_CHANCE": 50
+        "BORED_EVENT_CHANCE": 50,
+        "RELATIONSHIP_UPDATE_CHANCE": 50
     }$$::jsonb,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -1354,6 +1355,28 @@ CREATE TABLE IF NOT EXISTS core_tts_connector (
     is_default BOOLEAN DEFAULT FALSE,
     config JSONB DEFAULT '{}'
 );
+
+-- Empty-by-default TTS pronunciation dictionary managed from TTS Studio.
+CREATE TABLE IF NOT EXISTS core_tts_pronunciation (
+    id BIGSERIAL PRIMARY KEY,
+    source_text VARCHAR(120) NOT NULL,
+    spoken_text VARCHAR(240) NOT NULL,
+    npc_names VARCHAR(512) NOT NULL DEFAULT '',
+    races VARCHAR(512) NOT NULL DEFAULT '',
+    oghma_tags VARCHAR(512) NOT NULL DEFAULT '',
+    is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT core_tts_pronunciation_source_not_blank CHECK (BTRIM(source_text) <> ''),
+    CONSTRAINT core_tts_pronunciation_spoken_not_blank CHECK (BTRIM(spoken_text) <> '')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS core_tts_pronunciation_unique_entry
+    ON core_tts_pronunciation (
+        LOWER(source_text),
+        MD5(LOWER(npc_names) || E'\x1f' || LOWER(races) || E'\x1f' || LOWER(oghma_tags)),
+        is_builtin
+    );
 
 DO $$
 BEGIN
@@ -1898,7 +1921,8 @@ ALTER TABLE core_profiles ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT $${
     "CONTEXT_HISTORY": 75,
     "CONTEXT_HISTORY_DIARY": 100,
     "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
-    "BORED_EVENT_CHANCE": 50
+    "BORED_EVENT_CHANCE": 50,
+    "RELATIONSHIP_UPDATE_CHANCE": 50
 }$$::jsonb;
 
 UPDATE core_profiles
@@ -1924,7 +1948,8 @@ ALTER TABLE core_profiles ALTER COLUMN metadata SET DEFAULT $${
     "CONTEXT_HISTORY": 75,
     "CONTEXT_HISTORY_DIARY": 100,
     "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
-    "BORED_EVENT_CHANCE": 50
+    "BORED_EVENT_CHANCE": 50,
+    "RELATIONSHIP_UPDATE_CHANCE": 50
 }$$::jsonb;
 UPDATE core_profiles
 SET metadata = CASE
@@ -1949,7 +1974,8 @@ SET metadata = CASE
             "CONTEXT_HISTORY": 75,
             "CONTEXT_HISTORY_DIARY": 100,
             "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
-            "BORED_EVENT_CHANCE": 50
+            "BORED_EVENT_CHANCE": 50,
+            "RELATIONSHIP_UPDATE_CHANCE": 50
         }$$::jsonb
     ELSE $${
         "DYNAMIC_PROFILE_ENABLED": false,
@@ -1971,7 +1997,8 @@ SET metadata = CASE
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
         "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
-        "BORED_EVENT_CHANCE": 50
+        "BORED_EVENT_CHANCE": 50,
+        "RELATIONSHIP_UPDATE_CHANCE": 50
     }$$::jsonb || metadata
 END;
 
@@ -3411,6 +3438,7 @@ ON CONFLICT (name, type) DO NOTHING;
 
 INSERT INTO core_action (command, action_name, description, is_activated) VALUES
 ('ATTACK', 'Attack', 'Attack with intention to kill a named actor in scene. Use target name. If you attack someone in your same faction, you will be made an enemy of that faction.', TRUE),
+('STOP_ATTACK', 'StopAttack', 'End hostilities between your entire faction and the target actor''s faction after agreeing to a ceasefire or recognizing a misunderstanding. Target a nearby actor from the opposing faction. Stops current combat on both sides and makes the two factions no longer enemies. Does not clear crimes or bounties.', TRUE),
 ('SUICIDE', 'Suicide', 'Die immediately on the spot.', TRUE),
 ('FOLLOW', 'Follow', 'Move to and follow the specified target actor.', TRUE),
 ('STOP_FOLLOW', 'StopFollow', 'Stop following and return to normal behavior.', TRUE),
@@ -3671,7 +3699,7 @@ Your primary driver is to be a compelling, psychologically consistent, and authe
 ('RECHAT_MODE', 'random',                'Controls how Stobe chooses the next rechat responder: tight, conversational, group, or random.'),
 ('ENFORCE_STRICT_RECHAT_RESPONSE', 'false', 'When true, rechat replies must target the actor who just spoke.'),
 ('SPEAKER_RECHAT', 'false',              'When true, the initiating player speaker may be selected in rechat; when false, they are excluded.'),
-('COMPACT_CHAT_HISTORY_ENABLED', 'false', 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.'),
+('COMPACT_CHAT_HISTORY_ENABLED', 'true', 'Combine recent NPC chat history into a compact Markdown block in prompts. Narrator prompts are unchanged.'),
 ('PLAYER_DIALOGUE_AUDIO_ENABLED', 'true', 'Play TTS for when the selected player character speaks.'),
 ('PROMPT_CONTEXT_OPTIONS', '{"enabled_sections":["world","knowledge","player_faction_funds","available_actions_list","nearby_actors","nearby_player_allies","nearby_items","points_of_interest","combat_priority","nearby_context_json","detailed_context_json"],"enabled_character_subsections":["basic_summary","personality","appearance","relationships","occupation","bounty","skills","speech_style","goals","middle_term_memory"],"enabled_state_subsections":["current_condition","activity_state","equipment","personal_inventory","merchant_inventory"],"enabled_knowledge_subsections":["world_knowledge","player_faction_prompt"]}', 'Controls which prompt context blocks and subsections are included in Stobe system prompts. Managed from Global Settings.'),
 ('STOBE_QUICKSTART_COMPLETED', 'false',  'When false, first dashboard visit redirects to the quickstart menu.')
@@ -3796,16 +3824,16 @@ INSERT INTO core_llm_connector (
     config
 ) VALUES
 (
-    'GLM 4.7',
+    'DeepSeek V4 Flash',
     'openrouterjson',
     (SELECT id FROM core_api_badge WHERE LOWER(label) = 'openrouter' LIMIT 1),
     '',
     'https://openrouter.ai/api/v1/chat/completions',
-    'z-ai/glm-4.7',
+    'deepseek/deepseek-v4-flash',
     750,
-    1.0,
+    0.6,
     FALSE,
-    '{"service":"openrouter","provider":"openrouter","enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
+    '{"service":"openrouter","provider":"openrouter","reasoning_model":true,"enforce_json":true,"json_schema":true,"prefill_json":false}'::jsonb
 ),
 (
     'Gemini 2.5 Flash',
@@ -3980,27 +4008,27 @@ INSERT INTO core_profiles (
     'Default Profile',
     TRUE,
     COALESCE(
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash lite' LIMIT 1),
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 5.2' LIMIT 1),
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 pro' LIMIT 1),
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
     COALESCE(
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
         (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
     ),
@@ -4050,7 +4078,8 @@ INSERT INTO core_profiles (
         "CONTEXT_HISTORY": 75,
         "CONTEXT_HISTORY_DIARY": 100,
         "CONTEXT_HISTORY_DYNAMIC_PROFILE": 50,
-        "BORED_EVENT_CHANCE": 50
+        "BORED_EVENT_CHANCE": 50,
+        "RELATIONSHIP_UPDATE_CHANCE": 50
     }'::jsonb
 )
 ON CONFLICT (label) DO UPDATE SET
@@ -4185,7 +4214,7 @@ WHERE LOWER(COALESCE(label, '')) = 'player faction';
 
 UPDATE core_profiles
 SET response_connector = COALESCE(
-    (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1),
+    (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'gemini 2.5 flash' LIMIT 1),
     (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'openrouter default' LIMIT 1)
 ),
@@ -4225,7 +4254,7 @@ UPDATE core_profiles
 SET llm_primary_id = COALESCE(
         llm_primary_id,
         response_connector,
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1)
     ),
     llm_secondary_id = COALESCE(
         llm_secondary_id,
@@ -4248,7 +4277,7 @@ SET llm_primary_id = COALESCE(
     response_connector = COALESCE(
         response_connector,
         llm_primary_id,
-        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'glm 4.7' LIMIT 1)
+        (SELECT id FROM core_llm_connector WHERE LOWER(name) = 'deepseek v4 flash' LIMIT 1)
     )
 WHERE COALESCE(is_default_npc, FALSE) = TRUE
    OR COALESCE(is_player_faction_profile, FALSE) = TRUE;
@@ -4266,4 +4295,15 @@ CREATE TABLE IF NOT EXISTS core_narrator (
 
 
 
+
+
+-- Named portable settings presets (also installed by the upgrade migrator).
+CREATE TABLE IF NOT EXISTS stobe_settings_presets (
+    scope TEXT NOT NULL CHECK (scope IN ('global', 'profile')),
+    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    settings JSONB NOT NULL CHECK (jsonb_typeof(settings) = 'object'),
+    PRIMARY KEY (scope, name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS stobe_settings_presets_name_idx
+    ON stobe_settings_presets (scope, lower(name));
 

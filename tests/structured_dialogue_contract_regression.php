@@ -142,6 +142,83 @@ contractAssertSame('Esata the Stone Golem', trim(strval($legacyStyle['character'
 contractAssertSame('Herika', trim(strval($legacyStyle['listener'] ?? '')), 'Legacy Stobe JSON should preserve listener');
 contractAssertSame('State your purpose. Now.', trim(strval($legacyStyle['message'] ?? '')), 'Legacy Stobe JSON should preserve message');
 
+$arrayReply = ['character' => 'Beep', 'message' => 'Stay close.', 'listener' => 'Drifter', 'action' => 'FOLLOW', 'target' => 'Drifter'];
+$objectReply = stobeParseStructuredDialogueResponse(json_encode($arrayReply), 'chat');
+foreach ([[$arrayReply], ['response' => [$arrayReply]], [['data' => json_encode($arrayReply)]]] as $wrappedReply) {
+    $parsedReply = stobeParseStructuredDialogueResponse(json_encode($wrappedReply), 'chat');
+    contractAssertTrue($parsedReply === $objectReply, 'A single wrapped reply should preserve dialogue, listener and validated action');
+}
+$multipleReplies = stobeParseStructuredDialogueResponse(json_encode([$arrayReply, $arrayReply]), 'chat');
+contractAssertSame('', $multipleReplies['message'], 'Multiple replies must not silently select a speaker');
+contractAssertSame('', $multipleReplies['action_tag'], 'Multiple replies must not execute an arbitrary action');
+
+$stopAttackTag = stobeBuildActionTagFromStructuredPayload(
+    'StopAttack',
+    'RANGROO',
+    '',
+    'It was a misunderstanding. Stand down.',
+    'RANGROO'
+);
+contractAssertSame(
+    'STOP_ATTACK@RANGROO',
+    $stopAttackTag,
+    'StopAttack should target the opposing faction through a named nearby actor'
+);
+contractAssertSame(
+    '',
+    stobeBuildActionTagFromStructuredPayload('StopAttack', '', '', 'Stand down.', 'RANGROO'),
+    'StopAttack should be rejected when no opposing target is provided'
+);
+contractAssertSame(
+    'STOP_ATTACK@RANGROO',
+    normalizeActionTagToken('STOPATTACK@RANGROO', ['allowlist' => ['STOP_ATTACK']]),
+    'StopAttack aliases should normalize to the targeted STOP_ATTACK command'
+);
+contractAssertSame(
+    '',
+    normalizeActionTagToken(
+        'STOP_ATTACK@RANGROO',
+        ['allowlist' => ['STOP_ATTACK'], 'disallow_stop_attack' => true]
+    ),
+    'StopAttack should be rejected outside combat'
+);
+$nonCombatContract = stobeResolveStructuredDialogueContractParts(
+    'Gate Guard',
+    ['metadata' => ['is_in_combat' => false, 'is_attacking' => false]],
+    false,
+    'chat'
+);
+contractAssertTrue(
+    !in_array('StopAttack', $nonCombatContract['actions'] ?? [], true),
+    'StopAttack should not be exposed to an NPC outside combat'
+);
+$combatContract = stobeResolveStructuredDialogueContractParts(
+    'Gate Guard',
+    ['metadata' => ['is_in_combat' => true]],
+    false,
+    'chat'
+);
+contractAssertTrue(
+    in_array('StopAttack', $combatContract['actions'] ?? [], true),
+    'StopAttack should be exposed to an NPC in combat'
+);
+$combatPrompt = stobeBuildOutputContractUserPrompt(
+    'Gate Guard',
+    false,
+    false,
+    false,
+    'chat',
+    '',
+    ['metadata' => ['is_in_combat' => true]]
+);
+contractAssertTrue(
+    str_contains($combatPrompt, 'action MUST be StopAttack'),
+    'Combat dialogue prompt should forbid claiming a ceasefire without StopAttack'
+);
+contractAssertTrue(
+    str_contains($combatPrompt, 'If this NPC refuses the ceasefire'),
+    'Combat dialogue prompt should preserve the NPC choice to refuse a ceasefire'
+);
 $partialStructured = stobeParseStructuredDialogueResponse(
     '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler',
     'chat'
@@ -150,5 +227,31 @@ contractAssertTrue(boolval($partialStructured['is_structured'] ?? false), 'Parti
 contractAssertSame('Dagur', trim(strval($partialStructured['character'] ?? '')), 'Partial structured JSON should preserve character');
 contractAssertSame('RANGROO', trim(strval($partialStructured['listener'] ?? '')), 'Partial structured JSON should preserve listener');
 contractAssertSame('Well met, traveler', trim(strval($partialStructured['message'] ?? '')), 'Partial structured JSON should expose message early');
+
+$unusablePrefix = stobeParseStructuredDialogueResponse('{ "character":', 'chat');
+contractAssertTrue(
+    !boolval($unusablePrefix['is_structured'] ?? false),
+    'A JSON prefix without dialogue should not parse as a structured response'
+);
+contractAssertTrue(
+    !stobeStructuredStreamResponseIsUsable(
+        '{ "character":',
+        boolval($unusablePrefix['is_structured'] ?? false),
+        trim(strval($unusablePrefix['message'] ?? ''))
+    ),
+    'A JSON prefix without dialogue should be rejected before streaming'
+);
+contractAssertTrue(
+    stobeStructuredStreamResponseIsUsable(
+        '{"character":"Dagur","listener":"RANGROO","message":"Well met, traveler',
+        boolval($partialStructured['is_structured'] ?? false),
+        trim(strval($partialStructured['message'] ?? ''))
+    ),
+    'A partial structured response with usable dialogue should remain compatible'
+);
+contractAssertTrue(
+    stobeStructuredStreamResponseIsUsable('Plain text fallback.', false, 'Plain text fallback.'),
+    'A plain-text provider fallback should remain compatible'
+);
 
 echo "PASS: structured dialogue contract regression\n";

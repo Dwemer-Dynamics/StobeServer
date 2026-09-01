@@ -100,6 +100,42 @@ function stobeShouldUseStreamingTransport(array $connectorConfig): bool {
     return $useStreaming;
 }
 
+function stobeResolveStreamFailure(
+    string $streamError,
+    string $finishReason,
+    string $nativeFinishReason = ''
+): string {
+    $streamError = trim($streamError);
+    if ($streamError !== '') {
+        return $streamError;
+    }
+
+    $normalizedFinishReason = strtolower(trim($finishReason));
+    if (in_array($normalizedFinishReason, ['length', 'content_filter', 'error'], true)) {
+        return 'finish_reason_' . $normalizedFinishReason;
+    }
+
+    $normalizedNativeFinishReason = strtolower(trim($nativeFinishReason));
+    if (in_array($normalizedNativeFinishReason, ['max_tokens', 'max_output_tokens', 'length'], true)) {
+        return 'native_finish_reason_length';
+    }
+    if (in_array($normalizedNativeFinishReason, ['content_filter', 'safety', 'blocked', 'error'], true)) {
+        return 'native_finish_reason_' . $normalizedNativeFinishReason;
+    }
+
+    return '';
+}
+
+function stobeExtractStreamError(mixed $errorPayload): string {
+    if (is_array($errorPayload)) {
+        $error = trim(strval($errorPayload['message'] ?? $errorPayload['code'] ?? 'stream_error'));
+    } else {
+        $error = trim(strval($errorPayload));
+    }
+
+    return $error !== '' ? $error : 'stream_error';
+}
+
 function stobeApplyConnectorExtraPayload(array &$payload, array $connectorConfig, bool $streamValue): void {
     $extraPayload = stobeParseConnectorExtras($connectorConfig);
     if (array_key_exists('stream', $extraPayload)) {
@@ -1070,12 +1106,18 @@ function callLLMStream(
     $fullContent = '';
     $usage = [];
     $streamDone = false;
+    $streamError = '';
+    $finishReason = '';
+    $nativeFinishReason = '';
     $writeCallback = function ($curlHandle, string $data) use (
         &$streamBuffer,
         &$rawStream,
         &$fullContent,
         &$usage,
         &$streamDone,
+        &$streamError,
+        &$finishReason,
+        &$nativeFinishReason,
         $onTextDelta
     ): int {
         $rawStream .= $data;
@@ -1114,14 +1156,28 @@ function callLLMStream(
                 $usage = $chunkData['usage'];
             }
 
+            if (array_key_exists('error', $chunkData)) {
+                $streamError = stobeExtractStreamError($chunkData['error']);
+            }
+
             $choices = $chunkData['choices'] ?? [];
             if (!is_array($choices) || count($choices) === 0 || !is_array($choices[0] ?? null)) {
                 continue;
             }
 
-            $deltaText = stobeExtractDeltaContent($choices[0]);
+            $choice = $choices[0];
+            $chunkFinishReason = trim(strval($choice['finish_reason'] ?? ''));
+            if ($chunkFinishReason !== '') {
+                $finishReason = $chunkFinishReason;
+            }
+            $chunkNativeFinishReason = trim(strval($choice['native_finish_reason'] ?? ''));
+            if ($chunkNativeFinishReason !== '') {
+                $nativeFinishReason = $chunkNativeFinishReason;
+            }
+
+            $deltaText = stobeExtractDeltaContent($choice);
             if ($deltaText === '') {
-                $messageContent = stobeExtractMessageContent($choices[0]);
+                $messageContent = stobeExtractMessageContent($choice);
                 if ($messageContent !== '') {
                     $deltaText = $messageContent;
                 }
@@ -1203,6 +1259,9 @@ function callLLMStream(
             $fullContent = '';
             $usage = [];
             $streamDone = false;
+            $streamError = '';
+            $finishReason = '';
+            $nativeFinishReason = '';
             $execResult = $runStreamRequest($retryPayloadJson);
         }
     }
@@ -1246,9 +1305,15 @@ function callLLMStream(
     if (trim($fullContent) === '' && trim($rawStream) !== '') {
         $maybeJson = json_decode($rawStream, true);
         if (is_array($maybeJson)) {
+            if (array_key_exists('error', $maybeJson)) {
+                $streamError = stobeExtractStreamError($maybeJson['error']);
+            }
             $choices = $maybeJson['choices'] ?? [];
             if (is_array($choices) && count($choices) > 0 && is_array($choices[0] ?? null)) {
-                $fullContent = stobeExtractMessageContent($choices[0]);
+                $choice = $choices[0];
+                $finishReason = trim(strval($choice['finish_reason'] ?? $finishReason));
+                $nativeFinishReason = trim(strval($choice['native_finish_reason'] ?? $nativeFinishReason));
+                $fullContent = stobeExtractMessageContent($choice);
                 if (trim($fullContent) !== '') {
                     try {
                         $onTextDelta($fullContent);
@@ -1263,6 +1328,48 @@ function callLLMStream(
                 $usage = $maybeJson['usage'];
             }
         }
+    }
+
+    $streamFailure = stobeResolveStreamFailure($streamError, $finishReason, $nativeFinishReason);
+    if ($streamFailure !== '') {
+        stobeAppendLlmDebugLog('output_from_llm.log', 'llm_stream_response_incomplete', [
+            'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
+            'event_type' => strval($meta['event_type'] ?? ''),
+            'npc_name' => strval($meta['npc_name'] ?? ''),
+            'connector_type' => $connectorType,
+            'model' => $model,
+            'finish_reason' => $finishReason,
+            'native_finish_reason' => $nativeFinishReason,
+            'error' => $streamFailure,
+            'response_text' => $fullContent,
+        ]);
+        stobeLogWarn('LLM stream ended before a complete response', [
+            'model' => $model,
+            'finish_reason' => $finishReason,
+            'native_finish_reason' => $nativeFinishReason,
+            'error' => $streamFailure,
+        ]);
+        stobeRecordAuditRequest([
+            'request_id' => strval($GLOBALS['__stobe_request_id'] ?? ''),
+            'event_type' => strval($meta['event_type'] ?? ''),
+            'npc_name' => strval($meta['npc_name'] ?? ''),
+            'connector_type' => $connectorType,
+            'model' => $model,
+            'url' => $url,
+            'request_payload' => $payload,
+            'result_payload' => [
+                'response_text' => $fullContent,
+                'finish_reason' => $finishReason,
+                'native_finish_reason' => $nativeFinishReason,
+            ],
+            'http_code' => intval($httpCode),
+            'duration_ms' => intval(round((microtime(true) - $requestStartedAt) * 1000)),
+            'is_stream' => true,
+            'usage' => is_array($usage) ? $usage : [],
+            'status' => 'error',
+            'error' => $streamFailure,
+        ]);
+        return false;
     }
 
     if (trim($fullContent) === '') {
@@ -1309,6 +1416,8 @@ function callLLMStream(
         'connector_type' => $connectorType,
         'model' => $model,
         'usage' => is_array($usage) ? $usage : [],
+        'finish_reason' => $finishReason,
+        'native_finish_reason' => $nativeFinishReason,
         'response_text' => $fullContent,
     ]);
 
@@ -1328,7 +1437,11 @@ function callLLMStream(
         'model' => $model,
         'url' => $url,
         'request_payload' => $payload,
-        'result_payload' => ['response_text' => $fullContent],
+        'result_payload' => [
+            'response_text' => $fullContent,
+            'finish_reason' => $finishReason,
+            'native_finish_reason' => $nativeFinishReason,
+        ],
         'http_code' => intval($httpCode),
         'duration_ms' => intval(round((microtime(true) - $requestStartedAt) * 1000)),
         'is_stream' => true,

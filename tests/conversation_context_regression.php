@@ -43,6 +43,49 @@ function contextFlowMessageContents(array $messages): array
     return $contents;
 }
 
+$historyAliases = stobeResolveNpcEventHistoryAliases(
+    ['original_name' => 'Dust Boss Hotlongs'],
+    'Fenth [Dust Boss Hotlongs]'
+);
+contextFlowAssertSame(
+    'Dust Boss Hotlongs',
+    strval($historyAliases[0] ?? ''),
+    'renamed NPC history should retain the original game name as an event alias'
+);
+
+$recentCombatHistory = [
+    [
+        'type' => 'major_damage',
+        'data' => 'Fenth [Dust Boss Hotlongs]: took a major hit from Herika using Short Cleaver',
+        'gamets' => 1950,
+        'localts' => time(),
+    ],
+    [
+        'type' => 'major_damage',
+        'data' => 'Fenth [Dust Boss Hotlongs]: took an old hit',
+        'gamets' => 500,
+        'localts' => time() - 600,
+    ],
+];
+$recentCombatEvents = stobeBuildRecentCombatPromptEvents($recentCombatHistory, 2000);
+contextFlowAssertSameInt(1, count($recentCombatEvents), 'combat prompt should retain only recent severe events');
+contextFlowAssert(
+    str_contains(strval($recentCombatEvents[0]['line'] ?? ''), 'Herika using Short Cleaver'),
+    'combat prompt event should preserve attacker and weapon details'
+);
+$combatNpcData = stobeAttachRecentCombatPromptEvents(
+    ['name' => 'Fenth [Dust Boss Hotlongs]', 'metadata' => []],
+    $recentCombatHistory,
+    2000
+);
+$combatPriorityBlock = stobeBuildCombatPriorityPromptBlock($combatNpcData, 'Fenth [Dust Boss Hotlongs]');
+contextFlowAssert(
+    str_contains($combatPriorityBlock, '<combat_priority>')
+        && str_contains($combatPriorityBlock, '<recent_event type="major_damage">')
+        && str_contains($combatPriorityBlock, 'never detached or analytical'),
+    'recent major damage should activate an urgent combat prompt with concrete evidence'
+);
+
 $eventHistory = [
     [
         'type' => 'chat',
@@ -72,6 +115,26 @@ $eventHistory = [
 
 $messages = stobeBuildRecentContextMessages($eventHistory, 600, 64);
 $contents = contextFlowMessageContents($messages);
+
+// Short-term memory needs the surviving history floor without leaking internal timestamps.
+$timedMessages = stobeBuildRecentContextMessages($eventHistory, 600, 64, '', true);
+contextFlowAssertSameInt(497, min(array_column($timedMessages, '_stobe_gamets')), 'history retains its oldest surviving timestamp');
+contextFlowAssertSame('', stobeBuildShortTermMemoryContext(false, 'Unknown NPC', $timedMessages, 600, false), 'unknown NPCs do not receive summaries');
+contextFlowAssert($timedMessages === $messages, 'short-term memory strips timestamps without changing live dialogue');
+
+$rollingEvents = [];
+for ($index = 1; $index <= 20; $index++) {
+    $rollingEvents[] = [
+        'type' => 'chat',
+        'data' => ($index % 2 ? 'Beep' : 'Ruka') . ': Message ' . $index,
+        'gamets' => 600 + $index,
+    ];
+}
+$rollingEvents = array_reverse($rollingEvents);
+$rollingTimed = stobeBuildRecentContextMessages($rollingEvents, 700, 8, 'Beep', true);
+contextFlowAssertSameInt(613, $rollingTimed[0]['_stobe_gamets'], 'summary boundary follows the surviving window after cropping');
+stobeBuildShortTermMemoryContext(false, 'Unknown NPC', $rollingTimed, 700, true);
+contextFlowAssert($rollingTimed === stobeBuildRecentContextMessages($rollingEvents, 700, 8, 'Beep'), 'timestamp tracking preserves cropped dialogue');
 
 contextFlowAssert(count($contents) === 4, 'recent context builder should emit location transitions plus deduped narrative rows');
 contextFlowAssert(
@@ -354,7 +417,7 @@ contextFlowAssert(
     'compact chat history should remove ambient user-message wrappers'
 );
 
-$priorCompactSetting = getSetting('COMPACT_CHAT_HISTORY_ENABLED', 'false');
+$priorCompactSetting = getSetting('COMPACT_CHAT_HISTORY_ENABLED', 'true');
 try {
     setSetting('COMPACT_CHAT_HISTORY_ENABLED', 'true');
     contextFlowAssert(
@@ -402,6 +465,98 @@ contextFlowAssertSameInt(
     count(is_array($compactedHistory['history_messages'] ?? null) ? $compactedHistory['history_messages'] : []),
     'enabled compact chat history should remove the role-separated recent history'
 );
+
+$GLOBALS['db']->exec('BEGIN');
+try {
+    $GLOBALS['db']->exec("DELETE FROM general_settings WHERE id = 'PROMPT_HEAD_MARKDOWN_ENABLED'");
+    contextFlowAssert(getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true), 'Compact Prompt Info defaults on when missing');
+    setSetting('PROMPT_HEAD_MARKDOWN_ENABLED', 'false');
+    contextFlowAssert(!getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true), 'Explicitly disabled Compact Prompt Info stays off');
+    $GLOBALS['db']->exec("DELETE FROM general_settings WHERE id = 'COMPACT_CHAT_HISTORY_ENABLED'");
+    contextFlowAssert(stobeShouldCompactChatHistory('Doran'), 'Compact Chat History defaults on when missing');
+    setSetting('COMPACT_CHAT_HISTORY_ENABLED', 'false');
+    contextFlowAssert(!stobeShouldCompactChatHistory('Doran'), 'Explicitly disabled Compact Chat History stays off');
+} finally {
+    $GLOBALS['db']->exec('ROLLBACK');
+}
+
+$GLOBALS['db']->exec('BEGIN');
+try {
+    setSetting('PROMPT_CONTEXT_OPTIONS', json_encode(stobeGetDefaultPromptContextOptions()));
+    $nearbyAppearanceOne = 'UT_NEARBY_APPEARANCE_ONE';
+    $nearbyAppearanceTwo = 'UT_NEARBY_APPEARANCE_TWO';
+    $longNearbyAppearance = 'A weathered face, a shaved head, and a bright crimson scarf, with a long burn scar crossing the left cheek, pale green eyes, a chipped front tooth, and dust-stained leather wraps around both forearms.';
+    storeNpcProfile($nearbyAppearanceOne, [
+        'appearance' => $longNearbyAppearance,
+    ]);
+    storeNpcProfile($nearbyAppearanceTwo, [
+        'appearance' => 'Tall and broad-shouldered with a distinctive silver eyepatch.',
+    ]);
+    $nearbyAppearanceActor = static function (string $name): array {
+        return [
+            'name' => $name,
+            'race' => 'Greenlander',
+            'gender' => 'male',
+            'faction' => 'Drifters',
+            'current_action' => 'standing',
+            'equipment' => 'Dustcoat',
+            'is_animal' => false,
+            'is_dead' => false,
+            'is_knocked_out' => false,
+            'is_unconscious' => false,
+        ];
+    };
+    $nearbyAppearancePrompt = stobeBuildNearbyActorsPromptBlock([
+        'extended_data' => [
+            'nearby_actors' => [
+                $nearbyAppearanceActor($nearbyAppearanceOne),
+                $nearbyAppearanceActor($nearbyAppearanceTwo),
+            ],
+        ],
+    ], 'UT_NEARBY_APPEARANCE_LISTENER');
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: ' . $longNearbyAppearance) !== false,
+        'nearby actor context should include the complete long NPC profile appearance'
+    );
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: Tall and broad-shouldered with a distinctive silver eyepatch.') !== false,
+        'nearby actor context should include the second NPC profile appearance'
+    );
+} finally {
+    $GLOBALS['db']->exec('ROLLBACK');
+}
+
+$xmlPrompt = "<world>\r\n<location>The Hub</location>\r\n</world>\r\n"
+    . "<character>\n<skills>\n<group name=\"Combat\">\n"
+    . "<skill name=\"Melee Attack\">Expert</skill>\n</group>\n</skills>\n"
+    . "<character_state>\n<health>Healthy</health>\n</character_state>\n</character>\n"
+    . "<nearby_actors>\n#NEARBY ACTORS/NPC IN THE SCENE\n##Beep (1234)\n</nearby_actors>\n"
+    . "<general_instructions>\n<rule>Keep action JSON unchanged.</rule>\n"
+    . "* Be brief.\nUse <speech_style> for reference.\n</general_instructions>\n"
+    . "<nearby_context_json>\n{\"actor\":\"Beep\",\"id\":1234}\n</nearby_context_json>";
+contextFlowAssertSame($xmlPrompt, stobeFormatPromptHeadSection($xmlPrompt, false), 'off preserves exact XML and line endings');
+$markdownPrompt = stobeFormatPromptHeadSection($xmlPrompt, true);
+foreach ([
+    '# World', '- Location: The Hub', '# Character', '## Skills', '### Combat',
+    '- Melee Attack: Expert', '## Character State', '- Health: Healthy',
+    '# Nearby Actors', '- Beep (1234)', '- Keep action JSON unchanged.', '- Be brief.',
+    'Use `Speech Style` for reference.', '{"actor":"Beep","id":1234}',
+] as $expected) {
+    contextFlowAssert(strpos($markdownPrompt, $expected) !== false, 'Markdown retains ' . $expected);
+}
+contextFlowAssert(strpos($markdownPrompt, '<') === false, 'Markdown removes section tags including named skills');
+contextFlowAssert(strpos($markdownPrompt, 'NEARBY ACTORS/NPC IN THE SCENE') === false, 'duplicate legacy heading removed');
+foreach ([false, true] as $compactEnabled) {
+    $off = stobeApplyCompactChatHistory($xmlPrompt, $compactSourceMessages, 'Doran', $compactEnabled);
+    $explicitOff = stobeApplyCompactChatHistory($xmlPrompt, $compactSourceMessages, 'Doran', $compactEnabled, false);
+    contextFlowAssert($off === $explicitOff, 'missing and false Markdown flag are identical');
+    $on = stobeApplyCompactChatHistory($xmlPrompt, $compactSourceMessages, 'Doran', $compactEnabled, true);
+    contextFlowAssert($on['history_messages'] === $off['history_messages'], 'Markdown does not change history routing');
+    $expectedSystem = $compactEnabled
+        ? rtrim($markdownPrompt) . "\n\n# Conversation History\n\n" . preg_replace('/^# /m', '- ', $compactBlock)
+        : $markdownPrompt;
+    contextFlowAssertSame($expectedSystem, $on['system_prompt'], 'Markdown works independently of Compact Chat');
+}
 
 $baseSnapshot = stobeNormalizePlayerBaseSnapshot([
     'inside' => true,

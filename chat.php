@@ -300,7 +300,8 @@ if ($mode === 'autochat') {
 
 $eventType = 'inputtext';
 $message = $sanitizeChatMessage($message);
-$eventData = $speaker . ': ' . $message . ' (talking to: ' . $targetNpc . ')';
+$playerMoodCue = stobeResolvePlayerMoodCue($payload, $mode, $speaker);
+$eventData = $speaker . ': ' . $message . $playerMoodCue . ' (talking to: ' . $targetNpc . ')';
 storeEvent($eventType, time(), $gamets, $eventData);
 if (!$narratorMode) {
     // Mirror player input as chat immediately so timeline order is stable even
@@ -347,7 +348,7 @@ if ($deliveryStyleInstruction !== '') {
         . "  <instruction>" . stobePromptXmlEscape($deliveryStyleInstruction) . "</instruction>\n"
         . "</speech_mode>";
 }
-$userMessage = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message);
+$userMessage = stobeBuildPlayerInputPromptContent($speaker, $targetNpc, $message . $playerMoodCue);
 if ($mode === 'cheat') {
     $priorityInstruction = "PRIORITY INSTRUCTION - {$targetNpc} must do this, even if it breaks character roleplay: {$message}";
     $systemPrompt .= "\n\n<cheatmode>\n"
@@ -380,7 +381,8 @@ $compactHistory = stobeApplyCompactChatHistory(
     $systemPrompt,
     $historyMessages,
     $targetNpc,
-    stobeShouldCompactChatHistory($targetNpc)
+    stobeShouldCompactChatHistory($targetNpc),
+    getSettingBool('PROMPT_HEAD_MARKDOWN_ENABLED', true)
 );
 $systemPrompt = strval($compactHistory['system_prompt'] ?? $systemPrompt);
 $historyMessages = is_array($compactHistory['history_messages'] ?? null)
@@ -418,7 +420,7 @@ $messages[] = [
     'role' => 'user',
     'content' => $narratorMode
         ? 'Output contract: return only a direct conversational reply to the current speaker. Do not include scene narration, atmospheric description, third-person prose, or action tags.'
-        : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat', false, null, 'chat'),
+        : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat', false, null, 'chat', '', $npcData),
 ];
 
 $llmConfig = getLlmConfigForNpc($npcData);

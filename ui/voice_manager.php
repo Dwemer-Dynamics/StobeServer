@@ -2,6 +2,7 @@
 $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "bootstrap.php");
 require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "tts_voice_management.php");
+require_once($enginePath . "lib" . DIRECTORY_SEPARATOR . "tts_pronunciation_preview.php");
 if (!isset($GLOBALS["db"]) || !($GLOBALS["db"] instanceof sql)) {
     $GLOBALS["db"] = new sql();
 }
@@ -175,6 +176,11 @@ $webRoot = rtrim($webRoot, "/");
 $voicesDir = dirname(__DIR__) . DIRECTORY_SEPARATOR . "data" . DIRECTORY_SEPARATOR . "voices";
 $message = "";
 $messageType = "ok";
+$view = strtolower(stobe_voice_trim($_GET["view"] ?? "voices"));
+if (!in_array($view, ["voices", "pronunciations"], true)) {
+    $view = "voices";
+}
+$pronunciationDictionary = new TTSPronunciationDictionary();
 $providerConnectors = [];
 $providerConnectorMap = [];
 foreach ($db->fetchAll(
@@ -193,7 +199,71 @@ foreach ($db->fetchAll(
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    if (isset($_POST["provider_voice_action"])) {
+    if (isset($_POST["pronunciation_action"])) {
+        $view = "pronunciations";
+        $pronunciationAction = strtolower(stobe_voice_trim($_POST["pronunciation_action"] ?? ""));
+        $pronunciationId = intval($_POST["pronunciation_id"] ?? 0);
+
+        try {
+            $saved = false;
+            $status = "";
+            if ($pronunciationAction === "save") {
+                $saved = $pronunciationDictionary->saveCustom(
+                    $pronunciationId > 0 ? $pronunciationId : null,
+                    stobe_voice_trim($_POST["source_text"] ?? ""),
+                    stobe_voice_trim($_POST["spoken_text"] ?? ""),
+                    stobe_voice_trim($_POST["npc_names"] ?? ""),
+                    stobe_voice_trim($_POST["races"] ?? ""),
+                    stobe_voice_trim($_POST["oghma_tags"] ?? ""),
+                    isset($_POST["enabled"])
+                );
+                $status = "saved";
+            } elseif ($pronunciationAction === "save_builtin") {
+                $saved = $pronunciationDictionary->saveBuiltin(
+                    $pronunciationId,
+                    stobe_voice_trim($_POST["spoken_text"] ?? ""),
+                    isset($_POST["enabled"])
+                );
+                $status = "saved";
+            } elseif ($pronunciationAction === "toggle") {
+                $saved = $pronunciationDictionary->setEnabled(
+                    $pronunciationId,
+                    stobeTtsPronunciationBoolean($_POST["enabled"] ?? false)
+                );
+                $status = "updated";
+            } elseif ($pronunciationAction === "delete") {
+                $saved = $pronunciationDictionary->deleteEntry($pronunciationId);
+                $status = "deleted";
+            } else {
+                $message = "Unknown pronunciation action.";
+                $messageType = "err";
+            }
+
+            if ($saved) {
+                header("Location: " . stobe_voice_build_url(
+                    ["view" => "pronunciations", "pronunciation_ok" => $status],
+                    $isEmbed
+                ));
+                exit;
+            }
+            if ($message === "") {
+                if ($pronunciationAction === "save") {
+                    $message = "Enter a written and spoken form, or check for a duplicate entry.";
+                } elseif ($pronunciationAction === "save_builtin") {
+                    $message = "Enter a spoken form for the built-in pronunciation.";
+                } else {
+                    $message = "The pronunciation could not be updated.";
+                }
+                $messageType = "err";
+            }
+        } catch (Throwable $exception) {
+            if (function_exists('stobeLogException')) {
+                stobeLogException($exception, 'TTS pronunciation update failed');
+            }
+            $message = "The pronunciation could not be saved. Check for a duplicate entry and try again.";
+            $messageType = "err";
+        }
+    } elseif (isset($_POST["provider_voice_action"])) {
         $connectorId = intval($_POST["connector_id"] ?? 0);
         $voiceid = stobeVoiceProviderNormalizeId(strval($_POST["voiceid"] ?? ""));
         $providerAction = strtolower(stobe_voice_trim($_POST["provider_voice_action"] ?? ""));
@@ -339,6 +409,17 @@ if (isset($_GET["ok"])) {
     }
 }
 
+if (isset($_GET["pronunciation_ok"])) {
+    $pronunciationOk = stobe_voice_trim($_GET["pronunciation_ok"] ?? "");
+    if ($pronunciationOk === "saved") {
+        $message = "Pronunciation saved.";
+    } elseif ($pronunciationOk === "updated") {
+        $message = "Pronunciation status updated.";
+    } elseif ($pronunciationOk === "deleted") {
+        $message = "Pronunciation deleted.";
+    }
+}
+
 $letter = strtoupper(stobe_voice_trim($_GET["letter"] ?? ""));
 $search = stobe_voice_trim($_GET["search"] ?? "");
 $params = [];
@@ -407,6 +488,78 @@ if (!$editRow) {
         "notes" => "",
     ];
 }
+
+$pronunciationSearch = '';
+$pronunciationTag = '';
+$pronunciationTags = [];
+$pronunciationRows = [];
+$pronunciationEditRow = [
+    'id' => 0,
+    'source_text' => '',
+    'spoken_text' => '',
+    'npc_names' => '',
+    'races' => '',
+    'oghma_tags' => '',
+    'enabled' => true,
+];
+$pronunciationPreviewOptions = [
+    'connectors' => [],
+    'voices' => [],
+    'default_connector_id' => 0,
+    'default_voice' => '',
+];
+if ($view === 'pronunciations') {
+    $pronunciationSearch = stobe_voice_trim($_GET["pronunciation_search"] ?? "");
+    $pronunciationTag = stobe_voice_trim($_GET["pronunciation_tag"] ?? "");
+    $pronunciationTags = $pronunciationDictionary->getAvailableTags();
+    $pronunciationRows = $pronunciationDictionary->getRows($pronunciationTag);
+    if ($pronunciationSearch !== "") {
+        $needle = function_exists('mb_strtolower')
+            ? mb_strtolower($pronunciationSearch, 'UTF-8')
+            : strtolower($pronunciationSearch);
+        $pronunciationRows = array_values(array_filter(
+            $pronunciationRows,
+            static function (array $row) use ($needle): bool {
+                $haystack = implode(' ', [
+                    strval($row['source_text'] ?? ''),
+                    strval($row['spoken_text'] ?? ''),
+                    strval($row['npc_names'] ?? ''),
+                    strval($row['races'] ?? ''),
+                    strval($row['oghma_tags'] ?? ''),
+                ]);
+                $haystack = function_exists('mb_strtolower')
+                    ? mb_strtolower($haystack, 'UTF-8')
+                    : strtolower($haystack);
+                return strpos($haystack, $needle) !== false;
+            }
+        ));
+    }
+
+    $editPronunciationId = intval($_GET['edit_pronunciation'] ?? 0);
+    if ($editPronunciationId > 0) {
+        foreach ($pronunciationDictionary->getRows() as $candidate) {
+            if (intval($candidate['id'] ?? 0) === $editPronunciationId
+                && !stobeTtsPronunciationBoolean($candidate['is_builtin'] ?? false)) {
+                $pronunciationEditRow = $candidate;
+                break;
+            }
+        }
+    }
+    if ($_SERVER["REQUEST_METHOD"] === "POST"
+        && strtolower(stobe_voice_trim($_POST["pronunciation_action"] ?? "")) === "save"
+        && $messageType === "err") {
+        $pronunciationEditRow = [
+            'id' => intval($_POST['pronunciation_id'] ?? 0),
+            'source_text' => stobe_voice_trim($_POST['source_text'] ?? ''),
+            'spoken_text' => stobe_voice_trim($_POST['spoken_text'] ?? ''),
+            'npc_names' => stobe_voice_trim($_POST['npc_names'] ?? ''),
+            'races' => stobe_voice_trim($_POST['races'] ?? ''),
+            'oghma_tags' => stobe_voice_trim($_POST['oghma_tags'] ?? ''),
+            'enabled' => isset($_POST['enabled']),
+        ];
+    }
+    $pronunciationPreviewOptions = stobeTtsPronunciationPreviewOptions();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -418,6 +571,7 @@ if (!$editRow) {
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/navbar.css">
+    <link rel="stylesheet" href="css/tts-pronunciations.css?v=20260830">
     <style>
         main {
             padding-top: 30px;
@@ -688,9 +842,29 @@ if (!$editRow) {
 
     <div class="page-header">
         <h1 class="api-title">TTS Studio &amp; Voice Manager</h1>
-        <p class="page-subtitle">Manage local voice samples, NPC matching metadata, and uploaded connector copies</p>
+        <p class="page-subtitle">
+            <?= $view === "pronunciations"
+                ? "Control how written words are spoken without changing dialogue text"
+                : "Manage local voice samples, NPC matching metadata, and uploaded connector copies" ?>
+        </p>
     </div>
 
+    <nav class="tts-studio-tabs" aria-label="TTS Studio sections">
+        <a
+            class="tts-studio-tab <?= $view === "voices" ? "active" : "" ?>"
+            href="<?= h(stobe_voice_build_url([], $isEmbed)) ?>"
+            <?= $view === "voices" ? 'aria-current="page"' : '' ?>
+        >Voice Manager</a>
+        <a
+            class="tts-studio-tab <?= $view === "pronunciations" ? "active" : "" ?>"
+            href="<?= h(stobe_voice_build_url(["view" => "pronunciations"], $isEmbed)) ?>"
+            <?= $view === "pronunciations" ? 'aria-current="page"' : '' ?>
+        >Pronunciations</a>
+    </nav>
+
+    <?php if ($view === "pronunciations"): ?>
+        <?php include(__DIR__ . DIRECTORY_SEPARATOR . "tmpl" . DIRECTORY_SEPARATOR . "tts_pronunciations.php"); ?>
+    <?php else: ?>
     <div class="content-grid">
         <div id="edit-form" class="content-section">
             <h2><?= stobe_voice_trim($editRow["voiceid"] ?? "") !== "" ? "Edit Voice Override" : "Add Voice Override" ?></h2>
@@ -892,6 +1066,7 @@ if (!$editRow) {
             </div>
         </div>
     </div>
+    <?php endif; ?>
 </main>
 
 <script>

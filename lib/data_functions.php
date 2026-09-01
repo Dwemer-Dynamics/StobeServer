@@ -2805,6 +2805,8 @@ function stobeApplySpeechDeliveryUpdates(array $updates): array {
 }
 
 function stobeNormalizeDialogueForMirrorDedupe(string $rawMessage): string {
+    // The game echoes literal speech without the server's non-spoken mood cue.
+    $rawMessage = preg_replace('/\s*\[Player tone: [^\]]*\]\s*$/u', '', $rawMessage) ?? $rawMessage;
     $normalized = strtolower(trim(stobeSanitizeDialogueMessageForLog($rawMessage)));
     // Common corruption tail: stray trailing digits (for example "...join us6").
     $normalized = preg_replace('/(?<=\p{L})\d{1,2}\s*$/u', '', $normalized) ?? $normalized;
@@ -2879,6 +2881,12 @@ function stobeShouldSkipMirroredPlayerChatRow($db, string $chatData, int $eventL
 }
 
 function stobeSanitizeDialogueMessageForLog(string $message): string {
+    $moodCue = '';
+    if (preg_match('/\s*(\[Player tone: [^\]]*\])\s*$/u', $message, $match) === 1) {
+        // Mood text is already normalized; do not treat Unicode custom cues as game corruption.
+        $moodCue = ' ' . $match[1];
+        $message = substr($message, 0, -strlen($match[0]));
+    }
     $clean = sanitizeForKenshi(strval($message));
     $clean = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/u', '', $clean) ?? $clean;
     $clean = trim($clean);
@@ -2897,7 +2905,7 @@ function stobeSanitizeDialogueMessageForLog(string $message): string {
     $clean = preg_replace('/([\.!\?\)\]])\d{1,3}\s*$/u', '$1', $clean) ?? $clean;
     $clean = preg_replace('/\s{2,}/u', ' ', $clean) ?? $clean;
 
-    return trim($clean);
+    return trim($clean) . $moodCue;
 }
 
 function stobeChooseIndefiniteArticle(string $value): string {
@@ -6545,7 +6553,31 @@ function persistManualRename(
  * Build context from eventlog for LLM prompts.
  * Returns the most recent N events as formatted history.
  */
-function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaignFilter = ''): array {
+function stobeResolveNpcEventHistoryAliases(array|false $npcData, string $primaryName): array {
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return [];
+    }
+
+    $primaryKey = strtolower(normalizeParticipantNameToken($primaryName));
+    $metadata = normalizeCoreNpcMetadata($npcData['metadata'] ?? []);
+    $aliases = [];
+    foreach ([$npcData['original_name'] ?? '', $metadata['original_name'] ?? ''] as $candidate) {
+        $alias = normalizeParticipantNameToken(strval($candidate));
+        $aliasKey = strtolower($alias);
+        if ($alias === '' || $aliasKey === $primaryKey || isset($aliases[$aliasKey])) {
+            continue;
+        }
+        $aliases[$aliasKey] = $alias;
+    }
+    return array_values($aliases);
+}
+
+function DataEventLog(
+    int $limit = 0,
+    string $actorFilter = '',
+    string $campaignFilter = '',
+    array $actorAliases = []
+): array {
     $db = $GLOBALS["db"];
 
     if ($limit <= 0) {
@@ -6559,13 +6591,27 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
                 AND {$deliveryVisibilitySql}";
     $params = [];
 
-    if ($actorFilter) {
-        $query .= " AND (people LIKE $1 OR data LIKE $1)";
-        $params[] = "%{$actorFilter}%";
+    $actorFilters = [];
+    foreach (array_merge([$actorFilter], $actorAliases) as $candidate) {
+        $filter = normalizeParticipantNameToken(strval($candidate));
+        $filterKey = strtolower($filter);
+        if ($filter === '' || isset($actorFilters[$filterKey])) {
+            continue;
+        }
+        $actorFilters[$filterKey] = $filter;
+    }
+    if (count($actorFilters) > 0) {
+        $actorClauses = [];
+        foreach ($actorFilters as $filter) {
+            $paramIndex = count($params) + 1;
+            $actorClauses[] = "(people LIKE $" . strval($paramIndex) . " OR data LIKE $" . strval($paramIndex) . ")";
+            $params[] = "%{$filter}%";
+        }
+        $query .= " AND (" . implode(' OR ', $actorClauses) . ")";
     }
 
     $fetchLimit = intval($limit);
-    if ($actorFilter !== '') {
+    if (count($actorFilters) > 0) {
         $fetchLimit = max($fetchLimit + 24, $fetchLimit * 4);
         if ($fetchLimit > 600) {
             $fetchLimit = 600;
@@ -6575,7 +6621,7 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
     $query .= " ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
 
     $rows = $db->fetchAll($query, $params);
-    if ($actorFilter === '' || count($rows) === 0) {
+    if (count($actorFilters) === 0 || count($rows) === 0) {
         return $rows;
     }
 
@@ -7742,6 +7788,10 @@ function stobeRelationshipExtendedDataKeys(): array {
     ];
 }
 
+function stobePersistentNpcSettingExtendedDataKeys(): array {
+    return ['individual_memory_enabled'];
+}
+
 function stobeRelationshipTimelineState(mixed $extendedData): ?array {
     if (is_string($extendedData) && trim($extendedData) !== '') {
         $extendedData = json_decode($extendedData, true);
@@ -7759,21 +7809,42 @@ function stobeRelationshipTimelineState(mixed $extendedData): ?array {
     return $state;
 }
 
-// Build an atomic JSONB update that keeps relationship state owned by relationship writers.
-function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
-    $incomingWithoutRelationships = '(' . $incomingExpression . ')';
-    foreach (stobeRelationshipExtendedDataKeys() as $key) {
-        $incomingWithoutRelationships .= " - '" . $key . "'";
+// Build an atomic JSONB update that keeps selected keys from the current stored object.
+function stobeExtendedDataPreservingKeysSql(
+    string $incomingExpression,
+    string $currentExpression,
+    array $preservedKeys
+): string {
+    $incomingWithoutPreservedKeys = '(' . $incomingExpression . ')';
+    foreach ($preservedKeys as $key) {
+        $incomingWithoutPreservedKeys .= " - '" . $key . "'";
     }
 
-    $relationshipPairs = [];
-    foreach (stobeRelationshipExtendedDataKeys() as $key) {
-        $relationshipPairs[] = "'" . $key . "', (" . $currentExpression . ") -> '" . $key . "'";
+    $preservedPairs = [];
+    foreach ($preservedKeys as $key) {
+        $preservedPairs[] = "'" . $key . "', (" . $currentExpression . ") -> '" . $key . "'";
     }
 
-    return '(' . $incomingWithoutRelationships . ') || jsonb_strip_nulls(jsonb_build_object('
-        . implode(', ', $relationshipPairs)
+    return '(' . $incomingWithoutPreservedKeys . ') || jsonb_strip_nulls(jsonb_build_object('
+        . implode(', ', $preservedPairs)
         . '))';
+}
+
+// Keep relationship state and persistent NPC settings out of generic whole-object replacements.
+function stobeRelationshipPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
+    return stobeExtendedDataPreservingKeysSql(
+        $incomingExpression,
+        $currentExpression,
+        array_merge(stobeRelationshipExtendedDataKeys(), stobePersistentNpcSettingExtendedDataKeys())
+    );
+}
+
+function stobeIndividualMemoryPreservingExtendedDataSql(string $incomingExpression, string $currentExpression): string {
+    return stobeExtendedDataPreservingKeysSql(
+        $incomingExpression,
+        $currentExpression,
+        stobePersistentNpcSettingExtendedDataKeys()
+    );
 }
 
 function stobeAcquireNpcRelationshipLock(int $npcId): ?int {
@@ -7797,11 +7868,14 @@ function stobeReleaseNpcRelationshipLock(?int $lockId): void {
     $GLOBALS['db']->exec('SELECT pg_advisory_unlock($1)', [$lockId]);
 }
 
-function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcId = 0): mixed {
+function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcId = 0, bool $allowCustomInfo = false): mixed {
     $hadPrevious = array_key_exists('STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE', $GLOBALS);
     $previous = $hadPrevious ? $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] : null;
+    $hadCustomInfo = array_key_exists('STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE', $GLOBALS);
+    $previousCustomInfo = $GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'] ?? null;
     $lockId = stobeAcquireNpcRelationshipLock($npcId);
     $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = true;
+    $GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'] = $allowCustomInfo;
 
     try {
         return $callback();
@@ -7810,6 +7884,11 @@ function stobeRunWithRelationshipExtendedDataWrite(callable $callback, int $npcI
             $GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'] = $previous;
         } else {
             unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE']);
+        }
+        if ($hadCustomInfo) {
+            $GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'] = $previousCustomInfo;
+        } else {
+            unset($GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE']);
         }
         stobeReleaseNpcRelationshipLock($lockId);
     }
@@ -11038,6 +11117,37 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         ], 'DEBUG');
     }
 
+    $hasIncomingActivityState = array_key_exists('current_action', $metadataForStorage)
+        || array_key_exists('is_in_combat', $metadataForStorage)
+        || array_key_exists('is_attacking', $metadataForStorage);
+    if ($isInventoryLiveSync) {
+        foreach (['character_state', 'is_incapacitated'] as $preservedKey) {
+            if (
+                !array_key_exists($preservedKey, $metadataForStorage)
+                && array_key_exists($preservedKey, $existingMasterMetadata)
+            ) {
+                $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            }
+        }
+    }
+    if ($isInventoryLiveSync && !$hasIncomingActivityState) {
+        $preservedActivityKeys = [
+            'current_action',
+            'is_moving',
+            'is_running',
+            'is_sneaking',
+            'is_in_combat',
+            'is_attacking',
+            'movement_speed',
+            'attack_target',
+        ];
+        foreach ($preservedActivityKeys as $preservedKey) {
+            if (array_key_exists($preservedKey, $existingMasterMetadata)) {
+                $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            }
+        }
+    }
+
     $shouldPreserveTraderMetadata =
         $snapshotTraderInventoryEntryCount <= 0 &&
         $traderShopSourceCount <= 0 &&
@@ -11542,6 +11652,31 @@ function deleteNpc(int $id): void {
 function updateNpcById(int $id, array $fields): bool {
     $db = $GLOBALS["db"];
     $historyRowBefore = stobeFetchNpcRowForHistoryById($id);
+    if (!empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])
+        && empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'])
+        && array_key_exists('extended_data', $fields)) {
+        $extended = normalizeCoreNpcExtendedData($fields['extended_data']);
+        $extended['relationships'] = stobePreserveRelationshipCustomInfo(
+            stobeGetNpcRelationshipMap($historyRowBefore ?: []),
+            is_array($extended['relationships'] ?? null) ? $extended['relationships'] : []
+        );
+        $fields['extended_data'] = $extended;
+    }
+    $hasIndividualMemoryUpdate = array_key_exists('individual_memory_enabled', $fields);
+    $individualMemoryEnabled = $hasIndividualMemoryUpdate
+        ? coerceBoolean($fields['individual_memory_enabled'])
+        : false;
+    unset($fields['individual_memory_enabled']);
+
+    if ($hasIndividualMemoryUpdate && array_key_exists('extended_data', $fields)) {
+        $extendedData = normalizeCoreNpcExtendedData($fields['extended_data']);
+        if ($individualMemoryEnabled) {
+            $extendedData['individual_memory_enabled'] = 1;
+        } else {
+            unset($extendedData['individual_memory_enabled']);
+        }
+        $fields['extended_data'] = $extendedData;
+    }
     if (array_key_exists('dynamic_profile', $fields) || array_key_exists('middle_term_enabled', $fields)) {
         $metadata = [];
         if (array_key_exists('metadata', $fields)) {
@@ -11637,14 +11772,24 @@ function updateNpcById(int $id, array $fields): bool {
 
         if ($type === 'json') {
             $incomingExpression = '$' . $paramIndex . '::jsonb';
-            if (
-                $column === 'extended_data'
-                && empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])
-            ) {
-                $setClauses[] = $column . ' = ' . stobeRelationshipPreservingExtendedDataSql(
-                    $incomingExpression,
-                    $column
-                );
+            if ($column === 'extended_data') {
+                $preservedKeys = [];
+                if (empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_EXTENDED_DATA_WRITE'])) {
+                    $preservedKeys = stobeRelationshipExtendedDataKeys();
+                }
+                if (!$hasIndividualMemoryUpdate) {
+                    $preservedKeys = array_merge($preservedKeys, stobePersistentNpcSettingExtendedDataKeys());
+                }
+
+                if (count($preservedKeys) > 0) {
+                    $setClauses[] = $column . ' = ' . stobeExtendedDataPreservingKeysSql(
+                        $incomingExpression,
+                        $column,
+                        $preservedKeys
+                    );
+                } else {
+                    $setClauses[] = "{$column} = " . $incomingExpression;
+                }
             } else {
                 $setClauses[] = "{$column} = " . $incomingExpression;
             }
@@ -11688,6 +11833,31 @@ function updateNpcById(int $id, array $fields): bool {
 
         $setClauses[] = "{$column} = $" . $paramIndex;
         $params[] = strval($fields[$column]);
+        $paramIndex++;
+    }
+
+    if (!empty($GLOBALS['STOBE_ALLOW_RELATIONSHIP_CUSTOM_INFO_WRITE'])
+        && array_key_exists('extended_data', $fields)) {
+        $extended = normalizeCoreNpcExtendedData($fields['extended_data']);
+        if (array_key_exists('relationships', $extended)) {
+            // Keep the legacy copy in sync so deliberately deleted notes cannot return.
+            $setClauses[] = 'relationships = $' . $paramIndex;
+            $params[] = normalizeJsonString($extended['relationships']);
+            $paramIndex++;
+        }
+    }
+
+    if ($hasIndividualMemoryUpdate && !array_key_exists('extended_data', $fields)) {
+        $setClauses[] = "extended_data = CASE
+            WHEN $" . $paramIndex . " THEN jsonb_set(
+                COALESCE(extended_data, '{}'::jsonb) - 'individual_memory_enabled',
+                '{individual_memory_enabled}',
+                '1'::jsonb,
+                true
+            )
+            ELSE COALESCE(extended_data, '{}'::jsonb) - 'individual_memory_enabled'
+        END";
+        $params[] = $individualMemoryEnabled;
         $paramIndex++;
     }
 
@@ -12631,6 +12801,8 @@ function getDefaultCoreProfileMetadata(): array {
     return [
         'DYNAMIC_PROFILE_ENABLED' => false,
         'MIDDLE_TERM_MEMORY_ENABLED' => false,
+        'SHORT_TERM_MEMORY_ENABLED' => false,
+        'SHORT_TERM_MEMORY_MAX' => 10,
         'AUTO_DIARY_ENABLED' => false,
         'LATEST_DIARY_CONTEXT_ENABLED' => false,
         'DIARY_DAYS' => 1,
@@ -12650,6 +12822,7 @@ function getDefaultCoreProfileMetadata(): array {
         'CONTEXT_HISTORY_DIARY' => 100,
         'CONTEXT_HISTORY_DYNAMIC_PROFILE' => 50,
         'BORED_EVENT_CHANCE' => 50,
+        'RELATIONSHIP_UPDATE_CHANCE' => 50,
     ];
 }
 
@@ -12693,7 +12866,10 @@ function ensureDefaultCoreProfile(): int {
         return intval($row['id'] ?? 0);
     };
 
-    $primaryConnectorId = $connectorIdByName('GLM 4.7');
+    $primaryConnectorId = $connectorIdByName('DeepSeek V4 Flash');
+    if ($primaryConnectorId <= 0) {
+        $primaryConnectorId = $connectorIdByName('GLM 4.7');
+    }
     if ($primaryConnectorId <= 0) {
         $primaryConnectorId = $connectorIdByName('Gemini 2.5 Flash');
     }
