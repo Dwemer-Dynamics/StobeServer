@@ -8243,7 +8243,7 @@ function stobeDescribeHighPromptState(
 function stobeDescribeNearbyEntryAppearance(array $entry): string {
     $appearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
     if ($appearance !== '') {
-        return truncatePromptValue($appearance, 140);
+        return trim(preg_replace('/\s+/u', ' ', $appearance) ?? '');
     }
 
     $race = trim(strval($entry['race'] ?? ''));
