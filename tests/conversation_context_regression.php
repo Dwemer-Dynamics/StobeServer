@@ -436,6 +436,52 @@ try {
 } finally {
     $GLOBALS['db']->exec('ROLLBACK');
 }
+
+$GLOBALS['db']->exec('BEGIN');
+try {
+    setSetting('PROMPT_CONTEXT_OPTIONS', json_encode(stobeGetDefaultPromptContextOptions()));
+    $nearbyAppearanceOne = 'UT_NEARBY_APPEARANCE_ONE';
+    $nearbyAppearanceTwo = 'UT_NEARBY_APPEARANCE_TWO';
+    storeNpcProfile($nearbyAppearanceOne, [
+        'appearance' => 'A weathered face, a shaved head, and a bright crimson scarf.',
+    ]);
+    storeNpcProfile($nearbyAppearanceTwo, [
+        'appearance' => 'Tall and broad-shouldered with a distinctive silver eyepatch.',
+    ]);
+    $nearbyAppearanceActor = static function (string $name): array {
+        return [
+            'name' => $name,
+            'race' => 'Greenlander',
+            'gender' => 'male',
+            'faction' => 'Drifters',
+            'current_action' => 'standing',
+            'equipment' => 'Dustcoat',
+            'is_animal' => false,
+            'is_dead' => false,
+            'is_knocked_out' => false,
+            'is_unconscious' => false,
+        ];
+    };
+    $nearbyAppearancePrompt = stobeBuildNearbyActorsPromptBlock([
+        'extended_data' => [
+            'nearby_actors' => [
+                $nearbyAppearanceActor($nearbyAppearanceOne),
+                $nearbyAppearanceActor($nearbyAppearanceTwo),
+            ],
+        ],
+    ], 'UT_NEARBY_APPEARANCE_LISTENER');
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: A weathered face, a shaved head, and a bright crimson scarf.') !== false,
+        'nearby actor context should include the first NPC profile appearance'
+    );
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: Tall and broad-shouldered with a distinctive silver eyepatch.') !== false,
+        'nearby actor context should include the second NPC profile appearance'
+    );
+} finally {
+    $GLOBALS['db']->exec('ROLLBACK');
+}
+
 $xmlPrompt = "<world>\r\n<location>The Hub</location>\r\n</world>\r\n"
     . "<character>\n<skills>\n<group name=\"Combat\">\n"
     . "<skill name=\"Melee Attack\">Expert</skill>\n</group>\n</skills>\n"

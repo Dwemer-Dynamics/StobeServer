@@ -8262,6 +8262,80 @@ function stobeDescribeNearbyEntryAppearance(array $entry): string {
     return '';
 }
 
+// Resolves detailed profile appearances for the nearby actor list in one database query.
+function stobeLoadNearbyNpcAppearanceMap(array $actors): array {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'appearance')) {
+        return [];
+    }
+
+    $requestedNames = [];
+    foreach ($actors as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $existingAppearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
+        if ($existingAppearance !== '' || stobeParseFlexibleBool($entry['is_animal'] ?? null) === true) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $requestedNames[strtolower($name)] = true;
+        if (count($requestedNames) >= 32) {
+            break;
+        }
+    }
+    if (count($requestedNames) === 0) {
+        return [];
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !is_object($db) || !method_exists($db, 'fetchAll')) {
+        return [];
+    }
+
+    $namesJson = json_encode(array_keys($requestedNames), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($namesJson) || $namesJson === '') {
+        return [];
+    }
+
+    $rows = $db->fetchAll(
+        "WITH requested AS (
+            SELECT value AS lookup_name
+            FROM jsonb_array_elements_text($1::jsonb)
+         )
+         SELECT requested.lookup_name, matched.appearance
+         FROM requested
+         JOIN LATERAL (
+            SELECT n.appearance
+            FROM core_npc n
+            WHERE (
+                    LOWER(n.name) = requested.lookup_name
+                    OR LOWER(COALESCE(n.original_name, '')) = requested.lookup_name
+                  )
+              AND BTRIM(COALESCE(n.appearance, '')) <> ''
+            ORDER BY
+                CASE WHEN LOWER(n.name) = requested.lookup_name THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(n.metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+                n.gamets_last_updated DESC,
+                n.updated_at DESC
+            LIMIT 1
+         ) AS matched ON TRUE",
+        [$namesJson]
+    );
+
+    $appearanceByName = [];
+    foreach ($rows as $row) {
+        $lookupName = strtolower(trim(strval($row['lookup_name'] ?? '')));
+        $appearance = trim(strval($row['appearance'] ?? ''));
+        if ($lookupName !== '' && $appearance !== '') {
+            $appearanceByName[$lookupName] = $appearance;
+        }
+    }
+    return $appearanceByName;
+}
+
 function stobeGetActivatedNpcNameLookup(): array {
     static $lookup = null;
     if (is_array($lookup)) {
@@ -8360,6 +8434,7 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
     }
 
     $speakerKey = strtolower(normalizeParticipantNameToken($speakerName));
+    $profileAppearances = stobeLoadNearbyNpcAppearanceMap($actors);
     $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $seen = [];
     $seenFactionLabels = [];
@@ -8375,12 +8450,16 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if (!is_array($entry)) {
             continue;
         }
-        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
         $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
         if ($name === '') {
             continue;
         }
         $nameKey = strtolower($name);
+        $entryAppearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
+        if ($entryAppearance === '' && isset($profileAppearances[$nameKey])) {
+            $entry['appearance'] = $profileAppearances[$nameKey];
+        }
+        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
         if ($nameKey === $speakerKey) {
             continue;
         }
