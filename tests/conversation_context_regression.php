@@ -440,30 +440,43 @@ try {
 $GLOBALS['db']->exec('BEGIN');
 try {
     setSetting('PROMPT_CONTEXT_OPTIONS', json_encode(stobeGetDefaultPromptContextOptions()));
-    $speakerAppearanceName = 'UT_PROMPT_SPEAKER_APPEARANCE';
-    storeNpcProfile($speakerAppearanceName, [
+    $nearbyAppearanceOne = 'UT_NEARBY_APPEARANCE_ONE';
+    $nearbyAppearanceTwo = 'UT_NEARBY_APPEARANCE_TWO';
+    storeNpcProfile($nearbyAppearanceOne, [
         'appearance' => 'A weathered face, a shaved head, and a bright crimson scarf.',
     ]);
-    $speakerAppearancePrompt = buildSystemPrompt(
-        'UT_PROMPT_APPEARANCE_LISTENER',
-        [
+    storeNpcProfile($nearbyAppearanceTwo, [
+        'appearance' => 'Tall and broad-shouldered with a distinctive silver eyepatch.',
+    ]);
+    $nearbyAppearanceActor = static function (string $name): array {
+        return [
+            'name' => $name,
             'race' => 'Greenlander',
+            'gender' => 'male',
             'faction' => 'Drifters',
-            'metadata' => [],
-            'extended_data' => [],
+            'current_action' => 'standing',
+            'equipment' => 'Dustcoat',
+            'is_animal' => false,
+            'is_dead' => false,
+            'is_knocked_out' => false,
+            'is_unconscious' => false,
+        ];
+    };
+    $nearbyAppearancePrompt = stobeBuildNearbyActorsPromptBlock([
+        'extended_data' => [
+            'nearby_actors' => [
+                $nearbyAppearanceActor($nearbyAppearanceOne),
+                $nearbyAppearanceActor($nearbyAppearanceTwo),
+            ],
         ],
-        $speakerAppearanceName,
-        'Look at me.',
-        false,
-        'chat'
+    ], 'UT_NEARBY_APPEARANCE_LISTENER');
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: A weathered face, a shaved head, and a bright crimson scarf.') !== false,
+        'nearby actor context should include the first NPC profile appearance'
     );
     contextFlowAssert(
-        strpos($speakerAppearancePrompt, '<name>' . $speakerAppearanceName . '</name>') !== false,
-        'speaker appearance context should identify the NPC currently talking to the listener'
-    );
-    contextFlowAssert(
-        strpos($speakerAppearancePrompt, 'A weathered face, a shaved head, and a bright crimson scarf.') !== false,
-        'speaker appearance context should include the speaking NPC profile appearance'
+        strpos($nearbyAppearancePrompt, 'Appearance: Tall and broad-shouldered with a distinctive silver eyepatch.') !== false,
+        'nearby actor context should include the second NPC profile appearance'
     );
 } finally {
     $GLOBALS['db']->exec('ROLLBACK');
