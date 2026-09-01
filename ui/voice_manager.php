@@ -218,6 +218,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     isset($_POST["enabled"])
                 );
                 $status = "saved";
+            } elseif ($pronunciationAction === "save_builtin") {
+                $saved = $pronunciationDictionary->saveBuiltin(
+                    $pronunciationId,
+                    stobe_voice_trim($_POST["spoken_text"] ?? ""),
+                    isset($_POST["enabled"])
+                );
+                $status = "saved";
             } elseif ($pronunciationAction === "toggle") {
                 $saved = $pronunciationDictionary->setEnabled(
                     $pronunciationId,
@@ -225,7 +232,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 );
                 $status = "updated";
             } elseif ($pronunciationAction === "delete") {
-                $saved = $pronunciationDictionary->deleteCustom($pronunciationId);
+                $saved = $pronunciationDictionary->deleteEntry($pronunciationId);
                 $status = "deleted";
             } else {
                 $message = "Unknown pronunciation action.";
@@ -240,9 +247,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 exit;
             }
             if ($message === "") {
-                $message = $pronunciationAction === "save"
-                    ? "Enter a written and spoken form, or check for a duplicate entry."
-                    : "The pronunciation could not be updated.";
+                if ($pronunciationAction === "save") {
+                    $message = "Enter a written and spoken form, or check for a duplicate entry.";
+                } elseif ($pronunciationAction === "save_builtin") {
+                    $message = "Enter a spoken form for the built-in pronunciation.";
+                } else {
+                    $message = "The pronunciation could not be updated.";
+                }
                 $messageType = "err";
             }
         } catch (Throwable $exception) {
@@ -535,7 +546,7 @@ if ($view === 'pronunciations') {
         }
     }
     if ($_SERVER["REQUEST_METHOD"] === "POST"
-        && isset($_POST["pronunciation_action"])
+        && strtolower(stobe_voice_trim($_POST["pronunciation_action"] ?? "")) === "save"
         && $messageType === "err") {
         $pronunciationEditRow = [
             'id' => intval($_POST['pronunciation_id'] ?? 0),

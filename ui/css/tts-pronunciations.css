@@ -203,6 +203,11 @@ body nav.tts-studio-tabs a.tts-studio-tab.active[aria-current="page"] {
     opacity: 0.68;
 }
 
+.pronunciation-row.editing {
+    border-color: #e6b76c;
+    box-shadow: 0 0 0 1px rgba(230, 183, 108, 0.18);
+}
+
 .pronunciation-value {
     min-width: 0;
 }
@@ -225,6 +230,16 @@ body nav.tts-studio-tabs a.tts-studio-tab.active[aria-current="page"] {
 
 .pronunciation-value-line strong {
     overflow-wrap: anywhere;
+}
+
+.pronunciation-builtin-editor[hidden],
+.pronunciation-value-line[hidden] {
+    display: none !important;
+}
+
+.pronunciation-builtin-editor input[type="text"] {
+    width: 100%;
+    min-width: 130px;
 }
 
 .pronunciation-row .pronunciation-play {
@@ -261,7 +276,13 @@ body nav.tts-studio-tabs a.tts-studio-tab.active[aria-current="page"] {
 }
 
 .pronunciation-actions form {
-    display: inline;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.pronunciation-row-enabled {
     margin: 0;
 }
 
