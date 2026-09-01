@@ -6553,7 +6553,31 @@ function persistManualRename(
  * Build context from eventlog for LLM prompts.
  * Returns the most recent N events as formatted history.
  */
-function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaignFilter = ''): array {
+function stobeResolveNpcEventHistoryAliases(array|false $npcData, string $primaryName): array {
+    if (!is_array($npcData) || count($npcData) === 0) {
+        return [];
+    }
+
+    $primaryKey = strtolower(normalizeParticipantNameToken($primaryName));
+    $metadata = normalizeCoreNpcMetadata($npcData['metadata'] ?? []);
+    $aliases = [];
+    foreach ([$npcData['original_name'] ?? '', $metadata['original_name'] ?? ''] as $candidate) {
+        $alias = normalizeParticipantNameToken(strval($candidate));
+        $aliasKey = strtolower($alias);
+        if ($alias === '' || $aliasKey === $primaryKey || isset($aliases[$aliasKey])) {
+            continue;
+        }
+        $aliases[$aliasKey] = $alias;
+    }
+    return array_values($aliases);
+}
+
+function DataEventLog(
+    int $limit = 0,
+    string $actorFilter = '',
+    string $campaignFilter = '',
+    array $actorAliases = []
+): array {
     $db = $GLOBALS["db"];
 
     if ($limit <= 0) {
@@ -6567,13 +6591,27 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
                 AND {$deliveryVisibilitySql}";
     $params = [];
 
-    if ($actorFilter) {
-        $query .= " AND (people LIKE $1 OR data LIKE $1)";
-        $params[] = "%{$actorFilter}%";
+    $actorFilters = [];
+    foreach (array_merge([$actorFilter], $actorAliases) as $candidate) {
+        $filter = normalizeParticipantNameToken(strval($candidate));
+        $filterKey = strtolower($filter);
+        if ($filter === '' || isset($actorFilters[$filterKey])) {
+            continue;
+        }
+        $actorFilters[$filterKey] = $filter;
+    }
+    if (count($actorFilters) > 0) {
+        $actorClauses = [];
+        foreach ($actorFilters as $filter) {
+            $paramIndex = count($params) + 1;
+            $actorClauses[] = "(people LIKE $" . strval($paramIndex) . " OR data LIKE $" . strval($paramIndex) . ")";
+            $params[] = "%{$filter}%";
+        }
+        $query .= " AND (" . implode(' OR ', $actorClauses) . ")";
     }
 
     $fetchLimit = intval($limit);
-    if ($actorFilter !== '') {
+    if (count($actorFilters) > 0) {
         $fetchLimit = max($fetchLimit + 24, $fetchLimit * 4);
         if ($fetchLimit > 600) {
             $fetchLimit = 600;
@@ -6583,7 +6621,7 @@ function DataEventLog(int $limit = 0, string $actorFilter = '', string $campaign
     $query .= " ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
 
     $rows = $db->fetchAll($query, $params);
-    if ($actorFilter === '' || count($rows) === 0) {
+    if (count($actorFilters) === 0 || count($rows) === 0) {
         return $rows;
     }
 
@@ -11077,6 +11115,37 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             'gamets' => max(0, $gamets),
             'source' => $snapshotSource,
         ], 'DEBUG');
+    }
+
+    $hasIncomingActivityState = array_key_exists('current_action', $metadataForStorage)
+        || array_key_exists('is_in_combat', $metadataForStorage)
+        || array_key_exists('is_attacking', $metadataForStorage);
+    if ($isInventoryLiveSync) {
+        foreach (['character_state', 'is_incapacitated'] as $preservedKey) {
+            if (
+                !array_key_exists($preservedKey, $metadataForStorage)
+                && array_key_exists($preservedKey, $existingMasterMetadata)
+            ) {
+                $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            }
+        }
+    }
+    if ($isInventoryLiveSync && !$hasIncomingActivityState) {
+        $preservedActivityKeys = [
+            'current_action',
+            'is_moving',
+            'is_running',
+            'is_sneaking',
+            'is_in_combat',
+            'is_attacking',
+            'movement_speed',
+            'attack_target',
+        ];
+        foreach ($preservedActivityKeys as $preservedKey) {
+            if (array_key_exists($preservedKey, $existingMasterMetadata)) {
+                $metadataForStorage[$preservedKey] = $existingMasterMetadata[$preservedKey];
+            }
+        }
     }
 
     $shouldPreserveTraderMetadata =

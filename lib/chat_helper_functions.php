@@ -8262,6 +8262,80 @@ function stobeDescribeNearbyEntryAppearance(array $entry): string {
     return '';
 }
 
+// Resolves detailed profile appearances for the nearby actor list in one database query.
+function stobeLoadNearbyNpcAppearanceMap(array $actors): array {
+    if (!stobePromptContextOptionEnabled('enabled_character_subsections', 'appearance')) {
+        return [];
+    }
+
+    $requestedNames = [];
+    foreach ($actors as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $existingAppearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
+        if ($existingAppearance !== '' || stobeParseFlexibleBool($entry['is_animal'] ?? null) === true) {
+            continue;
+        }
+        $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $requestedNames[strtolower($name)] = true;
+        if (count($requestedNames) >= 32) {
+            break;
+        }
+    }
+    if (count($requestedNames) === 0) {
+        return [];
+    }
+
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db || !is_object($db) || !method_exists($db, 'fetchAll')) {
+        return [];
+    }
+
+    $namesJson = json_encode(array_keys($requestedNames), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($namesJson) || $namesJson === '') {
+        return [];
+    }
+
+    $rows = $db->fetchAll(
+        "WITH requested AS (
+            SELECT value AS lookup_name
+            FROM jsonb_array_elements_text($1::jsonb)
+         )
+         SELECT requested.lookup_name, matched.appearance
+         FROM requested
+         JOIN LATERAL (
+            SELECT n.appearance
+            FROM core_npc n
+            WHERE (
+                    LOWER(n.name) = requested.lookup_name
+                    OR LOWER(COALESCE(n.original_name, '')) = requested.lookup_name
+                  )
+              AND BTRIM(COALESCE(n.appearance, '')) <> ''
+            ORDER BY
+                CASE WHEN LOWER(n.name) = requested.lookup_name THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(n.metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+                n.gamets_last_updated DESC,
+                n.updated_at DESC
+            LIMIT 1
+         ) AS matched ON TRUE",
+        [$namesJson]
+    );
+
+    $appearanceByName = [];
+    foreach ($rows as $row) {
+        $lookupName = strtolower(trim(strval($row['lookup_name'] ?? '')));
+        $appearance = trim(strval($row['appearance'] ?? ''));
+        if ($lookupName !== '' && $appearance !== '') {
+            $appearanceByName[$lookupName] = $appearance;
+        }
+    }
+    return $appearanceByName;
+}
+
 function stobeGetActivatedNpcNameLookup(): array {
     static $lookup = null;
     if (is_array($lookup)) {
@@ -8360,6 +8434,7 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
     }
 
     $speakerKey = strtolower(normalizeParticipantNameToken($speakerName));
+    $profileAppearances = stobeLoadNearbyNpcAppearanceMap($actors);
     $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $seen = [];
     $seenFactionLabels = [];
@@ -8375,12 +8450,16 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if (!is_array($entry)) {
             continue;
         }
-        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
         $name = normalizeParticipantNameToken(strval($entry['name'] ?? ''));
         if ($name === '') {
             continue;
         }
         $nameKey = strtolower($name);
+        $entryAppearance = trim(strval($entry['appearance'] ?? ($entry['looks'] ?? '')));
+        if ($entryAppearance === '' && isset($profileAppearances[$nameKey])) {
+            $entry['appearance'] = $profileAppearances[$nameKey];
+        }
+        $entry = stobeEnrichNearbyEntryFromNpcProfile($entry);
         if ($nameKey === $speakerKey) {
             continue;
         }
@@ -8965,6 +9044,68 @@ function stobeBuildScenePromptBlock(array $npcData, string $speakerName = ''): s
     return implode("\n\n", $blocks);
 }
 
+function stobeBuildRecentCombatPromptEvents(
+    array $eventHistory,
+    int $currentGamets = 0,
+    int $limit = 5
+): array {
+    $allowedTypes = ['major_damage', 'knockout', 'limb_loss', 'death', 'combat_start'];
+    $events = [];
+    $seen = [];
+    $now = time();
+    $safeCurrentGamets = max(0, $currentGamets);
+
+    foreach ($eventHistory as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $type = strtolower(trim(strval($row['type'] ?? '')));
+        if (!in_array($type, $allowedTypes, true)) {
+            continue;
+        }
+
+        $rowGamets = max(0, intval($row['gamets'] ?? 0));
+        $localts = max(0, intval($row['localts'] ?? 0));
+        $recentByGameTime = $safeCurrentGamets > 0
+            && $rowGamets > 0
+            && $rowGamets <= $safeCurrentGamets
+            && ($safeCurrentGamets - $rowGamets) <= 1200;
+        $recentByClock = $localts > 0 && ($now - $localts) >= 0 && ($now - $localts) <= 180;
+        if (!$recentByGameTime && !$recentByClock) {
+            continue;
+        }
+
+        $line = stobeSanitizePromptContextLine(strval($row['data'] ?? ''));
+        $dedupeKey = $type . '|' . strtolower($line);
+        if ($line === '' || isset($seen[$dedupeKey])) {
+            continue;
+        }
+        $seen[$dedupeKey] = true;
+        $events[] = ['type' => $type, 'line' => truncatePromptValue($line, 280)];
+        if (count($events) >= max(1, min(8, $limit))) {
+            break;
+        }
+    }
+
+    return array_reverse($events);
+}
+
+function stobeAttachRecentCombatPromptEvents(
+    array $npcData,
+    array $eventHistory,
+    int $currentGamets = 0
+): array {
+    $events = stobeBuildRecentCombatPromptEvents($eventHistory, $currentGamets);
+    if (count($events) === 0) {
+        return $npcData;
+    }
+
+    $metadata = normalizeNpcMetadataPayload($npcData['metadata'] ?? []);
+    $metadata['recent_combat_events'] = $events;
+    $npcData['metadata'] = $metadata;
+    return $npcData;
+}
+
 function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName = ''): string {
     if (!stobePromptContextOptionEnabled('enabled_sections', 'combat_priority')) {
         return '';
@@ -8979,6 +9120,22 @@ function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName
     $isAttacking = stobeCoerceTruthyPromptFlag($metadata['is_attacking'] ?? false);
     $currentAction = strtolower(trim(strval($metadata['current_action'] ?? '')));
     $actionFlagsText = strtolower(trim(strval($metadata['action_flags'] ?? '')));
+    $recentCombatEvents = [];
+    if (isset($metadata['recent_combat_events']) && is_array($metadata['recent_combat_events'])) {
+        foreach ($metadata['recent_combat_events'] as $event) {
+            if (!is_array($event)) {
+                continue;
+            }
+            $line = trim(strval($event['line'] ?? ''));
+            if ($line === '') {
+                continue;
+            }
+            $recentCombatEvents[] = [
+                'type' => strtolower(trim(strval($event['type'] ?? 'combat'))),
+                'line' => $line,
+            ];
+        }
+    }
 
     $currentActionSignalsCombat = (
         $currentAction === 'combat' ||
@@ -8990,8 +9147,15 @@ function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName
         strpos($actionFlagsText, 'in combat') !== false ||
         strpos($actionFlagsText, 'attacking') !== false
     );
+    $hasLiveCombatSignal = $isInCombat
+        || $isAttacking
+        || $currentActionSignalsCombat
+        || $actionFlagsSignalCombat;
 
-    if (!$isInCombat && !$isAttacking && !$currentActionSignalsCombat && !$actionFlagsSignalCombat) {
+    if (
+        !$hasLiveCombatSignal
+        && count($recentCombatEvents) === 0
+    ) {
         return '';
     }
 
@@ -9004,7 +9168,9 @@ function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName
     }
 
     $attackTarget = normalizeParticipantNameToken(strval($metadata['attack_target'] ?? ''));
-    $priorityInstruction = "PRIORITY INSTRUCTION - {$speaker} is in active combat and fighting for survival right now. Prioritize combat-relevant responses over casual conversation.";
+    $priorityInstruction = $hasLiveCombatSignal
+        ? "PRIORITY INSTRUCTION - {$speaker} is in active combat and fighting for survival right now. Prioritize combat-relevant responses over casual conversation."
+        : "PRIORITY INSTRUCTION - {$speaker} has just suffered a serious combat event and may still be under immediate threat. Prioritize the violent situation over casual conversation.";
 
     $lines = [];
     $lines[] = '<combat_priority>';
@@ -9012,8 +9178,17 @@ function stobeBuildCombatPriorityPromptBlock(array $npcData, string $speakerName
     $lines[] = '  <rule>Focus this turn on immediate threats, survival, and battlefield intent.</rule>';
     $lines[] = '  <rule>Keep speech urgent, concise, and grounded in the active fight.</rule>';
     $lines[] = '  <rule>Avoid casual, off-topic, or long-form chatter while combat is active.</rule>';
+    $lines[] = '  <rule>React to wounds, fallen allies, and surrender demands as immediate physical stakes, not as an abstract discussion.</rule>';
+    $lines[] = '  <rule>Let personality shape whether the response is frightened, desperate, furious, defiant, pleading, or tactical, but never detached or analytical.</rule>';
+    $lines[] = '  <rule>If badly hurt or visibly losing, show credible desperation or self-preservation instead of effortless confidence.</rule>';
     if ($attackTarget !== '') {
         $lines[] = '  <attack_target>' . stobePromptXmlEscape($attackTarget) . '</attack_target>';
+    }
+    foreach ($recentCombatEvents as $event) {
+        $eventType = trim(strval($event['type'] ?? 'combat'));
+        $eventLine = trim(strval($event['line'] ?? ''));
+        $lines[] = '  <recent_event type="' . stobePromptXmlEscape($eventType) . '">'
+            . stobePromptXmlEscape($eventLine) . '</recent_event>';
     }
     $lines[] = '</combat_priority>';
 

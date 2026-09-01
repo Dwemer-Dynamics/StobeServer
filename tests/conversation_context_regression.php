@@ -43,6 +43,49 @@ function contextFlowMessageContents(array $messages): array
     return $contents;
 }
 
+$historyAliases = stobeResolveNpcEventHistoryAliases(
+    ['original_name' => 'Dust Boss Hotlongs'],
+    'Fenth [Dust Boss Hotlongs]'
+);
+contextFlowAssertSame(
+    'Dust Boss Hotlongs',
+    strval($historyAliases[0] ?? ''),
+    'renamed NPC history should retain the original game name as an event alias'
+);
+
+$recentCombatHistory = [
+    [
+        'type' => 'major_damage',
+        'data' => 'Fenth [Dust Boss Hotlongs]: took a major hit from Herika using Short Cleaver',
+        'gamets' => 1950,
+        'localts' => time(),
+    ],
+    [
+        'type' => 'major_damage',
+        'data' => 'Fenth [Dust Boss Hotlongs]: took an old hit',
+        'gamets' => 500,
+        'localts' => time() - 600,
+    ],
+];
+$recentCombatEvents = stobeBuildRecentCombatPromptEvents($recentCombatHistory, 2000);
+contextFlowAssertSameInt(1, count($recentCombatEvents), 'combat prompt should retain only recent severe events');
+contextFlowAssert(
+    str_contains(strval($recentCombatEvents[0]['line'] ?? ''), 'Herika using Short Cleaver'),
+    'combat prompt event should preserve attacker and weapon details'
+);
+$combatNpcData = stobeAttachRecentCombatPromptEvents(
+    ['name' => 'Fenth [Dust Boss Hotlongs]', 'metadata' => []],
+    $recentCombatHistory,
+    2000
+);
+$combatPriorityBlock = stobeBuildCombatPriorityPromptBlock($combatNpcData, 'Fenth [Dust Boss Hotlongs]');
+contextFlowAssert(
+    str_contains($combatPriorityBlock, '<combat_priority>')
+        && str_contains($combatPriorityBlock, '<recent_event type="major_damage">')
+        && str_contains($combatPriorityBlock, 'never detached or analytical'),
+    'recent major damage should activate an urgent combat prompt with concrete evidence'
+);
+
 $eventHistory = [
     [
         'type' => 'chat',
@@ -436,6 +479,52 @@ try {
 } finally {
     $GLOBALS['db']->exec('ROLLBACK');
 }
+
+$GLOBALS['db']->exec('BEGIN');
+try {
+    setSetting('PROMPT_CONTEXT_OPTIONS', json_encode(stobeGetDefaultPromptContextOptions()));
+    $nearbyAppearanceOne = 'UT_NEARBY_APPEARANCE_ONE';
+    $nearbyAppearanceTwo = 'UT_NEARBY_APPEARANCE_TWO';
+    storeNpcProfile($nearbyAppearanceOne, [
+        'appearance' => 'A weathered face, a shaved head, and a bright crimson scarf.',
+    ]);
+    storeNpcProfile($nearbyAppearanceTwo, [
+        'appearance' => 'Tall and broad-shouldered with a distinctive silver eyepatch.',
+    ]);
+    $nearbyAppearanceActor = static function (string $name): array {
+        return [
+            'name' => $name,
+            'race' => 'Greenlander',
+            'gender' => 'male',
+            'faction' => 'Drifters',
+            'current_action' => 'standing',
+            'equipment' => 'Dustcoat',
+            'is_animal' => false,
+            'is_dead' => false,
+            'is_knocked_out' => false,
+            'is_unconscious' => false,
+        ];
+    };
+    $nearbyAppearancePrompt = stobeBuildNearbyActorsPromptBlock([
+        'extended_data' => [
+            'nearby_actors' => [
+                $nearbyAppearanceActor($nearbyAppearanceOne),
+                $nearbyAppearanceActor($nearbyAppearanceTwo),
+            ],
+        ],
+    ], 'UT_NEARBY_APPEARANCE_LISTENER');
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: A weathered face, a shaved head, and a bright crimson scarf.') !== false,
+        'nearby actor context should include the first NPC profile appearance'
+    );
+    contextFlowAssert(
+        strpos($nearbyAppearancePrompt, 'Appearance: Tall and broad-shouldered with a distinctive silver eyepatch.') !== false,
+        'nearby actor context should include the second NPC profile appearance'
+    );
+} finally {
+    $GLOBALS['db']->exec('ROLLBACK');
+}
+
 $xmlPrompt = "<world>\r\n<location>The Hub</location>\r\n</world>\r\n"
     . "<character>\n<skills>\n<group name=\"Combat\">\n"
     . "<skill name=\"Melee Attack\">Expert</skill>\n</group>\n</skills>\n"
