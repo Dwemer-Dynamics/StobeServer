@@ -72,6 +72,26 @@ if (!isset($tabMap[$activeTab])) {
             font-style: normal;
         }
         .tab-container { margin: 0 0 6px; }
+
+        /*
+         * Fill the space under the navbar + compact nav instead of hard-coding an
+         * offset, so a nav that wraps to two rows on mid-size viewports shrinks the
+         * embed rather than overflowing the page.
+         */
+        body.hub-page > main {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - var(--hub-navbar-offset));
+            min-height: 0;
+        }
+        .tab-container {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        .config-navigation.roleplay-hub-nav { flex: 0 0 auto; }
+
         .tab-content {
             display: none;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -79,18 +99,106 @@ if (!isset($tabMap[$activeTab])) {
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
         }
-        .tab-content.active { display: block; }
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
         .embed-wrap {
             width: 100%;
-            height: calc(100vh - 185px);
-            min-height: 520px;
+            flex: 1 1 auto;
+            height: auto;
+            min-height: 380px;
             overflow: hidden;
             border: 1px solid #4a4a4a;
             border-radius: 8px;
             background: #2a2a2a;
         }
         .embed { width: 100%; height: 100%; border: 0; background: transparent; }
-        @media (max-height: 800px) { .embed-wrap { min-height: 420px; } }
+        @media (max-height: 800px) { .embed-wrap { min-height: 320px; } }
+
+        /*
+         * Page-scoped compaction of the shared hub navigation. The shared
+         * hub-navigation.css lays each group out as a stacked label + button grid,
+         * which costs ~154px of vertical space here. Roleplay only has five tabs,
+         * so both groups can sit on a single compact row and hand the reclaimed
+         * height to the embedded page below.
+         */
+        .config-navigation.roleplay-hub-nav {
+            padding: 6px;
+        }
+
+        .config-navigation.roleplay-hub-nav .tab-groups {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: stretch;
+        }
+
+        .config-navigation.roleplay-hub-nav .tab-group {
+            flex: 0 1 auto;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            overflow: visible;
+        }
+
+        .config-navigation.roleplay-hub-nav .tab-group-label {
+            flex: 0 0 auto;
+            padding: 0 8px 0 0;
+            border-bottom: 0;
+            border-right: 1px solid rgba(230, 183, 108, 0.28);
+            font-size: 0.74em;
+            letter-spacing: 1px;
+            word-spacing: 2px;
+            line-height: 1.25;
+            white-space: nowrap;
+        }
+
+        .config-navigation.roleplay-hub-nav .tab-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            padding: 0;
+        }
+
+        .config-navigation.roleplay-hub-nav .tab-button {
+            width: auto;
+            height: 34px;
+            padding: 6px 10px;
+            letter-spacing: 1px;
+        }
+
+        .config-navigation.roleplay-hub-nav .tab-button:focus-visible {
+            outline: 2px solid rgb(230, 183, 108);
+            outline-offset: 2px;
+        }
+
+        /* Narrow viewports: fall back to a stacked label + wrapped buttons layout. */
+        @media (max-width: 900px) {
+            .config-navigation.roleplay-hub-nav .tab-group {
+                flex: 1 1 100%;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 6px;
+                padding: 6px 8px;
+            }
+
+            .config-navigation.roleplay-hub-nav .tab-group-label {
+                padding: 0 0 5px;
+                border-right: 0;
+                border-bottom: 1px solid rgba(230, 183, 108, 0.28);
+                white-space: normal;
+            }
+
+            .config-navigation.roleplay-hub-nav .tab-button {
+                flex: 1 1 auto;
+                justify-content: center;
+            }
+        }
     </style>
 </head>
 <body class="hub-page">
@@ -98,7 +206,7 @@ if (!isset($tabMap[$activeTab])) {
 
 <main class="container-fluid">
     <div class="tab-container">
-        <div class="config-navigation" aria-label="Roleplay sections">
+        <div class="config-navigation roleplay-hub-nav" aria-label="Roleplay sections">
             <div class="tab-groups">
                 <?php foreach ($tabGroups as $groupId => $groupLabel): ?>
                     <section class="tab-group <?= ($tabMap[$activeTab]['group'] ?? '') === $groupId ? 'active' : '' ?>" data-category="<?= h($groupId) ?>">
