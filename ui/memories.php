@@ -220,14 +220,25 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
         body {
             padding-top: 80px;
         }
-        body.embed-page { padding-top: 0; }
-        body.embed-page main { padding-top: 10px; }
-
+        /*
+         * Height flows instead of being guessed: main / .tab-container / .tab-content
+         * form a flex column so .table-container absorbs whatever the overview band,
+         * tab buttons and pagination row do not use. No magic viewport offsets, and
+         * the table scrolls internally rather than pushing the pager off-screen.
+         */
         main {
-            padding-top: 20px;
-            padding-bottom: 40px;
-            padding-left: 10px;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 80px);
+            min-height: 0;
+            padding: 14px 0 20px 10px;
         }
+
+        /* Embedded in the Roleplay hub: the hub already supplies the outer chrome. */
+        body.embed-page { padding-top: 0; }
+        body.embed-page main { height: 100vh; padding: 4px 10px 8px; }
+        body.embed-page .tab-container { margin: 0; }
+        body.embed-page .tab-content { padding: 10px 12px; border-top-left-radius: 8px; }
 
         @font-face {
             font-family: "MagicCards";
@@ -242,7 +253,11 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
         }
 
         .tab-container {
-            margin: 20px 0;
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+            margin: 12px 0;
         }
 
         .tab-buttons {
@@ -292,7 +307,10 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
         }
 
         .tab-content {
-            display: block;
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
             padding: 20px;
             border-radius: 8px;
@@ -302,10 +320,11 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
         }
 
         .table-container {
-            max-height: calc(100vh - 450px) !important;
-            margin-top: 20px;
+            flex: 1 1 auto;
+            min-height: 200px;
+            margin-top: 10px;
             width: 100%;
-            overflow-x: auto;
+            overflow: auto;
             background: linear-gradient(180deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
             border-radius: 10px;
             border: 1px solid #3a3a3a;
@@ -393,7 +412,141 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
             white-space: pre-wrap;
         }
 
+        /* Compact overview band: heading + description + actions, then a status row. */
+        .memory-overview {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 0 0 10px;
+            padding: 9px 13px;
+            background: #1f1f1f;
+            border: 1px solid #3a3a3a;
+            border-left: 4px solid #e6b76c;
+            border-radius: 6px;
+            font-size: 0.86em;
+        }
+
+        /* Header row: description left, primary/destructive actions right. */
+        .memory-overview-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 8px 16px;
+        }
+
+        .memory-overview-main {
+            flex: 1 1 380px;
+            min-width: 0;
+        }
+
+        .memory-overview-title {
+            margin: 0 0 2px;
+            color: #e6b76c;
+            font-size: 1.1em;
+            word-spacing: 5px;
+        }
+
+        .memory-overview-desc {
+            margin: 0;
+            color: #f8f9fa;
+            line-height: 1.4;
+        }
+
+        .memory-overview-desc .memory-overview-term {
+            color: #e6b76c;
+            font-weight: bold;
+        }
+
+        .memory-status-list {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .memory-status {
+            display: inline-flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 7px;
+            max-width: 100%;
+            padding: 5px 9px;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 5px;
+        }
+
+        .memory-status-label {
+            color: #e6b76c;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .memory-status-url {
+            color: #c9c9c9;
+            overflow-wrap: anywhere;
+        }
+
+        .status-pill {
+            padding: 2px 9px;
+            border: 1px solid;
+            border-radius: 999px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .status-pill.is-on {
+            color: #7ee2a0;
+            background: rgba(76, 175, 80, 0.14);
+            border-color: rgba(76, 175, 80, 0.5);
+        }
+
+        .status-pill.is-off {
+            color: #ff9189;
+            background: rgba(244, 67, 54, 0.14);
+            border-color: rgba(244, 67, 54, 0.55);
+        }
+
+        .memory-actions {
+            flex: 0 0 auto;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+        }
+
+        .memory-actions form {
+            margin: 0;
+        }
+
+        .memory-actions .btn-base {
+            margin: 0;
+            padding: 9px 15px;
+            font-size: 15px;
+            font-weight: bold;
+        }
+
+        /* .btn-base clears the default outline, so restore a visible focus ring. */
+        main .btn-base:focus-visible {
+            outline: 2px solid #e6b76c;
+            outline-offset: 2px;
+        }
+
         @media (max-width: 768px) {
+            .memory-actions {
+                width: 100%;
+                margin-left: 0;
+            }
+
+            .memory-actions > * {
+                flex: 1 1 auto;
+            }
+
+            .memory-actions form .btn-base {
+                width: 100%;
+            }
+
             .table-container {
                 margin: 10px -15px;
                 border-radius: 0;
@@ -447,45 +600,42 @@ $totalPages = max(1, (int)ceil($totalRecords / $limit));
                 </div>
             <?php endif; ?>
 
-            <div style="background: #2a2a2a; border-left: 4px solid #e6b76c; padding: 12px 15px; border-radius: 5px; margin: 15px 0; font-size: 0.9em;">
-                <span style="color: #e6b76c; font-weight: bold;">Memories:</span>
-                <span style="color: #f8f9fa;">Complete log of generated memory summaries with timeline ranges and grouped participants. Use this to debug memory continuity and long-term context quality.</span>
-            </div>
+            <?php
+            $statusPill = static function (bool $enabled): string {
+                return $enabled
+                    ? "<span class='status-pill is-on'>Enabled</span>"
+                    : "<span class='status-pill is-off'>Disabled</span>";
+            };
+            ?>
 
-            <div style="background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 8px; padding: 20px; margin: 15px 0;">
-                <div style="margin-bottom: 15px;">
-                    <h3 style="margin: 0; color: #e6b76c; word-spacing: 5px;">Memory System Configuration</h3>
-                </div>
-
-                <?php
-                $statusIcon = static function (bool $enabled): string {
-                    return $enabled
-                        ? "<span style='color: #4caf50;'>Enabled</span>"
-                        : "<span style='color: #f44336;'>Disabled</span>";
-                };
-                ?>
-
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
-                    <div style="background: #2a2a2a; padding: 15px; border-radius: 5px; border: 1px solid #3a3a3a;">
-                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">Memory System</div>
-                        <div style="font-size: 14px;"><?= $statusIcon($memoryEnabled) ?></div>
+            <section class="memory-overview" aria-labelledby="memory-overview-title">
+                <div class="memory-overview-head">
+                    <div class="memory-overview-main">
+                        <h3 class="memory-overview-title" id="memory-overview-title">Memory System Configuration</h3>
+                        <p class="memory-overview-desc"><span class="memory-overview-term">Memories:</span> Complete log of generated memory summaries with timeline ranges and grouped participants. Use this to debug memory continuity and long-term context quality.</p>
                     </div>
 
-                    <div style="background: #2a2a2a; padding: 15px; border-radius: 5px; border: 1px solid #3a3a3a;">
-                        <div style="font-weight: bold; margin-bottom: 8px; color: #e6b76c; font-size: 14px;">TXT2VEC (Embeddings)</div>
-                        <div style="font-size: 14px;"><?= $statusIcon($useText2Vec) ?></div>
-                        <div style="font-size: 12px; color: #aaa; margin-top: 4px;">URL: <?= h($txtaiUrl) ?></div>
+                    <div class="memory-actions">
+                        <form method="post" action="<?= h(memoriesUrl($page, $limit)) ?>">
+                            <input type="hidden" name="run_memory_sync" value="1">
+                            <button type="submit" class="btn-base action-button add-new">Sync Memory Summaries Now</button>
+                        </form>
+                        <button type="button" onclick="deleteAllMemoriesConfirm()" class="btn-base btn-danger" style="background-color: #dc2626;">Delete All Memory Summaries</button>
                     </div>
                 </div>
-            </div>
 
-            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 15px 0; flex-wrap: wrap;">
-                <form method="post" action="<?= h(memoriesUrl($page, $limit)) ?>" style="margin: 0;">
-                    <input type="hidden" name="run_memory_sync" value="1">
-                    <button type="submit" class="btn-base action-button add-new" style="font-weight: bold;">Sync Memory Summaries Now</button>
-                </form>
-                <button type="button" onclick="deleteAllMemoriesConfirm()" class="btn-base btn-danger" style="background-color: #dc2626; font-weight: bold;">Delete All Memory Summaries</button>
-            </div>
+                <div class="memory-status-list">
+                    <div class="memory-status">
+                        <span class="memory-status-label">Memory System</span>
+                        <?= $statusPill($memoryEnabled) ?>
+                    </div>
+                    <div class="memory-status">
+                        <span class="memory-status-label">TXT2VEC (Embeddings)</span>
+                        <?= $statusPill($useText2Vec) ?>
+                        <span class="memory-status-url">URL: <?= h($txtaiUrl) ?></span>
+                    </div>
+                </div>
+            </section>
 
             <div class="table-container">
                 <table>
