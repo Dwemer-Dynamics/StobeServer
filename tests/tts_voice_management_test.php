@@ -149,6 +149,45 @@ expectSame(
     'uses whole terms and ignores disabled rows'
 );
 
+$fakePronunciationDb = new class {
+    public bool $builtin = true;
+    public array $queries = [];
+
+    public function fetchOne(string $query, array $params = []): array
+    {
+        if (str_contains($query, 'to_regclass')) {
+            return ['relation_name' => 'core_tts_pronunciation'];
+        }
+        return ['is_builtin' => $this->builtin];
+    }
+
+    public function exec(string $query, array $params = []): bool
+    {
+        $this->queries[] = ['query' => $query, 'params' => $params];
+        return true;
+    }
+};
+$GLOBALS['db'] = $fakePronunciationDb;
+$fakeDictionary = new TTSPronunciationDictionary();
+expectSame(true, stobeUnhyphenateBuiltinTtsPronunciations(), 'removes hyphens only from built-ins');
+$lastFakeQuery = $fakePronunciationDb->queries[array_key_last($fakePronunciationDb->queries)] ?? [];
+expectSame(true, str_contains(strval($lastFakeQuery['query'] ?? ''), 'WHERE is_builtin = TRUE'), 'scopes unhyphenation to built-ins');
+expectSame(true, $fakeDictionary->saveBuiltin(42, 'New Reading', false), 'edits a built-in spoken value');
+$lastFakeQuery = $fakePronunciationDb->queries[array_key_last($fakePronunciationDb->queries)] ?? [];
+$saveQuery = strval($lastFakeQuery['query'] ?? '');
+expectSame(true, str_contains($saveQuery, 'is_builtin = TRUE AND deleted = FALSE'), 'limits built-in edits to active defaults');
+expectSame(false, str_contains($saveQuery, 'source_text ='), 'keeps built-in written values immutable');
+expectSame(true, $fakeDictionary->deleteEntry(42), 'tombstones a built-in pronunciation');
+$lastFakeQuery = $fakePronunciationDb->queries[array_key_last($fakePronunciationDb->queries)] ?? [];
+$builtinDeleteQuery = strval($lastFakeQuery['query'] ?? '');
+expectSame(true, str_contains($builtinDeleteQuery, 'SET deleted = TRUE, enabled = FALSE'), 'preserves a built-in tombstone');
+$fakePronunciationDb->builtin = false;
+expectSame(true, $fakeDictionary->deleteEntry(43), 'deletes a custom pronunciation');
+$lastFakeQuery = $fakePronunciationDb->queries[array_key_last($fakePronunciationDb->queries)] ?? [];
+$customDeleteQuery = strval($lastFakeQuery['query'] ?? '');
+expectSame(true, str_contains($customDeleteQuery, 'is_builtin = FALSE AND deleted = FALSE'), 'limits physical deletion to active custom rows');
+unset($GLOBALS['db']);
+
 $testDatabase = trim(strval(getenv('STOBE_DB_NAME') ?: ''));
 if ($testDatabase !== '' && stripos($testDatabase, 'test') === false && stripos($testDatabase, 'ci') === false) {
     fwrite(STDERR, "Refusing pronunciation CRUD checks against non-test database: {$testDatabase}\n");
@@ -200,7 +239,7 @@ if ($testDatabase !== '') {
     expectSame(true, $dictionary->setEnabled($savedId, false), 'disables a pronunciation');
     $disabledRows = $dictionary->getRows();
     expectSame(false, stobeTtsPronunciationBoolean($disabledRows[0]['enabled'] ?? true), 'persists disabled state');
-    expectSame(true, $dictionary->deleteCustom($savedId), 'deletes a custom pronunciation');
+    expectSame(true, $dictionary->deleteEntry($savedId), 'deletes a custom pronunciation');
     expectSame([], $dictionary->getRows(), 'deletion restores the blank dictionary');
     $GLOBALS['db']->exec("DELETE FROM core_npc_master WHERE name = 'TTS Scope Fixture'");
     $GLOBALS['db']->close();

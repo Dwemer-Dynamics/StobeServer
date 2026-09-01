@@ -208,6 +208,9 @@ $pronunciationPageUrl = stobe_voice_build_url(['view' => 'pronunciations'], $isE
                     $rowId = intval($row['id'] ?? 0);
                     $rowEnabled = stobeTtsPronunciationBoolean($row['enabled'] ?? true);
                     $rowBuiltin = stobeTtsPronunciationBoolean($row['is_builtin'] ?? false);
+                    $rowActionable = $rowId > 0;
+                    $builtinFormId = 'pronunciation-builtin-form-' . $rowId;
+                    $builtinEditorId = 'pronunciation-builtin-editor-' . $rowId;
                     $rowScopes = [];
                     if (trim(strval($row['npc_names'] ?? '')) !== '') {
                         $rowScopes[] = 'Name: ' . trim(strval($row['npc_names']));
@@ -235,7 +238,7 @@ $pronunciationPageUrl = stobe_voice_build_url(['view' => 'pronunciations'], $isE
                         </div>
                         <div class="pronunciation-value">
                             <span class="pronunciation-value-label">Spoken</span>
-                            <div class="pronunciation-value-line">
+                            <div class="pronunciation-value-line" <?= $rowBuiltin ? 'data-pronunciation-builtin-display' : '' ?>>
                                 <strong><?= h($row['spoken_text'] ?? '') ?></strong>
                                 <button
                                     type="button"
@@ -245,6 +248,19 @@ $pronunciationPageUrl = stobe_voice_build_url(['view' => 'pronunciations'], $isE
                                     title="Preview spoken text"
                                 >&#9654;</button>
                             </div>
+                            <?php if ($rowBuiltin && $rowActionable): ?>
+                                <div class="pronunciation-value-line pronunciation-builtin-editor"
+                                     id="<?= h($builtinEditorId) ?>" data-pronunciation-builtin-editor hidden>
+                                    <input type="text" id="<?= h($builtinEditorId) ?>-input" name="spoken_text"
+                                           value="<?= h($row['spoken_text'] ?? '') ?>" maxlength="240" required
+                                           form="<?= h($builtinFormId) ?>" data-pronunciation-builtin-input
+                                           aria-label="Spoken form for <?= h($row['source_text'] ?? '') ?>">
+                                    <button type="button" class="pronunciation-play"
+                                            data-preview-input="<?= h($builtinEditorId) ?>-input"
+                                            aria-label="Preview edited spoken text <?= h($row['source_text'] ?? '') ?>"
+                                            title="Preview spoken text">&#9654;</button>
+                                </div>
+                            <?php endif; ?>
                         </div>
                         <div>
                             <div class="pronunciation-scopes">
@@ -255,23 +271,44 @@ $pronunciationPageUrl = stobe_voice_build_url(['view' => 'pronunciations'], $isE
                                         <span class="pronunciation-scope"><?= h($scope) ?></span>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
-                                <span class="pronunciation-state <?= $rowEnabled ? '' : 'off' ?>"><?= $rowEnabled ? 'Enabled' : 'Disabled' ?></span>
+                                <?php if ($rowBuiltin && $rowActionable): ?>
+                                    <label class="pronunciation-enabled pronunciation-row-enabled">
+                                        <input type="checkbox" name="enabled" value="1" form="<?= h($builtinFormId) ?>"
+                                               <?= $rowEnabled ? 'checked' : '' ?>>
+                                        Enabled
+                                    </label>
+                                <?php else: ?>
+                                    <span class="pronunciation-state <?= $rowEnabled ? '' : 'off' ?>"><?= $rowEnabled ? 'Enabled' : 'Disabled' ?></span>
+                                <?php endif; ?>
                             </div>
                         </div>
                         <div class="pronunciation-actions">
-                            <?php if (!$rowBuiltin): ?>
+                            <?php if ($rowBuiltin && $rowActionable): ?>
+                                <form id="<?= h($builtinFormId) ?>" method="post" action="<?= h($pronunciationPageUrl) ?>"
+                                      data-pronunciation-builtin-form>
+                                    <input type="hidden" name="pronunciation_action" value="toggle" data-pronunciation-builtin-action>
+                                    <input type="hidden" name="pronunciation_id" value="<?= h($rowId) ?>">
+                                    <button type="submit" class="action-button" data-pronunciation-apply>Apply</button>
+                                    <button type="button" class="action-button edit" data-pronunciation-edit
+                                            aria-expanded="false" aria-controls="<?= h($builtinEditorId) ?>">Edit</button>
+                                </form>
+                                <form method="post" action="<?= h($pronunciationPageUrl) ?>">
+                                    <input type="hidden" name="pronunciation_action" value="delete">
+                                    <input type="hidden" name="pronunciation_id" value="<?= h($rowId) ?>">
+                                    <button type="submit" class="btn-danger"
+                                            onclick="return confirm('Delete this pronunciation?');">Delete</button>
+                                </form>
+                            <?php else: ?>
                                 <a
                                     class="action-button edit"
                                     href="<?= h(stobe_voice_build_url(['view' => 'pronunciations', 'edit_pronunciation' => $rowId], $isEmbed, 'pronunciation-editor')) ?>"
                                 >Edit</a>
-                            <?php endif; ?>
-                            <form method="post" action="<?= h($pronunciationPageUrl) ?>">
-                                <input type="hidden" name="pronunciation_action" value="toggle">
-                                <input type="hidden" name="pronunciation_id" value="<?= h($rowId) ?>">
-                                <input type="hidden" name="enabled" value="<?= $rowEnabled ? '0' : '1' ?>">
-                                <button type="submit" class="action-button"><?= $rowEnabled ? 'Disable' : 'Enable' ?></button>
-                            </form>
-                            <?php if (!$rowBuiltin): ?>
+                                <form method="post" action="<?= h($pronunciationPageUrl) ?>">
+                                    <input type="hidden" name="pronunciation_action" value="toggle">
+                                    <input type="hidden" name="pronunciation_id" value="<?= h($rowId) ?>">
+                                    <input type="hidden" name="enabled" value="<?= $rowEnabled ? '0' : '1' ?>">
+                                    <button type="submit" class="action-button"><?= $rowEnabled ? 'Disable' : 'Enable' ?></button>
+                                </form>
                                 <form method="post" action="<?= h($pronunciationPageUrl) ?>">
                                     <input type="hidden" name="pronunciation_action" value="delete">
                                     <input type="hidden" name="pronunciation_id" value="<?= h($rowId) ?>">
@@ -343,6 +380,53 @@ $pronunciationPageUrl = stobe_voice_build_url(['view' => 'pronunciations'], $isE
                 setStatus(error && error.message ? error.message : 'Preview could not be generated.');
             } finally {
                 button.disabled = false;
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-pronunciation-builtin-form]').forEach(function (form) {
+        const row = form.closest('.pronunciation-row');
+        const editButton = form.querySelector('[data-pronunciation-edit]');
+        const applyButton = form.querySelector('[data-pronunciation-apply]');
+        const action = form.querySelector('[data-pronunciation-builtin-action]');
+        const editor = row ? row.querySelector('[data-pronunciation-builtin-editor]') : null;
+        const display = row ? row.querySelector('[data-pronunciation-builtin-display]') : null;
+        const input = editor ? editor.querySelector('[data-pronunciation-builtin-input]') : null;
+        if (!editButton || !applyButton || !action || !editor || !display || !input) return;
+        let originalValue = input.value;
+
+        function setEditing(editing) {
+            if (editing) {
+                originalValue = input.value;
+                display.hidden = true;
+                editor.hidden = false;
+                row.classList.add('editing');
+                action.value = 'save_builtin';
+                applyButton.textContent = 'Save';
+                editButton.textContent = 'Cancel';
+                editButton.setAttribute('aria-expanded', 'true');
+                input.focus();
+                input.select();
+                return;
+            }
+            input.value = originalValue;
+            display.hidden = false;
+            editor.hidden = true;
+            row.classList.remove('editing');
+            action.value = 'toggle';
+            applyButton.textContent = 'Apply';
+            editButton.textContent = 'Edit';
+            editButton.setAttribute('aria-expanded', 'false');
+        }
+
+        editButton.addEventListener('click', function () {
+            setEditing(editor.hidden);
+        });
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setEditing(false);
+                editButton.focus();
             }
         });
     });

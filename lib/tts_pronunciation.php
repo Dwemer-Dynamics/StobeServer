@@ -24,6 +24,21 @@ function stobeEnsureTtsPronunciationDictionary(): bool
     return is_string($schema) && trim($schema) !== '' && $db->exec($schema) !== false;
 }
 
+// Strip hyphens from any shipped spoken values while leaving custom rows alone.
+function stobeUnhyphenateBuiltinTtsPronunciations(): bool
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!$db) {
+        return false;
+    }
+
+    return $db->exec(
+        "UPDATE public.core_tts_pronunciation
+         SET spoken_text = REPLACE(spoken_text, '-', ''), updated_at = CURRENT_TIMESTAMP
+         WHERE is_builtin = TRUE AND spoken_text LIKE '%-%'"
+    ) !== false;
+}
+
 final class TTSPronunciationDictionary
 {
     private const TABLE = 'core_tts_pronunciation';
@@ -47,8 +62,9 @@ final class TTSPronunciationDictionary
 
         $rows = $GLOBALS['db']->fetchAll(
             'SELECT id, source_text, spoken_text, npc_names, races, oghma_tags,
-                    is_builtin, enabled, created_at, updated_at
+                    is_builtin, enabled, deleted, created_at, updated_at
              FROM public.' . self::TABLE . '
+             WHERE deleted = FALSE
              ORDER BY is_builtin DESC, LOWER(source_text), id
              LIMIT 1024'
         );
@@ -71,6 +87,9 @@ final class TTSPronunciationDictionary
     {
         $tags = [];
         foreach ($this->getRows() as $row) {
+            if (stobeTtsPronunciationBoolean($row['is_builtin'] ?? false)) {
+                continue;
+            }
             foreach (stobeTtsPronunciationNormalizeTags($row['oghma_tags'] ?? '') as $tag) {
                 $tags[$tag] = $tag;
             }
@@ -121,7 +140,7 @@ final class TTSPronunciationDictionary
                      oghma_tags = $5,
                      enabled = $6,
                      updated_at = CURRENT_TIMESTAMP
-                 WHERE id = $7 AND is_builtin = FALSE',
+                 WHERE id = $7 AND is_builtin = FALSE AND deleted = FALSE',
                 $params
             ) !== false;
         }
@@ -134,6 +153,27 @@ final class TTSPronunciationDictionary
         ) !== false;
     }
 
+    // Preserve the built-in source and scope; only the spoken value and enabled
+    // state are editable, and custom or deleted rows cannot cross this boundary.
+    public function saveBuiltin(int $id, string $spoken, bool $enabled): bool
+    {
+        if ($id <= 0 || !$this->isAvailable()) {
+            return false;
+        }
+
+        $spoken = trim($spoken);
+        if ($spoken === '' || strlen($spoken) > 240) {
+            return false;
+        }
+
+        return $GLOBALS['db']->exec(
+            'UPDATE public.' . self::TABLE . '
+             SET spoken_text = $1, enabled = $2, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $3 AND is_builtin = TRUE AND deleted = FALSE',
+            [$spoken, $enabled, $id]
+        ) !== false;
+    }
+
     public function setEnabled(int $id, bool $enabled): bool
     {
         if ($id <= 0 || !$this->isAvailable()) {
@@ -143,20 +183,42 @@ final class TTSPronunciationDictionary
         return $GLOBALS['db']->exec(
             'UPDATE public.' . self::TABLE . '
              SET enabled = $1, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2',
+             WHERE id = $2 AND deleted = FALSE',
             [$enabled, $id]
         ) !== false;
     }
 
-    public function deleteCustom(int $id): bool
+    // Custom rows are removed. Built-ins retain a hidden tombstone so a future
+    // default seeder cannot recreate a pronunciation the user chose to delete.
+    public function deleteEntry(int $id): bool
     {
         if ($id <= 0 || !$this->isAvailable()) {
             return false;
         }
 
+        $row = $GLOBALS['db']->fetchOne(
+            'SELECT is_builtin
+             FROM public.' . self::TABLE . '
+             WHERE id = $1 AND deleted = FALSE
+             LIMIT 1',
+            [$id]
+        );
+        if (!is_array($row)) {
+            return false;
+        }
+
+        if (stobeTtsPronunciationBoolean($row['is_builtin'] ?? false)) {
+            return $GLOBALS['db']->exec(
+                'UPDATE public.' . self::TABLE . '
+                 SET deleted = TRUE, enabled = FALSE, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $1 AND is_builtin = TRUE AND deleted = FALSE',
+                [$id]
+            ) !== false;
+        }
+
         return $GLOBALS['db']->exec(
             'DELETE FROM public.' . self::TABLE . '
-             WHERE id = $1 AND is_builtin = FALSE',
+             WHERE id = $1 AND is_builtin = FALSE AND deleted = FALSE',
             [$id]
         ) !== false;
     }

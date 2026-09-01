@@ -72,6 +72,26 @@ if (!isset($tabMap[$activeTab])) {
             font-style: normal;
         }
         .tab-container { margin: 0 0 6px; }
+
+        /*
+         * Fill the space under the navbar + compact nav instead of hard-coding an
+         * offset, so a nav that wraps to two rows on mid-size viewports shrinks the
+         * embed rather than overflowing the page.
+         */
+        body.hub-page > main {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - var(--hub-navbar-offset));
+            min-height: 0;
+        }
+        .tab-container {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        .config-navigation.roleplay-hub-nav { flex: 0 0 auto; }
+
         .tab-content {
             display: none;
             background: linear-gradient(135deg, rgba(42, 42, 42, 0.95), rgba(34, 34, 34, 0.98));
@@ -79,18 +99,24 @@ if (!isset($tabMap[$activeTab])) {
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px rgba(255, 255, 255, 0.03);
         }
-        .tab-content.active { display: block; }
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
         .embed-wrap {
             width: 100%;
-            height: calc(100vh - 185px);
-            min-height: 520px;
+            flex: 1 1 auto;
+            height: auto;
+            min-height: 380px;
             overflow: hidden;
             border: 1px solid #4a4a4a;
             border-radius: 8px;
             background: #2a2a2a;
         }
         .embed { width: 100%; height: 100%; border: 0; background: transparent; }
-        @media (max-height: 800px) { .embed-wrap { min-height: 420px; } }
+        @media (max-height: 800px) { .embed-wrap { min-height: 320px; } }
     </style>
 </head>
 <body class="hub-page">
@@ -98,8 +124,8 @@ if (!isset($tabMap[$activeTab])) {
 
 <main class="container-fluid">
     <div class="tab-container">
-        <div class="config-navigation" aria-label="Roleplay sections">
-            <div class="tab-groups">
+        <div class="config-navigation roleplay-hub-nav" aria-label="Roleplay sections">
+            <div class="tab-groups two-groups">
                 <?php foreach ($tabGroups as $groupId => $groupLabel): ?>
                     <section class="tab-group <?= ($tabMap[$activeTab]['group'] ?? '') === $groupId ? 'active' : '' ?>" data-category="<?= h($groupId) ?>">
                         <div class="tab-group-label"><?= h($groupLabel) ?></div>
