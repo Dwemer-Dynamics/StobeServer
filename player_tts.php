@@ -29,7 +29,12 @@ if (!getSettingBool('PLAYER_DIALOGUE_AUDIO_ENABLED', true)) {
 }
 
 $text = sanitizeForKenshi($textRaw);
-$tts = stobeSynthesizePocketTtsLine($actor, $text);
+$tts = stobeSynthesizePocketTtsLine(
+    $actor,
+    $text,
+    false,
+    getSetting('PLAYER_TTS_FILTER_PRESET', 'none')
+);
 $hash = trim(strval($tts['hash'] ?? ''));
 $durationMs = intval($tts['duration_ms'] ?? 0);
 

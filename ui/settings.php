@@ -3,6 +3,7 @@
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . "lib/bootstrap.php");
 require_once($path . 'lib/settings_presets.php');
+require_once($path . 'ui/tmpl/voice_filter_field.php');
 $presetToken = stobePresetToken();
 try {
     require_once($path . "debug/db_updates.php");
@@ -73,6 +74,11 @@ try {
                 'id' => 'PLAYER_DIALOGUE_AUDIO_ENABLED',
                 'value' => 'true',
                 'description' => 'Play TTS for when the selected player character speaks.',
+            ],
+            [
+                'id' => 'PLAYER_TTS_FILTER_PRESET',
+                'value' => 'none',
+                'description' => 'Fixed voice filter applied to the spoken dialogue of the player character.',
             ],
             [
                 'id' => 'ALWAYS_INSERT_RACE',
@@ -157,6 +163,22 @@ function stobeFindSettingDescription(array $rows, string $id, string $default = 
     return $default;
 }
 
+function stobeFindSettingValue(array $rows, string $id, string $default = ''): string
+{
+    $needle = strtoupper(trim($id));
+    if ($needle === '') {
+        return $default;
+    }
+
+    foreach ($rows as $row) {
+        if (strtoupper(trim(strval($row['id'] ?? ''))) === $needle) {
+            return strval($row['value'] ?? $default);
+        }
+    }
+
+    return $default;
+}
+
 function stobeSettingsWebRoot(): string
 {
     $scriptPath = strval($_SERVER['SCRIPT_NAME'] ?? '');
@@ -234,7 +256,7 @@ function stobeSettingType(string $id, string $value): string
     if ($idUpper === 'TXTAI_URL') {
         return 'url';
     }
-    if ($idUpper === 'RECHAT_MODE') {
+    if ($idUpper === 'RECHAT_MODE' || $idUpper === 'PLAYER_TTS_FILTER_PRESET') {
         return 'select';
     }
     if ($idUpper === 'DYNAMIC_PROFILE_INTERVAL_HOURS') {
@@ -263,6 +285,19 @@ function stobeSettingType(string $id, string $value): string
 
 function stobeSettingSelectOptions(string $id): array
 {
+    if (strtoupper(trim($id)) === 'PLAYER_TTS_FILTER_PRESET') {
+        $options = [];
+        foreach (stobeUiVoiceFilterPresets() as $presetKey => $presetRow) {
+            $presetId = strval(is_array($presetRow) ? ($presetRow['id'] ?? $presetKey) : $presetKey);
+            $presetLabel = trim(strval(is_array($presetRow) ? ($presetRow['label'] ?? '') : ''));
+            if ($presetLabel === '') {
+                $presetLabel = $presetId === 'none' ? 'None (default)' : $presetId;
+            }
+            $options[$presetId] = $presetLabel;
+        }
+        return $options;
+    }
+
     return match (strtoupper(trim($id))) {
         'RECHAT_MODE' => [
             'tight' => 'Tight',
@@ -283,6 +318,9 @@ function stobeNormalizeSettingValue(string $id, string $rawValue, string $type):
     if ($type === 'bool') {
         $lower = strtolower($value);
         return in_array($lower, ['1', 'true', 'yes', 'on'], true) ? 'true' : 'false';
+    }
+    if (strtoupper(trim($id)) === 'PLAYER_TTS_FILTER_PRESET') {
+        return stobeUiNormalizeVoiceFilterPreset($value);
     }
     if ($type === 'select') {
         $options = stobeSettingSelectOptions($id);
@@ -325,7 +363,7 @@ function stobeInferGroup(string $id): string
         || str_starts_with($idUpper, 'TALK_')
         || str_starts_with($idUpper, 'SHOUT_')
         || str_starts_with($idUpper, 'WHISPER_')
-        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'PROMPT_HEAD_MARKDOWN_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED'], true)
+        || in_array($idUpper, ['SPEAKER_RECHAT', 'ENFORCE_STRICT_RECHAT_RESPONSE', 'COMPACT_CHAT_HISTORY_ENABLED', 'SHORT_TERM_MEMORY_IN_COMPACT_CHAT', 'PROMPT_HEAD_MARKDOWN_ENABLED', 'PLAYER_DIALOGUE_AUDIO_ENABLED', 'PLAYER_TTS_FILTER_PRESET'], true)
     ) {
         return 'Prompt & Rechat';
     }
@@ -410,6 +448,7 @@ function stobePrettySettingLabel(string $id): string
         'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 'Short-Term Memory in Compact Chat',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Compact Prompt Info',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => 'Speak Player Dialogue',
+        'PLAYER_TTS_FILTER_PRESET' => 'Player Voice Filter',
         'PROMPT_HEAD' => 'Prompt Head',
         'EMOTEMOODS' => 'Emote Moods',
         'ROLEPLAY_INSTRUCTIONS' => 'Roleplay Instructions',
@@ -440,6 +479,7 @@ function stobeIconForSetting(string $id): string
         'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => '🧠',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => '🧾',
         'PLAYER_DIALOGUE_AUDIO_ENABLED' => '🔊',
+        'PLAYER_TTS_FILTER_PRESET' => '🎚️',
         'MEMORY_ENABLED' => '🧠',
         'MEMORY_AUTO_CREATE_SUMMARY_INTERVAL' => '⏱️',
         'TXTAI_URL' => '🔗',
@@ -602,6 +642,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $statusMessage = $savedCount > 0 ? ('Saved ' . $savedCount . ' setting(s).') : 'No changes detected.';
 }
 
+// Player Voice Filter samples are attributed to the configured player character.
+$playerVoiceFilterSpeaker = trim(stobeFindSettingValue($settingsRows, 'PLAYER_NAME', ''));
+
 $grouped = [];
 foreach ($settingsRows as $row) {
     $id = strval($row['id'] ?? '');
@@ -642,6 +685,7 @@ foreach ($grouped as $groupName => $rows) {
             'PLAYER_FACTION_CUSTOM_NAME' => 4,
             'PLAYER_FACTION_PROMPT' => 5,
             'PLAYER_DIALOGUE_AUDIO_ENABLED' => 5,
+            'PLAYER_TTS_FILTER_PRESET' => 6,
             'DYNAMIC_PROFILE_INTERVAL_HOURS' => 6,
             'HTTP_TIMEOUT' => 99,
             'MEMORY_ENABLED' => 0,
@@ -709,6 +753,7 @@ if (isset($grouped['LLM & API'])) {
     <link rel="icon" type="image/x-icon" href="/StobeServer/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="css/main.css">
+    <?php stobeUiVoiceFilterStylesheet($webRoot); ?>
     <?php if (!$isEmbed): ?>
         <link rel="stylesheet" href="css/navbar.css">
     <?php endif; ?>
@@ -1127,6 +1172,7 @@ if (isset($grouped['LLM & API'])) {
                                 $label = stobePrettySettingLabel($id);
                                 $checked = in_array(strtolower(trim($value)), ['true', '1', 'yes', 'on'], true);
                                 $isDynamicProfileInterval = strtoupper(trim($id)) === 'DYNAMIC_PROFILE_INTERVAL_HOURS';
+                                $isPlayerVoiceFilter = strtoupper(trim($id)) === 'PLAYER_TTS_FILTER_PRESET';
                             ?>
                             <div
                                 class="provider-card"
@@ -1155,6 +1201,21 @@ if (isset($grouped['LLM & API'])) {
                                 </div>
                                 <div class="provider-body">
                                     <?php if ($type === 'bool'): ?>
+                                    <?php elseif ($isPlayerVoiceFilter): ?>
+                                        <?php stobeUiRenderVoiceFilterField([
+                                            'select_id' => $inputId,
+                                            'select_name' => 'settings[' . $id . ']',
+                                            'selected' => $value,
+                                            'web_root' => $webRoot,
+                                            'aria_label' => $label,
+                                            'hint_tag' => 'div',
+                                            'hint_class' => '',
+                                            'variant' => 'gold',
+                                            'play_title' => $playerVoiceFilterSpeaker !== ''
+                                                ? 'Play a sample of ' . $playerVoiceFilterSpeaker . ' with this voice filter'
+                                                : 'Play a player voice sample with this filter',
+                                            'speaker' => $playerVoiceFilterSpeaker,
+                                        ]); ?>
                                     <?php elseif ($type === 'select'): ?>
                                         <?php $selectOptions = stobeSettingSelectOptions($id); ?>
                                         <select id="<?= h($inputId) ?>" name="settings[<?= h($id) ?>]">
@@ -1191,6 +1252,13 @@ if (isset($grouped['LLM & API'])) {
                                     <?php endif; ?>
                                     <?php if ($warning !== ''): ?>
                                         <div class="setting-warning"><?= h($warning) ?></div>
+                                    <?php endif; ?>
+                                    <?php if ($isPlayerVoiceFilter): ?>
+                                        <div class="provider-description">
+                                            <?= $playerVoiceFilterSpeaker !== ''
+                                                ? 'Presets are fixed and cannot be edited. Samples use ' . h($playerVoiceFilterSpeaker) . '.'
+                                                : 'Presets are fixed and cannot be edited. Samples use the current player character.' ?>
+                                        </div>
                                     <?php endif; ?>
                                 </div>
                             </div>
