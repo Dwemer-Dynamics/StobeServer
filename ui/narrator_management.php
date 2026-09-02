@@ -2,6 +2,7 @@
 
 $enginePath = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'bootstrap.php');
+require_once(__DIR__ . DIRECTORY_SEPARATOR . 'tmpl' . DIRECTORY_SEPARATOR . 'voice_filter_field.php');
 
 if (!isset($GLOBALS["db"]) || !($GLOBALS["db"] instanceof sql)) {
     $GLOBALS["db"] = new sql();
@@ -78,6 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_narrator'])) {
         'dynamic_profile' => $dynamicProfile,
         'profile_id' => strval($profileId),
         'voiceid' => trim(strval($_POST['voiceid'] ?? '')),
+        'tts_filter_preset' => stobeUiNormalizeVoiceFilterPreset($_POST['tts_filter_preset'] ?? 'none'),
         'core' => trim(strval($_POST['core'] ?? '')),
         'background' => trim(strval($_POST['background'] ?? '')),
         'personality' => trim(strval($_POST['personality'] ?? '')),
@@ -115,6 +117,7 @@ $dynamicProfileFields = $narrator->getDynamicProfileFields();
 $profileId = $narrator->getInt('profile_id', 1);
 $defaultNarratorSeed = Narrator::defaultSeedValues($profileId > 0 ? $profileId : 1);
 $voiceid = $narrator->get('voiceid') ?? strval($defaultNarratorSeed['voiceid'] ?? 'stobenarrator');
+$narratorTtsFilterPreset = stobeUiNormalizeVoiceFilterPreset($narrator->get('tts_filter_preset') ?? 'none');
 $core = $narrator->get('core') ?? strval($defaultNarratorSeed['core'] ?? '');
 $background = $narrator->get('background') ?? strval($defaultNarratorSeed['background'] ?? '');
 $personality = $narrator->get('personality') ?? strval($defaultNarratorSeed['personality'] ?? '');
@@ -155,6 +158,11 @@ if (!$isEmbed) {
     .page-container,
     .page-container * {
         color: #ffffff !important;
+    }
+
+    /* The white override above would otherwise hide the sample error state. */
+    .page-container .voice-filter-status.is-error {
+        color: #ff9c6e !important;
     }
 
     .page-container input::placeholder,
@@ -618,6 +626,20 @@ if (!$isEmbed) {
                     <label for="voiceid">Voice ID</label>
                     <input type="text" id="voiceid" name="voiceid" value="<?= htmlspecialchars($voiceid, ENT_QUOTES, 'UTF-8') ?>">
                     <span class="hint">Narrator TTS voice identifier.</span>
+
+                    <label for="tts_filter_preset">Voice Filter</label>
+                    <?php stobeUiRenderVoiceFilterField([
+                        'select_id' => 'tts_filter_preset',
+                        'select_name' => 'tts_filter_preset',
+                        'selected' => $narratorTtsFilterPreset,
+                        'web_root' => $webRoot,
+                        'hint' => 'Effect applied to everything The Narrator speaks. Presets are fixed and cannot be edited.',
+                        'hint_tag' => 'span',
+                        'hint_class' => 'hint',
+                        'play_title' => 'Play a sample of the narrator voice with this filter',
+                        'profile_select_id' => 'profile_id',
+                        'voice_input_id' => 'voiceid',
+                    ]); ?>
 
                     <label for="oghma_knowledge">World Knowledge Tags</label>
                     <input type="text" id="oghma_knowledge" name="oghma_knowledge" value="<?= htmlspecialchars($oghmaKnowledge, ENT_QUOTES, 'UTF-8') ?>">
