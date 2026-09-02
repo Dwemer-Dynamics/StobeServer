@@ -9606,8 +9606,13 @@ function stobeResolveNpcPromptOverrides(array $npcData, array $metadata = []): a
         }
     }
 
+    $resolvedPromptHead = $npcPromptHead !== '' ? $npcPromptHead : $profilePromptHead;
+    if ($resolvedPromptHead === '' && function_exists('getSetting')) {
+        $resolvedPromptHead = trim(strval(getSetting('PROMPT_HEAD', '')));
+    }
+
     return [
-        'prompt_head' => $npcPromptHead !== '' ? $npcPromptHead : $profilePromptHead,
+        'prompt_head' => $resolvedPromptHead,
         'profile_prompt' => $npcProfilePrompt !== '' ? $npcProfilePrompt : $profilePrompt,
     ];
 }
