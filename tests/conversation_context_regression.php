@@ -43,6 +43,35 @@ function contextFlowMessageContents(array $messages): array
     return $contents;
 }
 
+$db = $GLOBALS['db'];
+$originalGlobalPromptHead = $db->fetchOne(
+    "SELECT value FROM general_settings WHERE id = 'PROMPT_HEAD'"
+);
+setSetting('PROMPT_HEAD', 'UT global Prompt Head');
+$globalPromptOverrides = stobeResolveNpcPromptOverrides([
+    'profile_id' => 2147483647,
+    'prompt_head' => '',
+]);
+contextFlowAssertSame(
+    'UT global Prompt Head',
+    strval($globalPromptOverrides['prompt_head'] ?? ''),
+    'empty NPC and profile Prompt Heads should inherit the global Prompt Head'
+);
+$npcPromptOverrides = stobeResolveNpcPromptOverrides([
+    'profile_id' => 2147483647,
+    'prompt_head' => 'UT NPC Prompt Head',
+]);
+contextFlowAssertSame(
+    'UT NPC Prompt Head',
+    strval($npcPromptOverrides['prompt_head'] ?? ''),
+    'NPC Prompt Head should override the global Prompt Head'
+);
+if ($originalGlobalPromptHead) {
+    setSetting('PROMPT_HEAD', strval($originalGlobalPromptHead['value'] ?? ''));
+} else {
+    $db->exec("DELETE FROM general_settings WHERE id = 'PROMPT_HEAD'");
+}
+
 $historyAliases = stobeResolveNpcEventHistoryAliases(
     ['original_name' => 'Dust Boss Hotlongs'],
     'Fenth [Dust Boss Hotlongs]'
