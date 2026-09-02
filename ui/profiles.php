@@ -481,12 +481,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_profile'])) {
 }
 
 // ============= Profile Rules AJAX Handlers =============
+function profileRuleMatchValueFromPost(string $field): string {
+    $rawValue = trim(strval($_POST['match_' . $field] ?? ''));
+    if (strval($_POST['editor_mode'] ?? '') !== 'simple' || !in_array($field, ['race', 'gender', 'faction'], true)) {
+        return $rawValue;
+    }
+
+    $selected = trim(strval($_POST['simple_match_' . $field] ?? ''));
+    if ($field === 'gender') {
+        $selected = strtolower($selected);
+        if (!in_array($selected, ['', 'male', 'female'], true)) {
+            throw new InvalidArgumentException('Invalid gender selection');
+        }
+    }
+
+    return strval(stobeBuildExactProfileRuleRegex($selected) ?? '');
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['get_import_rules'])) {
     try { while (ob_get_level() > 0) { ob_end_clean(); } } catch (Throwable $e) {}
     header('Content-Type: application/json');
     try {
         $rules = stobeGetCoreProfileImportRules();
-        echo json_encode(['ok' => true, 'data' => $rules]);
+        foreach ($rules as &$rule) {
+            $rule['_simple'] = [];
+            $rule['_custom_fields'] = [];
+            foreach (['name', 'race', 'gender', 'faction'] as $field) {
+                $parsed = stobeParseExactProfileRuleRegex($rule['match_' . $field] ?? null);
+                if ($parsed === null || count($parsed) > 1) {
+                    $rule['_custom_fields'][] = $field;
+                    $rule['_simple'][$field] = '';
+                    continue;
+                }
+                $rule['_simple'][$field] = strval($parsed[0] ?? '');
+            }
+            $rule['_has_custom_regex'] = count($rule['_custom_fields']) > 0;
+            $rule['_editor_mode'] = count(array_intersect($rule['_custom_fields'], ['race', 'gender', 'faction'])) > 0
+                ? 'advanced'
+                : 'simple';
+        }
+        unset($rule);
+
+        $options = ['races' => [], 'factions' => []];
+        $optionsError = '';
+        try {
+            $options = stobeGetCoreProfileImportRuleEditorOptions();
+        } catch (Throwable $optionsException) {
+            error_log('[Profile Rules] Failed to load detected options: ' . $optionsException->getMessage());
+            $optionsError = 'Detected values are temporarily unavailable';
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'data' => $rules,
+            'options' => $options,
+            'options_error' => $optionsError,
+        ]);
     } catch (Throwable $e) {
         echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
     }
@@ -499,10 +549,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_import_rule'])
     try {
         $id = stobeCreateCoreProfileImportRule([
             'description' => trim(strval($_POST['description'] ?? 'New Profile Rule')),
-            'match_name' => trim(strval($_POST['match_name'] ?? '')),
-            'match_race' => trim(strval($_POST['match_race'] ?? '')),
-            'match_gender' => trim(strval($_POST['match_gender'] ?? '')),
-            'match_faction' => trim(strval($_POST['match_faction'] ?? '')),
+            'match_name' => profileRuleMatchValueFromPost('name'),
+            'match_race' => profileRuleMatchValueFromPost('race'),
+            'match_gender' => profileRuleMatchValueFromPost('gender'),
+            'match_faction' => profileRuleMatchValueFromPost('faction'),
             'profile' => intval($_POST['profile'] ?? 0),
             'priority' => intval($_POST['priority'] ?? 0),
             'enabled' => coerceBoolean($_POST['enabled'] ?? true),
@@ -525,10 +575,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_import_rule'])
         }
         stobeUpdateCoreProfileImportRule($id, [
             'description' => trim(strval($_POST['description'] ?? 'Profile Rule')),
-            'match_name' => trim(strval($_POST['match_name'] ?? '')),
-            'match_race' => trim(strval($_POST['match_race'] ?? '')),
-            'match_gender' => trim(strval($_POST['match_gender'] ?? '')),
-            'match_faction' => trim(strval($_POST['match_faction'] ?? '')),
+            'match_name' => profileRuleMatchValueFromPost('name'),
+            'match_race' => profileRuleMatchValueFromPost('race'),
+            'match_gender' => profileRuleMatchValueFromPost('gender'),
+            'match_faction' => profileRuleMatchValueFromPost('faction'),
             'profile' => intval($_POST['profile'] ?? 0),
             'priority' => intval($_POST['priority'] ?? 0),
             'enabled' => coerceBoolean($_POST['enabled'] ?? false),
@@ -799,14 +849,66 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
 .modal-close:hover { background:#4a4a4a; }
 .modal-body { padding:14px; max-height:78vh; overflow:auto; }
 .rules-list { display:flex; flex-direction:column; gap:12px; }
+#import_rules_modal .modal-container { width:min(1180px, 96vw); max-height:92vh; display:flex; flex-direction:column; }
+#import_rules_modal .modal-header { position:sticky; top:0; z-index:3; flex:0 0 auto; }
+#import_rules_modal .modal-body { flex:1 1 auto; min-height:0; max-height:none; }
+.rules-help { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-bottom:12px; color:#cdd6e2; font-size:12px; line-height:1.45; border:1px solid #3f3f3f; border-radius:8px; background:#222; padding:10px 12px; }
+.rules-help strong { color:#e7edf7; }
+.rules-help > span { min-width:0; }
+.rules-notice:empty { display:none; }
+.rule-inline-note { margin-bottom:10px; border:1px solid rgba(230,183,108,.35); background:rgba(230,183,108,.08); color:#e8d3ae; border-radius:8px; padding:8px 10px; font-size:12px; line-height:1.4; }
 .rule-card { background:#1e1e1e; border:1px solid #3f3f3f; border-radius:8px; padding:12px; }
-.rule-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px; flex-wrap:wrap; }
-.rule-grid { display:grid; grid-template-columns: 160px 1fr; gap:8px 12px; align-items:center; }
-@media (max-width: 900px) { .rule-grid { grid-template-columns: 1fr; } }
+.rule-card.editing { border-color:#e6b76c; box-shadow:0 0 0 1px rgba(230,183,108,.18); }
+.rule-head { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+.rule-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; }
+.rule-title { color:#e7edf7; font-weight:700; font-size:14px; overflow-wrap:anywhere; }
+.rule-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.rule-actions .btn-save, .rule-actions .btn-secondary, .rule-actions .btn-danger { padding:5px 10px; font-size:12px; }
+.rule-status, .rule-advanced-badge { border:1px solid #4a4a4a; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+.rule-status.enabled { color:#9be29b; border-color:rgba(109,209,156,.45); background:rgba(38,89,53,.35); }
+.rule-status.disabled { color:#9fb1c9; background:rgba(255,255,255,.03); }
+.rule-advanced-badge { color:#e6b76c; border-color:rgba(230,183,108,.45); background:rgba(230,183,108,.1); }
+.rule-summary { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:8px; color:#cdd6e2; font-size:12px; min-width:0; }
+.rule-summary-target { color:#e7edf7; font-weight:700; overflow-wrap:anywhere; }
+.rule-chip { display:inline-flex; align-items:center; gap:4px; max-width:100%; border:1px solid #4a4a4a; background:#151515; border-radius:999px; padding:3px 9px; font-size:12px; overflow-wrap:anywhere; }
+.rule-chip strong { color:#e6b76c; font-weight:700; }
+.rule-edit-core { display:grid; grid-template-columns:minmax(0, 1.4fr) minmax(0, 1fr) auto; gap:10px 14px; align-items:end; margin-top:12px; }
+.rule-field { min-width:0; }
+.rule-field label, .rule-picker-label { display:block; color:#9fb1c9; font-size:12px; font-weight:700; margin-bottom:5px; text-transform:uppercase; letter-spacing:.04em; }
+.rule-enabled-field { padding-bottom:7px; }
+.rule-enabled-field label { display:inline-flex; align-items:center; gap:8px; margin:0; color:#cdd6e2; font-size:12px; text-transform:none; letter-spacing:normal; white-space:nowrap; cursor:pointer; }
+.rule-input { width:100%; max-width:100%; background:#151515; color:#f0f5ff; border:1px solid #4a4a4a; border-radius:6px; padding:7px 9px; }
+.rule-input:focus, .rule-input:focus-visible { border-color:#e6b76c; outline:none; box-shadow:0 0 0 3px rgba(230,183,108,.12); }
+.rule-input[readonly] { color:#9fb1c9; background:#121212; font-family:Consolas, 'Courier New', monospace; font-size:12px; }
+.rule-input:disabled { color:#8b96a6; background:#141414; cursor:not-allowed; }
+.rule-checkbox { accent-color:#e6b76c; cursor:pointer; }
+.rule-checkbox:focus-visible { outline:2px solid #e6b76c; outline-offset:2px; }
+.rule-simple-section { margin-top:14px; }
+.rule-simple-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; margin-bottom:8px; color:#e6b76c; font-family:'MagicCards', serif; font-size:1.02em; letter-spacing:.4px; word-spacing:4px; }
+.rule-simple-note { min-width:0; color:#9fb1c9; font-family:inherit; font-size:12px; font-weight:400; letter-spacing:normal; word-spacing:normal; }
+.rule-simple-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+.rule-picker { min-width:0; background:#161616; border:1px solid #3f3f3f; border-radius:8px; padding:10px; }
+.rule-picker-label { display:flex; align-items:center; gap:6px; }
+.rule-picker-icon { font-size:14px; line-height:1; text-transform:none; }
+.rule-simple-section.locked .rule-picker { opacity:.65; }
+.rule-advanced-toggle { margin-top:12px; }
+.rule-advanced-toggle[aria-expanded='true'] { border-color:#e6b76c; color:#e6b76c; }
+.rule-advanced-panel { margin-top:10px; border:1px solid rgba(230,183,108,.3); border-radius:8px; background:rgba(230,183,108,.04); padding:12px; }
+.rule-advanced-panel[hidden] { display:none; }
+.rule-advanced-note { margin-bottom:10px; color:#cdd6e2; font-size:12px; line-height:1.45; }
+.rule-grid { display:grid; grid-template-columns:180px minmax(0, 1fr); gap:8px 12px; align-items:center; }
 .rule-label { color:#9fb1c9; font-size:12px; font-weight:700; }
-.rule-input { width:100%; background:#151515; color:#f0f5ff; border:1px solid #4a4a4a; border-radius:6px; padding:7px 9px; }
-.rule-input:focus { border-color:#e6b76c; outline:none; box-shadow:0 0 0 3px rgba(230,183,108,.12); }
-.rules-help { margin-bottom:10px; color:#cdd6e2; font-size:12px; line-height:1.45; border:1px solid #3f3f3f; border-radius:8px; background:#222; padding:10px; }
+.rule-grid .rule-label { margin-bottom:0; }
+.rule-mode-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+.rule-mode-note { min-width:0; color:#9fb1c9; font-size:11px; }
+@media (max-width: 850px) {
+    #import_rules_modal .modal-header { align-items:flex-start; flex-direction:column; }
+    #import_rules_modal .modal-header .rule-actions { width:100%; }
+    .rules-help { display:block; }
+    .rule-edit-core, .rule-simple-grid, .rule-grid { grid-template-columns:1fr; }
+    .rule-enabled-field { padding-bottom:0; }
+    .rule-head { align-items:flex-start; }
+}
 .profile-test-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.74); z-index:10070; align-items:center; justify-content:center; padding:24px; }
 .profile-test-shell { width:min(1120px, 96vw); max-height:90vh; overflow:hidden; display:flex; flex-direction:column; background:#1e1e1e; border:1px solid #4a4a4a; border-radius:14px; color:#e9efff; box-shadow:0 18px 48px rgba(0,0,0,.45); }
 .profile-test-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 20px; border-bottom:1px solid #343434; }
@@ -1356,22 +1458,21 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
     </div>
 
     <div id="import_rules_modal" class="modal-backdrop">
-        <div class="modal-container">
+        <div class="modal-container" role="dialog" aria-modal="true" aria-labelledby="import_rules_title">
             <div class="modal-header">
-                <h2 class="modal-title">Profile Rules</h2>
-                <div style="display:flex; gap:8px;">
+                <h2 class="modal-title" id="import_rules_title">Profile Rules</h2>
+                <div class="rule-actions">
                     <button type="button" id="add_rule_btn" class="btn-save">+ New Rule</button>
-                    <button type="button" id="backfill_rules_btn" class="btn-save">Run on Current Profiles</button>
+                    <button type="button" id="backfill_rules_btn" class="btn-secondary">Run on Current Profiles</button>
                     <button type="button" id="close_rules_modal" class="modal-close">Close</button>
                 </div>
             </div>
             <div class="modal-body">
                 <div class="rules-help">
-                    Rules are evaluated top-down by <strong>priority</strong>. New NPCs use the first matching rule automatically. Use <strong>Run on Current Profiles</strong> to apply rules to NPCs already imported. Manual NPC profile choices always take priority.
-                    <div style="margin-top:6px;">
-                        Match fields use regex and currently support: <strong>name</strong>, <strong>race</strong>, <strong>gender</strong>, <strong>faction</strong>.
-                    </div>
+                    <strong>Profile Rules automatically assign a profile when an NPC is first imported.</strong>
+                    <span>Pick a value for each field you care about &mdash; every field you set must match, and fields left on <em>Any</em> are ignored. Rules are evaluated by <strong>priority</strong> (highest first) and the first match wins. Use <strong>Run on Current Profiles</strong> to apply rules to NPCs already imported. Manual NPC profile choices always take priority. Use <strong>Advanced Rules</strong> for name matching, custom regex, and priority.</span>
                 </div>
+                <div id="rules_options_notice" class="rules-notice"></div>
                 <div id="rules_list" class="rules-list"></div>
             </div>
         </div>
@@ -1843,7 +1944,13 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
     const addRuleBtn = document.getElementById('add_rule_btn');
     const backfillRulesBtn = document.getElementById('backfill_rules_btn');
     const rulesList = document.getElementById('rules_list');
+    const rulesOptionsNotice = document.getElementById('rules_options_notice');
+    const RULE_GENDERS = ['Male', 'Female'];
+    const RULE_SIMPLE_FIELDS = ['race', 'gender', 'faction'];
     let rulesData = [];
+    let editorOptions = { races: [], factions: [] };
+    let optionsError = '';
+    let editingRuleId = 0;
     const unsavedNewRuleIds = new Set();
 
     function renderProfileSelect(selectedValue) {
@@ -1855,6 +1962,250 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
             options += '<option value="' + escapeHtml(id) + '"' + (id === selected ? ' selected' : '') + '>' + label + '</option>';
         });
         return options;
+    }
+
+    function ruleFieldRegex(rule, field) {
+        return String((rule && rule['match_' + field]) ?? '').trim();
+    }
+
+    // Recovers the single literal behind a regex this editor generated (^Nord$ or ^(?:Nord)$).
+    // Anything containing live regex syntax stays custom and is only editable in Advanced Rules.
+    function literalFromExactRegex(pattern) {
+        const raw = String(pattern ?? '').trim();
+        if (raw === '') {
+            return '';
+        }
+        let body = '';
+        const grouped = /^\^\(\?:(.*)\)\$$/.exec(raw);
+        if (grouped) {
+            body = grouped[1];
+        } else {
+            const plain = /^\^(.*)\$$/.exec(raw);
+            if (!plain) {
+                return '';
+            }
+            body = plain[1];
+        }
+        if (body === '') {
+            return '';
+        }
+        const metaChars = '.*+?^${}()|[]\\';
+        let literal = '';
+        for (let index = 0; index < body.length; index += 1) {
+            const char = body[index];
+            if (char === '\\') {
+                const next = body[index + 1];
+                if (next === undefined || (metaChars.indexOf(next) === -1 && next !== '/' && next !== '-')) {
+                    return '';
+                }
+                literal += next;
+                index += 1;
+                continue;
+            }
+            if (metaChars.indexOf(char) !== -1) {
+                return '';
+            }
+            literal += char;
+        }
+        return literal;
+    }
+
+    function buildExactRegex(value) {
+        const trimmed = String(value ?? '').trim();
+        if (trimmed === '') {
+            return '';
+        }
+        return '^' + trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
+    }
+
+    // Server annotations win when present; otherwise the shape of the stored regex decides.
+    function ruleFieldCustomFlag(rule, field) {
+        if (rule && Array.isArray(rule._custom_fields)) {
+            return rule._custom_fields.indexOf(field) !== -1;
+        }
+        if (rule && rule._custom && typeof rule._custom === 'object'
+            && Object.prototype.hasOwnProperty.call(rule._custom, field)) {
+            return isTruthy(rule._custom[field]);
+        }
+        return null;
+    }
+
+    function ruleSimpleValue(rule, field) {
+        if (rule && rule._simple && typeof rule._simple === 'object'
+            && Object.prototype.hasOwnProperty.call(rule._simple, field)) {
+            const raw = rule._simple[field];
+            return String((Array.isArray(raw) ? raw[0] : raw) ?? '').trim();
+        }
+        return literalFromExactRegex(ruleFieldRegex(rule, field));
+    }
+
+    function ruleFieldIsCustom(rule, field) {
+        const flag = ruleFieldCustomFlag(rule, field);
+        if (flag !== null) {
+            return flag;
+        }
+        const raw = ruleFieldRegex(rule, field);
+        if (raw === '') {
+            return false;
+        }
+        return ruleSimpleValue(rule, field) === '';
+    }
+
+    function ruleHasCustomRegex(rule) {
+        if (rule && Object.prototype.hasOwnProperty.call(rule, '_has_custom_regex')) {
+            return isTruthy(rule._has_custom_regex);
+        }
+        return RULE_SIMPLE_FIELDS.concat(['name']).some(function (field) {
+            return ruleFieldIsCustom(rule, field);
+        });
+    }
+
+    function ruleEditorMode(rule) {
+        if (rule && rule._editor_mode) {
+            return rule._editor_mode === 'advanced' ? 'advanced' : 'simple';
+        }
+        return RULE_SIMPLE_FIELDS.some(function (field) {
+            return ruleFieldIsCustom(rule, field);
+        }) ? 'advanced' : 'simple';
+    }
+
+    // Detected values plus whatever this rule already stores, so an unknown value is never dropped.
+    function ruleOptionValues(rawList, currentValue) {
+        const seen = new Map();
+        (Array.isArray(rawList) ? rawList : []).forEach(function (entry) {
+            const source = (entry && typeof entry === 'object') ? (entry.value ?? entry.label ?? '') : entry;
+            const value = String(source ?? '').trim();
+            if (value === '') {
+                return;
+            }
+            const key = value.toLocaleLowerCase();
+            if (!seen.has(key)) {
+                seen.set(key, value);
+            }
+        });
+        const current = String(currentValue ?? '').trim();
+        if (current !== '' && !seen.has(current.toLocaleLowerCase())) {
+            seen.set(current.toLocaleLowerCase(), current);
+        }
+        return Array.from(seen.values()).sort(function (left, right) {
+            return left.localeCompare(right, undefined, { sensitivity: 'base' });
+        });
+    }
+
+    function renderRuleSelector(id, field, label, icon, currentValue, values, anyLabel, emptyLabel, locked) {
+        const selectId = 'rule-' + id + '-simple-' + field;
+        const current = String(currentValue ?? '').trim();
+        let options = '<option value=""' + (current === '' ? ' selected' : '') + '>' + escapeHtml(anyLabel) + '</option>';
+        if (values.length === 0) {
+            options += '<option value="" disabled>' + escapeHtml(emptyLabel) + '</option>';
+        } else {
+            values.forEach(function (value) {
+                const isSelected = value.toLocaleLowerCase() === current.toLocaleLowerCase();
+                options += '<option value="' + escapeHtml(value) + '"' + (isSelected ? ' selected' : '') + '>' + escapeHtml(value) + '</option>';
+            });
+        }
+        return '<div class="rule-picker">'
+            + '<label class="rule-picker-label" for="' + selectId + '">'
+            + '<span class="rule-picker-icon" aria-hidden="true">' + icon + '</span>' + escapeHtml(label)
+            + '</label>'
+            + '<select id="' + selectId + '" class="rule-input rule-simple-' + field + '" data-simple-field="' + field + '"'
+            + (locked ? ' disabled' : '') + '>' + options + '</select>'
+            + '</div>';
+    }
+
+    function renderRuleSummary(rule, profileLabel) {
+        const chips = [];
+        [['Name', 'name'], ['Race', 'race'], ['Gender', 'gender'], ['Faction', 'faction']].forEach(function (pair) {
+            const raw = ruleFieldRegex(rule, pair[1]);
+            if (raw === '') {
+                return;
+            }
+            const simple = ruleFieldIsCustom(rule, pair[1]) ? '' : ruleSimpleValue(rule, pair[1]);
+            chips.push('<span class="rule-chip"><strong>' + pair[0] + ':</strong> ' + escapeHtml(simple !== '' ? simple : raw) + '</span>');
+        });
+        if (chips.length === 0) {
+            chips.push('<span class="rule-chip">Every new NPC</span>');
+        }
+        return '<div class="rule-summary">'
+            + '<span class="rule-summary-target">' + escapeHtml(profileLabel || 'No profile assigned') + '</span>'
+            + chips.join('')
+            + '</div>';
+    }
+
+    function renderRuleEditor(rule, id, enabled, priorityValue, locked) {
+        const raceValue = ruleSimpleValue(rule, 'race');
+        const genderValue = ruleSimpleValue(rule, 'gender');
+        const factionValue = ruleSimpleValue(rule, 'faction');
+        const nameRegex = String(rule.match_name ?? '').trim();
+        // In dropdown mode the regex fields mirror exactly what will be saved.
+        const raceRegex = locked ? String(rule.match_race ?? '') : buildExactRegex(raceValue);
+        const genderRegex = locked ? String(rule.match_gender ?? '') : buildExactRegex(genderValue);
+        const factionRegex = locked ? String(rule.match_faction ?? '') : buildExactRegex(factionValue);
+        const advancedOpen = locked || nameRegex !== '' || priorityValue !== 0;
+        const advancedId = 'rule-' + id + '-advanced';
+
+        let html = '<div class="rule-edit-core">';
+        html += '<div class="rule-field"><label for="rule-' + id + '-description">Rule Name</label>'
+            + '<input type="text" id="rule-' + id + '-description" class="rule-input rule-description" value="' + escapeHtml(rule.description || '') + '" required></div>';
+        html += '<div class="rule-field"><label for="rule-' + id + '-profile">Assign Profile</label>'
+            + '<select id="rule-' + id + '-profile" class="rule-input rule-profile">' + renderProfileSelect(rule.profile) + '</select></div>';
+        html += '<div class="rule-field rule-enabled-field"><label>'
+            + '<input type="checkbox" class="rule-checkbox rule-enabled"' + (enabled ? ' checked' : '') + '> Enabled</label></div>';
+        html += '</div>';
+
+        html += '<div class="rule-simple-section' + (locked ? ' locked' : '') + '">';
+        html += '<div class="rule-simple-heading">Match NPCs When'
+            + '<span class="rule-simple-note">Every field you set must match. Leave a field on &ldquo;Any&rdquo; to ignore it.</span></div>';
+        if (locked) {
+            html += '<div class="rule-inline-note">This rule uses custom regex, so the dropdowns are turned off. Edit the patterns in Advanced Rules below, or switch back to dropdowns there.</div>';
+        }
+        html += '<div class="rule-simple-grid">';
+        html += renderRuleSelector(id, 'race', 'Race', '&#129516;', raceValue, ruleOptionValues(editorOptions.races, raceValue), 'Any race', 'No detected races yet', locked);
+        html += renderRuleSelector(id, 'gender', 'Gender', '&#9895;', genderValue, ruleOptionValues(RULE_GENDERS, genderValue), 'Any gender', 'No genders available', locked);
+        html += renderRuleSelector(id, 'faction', 'Faction', '&#9876;', factionValue, ruleOptionValues(editorOptions.factions, factionValue), 'Any faction', 'No detected factions yet', locked);
+        html += '</div>';
+        html += '<button type="button" class="btn-secondary rule-advanced-toggle" data-action="toggle-advanced"'
+            + ' aria-expanded="' + (advancedOpen ? 'true' : 'false') + '" aria-controls="' + advancedId + '">&#9881; Advanced Rules</button>';
+        html += '</div>';
+
+        html += '<div class="rule-advanced-panel" id="' + advancedId + '"' + (advancedOpen ? '' : ' hidden') + '>';
+        html += '<div class="rule-advanced-note">Patterns are matched case-insensitively against the imported NPC value, and a blank pattern matches anything. Higher priority rules are checked first.</div>';
+        html += '<div class="rule-grid">';
+        html += '<label class="rule-label" for="rule-' + id + '-match_name">Match Name (regex)</label>'
+            + '<input type="text" id="rule-' + id + '-match_name" class="rule-input rule-match-name" value="' + escapeHtml(rule.match_name || '') + '" placeholder="e.g. ^Lydia$">';
+        html += '<label class="rule-label" for="rule-' + id + '-match_race">Match Race (regex)</label>'
+            + '<input type="text" id="rule-' + id + '-match_race" class="rule-input rule-match-race" value="' + escapeHtml(raceRegex) + '" placeholder="e.g. ^Nord$"' + (locked ? '' : ' readonly') + '>';
+        html += '<label class="rule-label" for="rule-' + id + '-match_gender">Match Gender (regex)</label>'
+            + '<input type="text" id="rule-' + id + '-match_gender" class="rule-input rule-match-gender" value="' + escapeHtml(genderRegex) + '" placeholder="e.g. ^Female$"' + (locked ? '' : ' readonly') + '>';
+        html += '<label class="rule-label" for="rule-' + id + '-match_faction">Match Faction (regex)</label>'
+            + '<input type="text" id="rule-' + id + '-match_faction" class="rule-input rule-match-faction" value="' + escapeHtml(factionRegex) + '" placeholder="e.g. ^Nameless \\[204-gamedata\\.base\\]$"' + (locked ? '' : ' readonly') + '>';
+        html += '<label class="rule-label" for="rule-' + id + '-priority">Priority</label>'
+            + '<input type="number" id="rule-' + id + '-priority" class="rule-input rule-priority" value="' + priorityValue + '">';
+        html += '</div>';
+        html += '<div class="rule-mode-row">';
+        if (locked) {
+            html += '<button type="button" class="btn-secondary" data-action="use-simple">Use Dropdowns Instead</button>';
+            html += '<span class="rule-mode-note">Race, gender and faction are read from the patterns above.</span>';
+        } else {
+            html += '<button type="button" class="btn-secondary" data-action="use-advanced">Use Custom Regex</button>';
+            html += '<span class="rule-mode-note">Race, gender and faction are generated from the dropdowns above.</span>';
+        }
+        html += '</div>';
+        html += '</div>';
+        return html;
+    }
+
+    function renderOptionsNotice() {
+        if (!rulesOptionsNotice) {
+            return;
+        }
+        if (optionsError === '') {
+            rulesOptionsNotice.innerHTML = '';
+            return;
+        }
+        rulesOptionsNotice.innerHTML = '<div class="rule-inline-note" role="status">Detected races and factions could not be loaded ('
+            + escapeHtml(optionsError)
+            + '). Values already used by a rule are still selectable, and you can write patterns in Advanced Rules.</div>';
     }
 
     function renderRules() {
@@ -1869,37 +2220,63 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
         let html = '';
         rulesData.forEach(function (rule) {
             const id = parseInt(rule.id, 10) || 0;
-            const description = escapeHtml(rule.description || '');
-            const matchName = escapeHtml(rule.match_name || '');
-            const matchRace = escapeHtml(rule.match_race || '');
-            const matchGender = escapeHtml(rule.match_gender || '');
-            const matchFaction = escapeHtml(rule.match_faction || '');
+            const isEditing = id > 0 && id === editingRuleId;
+            const enabled = isTruthy(rule.enabled);
             const priority = parseInt(rule.priority, 10);
             const priorityValue = Number.isNaN(priority) ? 0 : priority;
-            const enabled = isTruthy(rule.enabled);
+            const profileId = String(rule.profile ?? '');
+            const profile = profileOptions.find(function (entry) {
+                return String(entry.id ?? '') === profileId;
+            });
+            const profileLabel = profile ? (profile.label || ('Profile #' + profileId)) : '';
+            const mode = ruleEditorMode(rule);
+            const locked = mode === 'advanced';
 
-            html += '<div class="rule-card" data-id="' + id + '">';
-            html += '  <div class="rule-head">';
-            html += '      <div><strong>Rule #' + id + '</strong></div>';
-            html += '      <div class="btn-row" style="margin:0;">';
-            html += '          <button type="button" class="btn-save" data-action="save">Save</button>';
-            html += '          <button type="button" class="btn-danger" data-action="delete">Delete</button>';
-            html += '      </div>';
-            html += '  </div>';
-            html += '  <div class="rule-grid">';
-            html += '      <div class="rule-label">Description</div><div><input type="text" class="rule-input rule-description" value="' + description + '"></div>';
-            html += '      <div class="rule-label">Assign Profile</div><div><select class="rule-input rule-profile">' + renderProfileSelect(rule.profile) + '</select></div>';
-            html += '      <div class="rule-label">Priority</div><div><input type="number" class="rule-input rule-priority" value="' + priorityValue + '"></div>';
-            html += '      <div class="rule-label">Enabled</div><div><label style="display:inline-flex; align-items:center; gap:8px;"><input type="checkbox" class="rule-enabled"' + (enabled ? ' checked' : '') + '> Enabled</label></div>';
-            html += '      <div class="rule-label">Match Name (regex)</div><div><input type="text" class="rule-input rule-match-name" value="' + matchName + '" placeholder="e.g. ^Beep$"></div>';
-            html += '      <div class="rule-label">Match Race (regex)</div><div><input type="text" class="rule-input rule-match-race" value="' + matchRace + '" placeholder="e.g. sekelton"></div>';
-            html += '      <div class="rule-label">Match Gender (regex)</div><div><input type="text" class="rule-input rule-match-gender" value="' + matchGender + '" placeholder="e.g. female"></div>';
-            html += '      <div class="rule-label">Match Faction (regex)</div><div><input type="text" class="rule-input rule-match-faction" value="' + matchFaction + '" placeholder="e.g. 	Nameless [204-gamedata.base]"></div>';
-            html += '  </div>';
+            html += '<div class="rule-card' + (isEditing ? ' editing' : '') + '" data-id="' + id + '" data-editor-mode="' + mode + '">';
+            html += '<div class="rule-head">';
+            html += '<div class="rule-title-row">';
+            html += '<span class="rule-title">' + escapeHtml(rule.description || ('Rule #' + id)) + '</span>';
+            html += '<span class="rule-status ' + (enabled ? 'enabled' : 'disabled') + '">' + (enabled ? 'Enabled' : 'Disabled') + '</span>';
+            if (ruleHasCustomRegex(rule)) {
+                html += '<span class="rule-advanced-badge">Advanced</span>';
+            }
+            if (unsavedNewRuleIds.has(id)) {
+                html += '<span class="rule-advanced-badge">Unsaved</span>';
+            }
+            html += '</div>';
+            html += '<div class="rule-actions">';
+            if (isEditing) {
+                html += '<button type="button" class="btn-save" data-action="save">Save</button>';
+                html += '<button type="button" class="btn-secondary" data-action="cancel">Cancel</button>';
+            } else {
+                html += '<button type="button" class="btn-secondary" data-action="edit">Edit</button>';
+                html += '<button type="button" class="btn-danger" data-action="delete">Delete</button>';
+            }
+            html += '</div>';
+            html += '</div>';
+            html += isEditing
+                ? renderRuleEditor(rule, id, enabled, priorityValue, locked)
+                : renderRuleSummary(rule, profileLabel);
             html += '</div>';
         });
 
         rulesList.innerHTML = html;
+    }
+
+    function findRuleById(id) {
+        return rulesData.find(function (rule) {
+            return (parseInt(rule.id, 10) || 0) === id;
+        }) || null;
+    }
+
+    function focusRuleCard(id) {
+        if (!rulesList) {
+            return;
+        }
+        const field = rulesList.querySelector('.rule-card[data-id="' + id + '"] .rule-description');
+        if (field) {
+            field.focus();
+        }
     }
 
     async function postRulesForm(formData) {
@@ -1934,15 +2311,29 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
                 throw new Error(errorMessage);
             }
             rulesData = payload.data;
+            const options = (payload.options && typeof payload.options === 'object') ? payload.options : {};
+            editorOptions = {
+                races: Array.isArray(options.races) ? options.races : [],
+                factions: Array.isArray(options.factions) ? options.factions : []
+            };
+            optionsError = String(payload.options_error ?? options.error ?? '').trim();
+            renderOptionsNotice();
             renderRules();
         } catch (error) {
             rulesData = [];
+            optionsError = '';
+            renderOptionsNotice();
             const message = error && error.message ? String(error.message) : 'Failed to load rules';
             rulesList.innerHTML = '<div class="notice err">' + escapeHtml(message) + '</div>';
         }
     }
 
     async function createRule() {
+        if (editingRuleId > 0) {
+            notify('Save or cancel the rule you are editing first', true);
+            focusRuleCard(editingRuleId);
+            return;
+        }
         const formData = new FormData();
         formData.append('create_import_rule', '1');
         formData.append('description', 'New Profile Rule');
@@ -1957,8 +2348,10 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
             const newRuleId = parseInt(payload.id, 10) || 0;
             if (newRuleId > 0) {
                 unsavedNewRuleIds.add(newRuleId);
+                editingRuleId = newRuleId;
             }
             await loadRules();
+            focusRuleCard(newRuleId);
             notify('Rule created. Configure it, then save.', false);
         } catch (error) {
             const message = error && error.message ? String(error.message) : 'Failed to create rule';
@@ -1978,22 +2371,54 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
     }
 
     async function saveRule(card, id) {
+        const description = getCardValue(card, '.rule-description');
+        if (description === '') {
+            notify('Rule name is required', true);
+            const field = card.querySelector('.rule-description');
+            if (field) {
+                field.focus();
+            }
+            return;
+        }
+        const editorMode = card.getAttribute('data-editor-mode') === 'advanced' ? 'advanced' : 'simple';
+
         const formData = new FormData();
         formData.append('update_import_rule', '1');
         formData.append('id', String(id));
-        formData.append('description', getCardValue(card, '.rule-description'));
-        formData.append('match_name', getCardValue(card, '.rule-match-name'));
-        formData.append('match_race', getCardValue(card, '.rule-match-race'));
-        formData.append('match_gender', getCardValue(card, '.rule-match-gender'));
-        formData.append('match_faction', getCardValue(card, '.rule-match-faction'));
+        formData.append('description', description);
         formData.append('profile', getCardValue(card, '.rule-profile'));
         formData.append('priority', getCardValue(card, '.rule-priority') || '0');
         formData.append('enabled', getCardValue(card, '.rule-enabled'));
+        formData.append('editor_mode', editorMode);
+        // Name is always a raw pattern, in both editor modes.
+        formData.append('match_name', getCardValue(card, '.rule-match-name'));
+
+        if (editorMode === 'simple') {
+            const race = getCardValue(card, '.rule-simple-race');
+            const gender = getCardValue(card, '.rule-simple-gender');
+            const faction = getCardValue(card, '.rule-simple-faction');
+            formData.append('simple_match_race', race);
+            formData.append('simple_match_gender', gender);
+            formData.append('simple_match_faction', faction);
+            // The equivalent exact-match patterns are sent too, so the stored rule stays
+            // correct whether or not the backend builds them from the simple_ fields.
+            formData.append('match_race', buildExactRegex(race));
+            formData.append('match_gender', buildExactRegex(gender));
+            formData.append('match_faction', buildExactRegex(faction));
+        } else {
+            formData.append('simple_match_race', '');
+            formData.append('simple_match_gender', '');
+            formData.append('simple_match_faction', '');
+            formData.append('match_race', getCardValue(card, '.rule-match-race'));
+            formData.append('match_gender', getCardValue(card, '.rule-match-gender'));
+            formData.append('match_faction', getCardValue(card, '.rule-match-faction'));
+        }
 
         const isNewRule = unsavedNewRuleIds.has(id);
         try {
             await postRulesForm(formData);
             unsavedNewRuleIds.delete(id);
+            editingRuleId = 0;
             await loadRules();
             notify('Rule saved', false);
             if (isNewRule && confirm('Apply Profile Rules to current NPC profiles now? Manual NPC profile choices will not be changed.')) {
@@ -2003,6 +2428,70 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
             const message = error && error.message ? String(error.message) : 'Failed to save rule';
             notify(message, true);
         }
+    }
+
+    // Pulls the card's live values back into rulesData so a re-render never loses unsaved edits.
+    function syncCardIntoRule(card, id) {
+        const rule = findRuleById(id);
+        if (!rule) {
+            return null;
+        }
+        rule.description = getCardValue(card, '.rule-description');
+        rule.profile = getCardValue(card, '.rule-profile');
+        rule.priority = getCardValue(card, '.rule-priority') || '0';
+        rule.enabled = getCardValue(card, '.rule-enabled') === '1';
+        rule.match_name = getCardValue(card, '.rule-match-name');
+        if (card.getAttribute('data-editor-mode') === 'advanced') {
+            rule.match_race = getCardValue(card, '.rule-match-race');
+            rule.match_gender = getCardValue(card, '.rule-match-gender');
+            rule.match_faction = getCardValue(card, '.rule-match-faction');
+        } else {
+            rule.match_race = buildExactRegex(getCardValue(card, '.rule-simple-race'));
+            rule.match_gender = buildExactRegex(getCardValue(card, '.rule-simple-gender'));
+            rule.match_faction = buildExactRegex(getCardValue(card, '.rule-simple-faction'));
+        }
+        return rule;
+    }
+
+    function setRuleEditorMode(card, id, mode) {
+        const rule = syncCardIntoRule(card, id);
+        if (!rule) {
+            return;
+        }
+        rule._editor_mode = mode;
+        if (mode === 'simple') {
+            // The dropdowns own these fields again, so drop the annotations that force advanced mode.
+            rule._simple = {
+                race: literalFromExactRegex(rule.match_race),
+                gender: literalFromExactRegex(rule.match_gender),
+                faction: literalFromExactRegex(rule.match_faction)
+            };
+            rule.match_race = buildExactRegex(rule._simple.race);
+            rule.match_gender = buildExactRegex(rule._simple.gender);
+            rule.match_faction = buildExactRegex(rule._simple.faction);
+            rule._has_custom_regex = literalFromExactRegex(String(rule.match_name ?? '')) === ''
+                && String(rule.match_name ?? '').trim() !== '';
+            delete rule._custom_fields;
+            delete rule._custom;
+        } else {
+            delete rule._simple;
+            delete rule._custom_fields;
+            delete rule._custom;
+            rule._has_custom_regex = true;
+        }
+        renderRules();
+    }
+
+    function confirmSwitchToSimple(card) {
+        const hasCustom = RULE_SIMPLE_FIELDS.some(function (field) {
+            const input = card.querySelector('.rule-match-' + field);
+            const raw = input ? String(input.value ?? '').trim() : '';
+            return raw !== '' && literalFromExactRegex(raw) === '';
+        });
+        if (!hasCustom) {
+            return true;
+        }
+        return confirm('Switching to dropdowns replaces the custom race, gender and faction patterns with the values you pick. The name pattern and priority are kept. Continue?');
     }
 
     async function runRulesOnCurrentProfiles(requireConfirmation) {
@@ -2044,6 +2533,10 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
 
         try {
             await postRulesForm(formData);
+            unsavedNewRuleIds.delete(id);
+            if (editingRuleId === id) {
+                editingRuleId = 0;
+            }
             await loadRules();
             notify('Rule deleted', false);
         } catch (error) {
@@ -2094,6 +2587,77 @@ body .profile-setting-sync-btn:hover { border-color:#e6b76c !important; backgrou
             }
             if (action === 'delete') {
                 deleteRule(id);
+                return;
+            }
+            if (action === 'edit') {
+                if (editingRuleId > 0 && editingRuleId !== id) {
+                    notify('Save or cancel the rule you are editing first', true);
+                    focusRuleCard(editingRuleId);
+                    return;
+                }
+                editingRuleId = id;
+                renderRules();
+                focusRuleCard(id);
+                return;
+            }
+            if (action === 'cancel') {
+                editingRuleId = 0;
+                loadRules();
+                return;
+            }
+            if (action === 'toggle-advanced') {
+                const panel = card.querySelector('.rule-advanced-panel');
+                if (!panel) {
+                    return;
+                }
+                const willOpen = panel.hasAttribute('hidden');
+                if (willOpen) {
+                    panel.removeAttribute('hidden');
+                } else {
+                    panel.setAttribute('hidden', '');
+                }
+                btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+                if (willOpen) {
+                    const first = panel.querySelector('.rule-input:not([readonly])');
+                    if (first) {
+                        first.focus();
+                    }
+                }
+                return;
+            }
+            if (action === 'use-advanced') {
+                setRuleEditorMode(card, id, 'advanced');
+                const target = rulesList.querySelector('.rule-card[data-id="' + id + '"] .rule-match-race');
+                if (target) {
+                    target.focus();
+                }
+                return;
+            }
+            if (action === 'use-simple') {
+                if (!confirmSwitchToSimple(card)) {
+                    return;
+                }
+                setRuleEditorMode(card, id, 'simple');
+                const target = rulesList.querySelector('.rule-card[data-id="' + id + '"] .rule-simple-race');
+                if (target) {
+                    target.focus();
+                }
+            }
+        });
+
+        // Keep the read-only Advanced Rules patterns in step with the dropdowns.
+        rulesList.addEventListener('change', function (event) {
+            const select = event.target.closest('select[data-simple-field]');
+            if (!select) {
+                return;
+            }
+            const card = select.closest('.rule-card');
+            if (!card || card.getAttribute('data-editor-mode') === 'advanced') {
+                return;
+            }
+            const mirror = card.querySelector('.rule-match-' + select.getAttribute('data-simple-field'));
+            if (mirror) {
+                mirror.value = buildExactRegex(select.value);
             }
         });
     }
