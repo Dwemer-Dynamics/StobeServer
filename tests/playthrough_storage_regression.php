@@ -55,6 +55,8 @@ function ptStorageCleanupProfiles(string $prefix): void
     foreach ($profiles as $profile) {
         $name = strval($profile['name'] ?? '');
         if (str_starts_with($name, $prefix)) {
+            // Only deactivate this test's fixture before removing its protected snapshot.
+            $GLOBALS['db']->exec('UPDATE stobe_meta.playthrough_profiles SET is_active=false WHERE id=$1 AND name=$2', [intval($profile['id'] ?? 0), $name]);
             stobePlaythroughDeleteProfile(intval($profile['id'] ?? 0));
         }
     }
@@ -203,10 +205,10 @@ try {
     ptStorageAssert(!ptStorageSchemaExists(strval($second['schema_name'] ?? '')), 'deleted second snapshot schema should be dropped');
 
     $deleteFirst = stobePlaythroughDeleteProfile(intval($first['id'] ?? 0));
-    ptStorageAssert(boolval($deleteFirst['success'] ?? false), 'first snapshot should be deletable');
-    ptStorageAssert(stobePlaythroughGetProfileById(intval($first['id'] ?? 0)) === false, 'deleted first snapshot should no longer resolve');
-    ptStorageAssert(!ptStorageSchemaExists(strval($first['schema_name'] ?? '')), 'deleted first snapshot schema should be dropped');
-    ptStorageAssert(stobePlaythroughCurrentActiveProfileName() === '', 'active profile helper should be empty after deleting active snapshot');
+    ptStorageAssert(!boolval($deleteFirst['success'] ?? false), 'loaded snapshot must not be deletable');
+    ptStorageAssert(is_array(stobePlaythroughGetProfileById(intval($first['id'] ?? 0))), 'protected snapshot metadata should remain');
+    ptStorageAssert(ptStorageSchemaExists(strval($first['schema_name'] ?? '')), 'protected snapshot schema should remain');
+    ptStorageAssert(stobePlaythroughCurrentActiveProfileName() === strval($first['name'] ?? ''), 'rejected deletion must preserve the loaded marker');
 
     echo 'All playthrough storage regression tests passed.' . PHP_EOL;
 } finally {
