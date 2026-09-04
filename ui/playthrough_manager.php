@@ -4,9 +4,24 @@
  * Schema-clone snapshot manager with rollback autosnapshot visibility.
  */
 
+// Shared "Storage & Cleanup" fragment mode. The Dwemer Dashboard includes this
+// page in-process and renders its controls inside the shared shell, so only the
+// document chrome and asset URLs adapt while server-owned operations stay here.
+$ptmFragment = defined('DWEMER_STORAGE_FRAGMENT') && DWEMER_STORAGE_FRAGMENT === true;
+if (!$ptmFragment) {
+    // Shared compatibility policy lives in one place: redirect a bookmarked view,
+    // refuse stale writes, and stay standalone when the Dashboard is absent.
+    $ptmRouteHelper = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib'
+        . DIRECTORY_SEPARATOR . 'storage_manager_route.php';
+    if (is_file($ptmRouteHelper)) {
+        require_once $ptmRouteHelper;
+        dwemerStorageRedirect('stobe', 'manage');
+    }
+}
+
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . 'lib/bootstrap.php');
-require_once($path . 'debug/db_updates.php');
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') require_once($path . 'debug/db_updates.php');
 require_once($path . 'lib/playthrough_storage.php');
 
 function h(mixed $value): string
@@ -77,7 +92,7 @@ function decodeSnapshotMemberNames(mixed $value): array
     return array_values($members);
 }
 
-$isEmbedded = (isset($_GET['embed']) && strval($_GET['embed']) === '1');
+$isEmbedded = $ptmFragment || (isset($_GET['embed']) && strval($_GET['embed']) === '1');
 
 $status = '';
 $statusClass = '';
@@ -126,8 +141,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$profiles = stobePlaythroughListProfiles(1000);
-$activeName = stobePlaythroughCurrentActiveProfileName();
+$profiles = stobePlaythroughListProfiles(1000, false);
+$activeName = stobePlaythroughCurrentActiveProfileName(false);
 
 $lastSeenGamets = intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0'));
 $lastRollbackGamets = intval(getConfOpt('PLAYTHROUGH_LAST_ROLLBACK_GAMETS', '0'));
@@ -143,17 +158,34 @@ if ($webRoot === '/') {
     $webRoot = '';
 }
 $webRoot = rtrim($webRoot, '/');
+if ($ptmFragment) {
+    // The shared page lives under a different path, so assets need this
+    // server's own web root instead of a document-relative URL.
+    $webRoot = DWEMER_STORAGE_FRAGMENT_WEBROOT;
+    foreach ([
+        'https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css',
+        $webRoot . '/ui/css/main.css',
+    ] as $ptmStyleHref) {
+        if (function_exists('dwemer_storage_fragment_style')) {
+            dwemer_storage_fragment_style($ptmStyleHref);
+        } else {
+            echo '<link rel="stylesheet" href="' . h($ptmStyleHref) . '">';
+        }
+    }
+}
 ?>
+<?php if (!$ptmFragment): ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Playthrough Manager</title>
-    <link rel="icon" type="image/x-icon" href="/StobeServer/ui/images/favicon.ico">
+    <link rel="icon" type="image/x-icon" href="<?= h($webRoot) ?>/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/main.css">
-    <link rel="stylesheet" href="css/navbar.css">
+    <link rel="stylesheet" href="<?= h($webRoot) ?>/ui/css/main.css">
+    <link rel="stylesheet" href="<?= h($webRoot) ?>/ui/css/navbar.css">
+<?php endif; ?>
     <style>
         main {
             padding-top: <?= $isEmbedded ? '20px' : '96px' ?>;
@@ -356,8 +388,10 @@ $webRoot = rtrim($webRoot, '/');
             text-align: center;
         }
     </style>
+<?php if (!$ptmFragment): ?>
 </head>
 <body>
+<?php endif; ?>
 <?php if (!$isEmbedded): ?>
     <?php include(__DIR__ . DIRECTORY_SEPARATOR . 'tmpl' . DIRECTORY_SEPARATOR . 'navbar.php'); ?>
 <?php endif; ?>
@@ -365,7 +399,7 @@ $webRoot = rtrim($webRoot, '/');
 <main class="container-fluid">
     <div class="indent5">
         <div class="panel" style="margin-bottom: 12px;">
-            <h1>Playthrough Manager</h1>
+            <?php if ($ptmFragment): ?><h2>Snapshots and rollback</h2><?php else: ?><h1>Playthrough Manager</h1><?php endif; ?>
             <p class="subtitle">Schema-clone snapshots for StobeServer timelines and rollback safety. STOBE rollback autosnapshot threshold is set to 1 Kenshi day.</p>
             <?php if ($status !== ''): ?>
                 <div class="status <?= h($statusClass) ?>"><?= h($status) ?></div>
@@ -538,6 +572,7 @@ $webRoot = rtrim($webRoot, '/');
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<?php if (!$ptmFragment): ?>
 </body>
 </html>
-
+<?php endif; ?>

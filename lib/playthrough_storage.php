@@ -457,7 +457,7 @@ function stobePlaythroughGetProfileById(int $profileId): array|false
     );
 }
 
-function stobePlaythroughListProfiles(int $limit = 500): array
+function stobePlaythroughListProfiles(int $limit = 500, bool $ensureSchema = true): array
 {
     if ($limit < 1) {
         $limit = 1;
@@ -465,7 +465,7 @@ function stobePlaythroughListProfiles(int $limit = 500): array
         $limit = 5000;
     }
 
-    stobePlaythroughEnsureMetaSchemaOnDemand();
+    if ($ensureSchema) stobePlaythroughEnsureMetaSchemaOnDemand();
     $db = $GLOBALS['db'] ?? null;
     if (!$db) {
         return [];
@@ -497,14 +497,23 @@ function stobePlaythroughDeleteProfile(int $profileId): array
             return ['success' => false, 'error' => 'meta_schema_failed'];
         }
 
+        if (!pg_query($adminConn, 'BEGIN')) {
+            return ['success' => false, 'error' => 'begin_delete_failed'];
+        }
+        pg_query($adminConn, "SET LOCAL lock_timeout='2s'");
         $rowRes = @pg_query_params(
             $adminConn,
-            'SELECT id, name, schema_name, storage_type FROM stobe_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
+            'SELECT id, name, schema_name, storage_type, is_active FROM stobe_meta.playthrough_profiles WHERE id = $1 FOR UPDATE',
             [strval($profileId)]
         );
         $row = $rowRes ? @pg_fetch_assoc($rowRes) : null;
         if (!$row) {
             return ['success' => false, 'error' => 'profile_not_found'];
+        }
+
+        // Never remove the loaded snapshot or the initial recovery point.
+        if (in_array($row['is_active'], [true, 't', '1'], true) || strtolower($row['name']) === 'default') {
+            return ['success' => false, 'error' => 'protected_profile'];
         }
 
         $schemaName = trim(strval($row['schema_name'] ?? ''));
@@ -524,6 +533,9 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         if (!$delete) {
             return ['success' => false, 'error' => 'profile_delete_failed'];
         }
+        if (!pg_query($adminConn, 'COMMIT')) {
+            return ['success' => false, 'error' => 'commit_delete_failed'];
+        }
 
         stobeLogInfo('PLAYTHROUGH: Snapshot deleted', [
             'profile_id' => $profileId,
@@ -536,6 +548,7 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         stobeLogException($exception, 'PLAYTHROUGH: Snapshot delete failed', ['profile_id' => $profileId]);
         return ['success' => false, 'error' => $exception->getMessage()];
     } finally {
+        if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
         @pg_close($adminConn);
     }
 }
@@ -643,9 +656,9 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
     }
 }
 
-function stobePlaythroughCurrentActiveProfileName(): string
+function stobePlaythroughCurrentActiveProfileName(bool $ensureSchema = true): string
 {
-    stobePlaythroughEnsureMetaSchemaOnDemand();
+    if ($ensureSchema) stobePlaythroughEnsureMetaSchemaOnDemand();
     $db = $GLOBALS['db'] ?? null;
     if (!$db) {
         return '';
