@@ -13,7 +13,7 @@ require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
 function pts_clone_function_is_current($definition): bool {
     return is_string($definition)
         && str_contains($definition, 'OVERRIDING SYSTEM VALUE')
-        && str_contains($definition, 'STOBE_TABLE_ONLY_SNAPSHOTS')
+        && str_contains($definition, 'STOBE_TABLE_ONLY_PLAYTHROUGHS')
         && stripos($definition, 'CREATE OR REPLACE VIEW') === false;
 }
 
