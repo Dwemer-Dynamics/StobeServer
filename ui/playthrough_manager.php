@@ -1,7 +1,7 @@
 <?php
 /**
  * StobeServer Playthrough Manager.
- * Schema-clone snapshot manager with rollback autosnapshot visibility.
+ * Schema-clone playthrough manager with rollback automatic playthrough save visibility.
  */
 
 // Shared "Playthrough Management" fragment mode. The Dwemer Dashboard includes this
@@ -53,7 +53,7 @@ function boolish(mixed $value): bool
     return in_array($normalized, ['1', 'true', 't', 'yes', 'on'], true);
 }
 
-function decodeSnapshotMemberNames(mixed $value): array
+function decodePlaythroughMemberNames(mixed $value): array
 {
     if (is_array($value)) {
         $rawItems = $value;
@@ -101,10 +101,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $action = trim(strval($_POST['action'] ?? ''));
     $profileId = intval($_POST['profile_id'] ?? 0);
 
-    if ($action === 'create_snapshot') {
+    if ($action === 'create_playthrough') {
         $name = trim(strval($_POST['name'] ?? ''));
         $notes = trim(strval($_POST['notes'] ?? ''));
-        $result = stobePlaythroughCreateSchemaSnapshot($name, $notes, [
+        $result = stobePlaythroughCreate($name, $notes, [
             'mark_active' => false,
             'storage_type' => 'schema',
             'game' => 'Kenshi',
@@ -141,7 +141,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-// API callers stop before rendering or loading the legacy snapshot list.
+// API callers stop before rendering or loading the legacy playthrough list.
 if (defined('DWEMER_STORAGE_ACTIONS_ONLY')) {
     return ['ok' => $statusClass === 'success', 'message' => $status];
 }
@@ -414,7 +414,7 @@ if ($ptmFragment) {
             <section class="panel">
                 <h2>Create Playthrough</h2>
                 <form method="post" autocomplete="off">
-                    <input type="hidden" name="action" value="create_snapshot">
+                    <input type="hidden" name="action" value="create_playthrough">
                     <div class="mb-3">
                         <label class="form-label" for="name">Playthrough Name</label>
                         <input class="form-control" id="name" name="name" maxlength="220" placeholder="Manual Playthrough">
@@ -492,17 +492,17 @@ if ($ptmFragment) {
                                     <?php
                                         $id = intval($row['id'] ?? 0);
                                         $isActive = boolish($row['is_active'] ?? false);
-                                        $snapshotName = strval($row['name'] ?? '');
-                                        $snapshotNameDisplay = preg_replace('/^Dragon Break\\s*\\(/i', 'STOBE Rollback (', $snapshotName, 1);
-                                        if (!is_string($snapshotNameDisplay) || $snapshotNameDisplay === '') {
-                                            $snapshotNameDisplay = $snapshotName;
+                                        $playthroughName = strval($row['name'] ?? '');
+                                        $playthroughNameDisplay = preg_replace('/^Dragon Break\\s*\\(/i', 'STOBE Rollback (', $playthroughName, 1);
+                                        if (!is_string($playthroughNameDisplay) || $playthroughNameDisplay === '') {
+                                            $playthroughNameDisplay = $playthroughName;
                                         }
                                         $createdAt = trim(strval($row['created_at'] ?? ''));
                                         $sizeBytes = intval($row['size_bytes'] ?? 0);
                                         $lastGamets = intval($row['last_gamets'] ?? 0);
                                         $eventCount = intval($row['eventlog_count'] ?? 0);
                                         $oghmaCount = intval($row['oghma_count'] ?? 0);
-                                        $playerFactionMembers = decodeSnapshotMemberNames($row['player_faction_members'] ?? '[]');
+                                        $playerFactionMembers = decodePlaythroughMemberNames($row['player_faction_members'] ?? '[]');
                                         $storageType = trim(strval($row['storage_type'] ?? 'schema'));
                                         $schemaName = trim(strval($row['schema_name'] ?? ''));
                                         $schemaNameDisplay = $schemaName;
@@ -518,7 +518,7 @@ if ($ptmFragment) {
                                     <tr>
                                         <td><?= $id ?></td>
                                         <td>
-                                            <strong><?= h($snapshotNameDisplay) ?></strong>
+                                            <strong><?= h($playthroughNameDisplay) ?></strong>
                                             <?php if ($isActive): ?>
                                                 <span class="badge-active">ACTIVE</span>
                                             <?php endif; ?>

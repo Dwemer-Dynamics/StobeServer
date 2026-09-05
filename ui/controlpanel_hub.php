@@ -30,7 +30,7 @@ if (!is_string($distroDashboardRoot) || trim($distroDashboardRoot) === '' || $di
 $distroDebuggerStobeEmbedUrl = rtrim($distroDashboardRoot, '/') . '/distro_debugger.php?embed=1&tab=stobe';
 $distroDatabaseManagerUrl = rtrim($distroDashboardRoot, '/') . '/database_manager.php';
 
-// One entry point: snapshots, storage and database tools now share a single page.
+// One entry point: playthroughs, storage and database tools now share a single page.
 $distroDataManagerFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'Dwemer-Dashboard'
     . DIRECTORY_SEPARATOR . 'data_manager.php';
 $distroDataManagerAvailable = is_file($distroDataManagerFile) && is_file(dirname($distroDataManagerFile) . '/lib/storage_fragment.php');
