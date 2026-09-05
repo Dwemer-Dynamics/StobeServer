@@ -2,7 +2,7 @@
 
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'settings.php');
-require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_snapshot.php');
+require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_autosave.php');
 
 function stobePlaythroughRollbackToleranceGamets(): int
 {
@@ -1699,7 +1699,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             return [
                 'triggered' => true,
                 'autoload_switched' => true,
-                'snapshot_id' => intval($autoLoad['profile_id'] ?? 0),
+                'playthrough_id' => intval($autoLoad['profile_id'] ?? 0),
                 'delta_gamets' => $rollbackDelta,
                 'delta_days' => $rollbackDays,
                 'pruned' => stobePlaythroughZeroPruneCounts(),
@@ -1708,7 +1708,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             ];
         }
 
-        $snapshotId = stobeDragonBreakSnapshotIfNeeded($latestLastSeen, $incoming);
+        $playthroughId = stobeDragonBreakPlaythroughIfNeeded($latestLastSeen, $incoming);
         $pruneEnabled = stobePlaythroughPruneOnRollbackEnabled();
         $pruneCounts = $pruneEnabled
             ? stobePlaythroughPruneFutureTimeline($incoming)
@@ -1744,7 +1744,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
 
         stobeLogInfo('PLAYTHROUGH: Rollback completed', [
             'event_type' => $event,
-            'snapshot_id' => $snapshotId,
+            'playthrough_id' => $playthroughId,
             'incoming_gamets' => $incoming,
             'last_seen_gamets' => $latestLastSeen,
             'delta_gamets' => $rollbackDelta,
@@ -1758,7 +1758,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
 
         return [
             'triggered' => true,
-            'snapshot_id' => $snapshotId,
+            'playthrough_id' => $playthroughId,
             'delta_gamets' => $rollbackDelta,
             'delta_days' => $rollbackDays,
             'prune_enabled' => $pruneEnabled,

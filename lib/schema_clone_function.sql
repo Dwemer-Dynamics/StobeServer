@@ -1,4 +1,4 @@
--- Schema cloning function for fast playthrough snapshots
+-- Schema cloning function for fast playthrough saves
 -- Clone tables, data and sequences. Views are runtime definitions, not saved data.
 -- Functions are created in stobe_meta schema so they survive public schema drops
 
@@ -162,7 +162,7 @@ BEGIN
         END;
     END LOOP;
 
-    -- STOBE_TABLE_ONLY_SNAPSHOTS: unqualified view definitions can bind to live tables.
+-- STOBE_TABLE_ONLY_PLAYTHROUGHS: unqualified view definitions can bind to live tables.
     -- The profile switch preserves current public views in its restore transaction.
     
     RAISE NOTICE 'Schema cloning complete: % -> %', source_schema, dest_schema;

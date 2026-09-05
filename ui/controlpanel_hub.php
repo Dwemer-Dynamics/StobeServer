@@ -30,6 +30,14 @@ if (!is_string($distroDashboardRoot) || trim($distroDashboardRoot) === '' || $di
 $distroDebuggerStobeEmbedUrl = rtrim($distroDashboardRoot, '/') . '/distro_debugger.php?embed=1&tab=stobe';
 $distroDatabaseManagerUrl = rtrim($distroDashboardRoot, '/') . '/database_manager.php';
 
+// One entry point: playthroughs, storage and database tools now share a single page.
+$distroDataManagerFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'Dwemer-Dashboard'
+    . DIRECTORY_SEPARATOR . 'data_manager.php';
+$distroDataManagerAvailable = is_file($distroDataManagerFile) && is_file(dirname($distroDataManagerFile) . '/lib/storage_fragment.php');
+$storageTabUrl = $distroDataManagerAvailable
+    ? rtrim($distroDashboardRoot, '/') . '/data_manager.php?mod=stobe&view=manage'
+    : '';
+
 function buildTabTargetSrc(array $tab, string $webRoot): string
 {
     $directUrl = trim(strval($tab['url'] ?? ''));
@@ -55,9 +63,12 @@ $tabs = [
     ['id' => 'cost_breakdown', 'group' => 'monitoring', 'icon' => '&#x1F4CA;', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'response_queue', 'group' => 'monitoring', 'icon' => '&#x1F4AC;', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'audio_image_cache', 'group' => 'data-tools', 'icon' => '&#x1F3BC;', 'label' => 'Audio & Image Cache', 'page' => 'cache_browser.php', 'url' => '', 'status' => 'wired', 'embed' => true],
-    ['id' => 'playthrough_manager', 'group' => 'data-tools', 'icon' => '&#x1F3AE;', 'label' => 'Playthrough Manager', 'page' => 'playthrough_manager.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'database_manager', 'group' => 'data-tools', 'icon' => '&#x1F5C4;&#xFE0F;', 'label' => 'Database Manager', 'page' => '', 'url' => $distroDatabaseManagerUrl, 'status' => 'wired', 'embed' => false],
+    ['id' => 'storage', 'group' => 'data-tools', 'icon' => '&#x1F5C4;&#xFE0F;', 'label' => 'Playthrough Management', 'page' => 'playthrough_manager.php', 'url' => $storageTabUrl, 'status' => 'wired', 'embed' => true],
 ];
+// Without the shared page installed, the legacy database tools keep their own tab.
+if (!$distroDataManagerAvailable) {
+    $tabs[] = ['id' => 'database_manager', 'group' => 'data-tools', 'icon' => '&#x1F5C3;&#xFE0F;', 'label' => 'Database Manager', 'page' => 'database_manager.php', 'status' => 'wired', 'embed' => true];
+}
 
 $tabGroups = [
     'diagnostics' => 'Diagnostics',
@@ -66,12 +77,18 @@ $tabGroups = [
 ];
 
 $activeTab = strtolower(trim((string)($_GET['tab'] ?? 'server_logs')));
-if ($activeTab === 'playthough_manager') {
-    $activeTab = 'playthrough_manager';
-}
 $tabMap = [];
 foreach ($tabs as $tab) {
     $tabMap[$tab['id']] = $tab;
+}
+// Retired tab ids stay valid as deep links.
+$tabAliases = [
+    'playthough_manager' => 'storage',
+    'playthrough_manager' => 'storage',
+    'database_manager' => 'storage',
+];
+if (!isset($tabMap[$activeTab]) && isset($tabAliases[$activeTab])) {
+    $activeTab = $tabAliases[$activeTab];
 }
 if (!isset($tabMap[$activeTab])) {
     $activeTab = 'server_logs';
@@ -309,4 +326,3 @@ if (!isset($tabMap[$activeTab])) {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-

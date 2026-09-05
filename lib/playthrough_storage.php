@@ -18,12 +18,14 @@ function stobePlaythroughDbConfig(): array
 function stobePlaythroughConnectAdmin()
 {
     $cfg = stobePlaythroughDbConfig();
+    // A nested autosave must not close the restore operation's admin connection.
     $conn = @pg_connect(
         'host=' . $cfg['host']
         . ' port=' . $cfg['port']
         . ' dbname=' . $cfg['dbname']
         . ' user=' . $cfg['user']
-        . ' password=' . $cfg['password']
+        . ' password=' . $cfg['password'],
+        PGSQL_CONNECT_FORCE_NEW
     );
     if (!$conn) {
         stobeLogError('PLAYTHROUGH: Failed to connect admin PG session');
@@ -269,7 +271,7 @@ function stobePlaythroughBuildUniqueProfileName($adminConn, string $baseName): s
 {
     $trimmed = trim($baseName);
     if ($trimmed === '') {
-        $trimmed = 'Snapshot ' . gmdate('Y-m-d H:i:s') . ' UTC';
+        $trimmed = 'Playthrough ' . gmdate('Y-m-d H:i:s') . ' UTC';
     }
 
     $name = $trimmed;
@@ -310,7 +312,7 @@ function stobePlaythroughBuildUniqueSchemaName($adminConn, string $profileName):
     return $schema;
 }
 
-function stobePlaythroughCreateSchemaSnapshot(string $name, string $notes = '', array $options = []): array
+function stobePlaythroughCreate(string $name, string $notes = '', array $options = []): array
 {
     $adminConn = stobePlaythroughConnectAdmin();
     if (!$adminConn) {
@@ -394,7 +396,7 @@ function stobePlaythroughCreateSchemaSnapshot(string $name, string $notes = '', 
         if (!$insert) {
             @pg_query($adminConn, 'ROLLBACK');
             $drop = pts_drop_schema($adminConn, $schemaName);
-            stobeLogWarn('PLAYTHROUGH: snapshot metadata insert failed, dropped schema', [
+            stobeLogWarn('PLAYTHROUGH: playthrough metadata insert failed, dropped schema', [
                 'schema' => $schemaName,
                 'drop_success' => boolval($drop['success'] ?? false),
             ]);
@@ -405,7 +407,7 @@ function stobePlaythroughCreateSchemaSnapshot(string $name, string $notes = '', 
         $profileId = intval($row['id'] ?? 0);
         @pg_query($adminConn, 'COMMIT');
 
-        stobeLogInfo('PLAYTHROUGH: Snapshot created', [
+        stobeLogInfo('PLAYTHROUGH: Playthrough created', [
             'profile_id' => $profileId,
             'name' => $finalName,
             'schema_name' => $schemaName,
@@ -428,7 +430,7 @@ function stobePlaythroughCreateSchemaSnapshot(string $name, string $notes = '', 
             'error' => '',
         ];
     } catch (Throwable $exception) {
-        stobeLogException($exception, 'PLAYTHROUGH: Snapshot creation failed');
+        stobeLogException($exception, 'PLAYTHROUGH: Playthrough creation failed');
         return ['success' => false, 'id' => 0, 'error' => $exception->getMessage()];
     } finally {
         @pg_close($adminConn);
@@ -457,7 +459,7 @@ function stobePlaythroughGetProfileById(int $profileId): array|false
     );
 }
 
-function stobePlaythroughListProfiles(int $limit = 500): array
+function stobePlaythroughListProfiles(int $limit = 500, bool $ensureSchema = true): array
 {
     if ($limit < 1) {
         $limit = 1;
@@ -465,7 +467,7 @@ function stobePlaythroughListProfiles(int $limit = 500): array
         $limit = 5000;
     }
 
-    stobePlaythroughEnsureMetaSchemaOnDemand();
+    if ($ensureSchema) stobePlaythroughEnsureMetaSchemaOnDemand();
     $db = $GLOBALS['db'] ?? null;
     if (!$db) {
         return [];
@@ -497,14 +499,23 @@ function stobePlaythroughDeleteProfile(int $profileId): array
             return ['success' => false, 'error' => 'meta_schema_failed'];
         }
 
+        if (!pg_query($adminConn, 'BEGIN')) {
+            return ['success' => false, 'error' => 'begin_delete_failed'];
+        }
+        pg_query($adminConn, "SET LOCAL lock_timeout='2s'");
         $rowRes = @pg_query_params(
             $adminConn,
-            'SELECT id, name, schema_name, storage_type FROM stobe_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
+            'SELECT id, name, schema_name, storage_type, is_active FROM stobe_meta.playthrough_profiles WHERE id = $1 FOR UPDATE',
             [strval($profileId)]
         );
         $row = $rowRes ? @pg_fetch_assoc($rowRes) : null;
         if (!$row) {
             return ['success' => false, 'error' => 'profile_not_found'];
+        }
+
+        // Never remove the loaded playthrough or the initial recovery point.
+        if (in_array($row['is_active'], [true, 't', '1'], true) || strtolower($row['name']) === 'default') {
+            return ['success' => false, 'error' => 'protected_profile'];
         }
 
         $schemaName = trim(strval($row['schema_name'] ?? ''));
@@ -524,8 +535,11 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         if (!$delete) {
             return ['success' => false, 'error' => 'profile_delete_failed'];
         }
+        if (!pg_query($adminConn, 'COMMIT')) {
+            return ['success' => false, 'error' => 'commit_delete_failed'];
+        }
 
-        stobeLogInfo('PLAYTHROUGH: Snapshot deleted', [
+        stobeLogInfo('PLAYTHROUGH: Playthrough deleted', [
             'profile_id' => $profileId,
             'name' => strval($row['name'] ?? ''),
             'schema_name' => $schemaName,
@@ -533,14 +547,15 @@ function stobePlaythroughDeleteProfile(int $profileId): array
 
         return ['success' => true, 'error' => ''];
     } catch (Throwable $exception) {
-        stobeLogException($exception, 'PLAYTHROUGH: Snapshot delete failed', ['profile_id' => $profileId]);
+        stobeLogException($exception, 'PLAYTHROUGH: Playthrough delete failed', ['profile_id' => $profileId]);
         return ['success' => false, 'error' => $exception->getMessage()];
     } finally {
+        if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
         @pg_close($adminConn);
     }
 }
 
-function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurrent = true): array
+function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlaythrough = true): array
 {
     if ($profileId <= 0) {
         return ['success' => false, 'error' => 'invalid_profile_id'];
@@ -576,17 +591,17 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
         }
 
         $autosaveId = 0;
-        if ($autoSnapshotCurrent) {
+        if ($saveCurrentPlaythrough) {
             $autoName = 'AutoSave before switch to ' . strval($target['name'] ?? ('#' . strval($profileId))) . ' @ ' . gmdate('Y-m-d H:i:s') . ' UTC';
-            $autoSnapshot = stobePlaythroughCreateSchemaSnapshot($autoName, 'Automatic snapshot before profile switch', [
+            $autoPlaythrough = stobePlaythroughCreate($autoName, 'Automatic playthrough save before profile switch', [
                 'mark_active' => false,
                 'storage_type' => 'schema',
                 'game' => 'Kenshi',
             ]);
-            if (!boolval($autoSnapshot['success'] ?? false)) {
-                return ['success' => false, 'error' => 'autosave_failed: ' . strval($autoSnapshot['error'] ?? '')];
+            if (!boolval($autoPlaythrough['success'] ?? false)) {
+                return ['success' => false, 'error' => 'autosave_failed: ' . strval($autoPlaythrough['error'] ?? '')];
             }
-            $autosaveId = intval($autoSnapshot['id'] ?? 0);
+            $autosaveId = intval($autoPlaythrough['id'] ?? 0);
         }
 
         if (!pg_query($adminConn, 'BEGIN')) {
@@ -622,7 +637,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
             throw new RuntimeException('Could not commit playthrough restore');
         }
 
-        stobeLogInfo('PLAYTHROUGH: Switched active snapshot to profile', [
+        stobeLogInfo('PLAYTHROUGH: Switched active playthrough to profile', [
             'profile_id' => $profileId,
             'name' => strval($target['name'] ?? ''),
             'schema_name' => $schemaName,
@@ -643,9 +658,9 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
     }
 }
 
-function stobePlaythroughCurrentActiveProfileName(): string
+function stobePlaythroughCurrentActiveProfileName(bool $ensureSchema = true): string
 {
-    stobePlaythroughEnsureMetaSchemaOnDemand();
+    if ($ensureSchema) stobePlaythroughEnsureMetaSchemaOnDemand();
     $db = $GLOBALS['db'] ?? null;
     if (!$db) {
         return '';

@@ -98,7 +98,7 @@ require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_planner_funct
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'autonomy_helper_functions.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_schema.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_storage.php');
-require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_snapshot.php');
+require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_autosave.php');
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'playthrough_rollback.php');
 
 if (!function_exists('extract_assignments')) {

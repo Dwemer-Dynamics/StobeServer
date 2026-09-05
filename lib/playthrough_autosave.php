@@ -6,10 +6,10 @@ require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_storage.php');
 
 function stobeDragonBreakIsEnabled(): bool
 {
-    if (!isset($GLOBALS['DRAGON_BREAK_AUTOSNAPSHOT'])) {
-        $GLOBALS['DRAGON_BREAK_AUTOSNAPSHOT'] = true;
+    if (!isset($GLOBALS['DRAGON_BREAK_AUTO_PLAYTHROUGH'])) {
+        $GLOBALS['DRAGON_BREAK_AUTO_PLAYTHROUGH'] = true;
     }
-    return !!$GLOBALS['DRAGON_BREAK_AUTOSNAPSHOT'];
+    return !!$GLOBALS['DRAGON_BREAK_AUTO_PLAYTHROUGH'];
 }
 
 function stobeDragonBreakMinDays(): int
@@ -51,7 +51,7 @@ function stobeDragonBreakBuildName(int $prevGamets, int $incomingGamets): string
     return 'STOBE Rollback (' . stobeGametsDateLabel($prevGamets) . ' -> ' . stobeGametsDateLabel($incomingGamets) . ')';
 }
 
-function stobeDragonBreakCreateSnapshot(string $name, string $notes, array $meta = []): int
+function stobeDragonBreakCreatePlaythrough(string $name, string $notes, array $meta = []): int
 {
     $options = [
         'mark_active' => false,
@@ -62,19 +62,19 @@ function stobeDragonBreakCreateSnapshot(string $name, string $notes, array $meta
         'rollback_to_gamets' => intval($meta['rollback_to_gamets'] ?? 0),
     ];
 
-    $snapshot = stobePlaythroughCreateSchemaSnapshot($name, $notes, $options);
-    if (!boolval($snapshot['success'] ?? false)) {
-        stobeLogWarn('STOBE Rollback: Snapshot creation failed', [
+    $playthrough = stobePlaythroughCreate($name, $notes, $options);
+    if (!boolval($playthrough['success'] ?? false)) {
+        stobeLogWarn('STOBE Rollback: Playthrough creation failed', [
             'name' => $name,
-            'error' => strval($snapshot['error'] ?? 'unknown'),
+            'error' => strval($playthrough['error'] ?? 'unknown'),
         ]);
         return 0;
     }
 
-    return intval($snapshot['id'] ?? 0);
+    return intval($playthrough['id'] ?? 0);
 }
 
-function stobeDragonBreakSnapshotIfNeeded(mixed $prevGamets, mixed $incomingGamets): int
+function stobeDragonBreakPlaythroughIfNeeded(mixed $prevGamets, mixed $incomingGamets): int
 {
     if (!stobeDragonBreakIsEnabled()) {
         return 0;
@@ -93,7 +93,7 @@ function stobeDragonBreakSnapshotIfNeeded(mixed $prevGamets, mixed $incomingGame
     }
 
     $name = stobeDragonBreakBuildName($prev, $incoming);
-    $notes = 'Auto STOBE rollback snapshot due to rollback of '
+    $notes = 'Automatic STOBE rollback playthrough save due to rollback of '
         . strval($daysRollback)
         . ' Kenshi day(s) ('
         . strval($incoming)
@@ -101,15 +101,15 @@ function stobeDragonBreakSnapshotIfNeeded(mixed $prevGamets, mixed $incomingGame
         . strval($prev)
         . ').';
 
-    $snapshotId = stobeDragonBreakCreateSnapshot($name, $notes, [
+    $playthroughId = stobeDragonBreakCreatePlaythrough($name, $notes, [
         'rollback_delta_days' => $daysRollback,
         'rollback_from_gamets' => $prev,
         'rollback_to_gamets' => $incoming,
     ]);
 
-    if ($snapshotId > 0) {
-        stobeLogInfo('STOBE Rollback: Snapshot created', [
-            'snapshot_id' => $snapshotId,
+    if ($playthroughId > 0) {
+        stobeLogInfo('STOBE Rollback: Playthrough created', [
+            'playthrough_id' => $playthroughId,
             'days_rollback' => $daysRollback,
             'from_gamets' => $prev,
             'to_gamets' => $incoming,
@@ -117,7 +117,7 @@ function stobeDragonBreakSnapshotIfNeeded(mixed $prevGamets, mixed $incomingGame
         ]);
     }
 
-    return $snapshotId;
+    return $playthroughId;
 }
 
 ?>
