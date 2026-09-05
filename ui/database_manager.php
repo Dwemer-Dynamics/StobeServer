@@ -4,7 +4,7 @@
  * Stobe-native replacement of Herika import_db style manager.
  */
 
-// Shared "Storage & Cleanup" fragment mode. The Dwemer Dashboard includes this
+// Shared "Playthrough Management" fragment mode. The Dwemer Dashboard includes this
 // page in-process and renders its controls inside the shared shell, so only the
 // document chrome and asset URLs change. Every action handler below is untouched.
 $dbmFragment = defined('DWEMER_STORAGE_FRAGMENT') && DWEMER_STORAGE_FRAGMENT === true;
