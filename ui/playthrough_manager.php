@@ -111,10 +111,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ]);
         if (boolish($result['success'] ?? false)) {
             $statusClass = 'success';
-            $status = 'Snapshot created: ' . strval($result['name'] ?? '') . ' (ID ' . strval(intval($result['id'] ?? 0)) . ')';
+            $status = 'Playthrough created: ' . strval($result['name'] ?? '') . ' (ID ' . strval(intval($result['id'] ?? 0)) . ')';
         } else {
             $statusClass = 'error';
-            $status = 'Snapshot creation failed: ' . strval($result['error'] ?? 'unknown');
+            $status = 'Playthrough creation failed: ' . strval($result['error'] ?? 'unknown');
         }
     } elseif ($action === 'switch_profile' && $profileId > 0) {
         $result = stobePlaythroughSwitchToProfile($profileId, true);
@@ -123,7 +123,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $autosaveId = intval($result['autosave_id'] ?? 0);
             $status = 'Profile copied to public schema successfully.';
             if ($autosaveId > 0) {
-                $status .= ' Autosave snapshot ID: ' . $autosaveId . '.';
+                $status .= ' Autosave playthrough ID: ' . $autosaveId . '.';
             }
         } else {
             $statusClass = 'error';
@@ -133,7 +133,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $result = stobePlaythroughDeleteProfile($profileId);
         if (boolish($result['success'] ?? false)) {
             $statusClass = 'success';
-            $status = 'Snapshot deleted.';
+            $status = 'Playthrough deleted.';
         } else {
             $statusClass = 'error';
             $status = 'Delete failed: ' . strval($result['error'] ?? 'unknown');
@@ -403,8 +403,8 @@ if ($ptmFragment) {
 <main class="container-fluid">
     <div class="indent5">
         <div class="panel" style="margin-bottom: 12px;">
-            <?php if ($ptmFragment): ?><h2>Snapshots and rollback</h2><?php else: ?><h1>Playthrough Manager</h1><?php endif; ?>
-            <p class="subtitle">Schema-clone snapshots for StobeServer timelines and rollback safety. STOBE rollback autosnapshot threshold is set to 1 Kenshi day.</p>
+            <?php if ($ptmFragment): ?><h2>Playthroughs and rollback</h2><?php else: ?><h1>Playthrough Manager</h1><?php endif; ?>
+            <p class="subtitle">Schema-clone playthroughs for StobeServer timelines and rollback safety. STOBE automatically saves a rollback playthrough after 1 Kenshi day.</p>
             <?php if ($status !== ''): ?>
                 <div class="status <?= h($statusClass) ?>"><?= h($status) ?></div>
             <?php endif; ?>
@@ -412,18 +412,18 @@ if ($ptmFragment) {
 
         <div class="page-grid">
             <section class="panel">
-                <h2>Create Snapshot</h2>
+                <h2>Create Playthrough</h2>
                 <form method="post" autocomplete="off">
                     <input type="hidden" name="action" value="create_snapshot">
                     <div class="mb-3">
-                        <label class="form-label" for="name">Snapshot Name</label>
-                        <input class="form-control" id="name" name="name" maxlength="220" placeholder="Manual Snapshot">
+                        <label class="form-label" for="name">Playthrough Name</label>
+                        <input class="form-control" id="name" name="name" maxlength="220" placeholder="Manual Playthrough">
                     </div>
                     <div class="mb-3">
                         <label class="form-label" for="notes">Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="4" placeholder="Optional notes"></textarea>
                     </div>
-                    <button class="btn btn-stobe w-100" type="submit">Save Snapshot</button>
+                    <button class="btn btn-stobe w-100" type="submit">Save Playthrough</button>
                 </form>
 
                 <hr style="border-color: rgba(230,183,108,.25)">
@@ -463,14 +463,14 @@ if ($ptmFragment) {
                         <div class="meta-value">Kenshi</div>
                     </div>
                 </div>
-                <div class="small-muted">Switching copies the selected snapshot into <code>public</code>. Current public state is autosaved first.</div>
+                <div class="small-muted">Switching copies the selected playthrough into <code>public</code>. Current public state is autosaved first.</div>
             </section>
 
             <section class="panel">
-                <h2>Stored Snapshots</h2>
+                <h2>Stored Playthroughs</h2>
                 <div class="table-wrap">
                     <?php if (count($profiles) === 0): ?>
-                        <div class="empty">No snapshots found yet.</div>
+                        <div class="empty">No playthroughs found yet.</div>
                     <?php else: ?>
                         <table>
                             <thead>
@@ -552,12 +552,12 @@ if ($ptmFragment) {
                                         </td>
                                         <td>
                                             <div class="action-stack">
-                                                <form method="post" onsubmit="return confirm('Set this snapshot as active playthrough? Current public state will be auto-saved first.');">
+                                                <form method="post" onsubmit="return confirm('Make this the active playthrough? Current public state will be auto-saved first.');">
                                                     <input type="hidden" name="action" value="switch_profile">
                                                     <input type="hidden" name="profile_id" value="<?= $id ?>">
                                                     <button class="btn btn-sm btn-stobe" type="submit">Set Active Playthrough</button>
                                                 </form>
-                                                <form method="post" onsubmit="return confirm('Delete this snapshot and its schema? This cannot be undone.');">
+                                                <form method="post" onsubmit="return confirm('Delete this playthrough and its schema? This cannot be undone.');">
                                                     <input type="hidden" name="action" value="delete_profile">
                                                     <input type="hidden" name="profile_id" value="<?= $id ?>">
                                                     <button class="btn btn-sm btn-danger-soft" type="submit">Delete</button>

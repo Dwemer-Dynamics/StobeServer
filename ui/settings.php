@@ -28,7 +28,7 @@ try {
             [
                 'id' => 'NEVER_CLEAR_RELATIONSHIP_DATA',
                 'value' => 'false',
-                'description' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',
+                'description' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthroughs.',
             ],
             [
                 'id' => 'PLAYER_FACTION_CUSTOM_NAME',
@@ -410,7 +410,7 @@ function stobeSettingHelpText(string $id, string $storedDescription): string
         'COMPACT_CHAT_HISTORY_ENABLED' => 'Use compact text instead of separate messages for conversation history. Does not affect the Narrator.',
         'SHORT_TERM_MEMORY_IN_COMPACT_CHAT' => 'When compact chat history is on, allow short-term memory summaries for NPCs that have it enabled. Plain (non-compact) history is unaffected.',
         'PROMPT_HEAD_MARKDOWN_ENABLED' => 'Use Markdown headings instead of XML tags for all prompt sections.',
-        'NEVER_CLEAR_RELATIONSHIP_DATA' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthrough snapshots.',
+        'NEVER_CLEAR_RELATIONSHIP_DATA' => 'Keep current relationships when loading an older game save. Off by default. Can retain relationships from later events; does not carry them between saved playthroughs.',
     ];
 
     $idUpper = strtoupper(trim($id));

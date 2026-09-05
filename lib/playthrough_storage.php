@@ -271,7 +271,7 @@ function stobePlaythroughBuildUniqueProfileName($adminConn, string $baseName): s
 {
     $trimmed = trim($baseName);
     if ($trimmed === '') {
-        $trimmed = 'Snapshot ' . gmdate('Y-m-d H:i:s') . ' UTC';
+        $trimmed = 'Playthrough ' . gmdate('Y-m-d H:i:s') . ' UTC';
     }
 
     $name = $trimmed;
@@ -593,7 +593,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $autoSnapshotCurre
         $autosaveId = 0;
         if ($autoSnapshotCurrent) {
             $autoName = 'AutoSave before switch to ' . strval($target['name'] ?? ('#' . strval($profileId))) . ' @ ' . gmdate('Y-m-d H:i:s') . ' UTC';
-            $autoSnapshot = stobePlaythroughCreateSchemaSnapshot($autoName, 'Automatic snapshot before profile switch', [
+            $autoSnapshot = stobePlaythroughCreateSchemaSnapshot($autoName, 'Automatic playthrough save before profile switch', [
                 'mark_active' => false,
                 'storage_type' => 'schema',
                 'game' => 'Kenshi',
