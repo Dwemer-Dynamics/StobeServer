@@ -141,6 +141,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
+// API callers stop before rendering or loading the legacy snapshot list.
+if (defined('DWEMER_STORAGE_ACTIONS_ONLY')) {
+    return ['ok' => $statusClass === 'success', 'message' => $status];
+}
 $profiles = stobePlaythroughListProfiles(1000, false);
 $activeName = stobePlaythroughCurrentActiveProfileName(false);
 

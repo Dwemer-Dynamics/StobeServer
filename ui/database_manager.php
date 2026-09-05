@@ -259,11 +259,14 @@ if (($_SERVER["REQUEST_METHOD"] ?? "GET") === "POST") {
             $message = "Backup failed. " . implode(" | ", array_slice($out, 0, 3));
             $messageType = "error";
         }
-    } elseif (in_array($action, ['restore_uploaded_backup', 'restore_server_backup'], true)) {
+    } elseif (in_array($action, ['restore_uploaded_backup', 'restore_server_backup', 'restore_prepared_backup'], true)) {
         try {
             require_once $rootPath . '/lib/storage_backup_validation.php';
             $restorePath = null;
-            if ($action === 'restore_uploaded_backup') {
+            if ($action === 'restore_prepared_backup') {
+                if (!defined('DWEMER_STORAGE_RESTORE_FILE')) throw new RuntimeException('A verified restore preview is required.');
+                $restorePath = DWEMER_STORAGE_RESTORE_FILE;
+            } elseif ($action === 'restore_uploaded_backup') {
                 $upload = $_FILES['restore_file'] ?? null;
                 if (!is_array($upload) || (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
                     throw new RuntimeException('Choose a complete .sql or .sql.gz backup.');
@@ -361,6 +364,10 @@ if (($_SERVER["REQUEST_METHOD"] ?? "GET") === "POST") {
     }
 }
 
+// Keep API results separate from the standalone database manager layout.
+if (defined('DWEMER_STORAGE_ACTIONS_ONLY')) {
+    return ['ok' => $messageType === 'ok', 'message' => $message];
+}
 $dbSizeRow = safeFetchOne($db, "SELECT pg_database_size($1) AS size_bytes", [$dbName]);
 $dbSizeBytes = intval($dbSizeRow["size_bytes"] ?? 0);
 

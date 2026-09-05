@@ -131,6 +131,10 @@ try {
     ptStorageAssert(stobePlaythroughEnsureMetaSchemaOnDemand(), 'playthrough meta schema should be creatable on demand');
     $adminConn = stobePlaythroughConnectAdmin();
     ptStorageAssert($adminConn !== false, 'playthrough admin connection should succeed');
+    $nestedConn = stobePlaythroughConnectAdmin();
+    ptStorageAssert($nestedConn !== false && $nestedConn !== $adminConn, 'nested autosave must own a separate admin connection');
+    pg_close($nestedConn);
+    ptStorageAssert(pg_query($adminConn, 'SELECT 1') !== false, 'closing an autosave connection must leave the restore connection usable');
     @pg_close($adminConn);
 
     stobeAutonomyEnsureSchema();

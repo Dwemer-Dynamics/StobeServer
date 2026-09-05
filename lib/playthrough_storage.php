@@ -18,12 +18,14 @@ function stobePlaythroughDbConfig(): array
 function stobePlaythroughConnectAdmin()
 {
     $cfg = stobePlaythroughDbConfig();
+    // A nested autosave must not close the restore operation's admin connection.
     $conn = @pg_connect(
         'host=' . $cfg['host']
         . ' port=' . $cfg['port']
         . ' dbname=' . $cfg['dbname']
         . ' user=' . $cfg['user']
-        . ' password=' . $cfg['password']
+        . ' password=' . $cfg['password'],
+        PGSQL_CONNECT_FORCE_NEW
     );
     if (!$conn) {
         stobeLogError('PLAYTHROUGH: Failed to connect admin PG session');
