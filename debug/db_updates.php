@@ -2849,6 +2849,15 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             }
         });
 
+        $applyPatch('core_action', 202609040001, static function () use ($db): void {
+            $result = $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('MOVE_TO', 'MoveTo', 'Move to the specified character, object, or known point and stop nearby.', TRUE, NOW())
+                ON CONFLICT (command) DO NOTHING");
+            if ($result === false) {
+                throw new RuntimeException('Could not register MoveTo.');
+            }
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
