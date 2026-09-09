@@ -115,19 +115,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ]);
         if (boolish($result['success'] ?? false)) {
             $statusClass = 'success';
-            $status = 'Playthrough created: ' . strval($result['name'] ?? '') . ' (ID ' . strval(intval($result['id'] ?? 0)) . ')';
+            $status = 'Playthrough Save created: ' . strval($result['name'] ?? '') . ' (ID ' . strval(intval($result['id'] ?? 0)) . ')';
         } else {
             $statusClass = 'error';
-            $status = 'Playthrough creation failed: ' . strval($result['error'] ?? 'unknown');
+            $status = 'Could not create Playthrough Save: ' . strval($result['error'] ?? 'unknown');
         }
     } elseif ($action === 'switch_profile' && $profileId > 0) {
         $result = stobePlaythroughSwitchToProfile($profileId, true);
         if (boolish($result['success'] ?? false)) {
             $statusClass = 'success';
             $autosaveId = intval($result['autosave_id'] ?? 0);
-            $status = 'Profile copied to public schema successfully.';
+            $status = 'Playthrough Save restored.';
             if ($autosaveId > 0) {
-                $status .= ' Autosave playthrough ID: ' . $autosaveId . '.';
+                $status .= ' Before-Switch Save ID: ' . $autosaveId . '.';
             }
         } else {
             $statusClass = 'error';
@@ -137,7 +137,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $result = stobePlaythroughDeleteProfile($profileId);
         if (boolish($result['success'] ?? false)) {
             $statusClass = 'success';
-            $status = 'Playthrough deleted.';
+            $status = 'Playthrough Save deleted.';
         } else {
             $statusClass = 'error';
             $status = 'Delete failed: ' . strval($result['error'] ?? 'unknown');
@@ -407,8 +407,8 @@ if ($ptmFragment) {
 <main class="container-fluid">
     <div class="indent5">
         <div class="panel" style="margin-bottom: 12px;">
-            <?php if ($ptmFragment): ?><h2>Playthroughs and rollback</h2><?php else: ?><h1>Playthrough Saves</h1><?php endif; ?>
-            <p class="subtitle">A playthrough is a saved copy of STOBE data. Restore it alongside the matching Kenshi save. STOBE also saves an automatic recovery copy after one in-game day.</p>
+            <?php if ($ptmFragment): ?><h2>Playthrough Saves</h2><?php else: ?><h1>Playthrough Saves</h1><?php endif; ?>
+            <p class="subtitle">Save and restore STOBE data. Use each Playthrough Save with its matching Kenshi save.</p>
             <?php if ($status !== ''): ?>
                 <div class="status <?= h($statusClass) ?>"><?= h($status) ?></div>
             <?php endif; ?>
@@ -416,18 +416,18 @@ if ($ptmFragment) {
 
         <div class="page-grid">
             <section class="panel">
-                <h2>Save current playthrough</h2>
+                <h2>New Playthrough Save</h2>
                 <form method="post" autocomplete="off">
                     <input type="hidden" name="action" value="create_playthrough">
                     <div class="mb-3">
-                        <label class="form-label" for="name">Playthrough Name</label>
-                        <input class="form-control" id="name" name="name" maxlength="220" placeholder="Manual Playthrough">
+                        <label class="form-label" for="name">Save name</label>
+                        <input class="form-control" id="name" name="name" maxlength="220" placeholder="e.g., Before a big battle">
                     </div>
                     <div class="mb-3">
                         <label class="form-label" for="notes">Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="4" placeholder="Optional notes"></textarea>
                     </div>
-                    <button class="btn btn-stobe w-100" type="submit">Save current playthrough</button>
+                    <button class="btn btn-stobe w-100" type="submit">New Playthrough Save</button>
                 </form>
 
                 <hr style="border-color: rgba(230,183,108,.25)">
@@ -467,14 +467,14 @@ if ($ptmFragment) {
                         <div class="meta-value">Kenshi</div>
                     </div>
                 </div>
-                <div class="small-muted">Switching copies the selected playthrough into <code>public</code>. Current public state is autosaved first.</div>
+                <div class="small-muted">Before restoring, STOBE saves your current progress as a new Before-Switch Save.</div>
             </section>
 
             <section class="panel">
                 <h2>Playthrough Saves</h2>
                 <div class="table-wrap">
                     <?php if (count($profiles) === 0): ?>
-                        <div class="empty">No playthroughs found yet.</div>
+                        <div class="empty">No Playthrough Saves yet.</div>
                     <?php else: ?>
                         <table>
                             <thead>
@@ -556,12 +556,12 @@ if ($ptmFragment) {
                                         </td>
                                         <td>
                                             <div class="action-stack">
-                                                <form method="post" onsubmit="return confirm('Make this the active playthrough? Current public state will be auto-saved first.');">
+                                                <form method="post" onsubmit="return confirm('Restore this Playthrough Save? Stop Kenshi first. STOBE makes a new Before-Switch Save of your current progress, then restores this save. Load the matching Kenshi save afterwards.');">
                                                     <input type="hidden" name="action" value="switch_profile">
                                                     <input type="hidden" name="profile_id" value="<?= $id ?>">
-                                                    <button class="btn btn-sm btn-stobe" type="submit">Set Active Playthrough</button>
+                                                    <button class="btn btn-sm btn-stobe" type="submit">Restore</button>
                                                 </form>
-                                                <form method="post" onsubmit="return confirm('Delete this playthrough and its schema? This cannot be undone.');">
+                                                <form method="post" onsubmit="return confirm('Permanently delete this Playthrough Save? This cannot be undone.');">
                                                     <input type="hidden" name="action" value="delete_profile">
                                                     <input type="hidden" name="profile_id" value="<?= $id ?>">
                                                     <button class="btn btn-sm btn-danger-soft" type="submit">Delete</button>
