@@ -403,8 +403,8 @@ if ($ptmFragment) {
 <main class="container-fluid">
     <div class="indent5">
         <div class="panel" style="margin-bottom: 12px;">
-            <?php if ($ptmFragment): ?><h2>Playthroughs and rollback</h2><?php else: ?><h1>Playthrough Manager</h1><?php endif; ?>
-            <p class="subtitle">Schema-clone playthroughs for StobeServer timelines and rollback safety. STOBE automatically saves a rollback playthrough after 1 Kenshi day.</p>
+            <?php if ($ptmFragment): ?><h2>Playthroughs and rollback</h2><?php else: ?><h1>Playthrough Management</h1><?php endif; ?>
+            <p class="subtitle">A playthrough is a saved copy of STOBE data. Restore it alongside the matching Kenshi save. STOBE also saves an automatic recovery copy after one in-game day.</p>
             <?php if ($status !== ''): ?>
                 <div class="status <?= h($statusClass) ?>"><?= h($status) ?></div>
             <?php endif; ?>
@@ -412,7 +412,7 @@ if ($ptmFragment) {
 
         <div class="page-grid">
             <section class="panel">
-                <h2>Create Playthrough</h2>
+                <h2>Save current playthrough</h2>
                 <form method="post" autocomplete="off">
                     <input type="hidden" name="action" value="create_playthrough">
                     <div class="mb-3">
@@ -423,7 +423,7 @@ if ($ptmFragment) {
                         <label class="form-label" for="notes">Notes</label>
                         <textarea class="form-control" id="notes" name="notes" rows="4" placeholder="Optional notes"></textarea>
                     </div>
-                    <button class="btn btn-stobe w-100" type="submit">Save Playthrough</button>
+                    <button class="btn btn-stobe w-100" type="submit">Save current playthrough</button>
                 </form>
 
                 <hr style="border-color: rgba(230,183,108,.25)">
@@ -467,7 +467,7 @@ if ($ptmFragment) {
             </section>
 
             <section class="panel">
-                <h2>Stored Playthroughs</h2>
+                <h2>Saved playthroughs</h2>
                 <div class="table-wrap">
                     <?php if (count($profiles) === 0): ?>
                         <div class="empty">No playthroughs found yet.</div>
