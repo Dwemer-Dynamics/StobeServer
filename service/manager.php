@@ -53,6 +53,15 @@ if (function_exists('stobePlayer2HealthTick')) {
 }
 stobeBackgroundRecordTick($tickGamets);
 
+// Retention is independent of game activity and remains opt-in.
+require_once $enginePath . 'lib/playthrough_retention.php';
+$retentionConn = ptp_connect();
+if ($retentionConn) {
+    try { ptr_tick($retentionConn); }
+    catch (Throwable $e) { stobeLogWarn('Playthrough Save cleanup skipped: ' . $e->getMessage()); }
+    finally { pg_close($retentionConn); }
+}
+
 if ($tickGamets <= 0) {
     stobeLogDebug('Background manager skipped: no gamets yet');
     exit(0);

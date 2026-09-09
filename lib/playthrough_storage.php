@@ -3,6 +3,7 @@
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'settings.php');
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_schema.php');
+require_once(__DIR__ . '/playthrough_retention.php');
 
 function stobePlaythroughDbConfig(): array
 {
@@ -192,6 +193,7 @@ SQL;
         return false;
     }
 
+    ptr_ensure_schema($adminConn);
     if (!pts_ensure_functions($adminConn)) {
         stobeLogError('PLAYTHROUGH: Failed ensuring schema clone functions');
         return false;
@@ -319,7 +321,17 @@ function stobePlaythroughCreate(string $name, string $notes = '', array $options
         return ['success' => false, 'id' => 0, 'error' => 'db_connect_failed'];
     }
 
+    $operationLocked = false;
     try {
+        if (empty($options['operation_locked'])) {
+            // A rollback capture waits for bounded cleanup so the pre-rollback state is not lost.
+            if (($options['retention_kind'] ?? '') === 'dragon_break') {
+                ptr_query($adminConn, "SELECT pg_advisory_lock(hashtext('stobe_meta_playthrough_retention'))");
+            } elseif (!ptr_lock($adminConn)) {
+                throw new RuntimeException('Another Playthrough Save operation is running. Try again shortly.');
+            }
+            $operationLocked = true;
+        }
         if (!stobePlaythroughEnsureMetaSchema($adminConn)) {
             return ['success' => false, 'id' => 0, 'error' => 'meta_schema_failed'];
         }
@@ -366,12 +378,12 @@ function stobePlaythroughCreate(string $name, string $notes = '', array $options
                 name, size_bytes, storage_format, notes, is_active,
                 player_name, player_faction_members, game, eventlog_count, oghma_count, last_gamets,
                 schema_name, storage_type,
-                rollback_delta_days, rollback_from_gamets, rollback_to_gamets
+                rollback_delta_days, rollback_from_gamets, rollback_to_gamets, retention_kind
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7, $8, $9, $10, $11,
                 $12, $13,
-                $14, $15, $16
+                $14, $15, $16, $17
             ) RETURNING id',
             [
                 $finalName,
@@ -390,6 +402,7 @@ function stobePlaythroughCreate(string $name, string $notes = '', array $options
                 strval(max(0, $rollbackDeltaDays)),
                 strval(max(0, $rollbackFromGamets)),
                 strval(max(0, $rollbackToGamets)),
+                in_array($options['retention_kind'] ?? 'manual', ['manual','dragon_break','before_switch'], true) ? ($options['retention_kind'] ?? 'manual') : 'manual',
             ]
         );
 
@@ -433,6 +446,8 @@ function stobePlaythroughCreate(string $name, string $notes = '', array $options
         stobeLogException($exception, 'PLAYTHROUGH: Playthrough creation failed');
         return ['success' => false, 'id' => 0, 'error' => $exception->getMessage()];
     } finally {
+        if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
+        if ($operationLocked) ptr_unlock($adminConn);
         @pg_close($adminConn);
     }
 }
@@ -494,7 +509,10 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         return ['success' => false, 'error' => 'db_connect_failed'];
     }
 
+    $operationLocked = false;
     try {
+        if (!ptr_lock($adminConn)) throw new RuntimeException('Another Playthrough Save operation is running. Try again shortly.');
+        $operationLocked = true;
         if (!stobePlaythroughEnsureMetaSchema($adminConn)) {
             return ['success' => false, 'error' => 'meta_schema_failed'];
         }
@@ -505,7 +523,7 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         pg_query($adminConn, "SET LOCAL lock_timeout='2s'");
         $rowRes = @pg_query_params(
             $adminConn,
-            'SELECT id, name, schema_name, storage_type, is_active FROM stobe_meta.playthrough_profiles WHERE id = $1 FOR UPDATE',
+            'SELECT id, name, schema_name, storage_type, is_active, retention_pinned FROM stobe_meta.playthrough_profiles WHERE id = $1 FOR UPDATE',
             [strval($profileId)]
         );
         $row = $rowRes ? @pg_fetch_assoc($rowRes) : null;
@@ -514,7 +532,7 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         }
 
         // Never remove the loaded playthrough or the initial recovery point.
-        if (in_array($row['is_active'], [true, 't', '1'], true) || strtolower($row['name']) === 'default') {
+        if (in_array($row['is_active'], [true, 't', '1'], true) || strtolower($row['name']) === 'default' || $row['retention_pinned'] === 't') {
             return ['success' => false, 'error' => 'protected_profile'];
         }
 
@@ -551,6 +569,7 @@ function stobePlaythroughDeleteProfile(int $profileId): array
         return ['success' => false, 'error' => $exception->getMessage()];
     } finally {
         if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
+        if ($operationLocked) ptr_unlock($adminConn);
         @pg_close($adminConn);
     }
 }
@@ -566,7 +585,10 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
         return ['success' => false, 'error' => 'db_connect_failed'];
     }
 
+    $operationLocked = false;
     try {
+        if (!ptr_lock($adminConn)) throw new RuntimeException('Another Playthrough Save operation is running. Try again shortly.');
+        $operationLocked = true;
         if (!stobePlaythroughEnsureMetaSchema($adminConn)) {
             return ['success' => false, 'error' => 'meta_schema_failed'];
         }
@@ -592,11 +614,13 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
 
         $autosaveId = 0;
         if ($saveCurrentPlaythrough) {
-            $autoName = 'AutoSave before switch to ' . strval($target['name'] ?? ('#' . strval($profileId))) . ' @ ' . gmdate('Y-m-d H:i:s') . ' UTC';
+            $autoName = 'Before-Switch Playthrough Save for ' . strval($target['name'] ?? ('#' . strval($profileId))) . ' @ ' . gmdate('Y-m-d H:i:s') . ' UTC';
             $autoPlaythrough = stobePlaythroughCreate($autoName, 'Automatic playthrough save before profile switch', [
                 'mark_active' => false,
                 'storage_type' => 'schema',
                 'game' => 'Kenshi',
+                'retention_kind' => 'before_switch',
+                'operation_locked' => true,
             ]);
             if (!boolval($autoPlaythrough['success'] ?? false)) {
                 return ['success' => false, 'error' => 'autosave_failed: ' . strval($autoPlaythrough['error'] ?? '')];
@@ -654,6 +678,8 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
         stobeLogException($exception, 'PLAYTHROUGH: Profile switch failed', ['profile_id' => $profileId]);
         return ['success' => false, 'error' => $exception->getMessage()];
     } finally {
+        if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
+        if ($operationLocked) ptr_unlock($adminConn);
         @pg_close($adminConn);
     }
 }

@@ -3,25 +3,16 @@
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'utils_game_timestamp.php');
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_storage.php');
+require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_retention.php');
 
 function stobeDragonBreakIsEnabled(): bool
 {
-    if (!isset($GLOBALS['DRAGON_BREAK_AUTO_PLAYTHROUGH'])) {
-        $GLOBALS['DRAGON_BREAK_AUTO_PLAYTHROUGH'] = true;
-    }
-    return !!$GLOBALS['DRAGON_BREAK_AUTO_PLAYTHROUGH'];
+    return ptp_runtime_backup_settings()['enabled'];
 }
 
 function stobeDragonBreakMinDays(): int
 {
-    if (!isset($GLOBALS['DRAGON_BREAK_MIN_DAYS'])) {
-        $GLOBALS['DRAGON_BREAK_MIN_DAYS'] = 1;
-    }
-    $days = intval($GLOBALS['DRAGON_BREAK_MIN_DAYS']);
-    if ($days < 1) {
-        $days = 1;
-    }
-    return $days;
+    return ptp_runtime_backup_settings()['min_days'];
 }
 
 function stobeDragonBreakDaysRollback(int $prevGamets, int $incomingGamets): int
@@ -45,10 +36,10 @@ function stobeDragonBreakBuildName(int $prevGamets, int $incomingGamets): string
     $toDay = intval($incomingParts['day_number'] ?? 0);
 
     if ($fromDay > 0 && $toDay > 0) {
-        return 'STOBE Rollback (Day ' . $fromDay . ' -> Day ' . $toDay . ')';
+        return 'Automatic Playthrough Save (Day ' . $fromDay . ' -> Day ' . $toDay . ')';
     }
 
-    return 'STOBE Rollback (' . stobeGametsDateLabel($prevGamets) . ' -> ' . stobeGametsDateLabel($incomingGamets) . ')';
+    return 'Automatic Playthrough Save (' . stobeGametsDateLabel($prevGamets) . ' -> ' . stobeGametsDateLabel($incomingGamets) . ')';
 }
 
 function stobeDragonBreakCreatePlaythrough(string $name, string $notes, array $meta = []): int
@@ -57,12 +48,19 @@ function stobeDragonBreakCreatePlaythrough(string $name, string $notes, array $m
         'mark_active' => false,
         'storage_type' => 'schema',
         'game' => 'Kenshi',
+        'retention_kind' => 'dragon_break',
         'rollback_delta_days' => intval($meta['rollback_delta_days'] ?? 0),
         'rollback_from_gamets' => intval($meta['rollback_from_gamets'] ?? 0),
         'rollback_to_gamets' => intval($meta['rollback_to_gamets'] ?? 0),
     ];
 
     $playthrough = stobePlaythroughCreate($name, $notes, $options);
+    $statusConn = ptp_connect();
+    if ($statusConn) {
+        $id = !empty($playthrough['success']) ? intval($playthrough['id'] ?? 0) : 0;
+        ptp_record_backup($statusConn, $id, $id > 0 ? 'Automatic Playthrough Save created.' : 'Automatic Playthrough Save failed. Check the server log.');
+        pg_close($statusConn);
+    }
     if (!boolval($playthrough['success'] ?? false)) {
         stobeLogWarn('STOBE Rollback: Playthrough creation failed', [
             'name' => $name,
@@ -76,14 +74,14 @@ function stobeDragonBreakCreatePlaythrough(string $name, string $notes, array $m
 
 function stobeDragonBreakPlaythroughIfNeeded(mixed $prevGamets, mixed $incomingGamets): int
 {
-    if (!stobeDragonBreakIsEnabled()) {
-        return 0;
-    }
-
     $prev = stobeGametsNormalize($prevGamets);
     $incoming = stobeGametsNormalize($incomingGamets);
 
     if ($prev <= 0 || $incoming <= 0 || $incoming >= $prev) {
+        return 0;
+    }
+
+    if (!stobeDragonBreakIsEnabled()) {
         return 0;
     }
 

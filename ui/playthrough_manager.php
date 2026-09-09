@@ -1,10 +1,10 @@
 <?php
 /**
- * StobeServer Playthrough Manager.
+ * StobeServer Playthrough Saves.
  * Schema-clone playthrough manager with rollback automatic playthrough save visibility.
  */
 
-// Shared "Playthrough Management" fragment mode. The Dwemer Dashboard includes this
+// Shared "Playthrough Saves" fragment mode. The Dwemer Dashboard includes this
 // page in-process and renders its controls inside the shared shell, so only the
 // document chrome and asset URLs adapt while server-owned operations stay here.
 $ptmFragment = defined('DWEMER_STORAGE_FRAGMENT') && DWEMER_STORAGE_FRAGMENT === true;
@@ -18,6 +18,10 @@ if (!$ptmFragment) {
         dwemerStorageRedirect('stobe', 'manage');
     }
 }
+
+if (session_status() === PHP_SESSION_NONE) session_start();
+if (empty($_SESSION['ptm_csrf'])) $_SESSION['ptm_csrf'] = bin2hex(random_bytes(32));
+$csrfToken = (string)$_SESSION['ptm_csrf'];
 
 $path = dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($path . 'lib/bootstrap.php');
@@ -184,7 +188,7 @@ if ($ptmFragment) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Playthrough Manager</title>
+    <title>Playthrough Saves</title>
     <link rel="icon" type="image/x-icon" href="<?= h($webRoot) ?>/ui/images/favicon.ico">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="<?= h($webRoot) ?>/ui/css/main.css">
@@ -403,7 +407,7 @@ if ($ptmFragment) {
 <main class="container-fluid">
     <div class="indent5">
         <div class="panel" style="margin-bottom: 12px;">
-            <?php if ($ptmFragment): ?><h2>Playthroughs and rollback</h2><?php else: ?><h1>Playthrough Management</h1><?php endif; ?>
+            <?php if ($ptmFragment): ?><h2>Playthroughs and rollback</h2><?php else: ?><h1>Playthrough Saves</h1><?php endif; ?>
             <p class="subtitle">A playthrough is a saved copy of STOBE data. Restore it alongside the matching Kenshi save. STOBE also saves an automatic recovery copy after one in-game day.</p>
             <?php if ($status !== ''): ?>
                 <div class="status <?= h($statusClass) ?>"><?= h($status) ?></div>
@@ -467,7 +471,7 @@ if ($ptmFragment) {
             </section>
 
             <section class="panel">
-                <h2>Saved playthroughs</h2>
+                <h2>Playthrough Saves</h2>
                 <div class="table-wrap">
                     <?php if (count($profiles) === 0): ?>
                         <div class="empty">No playthroughs found yet.</div>
@@ -493,7 +497,7 @@ if ($ptmFragment) {
                                         $id = intval($row['id'] ?? 0);
                                         $isActive = boolish($row['is_active'] ?? false);
                                         $playthroughName = strval($row['name'] ?? '');
-                                        $playthroughNameDisplay = preg_replace('/^Dragon Break\\s*\\(/i', 'STOBE Rollback (', $playthroughName, 1);
+                                        $playthroughNameDisplay = preg_replace('/^Dragon Break\\s*\\(/i', 'Automatic Playthrough Save (', $playthroughName, 1);
                                         if (!is_string($playthroughNameDisplay) || $playthroughNameDisplay === '') {
                                             $playthroughNameDisplay = $playthroughName;
                                         }
@@ -573,7 +577,7 @@ if ($ptmFragment) {
             </section>
         </div>
     </div>
-</main>
+<?php include __DIR__ . '/tmpl/playthrough_save_controls.php'; ?></main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <?php if (!$ptmFragment): ?>
