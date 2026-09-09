@@ -317,6 +317,13 @@ function buildActionGuidanceFromRows(array $rows, array $npcData = []): string {
                 }
             }
         }
+        if ($command === 'MOVE_TO') {
+            $description .= ' Put the exact reference in target, or use player for the initiating speaker. Use a known visited location name for a fixed point. Never invent coordinates. Follow is for continued following; UseObject is for interaction.';
+            foreach (stobeMoveToReferences($npcData) as $reference) {
+                $lines[] = 'MoveTo target: hand_' . $reference['serial'] . ' = '
+                    . stobePromptXmlEscape($reference['name']);
+            }
+        }
         if ($description !== '') {
             $lines[] = "AVAILABLE ACTION: {$actionName} ({$description})";
         } else {
@@ -602,6 +609,9 @@ function stobeCanonicalizeActionCommand(string $command): string {
     $upper = strtoupper(trim($command));
     if ($upper === '') {
         return '';
+    }
+    if (in_array($upper, ['MOVETO', 'MOVE-TO'], true)) {
+        return 'MOVE_TO';
     }
     if ($upper === 'STOPATTACK') {
         return 'STOP_ATTACK';
@@ -1351,6 +1361,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
         }
         return 'PICKUP_NPC@' . $targetName;
     }
+    if ($command === 'MOVE_TO') {
+        $targetToken = $sanitizeInlineText($argument, 120);
+        return $targetToken !== '' ? 'MOVE_TO@' . $targetToken : '';
+    }
     if ($command === 'USE_OBJECT') {
         $objectToken = $sanitizeInlineText($argument, 160);
         if ($objectToken === '') {
@@ -1601,6 +1615,84 @@ function stobeBuildTravelLocationFailureAction(string $requestedLocation): strin
     return 'ROLEPLAY_ACTION@Can not travel to ' . $destination . ' as you have not visited it yet';
 }
 
+// Keep identity when similarly named characters, objects, and landmarks share a scene.
+function stobeMoveToReferences(array|false $npcData): array {
+    $extended = normalizeNpcExtendedDataPayload($npcData['extended_data'] ?? []);
+    $references = [];
+    foreach (['nearby_actors', 'nearby_items', 'points_of_interest', 'nearby_use_objects'] as $section) {
+        foreach (stobeExtractSceneArray($extended, $section) as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $name = trim(strval($entry['name'] ?? ''));
+            $ref = trim(strval($entry['refid'] ?? ($entry['serial'] ?? '')));
+            if ($name === '' || !preg_match('/^(?:hand_)?([1-9][0-9]{0,9})$/D', $ref, $match)
+                || (float)$match[1] > 4294967295) {
+                continue;
+            }
+            $references[$match[1]] = ['name' => $name, 'serial' => $match[1]];
+            if (count($references) >= 96) {
+                return $references;
+            }
+        }
+    }
+    return $references;
+}
+
+// Resolve dialogue targets against game context; only visited destinations supply coordinates.
+function stobeResolveMoveToDispatch(string $target, array|false $npcData): string {
+    $fail = 'ROLEPLAY_ACTION@Could not identify that destination.';
+    $target = trim($target);
+    if (in_array(strtolower($target), ['player', 'me', 'you', 'the player'], true)) {
+        $serial = trim(strval($_GET['initiator_sid'] ?? ''));
+        if (!preg_match('/^[1-9][0-9]{0,9}$/D', $serial) || (float)$serial > 4294967295) {
+            return $fail;
+        }
+        return 'MOVE_TO@ref;' . $serial . ';the speaker';
+    }
+    $matches = [];
+    foreach (stobeMoveToReferences($npcData) as $reference) {
+        if ($target === 'hand_' . $reference['serial'] || $target === strval($reference['serial'])
+            || strcasecmp($target, $reference['name']) === 0) {
+            $matches[] = $reference;
+        }
+    }
+    if (count($matches) > 1) {
+        return 'ROLEPLAY_ACTION@More than one destination has that name. Specify which one.';
+    }
+    if (count($matches) === 1) {
+        $reference = $matches[0];
+        return 'MOVE_TO@ref;' . $reference['serial'] . ';'
+            . stobeSanitizeTravelLocationToken($reference['name']);
+    }
+    // A model-supplied reference or wire payload must not become a location lookup.
+    if ($target === '' || preg_match('/^(?:hand_|ref;|point;)|[;@|]/i', $target)) {
+        return $fail;
+    }
+    $db = $GLOBALS['db'] ?? null;
+    $points = $db ? $db->fetchAll(
+        "SELECT zone_name, city_name, x, y, z FROM location_zones
+         WHERE (LOWER(zone_name) = LOWER($1) OR LOWER(city_name) = LOWER($1))
+           AND metadata->>'knowledge_only' IS DISTINCT FROM 'true'
+         LIMIT 2",
+        [$target]
+    ) : [];
+    if (count($points) !== 1) {
+        return $fail;
+    }
+    $point = $points[0];
+    foreach (['x', 'y', 'z'] as $axis) {
+        if (!is_numeric($point[$axis] ?? null) || !is_finite(floatval($point[$axis]))
+            || abs(floatval($point[$axis])) >= 1000000) {
+            return $fail;
+        }
+    }
+    return 'MOVE_TO@point;' . stobeFormatTravelCoordinateToken(floatval($point['x'])) . ';'
+        . stobeFormatTravelCoordinateToken(floatval($point['y'])) . ';'
+        . stobeFormatTravelCoordinateToken(floatval($point['z'])) . ';'
+        . stobeSanitizeTravelLocationToken($target);
+}
+
 function stobeTransformActionForDispatch(string $normalizedAction, array|false $npcData = false): string {
     $value = trim($normalizedAction);
     if ($value === '') {
@@ -1614,6 +1706,9 @@ function stobeTransformActionForDispatch(string $normalizedAction, array|false $
 
     $command = stobeCanonicalizeActionCommand(substr($value, 0, $atPos));
     $argument = trim(substr($value, $atPos + 1));
+    if ($command === 'MOVE_TO') {
+        return stobeResolveMoveToDispatch($argument, $npcData);
+    }
     if ($command !== 'TRAVEL_LOCATION') {
         return $value;
     }
@@ -1649,7 +1744,7 @@ function extractAndNormalizeActionTags(string $rawResponse, string $eventType, ?
     $commandNames = [
         'ATTACK', 'STOP_ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION', 'MOVE_TO', 'MOVETO',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',
@@ -4886,6 +4981,7 @@ function stobeResolveStructuredDialogueContractParts(
         $actions[] = 'Leave';
     }
     $actions[] = 'TravelLocation';
+    $actions[] = 'MoveTo';
 
     $moodsCsv = '';
     if (is_array($npcData)) {
@@ -5407,8 +5503,8 @@ function stobeBuildActionTagFromStructuredPayload(
         'HUNT' => 'ATTACK',
         'TAKEMONEYFROMRANGROO' => 'TAKE_CATS',
         'GIVEGOLDTO' => 'GIVE_CATS',
-        'MOVE_TO' => 'TASK',
-        'MOVETO' => 'TASK',
+        'MOVE_TO' => 'MOVE_TO',
+        'MOVETO' => 'MOVE_TO',
     ];
     if (isset($synonyms[$actionUpper])) {
         $actionUpper = $synonyms[$actionUpper];
@@ -5424,6 +5520,9 @@ function stobeBuildActionTagFromStructuredPayload(
             return '';
         }
         return 'STOP_ATTACK@' . $target;
+    }
+    if ($actionUpper === 'MOVE_TO') {
+        return $target !== '' ? 'MOVE_TO@' . $target : '';
     }
     if ($actionUpper === 'FOLLOW') {
         $followTarget = trim($target !== '' ? $target : $item);
@@ -12429,7 +12528,7 @@ function stobeStripParentheticalDialogueText(string $text): string {
     $commandNames = [
         'ATTACK', 'STOP_ATTACK', 'FOLLOW', 'STOP_FOLLOW', 'JOIN_PARTY',
         'LEAVE', 'IDLE', 'STOP_CARRYING', 'PICKUP_NPC', 'RELEASE_PLAYER', 'RELEASE_PRISONER', 'SUICIDE',
-        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION',
+        'GIVE_CATS', 'TAKE_CATS', 'TAKE_ITEM', 'GIVE_ITEM', 'DROP_ITEM', 'REMOVE_LIMB', 'KNOCKOUT', 'KILL', 'USE_OBJECT', 'USE_DRUGS', 'DRINK_ITEM', 'DRINK', 'FORCE_DRINK', 'TRAVEL_LOCATION', 'MOVE_TO', 'MOVETO',
         'ROLEPLAY_ACTION', 'NOTIFY', 'FACTION_RELATIONS', 'TASK', 'TALK',
         'SET_BLOCK', 'SET_HOLD', 'SET_PASSIVE', 'SET_JOBS', 'SET_RANGED',
         'SET_TAUNT', 'SET_SNEAK', 'SET_RESOURCE', 'SET_MEDIC',

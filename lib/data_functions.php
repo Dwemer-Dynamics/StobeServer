@@ -14255,6 +14255,8 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
         $extended['nearby_actors'] ?? ($extended['nearby'] ?? []),
         [
             'name',
+            'refid',
+            'serial',
             'race',
             'gender',
             'faction',
@@ -14287,7 +14289,7 @@ function normalizeCoreNpcExtendedData(mixed $value): array {
 
     $pointsOfInterest = $extractSceneRows(
         $extended['points_of_interest'] ?? [],
-        ['name', 'type', 'kind', 'location', 'dist'],
+        ['name', 'refid', 'serial', 'type', 'kind', 'location', 'dist'],
         32
     );
     $traderShopSources = $extractSceneRows(
