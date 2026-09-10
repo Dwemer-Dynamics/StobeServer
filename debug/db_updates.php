@@ -2870,3 +2870,18 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
 }
 
 stobeRunDatabaseUpdates();
+
+
+// Keep the installed snapshot functions and pgAdmin comments aligned with the current table policy.
+require_once dirname(__DIR__) . '/lib/playthrough_schema.php';
+require_once dirname(__DIR__) . '/lib/playthrough_preferences.php';
+$playthroughPolicyConn = ptp_connect();
+if ($playthroughPolicyConn) {
+    try {
+        if (!pts_update_playthrough_policy($playthroughPolicyConn)) {
+            Logger::error('Playthrough Save table policy update failed; retry the database update.');
+        }
+    } finally { pg_close($playthroughPolicyConn); }
+} else {
+    Logger::error('Cannot connect to update the Playthrough Save table policy.');
+}

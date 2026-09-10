@@ -8,12 +8,12 @@
  */
 
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
+require_once(__DIR__ . DIRECTORY_SEPARATOR . 'playthrough_policy.php');
 
 // Existing installations must refresh the stored SQL function, not just the source file.
 function pts_clone_function_is_current($definition): bool {
     return is_string($definition)
-        && str_contains($definition, 'OVERRIDING SYSTEM VALUE')
-        && str_contains($definition, 'STOBE_TABLE_ONLY_PLAYTHROUGHS')
+        && stripos($definition, 'clone_selected_schema') !== false
         && stripos($definition, 'CREATE OR REPLACE VIEW') === false;
 }
 
@@ -22,27 +22,39 @@ function pts_clone_function_is_current($definition): bool {
  * Safe to call multiple times (idempotent).
  */
 function pts_ensure_functions($conn): bool {
-    $checkQuery = "SELECT pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'clone_schema' AND n.nspname = 'stobe_meta' AND p.proargtypes = '25 25'::oidvector LIMIT 1";
+    // Upgrade older installations to the selected-table capture and restore API.
+    $checkQuery = "SELECT pg_get_functiondef(p.oid) AS function_definition FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.proname = 'clone_schema' AND n.nspname = 'stobe_meta' LIMIT 1";
     $checkResult = @pg_query($conn, $checkQuery);
     if ($checkResult && pg_num_rows($checkResult) > 0) {
-        $installed = pg_fetch_assoc($checkResult);
-        if (pts_clone_function_is_current($installed['definition'] ?? null)) {
+        $row = pg_fetch_assoc($checkResult);
+        if (pts_clone_function_is_current($row['function_definition'] ?? null)
+            && pg_fetch_result(pg_query($conn, "SELECT to_regprocedure('stobe_meta.sync_playthrough_comments(text[])') IS NOT NULL AND to_regprocedure('stobe_meta.restore_playthrough_upgraded(text,text[])') IS NOT NULL AND to_regprocedure('stobe_meta.restore_playthrough(text,text[])') IS NOT NULL AND to_regprocedure('stobe_meta.capture_playthrough(text,text[])') IS NOT NULL AND to_regprocedure('stobe_meta.clone_selected_schema(text,text,text[])') IS NOT NULL"), 0, 0) === 't') {
             return true;
         }
+
+        Logger::info("Schema clone functions are outdated; refreshing definitions");
     }
-    
+
     $sqlFile = __DIR__ . DIRECTORY_SEPARATOR . 'schema_clone_function.sql';
     if (!file_exists($sqlFile)) {
         Logger::error("schema_clone_function.sql not found at: " . $sqlFile);
         return false;
     }
-    
+
     $sql = file_get_contents($sqlFile);
+    $selectionSql = file_get_contents(__DIR__ . '/playthrough_selection.sql');
+    $upgradeSql = file_get_contents(__DIR__ . '/playthrough_upgrade.sql');
+    if ($selectionSql === false || $upgradeSql === false) {
+        return false;
+    }
+    if ($sql !== false) {
+        $sql .= "\n" . $selectionSql . "\n" . $upgradeSql;
+    }
     if ($sql === false) {
         Logger::error("Failed to read schema_clone_function.sql");
         return false;
     }
-    
+
     // Execute the SQL to create functions
     $result = @pg_query($conn, $sql);
     if (!$result) {
@@ -50,15 +62,15 @@ function pts_ensure_functions($conn): bool {
         Logger::error("Failed to create schema clone functions: " . $error);
         return false;
     }
-    
-    // Verify functions were created
+
+    // Verify the current function definition was installed
     $verifyResult = @pg_query($conn, $checkQuery);
-    $verified = $verifyResult ? pg_fetch_assoc($verifyResult) : false;
-    if (!pts_clone_function_is_current($verified['definition'] ?? null)) {
-        Logger::error("Schema clone functions were not created successfully");
+    $verifyRow = $verifyResult ? pg_fetch_assoc($verifyResult) : false;
+    if (!$verifyRow || !pts_clone_function_is_current($verifyRow['function_definition'] ?? null)) {
+        Logger::error("Schema clone functions were not installed successfully");
         return false;
     }
-    
+
     Logger::info("Schema clone functions installed successfully");
     return true;
 }
@@ -196,6 +208,18 @@ function pts_schema_exists($conn, string $schemaName): bool {
     return pg_num_rows($result) > 0;
 }
 
+/** Capture or restore the explicit table policy in one atomic database statement. */
+function pts_transfer_playthrough($conn, string $schemaName, bool $restore = false): array {
+    if (!pts_ensure_functions($conn)) {
+        return ['success' => false, 'error' => 'Playthrough database functions are unavailable'];
+    }
+    $function = $restore ? 'restore_playthrough_upgraded' : 'capture_playthrough';
+    $result = @pg_query_params($conn,
+        "SELECT stobe_meta.{$function}($1, ARRAY(SELECT jsonb_array_elements_text($2::jsonb)))",
+        [$schemaName, json_encode(pts_playthrough_tables())]);
+    return $result ? ['success' => true, 'error' => '']
+        : ['success' => false, 'error' => pg_last_error($conn)];
+}
 /**
  * Clone a schema (source) to another schema (destination).
  * Returns ['success' => bool, 'error' => string]

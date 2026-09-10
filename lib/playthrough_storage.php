@@ -339,7 +339,7 @@ function stobePlaythroughCreate(string $name, string $notes = '', array $options
         $finalName = stobePlaythroughBuildUniqueProfileName($adminConn, $name);
         $schemaName = stobePlaythroughBuildUniqueSchemaName($adminConn, $finalName);
 
-        $clone = pts_clone_schema($adminConn, 'public', $schemaName);
+        $clone = pts_transfer_playthrough($adminConn, $schemaName);
         if (!boolval($clone['success'] ?? false)) {
             return [
                 'success' => false,
@@ -631,20 +631,11 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
         if (!pg_query($adminConn, 'BEGIN')) {
             return ['success' => false, 'error' => 'begin_restore_failed'];
         }
-        $runtimeViews = pts_capture_public_views($adminConn);
-
-        if (!pts_recreate_public_schema($adminConn)) {
-            @pg_query($adminConn, 'ROLLBACK');
-            return ['success' => false, 'error' => 'recreate_public_failed'];
-        }
-
-        $clone = pts_clone_schema($adminConn, $schemaName, 'public');
+        $clone = pts_transfer_playthrough($adminConn, $schemaName, true);
         if (!boolval($clone['success'] ?? false)) {
             @pg_query($adminConn, 'ROLLBACK');
-            return ['success' => false, 'error' => 'clone_to_public_failed: ' . strval($clone['error'] ?? '')];
+            return ['success' => false, 'error' => 'restore_failed: ' . strval($clone['error'] ?? '')];
         }
-
-        pts_restore_public_views($adminConn, $runtimeViews);
 
         @pg_query($adminConn, 'UPDATE stobe_meta.playthrough_profiles SET is_active = FALSE');
         $mark = @pg_query_params(
