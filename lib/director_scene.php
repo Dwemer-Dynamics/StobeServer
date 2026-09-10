@@ -69,17 +69,18 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
     if (!$actors || !isset($actors[$seed])) throw new RuntimeException('No eligible Director cast');
     $history = DataEventLog(30, $seed, 'Default');
     $world = stobeBuildGameTimePromptBlock($gamets, $actors[$seed]);
+    $world .= "\n# Historical dialogue and events (not current presence)\n";
     foreach (array_reverse(stobeFilterNarratorRowsForContext($history, $seed, 'director')) as $row) {
         $world .= "\n" . stobeFormatEventHistoryLine($row, true);
     }
-    $world .= "\n" . stobeBuildNearbyPlayerFactionPartyPrompt($actors[$seed], $seed);
-    if (class_exists('RelationshipManager')) $world .= "\n" . RelationshipManager::buildDirectorContext(array_keys($actors));
+    $world .= "\n# Current nearby party\n" . stobeBuildNearbyPlayerFactionPartyPrompt($actors[$seed], $seed);
+    if (class_exists('RelationshipManager')) $world .= "\n# Present cast relationships\n" . RelationshipManager::buildDirectorContext(array_keys($actors));
     if (trim($instruction) === '') $instruction = "Start a natural conversation between {$seed} and {$listener} about the current situation.";
     $catalog = stobeDirectorCatalog($actors);
     $messages = [
         ['role' => 'system', 'content' => dwemerDirectorPrompt('Kenshi', $catalog)],
-        ['role' => 'user', 'content' => "# Current scene and relationships\n" . $world
-            . "\n# Eligible NPC profiles\n" . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        ['role' => 'user', 'content' => "# World context and history\n" . $world
+            . "\n# Present eligible NPC profiles\n" . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             . "\n# Player name\n" . $player],
         ['role' => 'user', 'content' => $instruction],
     ];
