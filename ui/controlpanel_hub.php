@@ -62,8 +62,8 @@ $tabs = [
     ['id' => 'relationship_logs', 'group' => 'diagnostics', 'icon' => '&#x1F517;', 'label' => 'Relationship Logs', 'page' => 'relationship_logs.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'cost_breakdown', 'group' => 'monitoring', 'icon' => '&#x1F4CA;', 'label' => 'Cost Breakdown', 'page' => 'audit.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'response_queue', 'group' => 'monitoring', 'icon' => '&#x1F4AC;', 'label' => 'Response Queue', 'page' => 'response_queue.php', 'status' => 'wired', 'embed' => true],
-    ['id' => 'audio_image_cache', 'group' => 'data-tools', 'icon' => '&#x1F3BC;', 'label' => 'Audio & Image Cache', 'page' => 'cache_browser.php', 'url' => '', 'status' => 'wired', 'embed' => true],
     ['id' => 'storage', 'group' => 'data-tools', 'icon' => '&#x1F5C4;&#xFE0F;', 'label' => 'Playthrough Management', 'page' => 'playthrough_manager.php', 'url' => $storageTabUrl, 'status' => 'wired', 'embed' => true],
+    ['id' => 'audio_image_cache', 'group' => 'data-tools', 'icon' => '&#x1F3BC;', 'label' => 'Audio & Image Cache', 'page' => 'cache_browser.php', 'url' => '', 'status' => 'wired', 'embed' => true],
 ];
 // Without the shared page installed, the legacy database tools keep their own tab.
 if (!$distroDataManagerAvailable) {
