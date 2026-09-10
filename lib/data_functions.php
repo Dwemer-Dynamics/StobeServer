@@ -2747,7 +2747,10 @@ function stobeApplySpeechDeliveryUpdates(array $updates): array {
         }
 
         if ($deliveryState === 'spoken') {
-            $db->exec(
+            // A cancelled Director turn must never be resurrected by a late playback acknowledgement.
+            $directorGuard = str_starts_with($utteranceId, 'director-')
+                ? " AND LOWER(COALESCE(delivery_state, 'pending')) = 'pending'" : '';
+            $deliveryResult = $db->exec(
                 "UPDATE eventlog
                  SET delivery_state = 'spoken',
                      sess = CASE
@@ -2755,13 +2758,17 @@ function stobeApplySpeechDeliveryUpdates(array $updates): array {
                          ELSE sess
                      END
                  WHERE utterance_id = $1
-                   AND LOWER(COALESCE(delivery_state, 'pending')) <> 'spoken'",
+                   AND LOWER(COALESCE(delivery_state, 'pending')) <> 'spoken'" . $directorGuard
+                    . ($directorGuard !== '' ? ' RETURNING *' : ''),
                 [$utteranceId]
             );
 
+            // Only the request that transitions a Director line may commit it to memory.
+            if ($directorGuard !== '') $rows = $deliveryResult ? (pg_fetch_all($deliveryResult) ?: []) : [];
+
             foreach ($rows as $row) {
                 $previousState = strtolower(trim(strval($row['delivery_state'] ?? 'pending')));
-                if ($previousState === 'spoken') {
+                if ($directorGuard === '' && $previousState === 'spoken') {
                     continue;
                 }
                 $result['spoken']++;
