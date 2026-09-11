@@ -612,6 +612,9 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
             return ['success' => false, 'error' => 'source_schema_missing'];
         }
 
+        if (!pg_query($adminConn, 'BEGIN')) return ['success'=>false,'error'=>'begin_restore_failed'];
+        $preparedSchema = pts_prepare_playthrough($adminConn, $schemaName);
+
         $autosaveId = 0;
         if ($saveCurrentPlaythrough) {
             $autoName = 'Before-Switch Playthrough Save for ' . strval($target['name'] ?? ('#' . strval($profileId))) . ' @ ' . gmdate('Y-m-d H:i:s') . ' UTC';
@@ -628,10 +631,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
             $autosaveId = intval($autoPlaythrough['id'] ?? 0);
         }
 
-        if (!pg_query($adminConn, 'BEGIN')) {
-            return ['success' => false, 'error' => 'begin_restore_failed'];
-        }
-        $clone = pts_transfer_playthrough($adminConn, $schemaName, true);
+        $clone = pts_activate_playthrough($adminConn, $preparedSchema);
         if (!boolval($clone['success'] ?? false)) {
             @pg_query($adminConn, 'ROLLBACK');
             return ['success' => false, 'error' => 'restore_failed: ' . strval($clone['error'] ?? '')];
