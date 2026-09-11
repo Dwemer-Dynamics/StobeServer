@@ -182,6 +182,11 @@ $participantIdentities = extractParticipantIdentities([
 ]);
 $ensureResult = ensureNpcProfilesFromParticipantIdentities($participantIdentities);
 
+// Profile discovery can include remote NPCs; only the supplied audience owns events.
+$GLOBALS['CACHE_PEOPLE'] = stobeAnnotatePeopleTokensWithNpcStates(
+    stobeEncodePeopleTokenList(stobeEventAudienceTokens($payload['people'] ?? []))
+);
+
 stobeLogInfo('JSON chat request received', [
     'target_npc' => $targetNpc,
     'speaker' => $speaker,
