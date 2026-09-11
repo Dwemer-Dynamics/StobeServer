@@ -117,6 +117,10 @@ function pgr_capture($conn, array &$state): int {
         $id = (int)$save['id'];
         if ($id < 1) throw new RuntimeException('The recovery save has no manager entry.');
         pth_query($conn, "UPDATE {$meta}.playthrough_profiles SET retention_pinned=true WHERE id=$1", [$id]);
+        if ($meta === 'stobe_meta') {
+            pth_query($conn, "UPDATE {$meta}.playthrough_profiles SET rollback_delta_days=$2,rollback_from_gamets=$3,rollback_to_gamets=$4 WHERE id=$1",
+                [$id,intdiv($state['previous']-$state['target'],86400),$state['previous'],$state['target']]);
+        }
         ptr_write($conn, 'PLAYTHROUGH_ROLLBACK_CAPTURE', ['id'=>$state['id'],'saved_id'=>$id]);
         pth_query($conn,'COMMIT');
         return $id;
