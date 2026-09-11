@@ -47,9 +47,10 @@ BEGIN
             -- The pronunciation dictionary did not exist before this game's migration.
             version_key := 'core_tts_pronunciation';
             required_version := CASE WHEN table_name=version_key THEN 202608300001::bigint ELSE NULL END;
-            -- Policy 2 kept these tables global, so its saves contain no copy.
+            -- These historical policies kept the listed tables global and saved no copy.
             -- Initialize only that known omission; never borrow another game's live data.
-            IF source_policy=2 AND table_name=ANY(ARRAY['world_knowledge','world_knowledge_context_rule']) THEN
+            IF (source_policy=2 AND table_name=ANY(ARRAY['world_knowledge','world_knowledge_context_rule']))
+                OR (source_policy IN (1,2,3) AND table_name=ANY(ARRAY['world_state_addendum','world_state_addendum_custom','world_state_definition'])) THEN
                 empty_tables := array_append(empty_tables,table_name);
             ELSE
                 IF required_version IS NULL THEN
@@ -160,7 +161,7 @@ BEGIN
     ) THEN RAISE EXCEPTION 'Snapshot sequence defaults still reference another schema'; END IF;
 
     EXECUTE format('COMMENT ON SCHEMA %I IS %L',stage_schema,
-        jsonb_build_object('format','stobe_selected_tables_v2','table_policy_version',3,
+        jsonb_build_object('format','stobe_selected_tables_v2','table_policy_version',4,
             'tables',live_names,'missing_tables',missing_tables,'empty_tables',empty_tables,'source_schema',source_schema,
             'upgrade_version',2)::text);
     RETURN stage_schema;
@@ -200,4 +201,4 @@ END;
 $$ LANGUAGE plpgsql SET lock_timeout = '10s';
 
 CREATE OR REPLACE FUNCTION stobe_meta.playthrough_api_version()
-RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 4';
+RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 5';
