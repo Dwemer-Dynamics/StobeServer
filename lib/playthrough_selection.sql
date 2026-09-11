@@ -39,6 +39,36 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Identity is read from the captured schema, never from a different live playthrough.
+CREATE OR REPLACE FUNCTION stobe_meta.playthrough_identity(source_schema text)
+RETURNS jsonb AS $$
+DECLARE raw text; squads jsonb; squad jsonb; entries jsonb; entry jsonb;
+    member text; members jsonb := '[]';
+BEGIN
+    IF to_regclass(format('%I.conf_opts',source_schema)) IS NOT NULL THEN
+        EXECUTE format('SELECT value FROM %I.conf_opts WHERE id=$1',source_schema) INTO raw USING 'PLAYER_SQUADS';
+        BEGIN squads := raw::jsonb; EXCEPTION WHEN invalid_text_representation THEN squads := NULL; END;
+        IF jsonb_typeof(squads)='array' THEN
+            FOR squad IN SELECT value FROM jsonb_array_elements(squads) LOOP
+                IF jsonb_typeof(squad)<>'string' THEN CONTINUE; END IF;
+                EXECUTE format('SELECT value FROM %I.conf_opts WHERE id=$1',source_schema) INTO raw USING squad#>>'{}';
+                BEGIN entries := raw::jsonb; EXCEPTION WHEN invalid_text_representation THEN entries := NULL; END;
+                IF jsonb_typeof(entries) IS DISTINCT FROM 'array' THEN CONTINUE; END IF;
+                FOR entry IN SELECT value FROM jsonb_array_elements(entries) LOOP
+                    IF jsonb_typeof(entry)<>'string' THEN CONTINUE; END IF;
+                    member := btrim(split_part(entry#>>'{}','|',1));
+                    IF member<>'' AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(members) m WHERE lower(m)=lower(member)) THEN
+                        members := members || jsonb_build_array(member);
+                    END IF;
+                END LOOP;
+            END LOOP;
+        END IF;
+    END IF;
+    SELECT coalesce(jsonb_agg(value ORDER BY lower(value),value),'[]') INTO members FROM jsonb_array_elements_text(members);
+    RETURN jsonb_build_object('version',1,'player_faction_members',members);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
 -- Snapshot and restore one explicit table policy without replacing shared tables.
 CREATE OR REPLACE FUNCTION stobe_meta.capture_playthrough(dest_schema text, selected_tables text[])
 RETURNS void AS $$
@@ -79,7 +109,8 @@ BEGIN
     END LOOP;
     EXECUTE format('COMMENT ON SCHEMA %I IS %L', dest_schema,
         jsonb_build_object('format','stobe_selected_tables_v2','table_policy_version',4,
-            'tables',names,'migrations',versions,'upgrade_version',2)::text);
+            'tables',names,'migrations',versions,'upgrade_version',2,
+            'player_identity',stobe_meta.playthrough_identity(dest_schema))::text);
 END;
 $$ LANGUAGE plpgsql SET lock_timeout = '10s';
 
