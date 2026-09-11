@@ -538,6 +538,9 @@ function stobeDynamicProfileFetchRecentContext(string $npcName, int $limit = 30)
         ? stobeBuildEventlogDeliveryVisibilitySql('eventlog')
         : '1=1';
 
+    $params = [];
+    $audienceSql = stobeEventAudienceSql($safeNpcName, $params);
+
     return $db->fetchAll(
         "SELECT rowid AS id, type, data, gamets, localts, ts, people, location
          FROM eventlog
@@ -550,13 +553,10 @@ function stobeDynamicProfileFetchRecentContext(string $npcName, int $limit = 30)
              'infoloc'
          )
            AND {$deliveryVisibilitySql}
-           AND (
-                LOWER(COALESCE(people, '')) LIKE LOWER($1)
-                OR LOWER(COALESCE(data, '')) LIKE LOWER($1)
-           )
+           AND {$audienceSql}
          ORDER BY rowid DESC
          LIMIT " . intval($limit),
-        ['%' . $safeNpcName . '%']
+        $params
     );
 }
 

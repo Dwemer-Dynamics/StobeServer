@@ -4639,115 +4639,76 @@ function stobePeopleTokenListFromRaw(mixed $rawPeople): array {
     return $tokens;
 }
 
+// Read only the audience captured for this event, including legacy pipe rosters.
+function stobeEventAudienceTokens(mixed $people): array {
+    if (is_array($people)) {
+        return array_values(array_filter($people, 'is_string'));
+    }
+    $raw = trim(strval($people ?? ''));
+    if ($raw === '') {
+        return [];
+    }
+    if ($raw[0] === '[') {
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? array_values(array_filter($decoded, 'is_string')) : [];
+    }
+    return preg_split('/\|(?!(?:hand_)?-?[0-9]+(?:\||$))/i', trim($raw, '|')) ?: [];
+}
+
+// Apply identity and event-time awareness before LIMIT, never searching event prose.
+function stobeEventAudienceSql(string $npcName, array &$params, array $aliases = [], array|false|null $npcData = null): string {
+    $name = normalizeParticipantNameToken($npcName);
+    if ($name === '') {
+        return 'FALSE';
+    }
+    $npcData = $npcData ?? getNpcData($name);
+    $metadata = normalizeCoreNpcMetadata($npcData['metadata'] ?? []);
+    $storageId = normalizeStorageIdToken($metadata['storage_id'] ?? '');
+    $names = array_values(array_unique(array_filter(array_map('normalizeParticipantNameToken', array_merge(
+        [$name], $aliases, stobeResolveNpcEventHistoryAliases($npcData, $name)
+    )))));
+    $nameParam = '$' . (count($params) + 1);
+    $params[] = json_encode($names, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $idParam = '$' . (count($params) + 1);
+    $params[] = json_encode($storageId === '' ? [] : buildStorageIdSearchVariants($storageId));
+
+    // Validate string-array syntax before casting old/untrusted text to JSONB.
+    $stringPattern = '"([^"\\\\[:cntrl:]]|\\\\(["\\\\/bfnrt]|u(?!0000|[dD][89a-fA-F])[0-9a-fA-F]{4}|u[dD][89abAB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}))*"';
+    $arrayPattern = '^\s*\[\s*(' . $stringPattern . '\s*(,\s*' . $stringPattern . '\s*)*)?\]\s*$';
+    $validParam = '$' . (count($params) + 1);
+    $params[] = $arrayPattern;
+    // Cheap candidate filtering avoids decoding every remote event in large histories.
+    // Include escaped legacy JSON names and every numeric/signed handle spelling.
+    $searchTokens = array_merge($names, $storageId === '' ? [] : buildStorageIdSearchVariants($storageId));
+    $patterns = [];
+    foreach ($searchTokens as $token) {
+        foreach ([$token, substr(json_encode($token), 1, -1)] as $spelling) {
+            $patterns[] = '%' . strtr($spelling, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
+        }
+    }
+    $patternParam = '$' . (count($params) + 1);
+    $params[] = json_encode(array_values(array_unique($patterns)));
+    return "(people ILIKE ANY(ARRAY(SELECT value FROM jsonb_array_elements_text({$patternParam}::jsonb))) AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(
+            CASE WHEN btrim(COALESCE(people, '')) ~ {$validParam}
+                THEN people::jsonb
+                WHEN left(btrim(COALESCE(people, '')), 1) = '[' THEN '[]'::jsonb
+                ELSE to_jsonb(regexp_split_to_array(trim(BOTH '|' FROM COALESCE(people, '')),
+                    '\\|(?!(?:hand_)?-?[0-9]+(?:\\||$))', 'i')) END
+        ) AS audience(token)
+        WHERE split_part(token, '|', 1) !~* ' \\((sleeping|unconscious|knocked[ _]out)\\)$'
+          AND CASE WHEN strpos(token, '|') > 0 AND jsonb_array_length({$idParam}::jsonb) > 0
+              THEN lower(btrim(split_part(token, '|', 2))) IN
+                  (SELECT lower(value) FROM jsonb_array_elements_text({$idParam}::jsonb))
+              ELSE lower(regexp_replace(btrim(split_part(token, '|', 1)),
+                  '( \\((busy|hostile|in combat|restrained|dead)\\))+$', '', 'i')) IN
+                  (SELECT lower(value) FROM jsonb_array_elements_text({$nameParam}::jsonb)) END
+    ))";
+}
+
 function stobeRecoverSparsePeopleForCriticalEvent(string $eventType, string $eventData, string $incomingPeople): string {
-    $normalizedType = strtolower(trim($eventType));
-    if ($normalizedType !== 'death') {
-        return $incomingPeople;
-    }
-
-    $currentTokens = stobePeopleTokenListFromRaw($incomingPeople);
-    if (count($currentTokens) > 1) {
-        return stobeEncodePeopleTokenList($currentTokens);
-    }
-
-    $db = $GLOBALS['db'] ?? null;
-    if (!$db) {
-        return stobeEncodePeopleTokenList($currentTokens);
-    }
-
-    $speaker = '';
-    if (function_exists('parseDialogueEventData')) {
-        $parsed = parseDialogueEventData($eventData);
-        $speaker = normalizeParticipantNameToken(strval($parsed['speaker'] ?? ''));
-    }
-    if ($speaker === '') {
-        $parts = explode(':', $eventData, 2);
-        if (count($parts) === 2) {
-            $speaker = normalizeParticipantNameToken(strval($parts[0] ?? ''));
-        }
-    }
-
-    $recentRow = false;
-    $recentSince = time() - 120;
-    if ($speaker !== '') {
-        $recentRow = $db->fetchOne(
-            "SELECT people
-             FROM eventlog
-             WHERE localts >= $1
-               AND COALESCE(BTRIM(people), '') <> ''
-               AND LOWER(people) LIKE LOWER($2)
-             ORDER BY rowid DESC
-             LIMIT 1",
-            [$recentSince, '%' . $speaker . '%']
-        );
-    }
-    if (!$recentRow) {
-        $fallbackSince = time() - 30;
-        $recentRow = $db->fetchOne(
-            "SELECT people
-             FROM eventlog
-             WHERE localts >= $1
-               AND COALESCE(BTRIM(people), '') <> ''
-             ORDER BY rowid DESC
-             LIMIT 1",
-            [$fallbackSince]
-        );
-    }
-    if (!$recentRow) {
-        return stobeEncodePeopleTokenList($currentTokens);
-    }
-
-    $recentTokens = stobePeopleTokenListFromRaw(strval($recentRow['people'] ?? ''));
-    if (count($recentTokens) === 0) {
-        return stobeEncodePeopleTokenList($currentTokens);
-    }
-
-    $mergedIdentities = extractParticipantIdentities([
-        'people' => array_merge($recentTokens, $currentTokens),
-    ]);
-    $namesWithStorageId = [];
-    foreach ($mergedIdentities as $identity) {
-        if (!is_array($identity)) {
-            continue;
-        }
-        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
-        if ($name === '') {
-            continue;
-        }
-        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
-        if ($storageId !== '') {
-            $namesWithStorageId[strtolower($name)] = true;
-        }
-    }
-    $mergedTokens = [];
-    foreach ($mergedIdentities as $identity) {
-        if (!is_array($identity)) {
-            continue;
-        }
-        $name = normalizeParticipantNameToken(strval($identity['name'] ?? ''));
-        if ($name === '') {
-            continue;
-        }
-        $storageId = normalizeStorageIdToken($identity['storage_id'] ?? '');
-        if ($storageId === '' && isset($namesWithStorageId[strtolower($name)])) {
-            continue;
-        }
-        $mergedTokens[] = $storageId !== '' ? ($name . '|' . $storageId) : $name;
-        if (count($mergedTokens) >= 24) {
-            break;
-        }
-    }
-
-    if (count($mergedTokens) <= count($currentTokens)) {
-        return stobeEncodePeopleTokenList($currentTokens);
-    }
-
-    stobeLogInfo('Death event people recovered from recent context', [
-        'speaker' => $speaker,
-        'incoming_count' => count($currentTokens),
-        'recovered_count' => count($mergedTokens),
-    ]);
-    return stobeEncodePeopleTokenList($mergedTokens);
+    // A previous event cannot prove who witnessed a death at another location.
+    return stobeEncodePeopleTokenList(stobeEventAudienceTokens($incomingPeople));
 }
 
 function ensureOriginalName(string $name, string $fallbackOriginal = ''): string {
@@ -6598,55 +6559,12 @@ function DataEventLog(
                 AND {$deliveryVisibilitySql}";
     $params = [];
 
-    $actorFilters = [];
-    foreach (array_merge([$actorFilter], $actorAliases) as $candidate) {
-        $filter = normalizeParticipantNameToken(strval($candidate));
-        $filterKey = strtolower($filter);
-        if ($filter === '' || isset($actorFilters[$filterKey])) {
-            continue;
-        }
-        $actorFilters[$filterKey] = $filter;
+    if (normalizeParticipantNameToken($actorFilter) !== '') {
+        $query .= ' AND ' . stobeEventAudienceSql($actorFilter, $params, $actorAliases);
     }
-    if (count($actorFilters) > 0) {
-        $actorClauses = [];
-        foreach ($actorFilters as $filter) {
-            $paramIndex = count($params) + 1;
-            $actorClauses[] = "(people LIKE $" . strval($paramIndex) . " OR data LIKE $" . strval($paramIndex) . ")";
-            $params[] = "%{$filter}%";
-        }
-        $query .= " AND (" . implode(' OR ', $actorClauses) . ")";
-    }
-
-    $fetchLimit = intval($limit);
-    if (count($actorFilters) > 0) {
-        $fetchLimit = max($fetchLimit + 24, $fetchLimit * 4);
-        if ($fetchLimit > 600) {
-            $fetchLimit = 600;
-        }
-    }
-    // Prompt context ordering must follow real-time sequence, not in-game gamets.
-    $query .= " ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC LIMIT " . intval($fetchLimit);
-
-    $rows = $db->fetchAll($query, $params);
-    if (count($actorFilters) === 0 || count($rows) === 0) {
-        return $rows;
-    }
-
-    $filtered = [];
-    foreach ($rows as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-        if (stobeEventRowActorHasAwarenessSuppressedTag($row, $actorFilter)) {
-            continue;
-        }
-        $filtered[] = $row;
-        if (count($filtered) >= $limit) {
-            break;
-        }
-    }
-
-    return $filtered;
+    // Filter before limiting so unrelated names cannot crowd out actual witnesses.
+    $query .= " ORDER BY COALESCE(NULLIF(localts, 0), ts, 0) DESC, ts DESC, rowid DESC LIMIT " . intval($limit);
+    return $db->fetchAll($query, $params);
 }
 
 function storeGameData(string $name, string $type, array $data): bool {
