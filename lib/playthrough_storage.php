@@ -577,107 +577,16 @@ function stobePlaythroughDeleteProfile(int $profileId): array
 
 function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlaythrough = true): array
 {
-    if ($profileId <= 0) {
-        return ['success' => false, 'error' => 'invalid_profile_id'];
-    }
-
-    $adminConn = stobePlaythroughConnectAdmin();
-    if (!$adminConn) {
-        return ['success' => false, 'error' => 'db_connect_failed'];
-    }
-
-    $operationLocked = false;
-    $runtimeSwitch = null;
+    $conn = stobePlaythroughConnectAdmin();
+    if (!$conn) return ['success'=>false,'error'=>'Database unavailable.'];
     try {
-        $runtimeSwitch = ptr_runtime_begin_switch(30.0, $adminConn);
-        if (!ptr_lock($adminConn)) throw new RuntimeException('Another Playthrough Save operation is running. Try again shortly.');
-        $operationLocked = true;
-        if (!stobePlaythroughEnsureMetaSchema($adminConn)) {
-            return ['success' => false, 'error' => 'meta_schema_failed'];
-        }
-
-        $targetRes = @pg_query_params(
-            $adminConn,
-            'SELECT id, name, schema_name, storage_type FROM stobe_meta.playthrough_profiles WHERE id = $1 LIMIT 1',
-            [strval($profileId)]
-        );
-        $target = $targetRes ? @pg_fetch_assoc($targetRes) : null;
-        if (!$target) {
-            return ['success' => false, 'error' => 'profile_not_found'];
-        }
-
-        $storageType = trim(strval($target['storage_type'] ?? 'schema'));
-        $schemaName = trim(strval($target['schema_name'] ?? ''));
-        if ($storageType !== 'schema' || $schemaName === '') {
-            return ['success' => false, 'error' => 'unsupported_storage_type'];
-        }
-        if (!pts_schema_exists($adminConn, $schemaName)) {
-            return ['success' => false, 'error' => 'source_schema_missing'];
-        }
-
-        if (!pg_query($adminConn, 'BEGIN')) return ['success'=>false,'error'=>'begin_restore_failed'];
-        $preparedSchema = pts_prepare_playthrough($adminConn, $schemaName);
-
-        $autosaveId = 0;
-        if ($saveCurrentPlaythrough) {
-            $autoName = 'Before-Switch Playthrough Save for ' . strval($target['name'] ?? ('#' . strval($profileId))) . ' @ ' . gmdate('Y-m-d H:i:s') . ' UTC';
-            $autoPlaythrough = stobePlaythroughCreate($autoName, 'Automatic playthrough save before profile switch', [
-                'mark_active' => false,
-                'storage_type' => 'schema',
-                'game' => 'Kenshi',
-                'retention_kind' => 'before_switch',
-                'operation_locked' => true,
-            ]);
-            if (!boolval($autoPlaythrough['success'] ?? false)) {
-                return ['success' => false, 'error' => 'autosave_failed: ' . strval($autoPlaythrough['error'] ?? '')];
-            }
-            $autosaveId = intval($autoPlaythrough['id'] ?? 0);
-        }
-
-        $clone = pts_activate_playthrough($adminConn, $preparedSchema);
-        if (!boolval($clone['success'] ?? false)) {
-            @pg_query($adminConn, 'ROLLBACK');
-            return ['success' => false, 'error' => 'restore_failed: ' . strval($clone['error'] ?? '')];
-        }
-
-        @pg_query($adminConn, 'UPDATE stobe_meta.playthrough_profiles SET is_active = FALSE');
-        $mark = @pg_query_params(
-            $adminConn,
-            'UPDATE stobe_meta.playthrough_profiles SET is_active = TRUE WHERE id = $1',
-            [strval($profileId)]
-        );
-        if (!$mark) {
-            @pg_query($adminConn, 'ROLLBACK');
-            return ['success' => false, 'error' => 'mark_active_failed'];
-        }
-
-        if (!pg_query($adminConn, 'COMMIT')) {
-            throw new RuntimeException('Could not commit playthrough restore');
-        }
-
-        $runtimeReady = ptr_runtime_finish_switch($runtimeSwitch);
-        stobeLogInfo('PLAYTHROUGH: Switched active playthrough to profile', [
-            'profile_id' => $profileId,
-            'name' => strval($target['name'] ?? ''),
-            'schema_name' => $schemaName,
-            'autosave_id' => $autosaveId,
-        ]);
-
-        return [
-            'success' => true,
-            'error' => '',
-            'autosave_id' => $autosaveId,
-            'runtime_ready' => $runtimeReady,
-        ];
-    } catch (Throwable $exception) {
-        @pg_query($adminConn, 'ROLLBACK');
-        stobeLogException($exception, 'PLAYTHROUGH: Profile switch failed', ['profile_id' => $profileId]);
-        return ['success' => false, 'error' => $exception->getMessage()];
+        require_once __DIR__ . '/playthrough_home.php';
+        return pth_change($conn, 'switch', ['profile_id'=>$profileId,'recovery_copy'=>$saveCurrentPlaythrough]);
+    } catch (Throwable $error) {
+        stobeLogException($error, 'PLAYTHROUGH: Profile switch failed', ['profile_id'=>$profileId]);
+        return ['success'=>false,'error'=>$error->getMessage()];
     } finally {
-        if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
-        if ($operationLocked) ptr_unlock($adminConn);
-        if ($runtimeSwitch !== null) ptr_runtime_finish_switch($runtimeSwitch);
-        @pg_close($adminConn);
+        pg_close($conn);
     }
 }
 

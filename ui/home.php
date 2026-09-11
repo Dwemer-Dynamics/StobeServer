@@ -1112,9 +1112,6 @@ if (count($wordCloud) > 0) {
         <h1>Stobe Dashboard</h1>
 
         <div class="dashboard-buttons">
-            <a href="<?= htmlspecialchars($webRoot . '/ui/controlpanel_hub.php?tab=storage', ENT_QUOTES, 'UTF-8') ?>" class="dashboard-btn">
-                <span class="btn-icon" aria-hidden="true">🧩</span> Playthrough Management
-            </a>
             <button onclick="window.open('https://dwemerdynamics.com/stobe/index.html', '_blank')" class="dashboard-btn">
                 <span class="btn-icon">&#x1F4DA;</span> Dwemer Dynamics Wiki
             </button>
@@ -1122,6 +1119,8 @@ if (count($wordCloud) > 0) {
                 <span class="btn-icon">🥇</span> AI/LLM Tier List
             </button>
         </div>
+
+        <?php require __DIR__ . '/tmpl/playthrough_home_controls.php'; ?>
 
         <div class="dashboard-container">
             <?= render_widget('Current Playthrough', $currentPlaythroughContent) ?>
