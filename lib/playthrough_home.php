@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/playthrough_retention.php';
 require_once __DIR__ . '/playthrough_runtime.php';
+require_once __DIR__ . '/utils_game_timestamp.php';
 
 function pth_query($conn, string $sql, array $params = []) {
     $result = @pg_query_params($conn, $sql, $params);
@@ -17,7 +18,7 @@ function pth_state($conn): array {
     $ready = pg_fetch_result(pth_query($conn, 'SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL',
         [$meta . '.playthrough_profiles', $meta . '.settings']), 0, 0) === 't';
     if (!$ready) return ['available'=>false, 'active_id'=>0, 'token'=>'', 'playthroughs'=>[]];
-    $rows = pg_fetch_all(pth_query($conn, "SELECT p.id,p.name,p.schema_name,p.is_active,p.storage_type,p.retention_kind,p.player_name,
+    $rows = pg_fetch_all(pth_query($conn, "SELECT p.id,p.name,p.schema_name,p.is_active,p.storage_type,p.retention_kind,p.player_name,p.last_gamets,
         to_jsonb(p)->>'player_faction_members' AS player_faction_members,
         obj_description(n.oid,'pg_namespace') AS manifest
         FROM {$meta}.playthrough_profiles p LEFT JOIN pg_namespace n ON n.nspname=p.schema_name AND p.storage_type='schema'
@@ -41,12 +42,21 @@ function pth_state($conn): array {
         $level = is_int($level) && $level > 0 ? $level : null;
         $members = $hasIdentity ? ($identity['player_faction_members'] ?? []) : json_decode($row['player_faction_members'] ?? '[]', true);
         $members = is_array($members) ? array_values(array_filter($members, fn($name) => is_string($name) && trim($name) !== '')) : [];
-        $detail = $meta === 'stobe_meta' ? implode(', ', $members) : $player;
-        if ($meta !== 'stobe_meta' && $detail !== '' && $level !== null) $detail .= ' · Level ' . $level;
-        $label = $row['name'] . ($detail !== '' ? ' — ' . $detail : '');
+        // Keep the selector readable while retaining the complete roster in saved metadata.
+        $gamets = stobeGametsNormalize($row['last_gamets'] ?? 0);
+        $day = $gamets > 0 ? stobeGametsToDateParts($gamets)['day_number'] : null;
+        $party = $members ? implode(', ', array_slice($members, 0, 5)) : 'Party not recorded';
+        if (count($members) > 5) $party .= ' +' . (count($members) - 5) . ' more';
+        $label = ($day !== null ? 'Day ' . $day : 'Day unknown') . ' — ' . $party;
         $choices[] = ['id'=>(int)$row['id'], 'name'=>$row['name'], 'active'=>$row['is_active']==='t',
             'label'=>$label, 'player_name'=>$player, 'player_level'=>$level, 'player_faction_members'=>$members];
     }
+    // Two copies may have the same day and party; keep their menu entries distinguishable.
+    $labelCounts = array_count_values(array_column($choices, 'label'));
+    foreach ($choices as &$choice) {
+        if ($labelCounts[$choice['label']] > 1) $choice['label'] .= ' · Save #' . $choice['id'];
+    }
+    unset($choice);
     return ['available'=>true, 'active_id'=>$id,
         'token'=>hash('sha256', json_encode([$id, $active[0]['schema_name'] ?? '', $revision])), 'playthroughs'=>$choices];
 }
