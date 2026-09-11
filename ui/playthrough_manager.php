@@ -473,7 +473,7 @@ if ($ptmFragment) {
             </section>
 
             <section class="panel">
-                <h2>Playthrough Saves</h2>
+                <h2>Playthrough Saves</h2><button type="button" class="ptx-import">Import save</button>
                 <div class="table-wrap">
                     <?php if (count($profiles) === 0): ?>
                         <div class="empty">No Playthrough Saves yet.</div>
@@ -557,7 +557,7 @@ if ($ptmFragment) {
                                             <?php endif; ?>
                                         </td>
                                         <td>
-                                            <div class="action-stack">
+                                            <div class="action-stack"><button type="button" class="ptx-download" data-profile-id="<?= $id ?>">Download</button>
                                                 <form method="post" onsubmit="return confirm('Restore this Playthrough Save? Stop Kenshi first. STOBE makes a new Before-Switch Save of your current progress, then restores this save. Load the matching Kenshi save afterwards.');">
                                                     <input type="hidden" name="action" value="switch_profile">
                                                     <input type="hidden" name="profile_id" value="<?= $id ?>">
@@ -579,7 +579,7 @@ if ($ptmFragment) {
             </section>
         </div>
     </div>
-<?php include __DIR__ . '/tmpl/playthrough_save_controls.php'; ?></main>
+<?php include __DIR__ . '/tmpl/playthrough_transfer_controls.php'; include __DIR__ . '/tmpl/playthrough_save_controls.php'; ?></main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <?php if (!$ptmFragment): ?>
