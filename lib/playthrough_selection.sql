@@ -43,7 +43,8 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION stobe_meta.playthrough_identity(source_schema text)
 RETURNS jsonb AS $$
 DECLARE raw text; squads jsonb; squad jsonb; entries jsonb; entry jsonb;
-    member text; members jsonb := '[]';
+    member text; members jsonb := '[]'; fallback_members jsonb := '[]';
+    dead_members jsonb := '[]'; npc record;
 BEGIN
     IF to_regclass(format('%I.conf_opts',source_schema)) IS NOT NULL THEN
         EXECUTE format('SELECT value FROM %I.conf_opts WHERE id=$1',source_schema) INTO raw USING 'PLAYER_SQUADS';
@@ -64,10 +65,74 @@ BEGIN
             END LOOP;
         END IF;
     END IF;
-    SELECT coalesce(jsonb_agg(value ORDER BY lower(value),value),'[]') INTO members FROM jsonb_array_elements_text(members);
-    RETURN jsonb_build_object('version',1,'player_faction_members',members);
+    -- Older clients may not have sent PLAYER_SQUADS. Use this archive's faction
+    -- identifiers, never today's global profile assignments, to recover its roster.
+    IF to_regclass(format('%I.core_npc_master',source_schema)) IS NOT NULL THEN
+        FOR npc IN EXECUTE format($query$
+            SELECT name, faction, to_jsonb(n)->'metadata'->>'type' AS npc_type,
+                to_jsonb(n)->'metadata'->>'character_state' AS state, to_jsonb(n)->'extended_data'->>'character_state' AS extended_state,
+                to_jsonb(n)->'metadata'->>'is_dead' AS is_dead, to_jsonb(n)->'extended_data'->>'is_dead' AS extended_dead
+            FROM %I.core_npc_master n
+        $query$,source_schema) LOOP
+            member := btrim(npc.name);
+            IF member IS NULL OR member='' THEN CONTINUE; END IF;
+            IF lower(btrim(coalesce(npc.state,''))) IN ('dead','deceased','death')
+                OR lower(btrim(coalesce(npc.extended_state,''))) IN ('dead','deceased','death')
+                OR lower(coalesce(npc.is_dead,'')) IN ('true','t','1','yes')
+                OR lower(coalesce(npc.extended_dead,'')) IN ('true','t','1','yes') THEN
+                dead_members := dead_members || jsonb_build_array(lower(member));
+            ELSIF lower(btrim(coalesce(npc.npc_type,'')))='player'
+                OR lower(btrim(coalesce(npc.faction,''))) ~ '(^|\[)204-gamedata\.base\]?$' THEN
+                fallback_members := fallback_members || jsonb_build_array(member);
+            END IF;
+        END LOOP;
+    END IF;
+    -- Death events can be the only surviving death record in a legacy archive.
+    -- Match the actor, not other names mentioned in the event's text or people list.
+    IF to_regclass(format('%I.eventlog',source_schema)) IS NOT NULL THEN
+        EXECUTE format($query$
+            SELECT $1 || coalesce(jsonb_agg(lower(btrim(split_part(actor,'|',1)))),'[]')
+            FROM (
+                SELECT CASE WHEN position(':' in data)>0 THEN split_part(data,':',1)
+                    ELSE substring(data from '(?i)^(.+?)\s+(?:has\s+)?(?:died|was\s+slain|is\s+dead)\M') END AS actor
+                FROM %I.eventlog WHERE type='death'
+            ) deaths WHERE actor IS NOT NULL
+        $query$,source_schema) INTO dead_members USING dead_members;
+    END IF;
+    IF jsonb_array_length(members)=0 THEN members := fallback_members; END IF;
+    SELECT coalesce(jsonb_agg(name ORDER BY lower(name),name),'[]') INTO members FROM (
+        SELECT min(value) AS name FROM jsonb_array_elements_text(members)
+        WHERE NOT dead_members ? lower(value) GROUP BY lower(value)
+    ) living;
+
+    RETURN jsonb_build_object('version',1,'party_policy','living_npcs_v1','player_faction_members',members);
 END;
 $$ LANGUAGE plpgsql STABLE;
+
+-- Refresh existing save labels once when installing this API revision. Repeated
+-- installs skip already refreshed manifests and avoid rewriting unchanged rows.
+DO $$
+DECLARE saved record; raw text; manifest jsonb; identity jsonb;
+BEGIN
+    IF to_regclass('stobe_meta.playthrough_profiles') IS NULL THEN RETURN; END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('stobe_meta_playthrough_retention'));
+    FOR saved IN SELECT id,schema_name FROM stobe_meta.playthrough_profiles
+        WHERE storage_type='schema' AND schema_name LIKE 'stobe_profile_%' FOR UPDATE LOOP
+        IF to_regclass(format('%I.core_npc_master',saved.schema_name)) IS NULL THEN CONTINUE; END IF;
+        SELECT obj_description(oid,'pg_namespace') INTO raw FROM pg_namespace WHERE nspname=saved.schema_name;
+        BEGIN manifest := raw::jsonb; EXCEPTION WHEN invalid_text_representation THEN CONTINUE; END;
+        IF manifest IS NOT NULL AND coalesce(manifest->>'format','') NOT IN ('stobe_selected_tables_v1','stobe_selected_tables_v2') THEN CONTINUE; END IF;
+        IF manifest#>>'{player_identity,party_policy}'='living_npcs_v1' THEN CONTINUE; END IF;
+        identity := stobe_meta.playthrough_identity(saved.schema_name);
+        UPDATE stobe_meta.playthrough_profiles SET player_faction_members=(identity->'player_faction_members')::text
+            WHERE id=saved.id AND player_faction_members IS DISTINCT FROM (identity->'player_faction_members')::text;
+        IF manifest IS NOT NULL THEN
+            EXECUTE format('COMMENT ON SCHEMA %I IS %L',saved.schema_name,
+                jsonb_set(manifest,'{player_identity}',identity)::text);
+        END IF;
+    END LOOP;
+END;
+$$;
 
 -- Snapshot and restore one explicit table policy without replacing shared tables.
 CREATE OR REPLACE FUNCTION stobe_meta.capture_playthrough(dest_schema text, selected_tables text[])

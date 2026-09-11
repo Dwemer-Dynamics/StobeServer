@@ -91,21 +91,9 @@ function pth_capture($conn, string $name, ?array $existing = null, string $kind 
     $fields = ['name'=>$name,'schema_name'=>$schema,'storage_type'=>'schema','size_bytes'=>pts_get_schema_size($conn,$schema),
         'player_name'=>$player,'eventlog_count'=>(int)$event['count'],'last_gamets'=>(int)$event['gamets'],
         ($meta==='dialectic_meta'?'worldknowledge_count':'oghma_count')=>(int)$knowledgeCount];
-    if ($meta === 'stobe_meta' && in_array('conf_opts', $tables, true)) {
-        $squads = pg_fetch_assoc(pth_query($conn, "SELECT value FROM public.conf_opts WHERE id='PLAYER_SQUADS'"));
-        $members = [];
-        foreach ((array)json_decode($squads['value'] ?? '[]', true) as $squad) {
-            if (!is_string($squad)) continue;
-            $row = pg_fetch_assoc(pth_query($conn, 'SELECT value FROM public.conf_opts WHERE id=$1', [$squad]));
-            foreach ((array)json_decode($row['value'] ?? '[]', true) as $entry) {
-                if (!is_string($entry)) continue;
-                $member = trim(explode('|', $entry, 2)[0]);
-                if ($member !== '') $members[strtolower($member)] = $member;
-            }
-        }
-        natcasesort($members);
-        $fields['player_faction_members'] = json_encode(array_values($members));
-    }
+    // The manifest and profile row must describe the same frozen, living roster.
+    $fields['player_faction_members'] = pg_fetch_result(pth_query($conn,
+        "SELECT obj_description(oid,'pg_namespace')::jsonb#>'{player_identity,player_faction_members}' FROM pg_namespace WHERE nspname=$1", [$schema]),0,0);
     if ($existing) {
         $values = array_values($fields); $sets = []; $i = 1;
         foreach (array_keys($fields) as $column) $sets[] = $column . '=$' . $i++;

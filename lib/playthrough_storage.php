@@ -354,7 +354,10 @@ function stobePlaythroughCreate(string $name, string $notes = '', array $options
 
         $markActive = stobePlaythroughToBool($options['mark_active'] ?? false);
         $playerName = trim(strval($options['player_name'] ?? getSetting('PLAYER_NAME', 'Player')));
-        $playerFactionMembers = stobePlaythroughCollectCurrentPlayerFactionMembers();
+        $identityResult = pg_query_params($adminConn,
+            "SELECT obj_description(oid,'pg_namespace')::jsonb#>'{player_identity,player_faction_members}' FROM pg_namespace WHERE nspname=$1", [$schemaName]);
+        if (!$identityResult) throw new RuntimeException('Could not read saved party metadata.');
+        $playerFactionMembers = json_decode(pg_fetch_result($identityResult,0,0),true);
         $playerFactionMembersJson = json_encode($playerFactionMembers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (!is_string($playerFactionMembersJson) || $playerFactionMembersJson === '') {
             $playerFactionMembersJson = '[]';

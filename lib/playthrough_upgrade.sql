@@ -201,4 +201,4 @@ END;
 $$ LANGUAGE plpgsql SET lock_timeout = '10s';
 
 CREATE OR REPLACE FUNCTION stobe_meta.playthrough_api_version()
-RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 5';
+RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 6';
