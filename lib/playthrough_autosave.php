@@ -74,48 +74,8 @@ function stobeDragonBreakCreatePlaythrough(string $name, string $notes, array $m
 
 function stobeDragonBreakPlaythroughIfNeeded(mixed $prevGamets, mixed $incomingGamets): int
 {
-    $prev = stobeGametsNormalize($prevGamets);
-    $incoming = stobeGametsNormalize($incomingGamets);
-
-    if ($prev <= 0 || $incoming <= 0 || $incoming >= $prev) {
-        return 0;
-    }
-
-    if (!stobeDragonBreakIsEnabled()) {
-        return 0;
-    }
-
-    $daysRollback = stobeDragonBreakDaysRollback($prev, $incoming);
-    if ($daysRollback < stobeDragonBreakMinDays()) {
-        return 0;
-    }
-
-    $name = stobeDragonBreakBuildName($prev, $incoming);
-    $notes = 'Automatic STOBE rollback playthrough save due to rollback of '
-        . strval($daysRollback)
-        . ' Kenshi day(s) ('
-        . strval($incoming)
-        . ' -> '
-        . strval($prev)
-        . ').';
-
-    $playthroughId = stobeDragonBreakCreatePlaythrough($name, $notes, [
-        'rollback_delta_days' => $daysRollback,
-        'rollback_from_gamets' => $prev,
-        'rollback_to_gamets' => $incoming,
-    ]);
-
-    if ($playthroughId > 0) {
-        stobeLogInfo('STOBE Rollback: Playthrough created', [
-            'playthrough_id' => $playthroughId,
-            'days_rollback' => $daysRollback,
-            'from_gamets' => $prev,
-            'to_gamets' => $incoming,
-            'name' => $name,
-        ]);
-    }
-
-    return $playthroughId;
+    require_once __DIR__ . '/playthrough_guard.php';
+    return pgr_before_rollback((int)$prevGamets, (int)$incomingGamets);
 }
 
 ?>

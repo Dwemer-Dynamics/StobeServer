@@ -1634,7 +1634,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
         return ['triggered' => false, 'reason' => 'no_gamets'];
     }
 
-    $lastSeen = intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0'));
+    $lastSeen = max(intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0')), (int)($GLOBALS['pgr_operation']['state']['previous'] ?? 0));
     if ($lastSeen <= 0) {
         stobePlaythroughRecordLastSeenGamets($incoming);
         return ['triggered' => false, 'reason' => 'seeded'];
@@ -1658,7 +1658,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
     }
 
     try {
-        $latestLastSeen = intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0'));
+        $latestLastSeen = max(intval(getConfOpt('PLAYTHROUGH_LAST_SEEN_GAMETS', '0')), (int)($GLOBALS['pgr_operation']['state']['previous'] ?? 0));
         if ($latestLastSeen <= 0) {
             stobePlaythroughRecordLastSeenGamets($incoming);
             return ['triggered' => false, 'reason' => 'seeded_after_lock'];
@@ -1683,7 +1683,7 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             'prune_enabled' => stobePlaythroughPruneOnRollbackEnabled(),
         ]);
 
-        $autoLoad = stobePlaythroughTryAutoLoadOnRollback($incoming, $latestLastSeen, $event);
+        $autoLoad = !empty($GLOBALS['pgr_operation']) ? ['switched'=>false] : stobePlaythroughTryAutoLoadOnRollback($incoming, $latestLastSeen, $event);
         if (boolval($autoLoad['switched'] ?? false)) {
             setConfOpt('PLAYTHROUGH_LAST_ROLLBACK_GAMETS', strval($incoming), true);
             setConfOpt('PLAYTHROUGH_LAST_ROLLBACK_TS', strval(time()), true);
@@ -1742,6 +1742,8 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             stobeDynamicProfileMarkLoadGrace(time(), $grace, 'playthrough_rollback');
         }
 
+        pgr_complete(empty($restoreCounts['errors']) && empty($volatileStateCounts['errors']));
+
         stobeLogInfo('PLAYTHROUGH: Rollback completed', [
             'event_type' => $event,
             'playthrough_id' => $playthroughId,
@@ -1767,6 +1769,11 @@ function stobeHandlePotentialGametsRollback(mixed $incomingGamets, string $event
             'queues_cleared' => $queueCounts,
         ];
     } catch (Throwable $exception) {
+        if (!empty($GLOBALS['pgr_operation'])) {
+            $blocked = $GLOBALS['pgr_operation']['state'];
+            pgr_fail($exception->getMessage());
+            pgr_deny($blocked,'rollback_failed');
+        }
         stobeLogException($exception, 'PLAYTHROUGH: Rollback handling failed', [
             'event_type' => $event,
             'incoming_gamets' => $incoming,
