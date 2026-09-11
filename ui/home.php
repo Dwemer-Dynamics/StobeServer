@@ -1120,6 +1120,8 @@ if (count($wordCloud) > 0) {
             </button>
         </div>
 
+        <?php require __DIR__ . '/tmpl/playthrough_home_controls.php'; ?>
+
         <div class="dashboard-container">
             <?= render_widget('Current Playthrough', $currentPlaythroughContent) ?>
             <?= render_widget('Recent Dialogue', $recentDialogueContent, 'table') ?>

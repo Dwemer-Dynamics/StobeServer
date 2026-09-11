@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . "/lib/playthrough_guard.php";
+pgr_http_preflight("chat_json");
 
 /**
  * JSON chat endpoint used by the in-game ChatMenu async pipeline.
