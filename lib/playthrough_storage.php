@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/playthrough_runtime.php';
 
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'logger.php');
 require_once(__DIR__ . DIRECTORY_SEPARATOR . 'settings.php');
@@ -586,7 +587,9 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
     }
 
     $operationLocked = false;
+    $runtimeSwitch = null;
     try {
+        $runtimeSwitch = ptr_runtime_begin_switch(30.0, $adminConn);
         if (!ptr_lock($adminConn)) throw new RuntimeException('Another Playthrough Save operation is running. Try again shortly.');
         $operationLocked = true;
         if (!stobePlaythroughEnsureMetaSchema($adminConn)) {
@@ -652,6 +655,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
             throw new RuntimeException('Could not commit playthrough restore');
         }
 
+        $runtimeReady = ptr_runtime_finish_switch($runtimeSwitch);
         stobeLogInfo('PLAYTHROUGH: Switched active playthrough to profile', [
             'profile_id' => $profileId,
             'name' => strval($target['name'] ?? ''),
@@ -663,6 +667,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
             'success' => true,
             'error' => '',
             'autosave_id' => $autosaveId,
+            'runtime_ready' => $runtimeReady,
         ];
     } catch (Throwable $exception) {
         @pg_query($adminConn, 'ROLLBACK');
@@ -671,6 +676,7 @@ function stobePlaythroughSwitchToProfile(int $profileId, bool $saveCurrentPlayth
     } finally {
         if (pg_transaction_status($adminConn) !== PGSQL_TRANSACTION_IDLE) @pg_query($adminConn, 'ROLLBACK');
         if ($operationLocked) ptr_unlock($adminConn);
+        if ($runtimeSwitch !== null) ptr_runtime_finish_switch($runtimeSwitch);
         @pg_close($adminConn);
     }
 }

@@ -125,7 +125,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         if (boolish($result['success'] ?? false)) {
             $statusClass = 'success';
             $autosaveId = intval($result['autosave_id'] ?? 0);
-            $status = 'Playthrough Save restored.';
+            $status = !empty($result['runtime_ready'])
+                ? 'Playthrough Save restored. Background processing refreshed. Load the matching Kenshi save.'
+                : 'Playthrough Save restored. Warning: background processing could not be confirmed. Restart the Stobe server before loading the matching Kenshi save.';
             if ($autosaveId > 0) {
                 $status .= ' Before-Switch Save ID: ' . $autosaveId . '.';
             }

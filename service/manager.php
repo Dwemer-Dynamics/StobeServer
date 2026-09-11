@@ -12,6 +12,7 @@ ini_set('display_errors', '0');
 
 $enginePath = dirname(__DIR__) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'bootstrap.php');
+ptr_runtime_ready();
 
 /**
  * Fetch latest known in-game timestamp from eventlog.
