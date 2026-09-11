@@ -43,11 +43,18 @@ BEGIN
             -- The pronunciation dictionary did not exist before this game's migration.
             version_key := 'core_tts_pronunciation';
             required_version := CASE WHEN table_name=version_key THEN 202608300001::bigint ELSE NULL END;
-            IF required_version IS NULL OR NOT ('database_versioning'=ANY(source_names)) THEN
+            IF required_version IS NULL THEN
                 RAISE EXCEPTION 'Snapshot is missing table %; no safe upgrade is available', table_name;
             END IF;
-            EXECUTE format('SELECT coalesce(max(version),0) FROM %I.database_versioning WHERE tablename=$1',stage_schema)
-                INTO saved_version USING version_key;
+            SELECT obj_description(oid,'pg_namespace')::jsonb INTO manifest FROM pg_namespace WHERE nspname=source_schema;
+            IF to_regclass(format('%I.database_versioning',source_schema)) IS NOT NULL THEN
+                EXECUTE format('SELECT coalesce(max(version),0) FROM %I.database_versioning WHERE tablename=$1',source_schema)
+                    INTO saved_version USING version_key;
+            ELSIF manifest ? 'migrations' THEN
+                saved_version := coalesce((manifest->'migrations'->>version_key)::bigint,0);
+            ELSE
+                RAISE EXCEPTION 'Snapshot has no migration history for missing table %',table_name;
+            END IF;
             IF saved_version >= required_version THEN
                 RAISE EXCEPTION 'Snapshot is missing table %, which already existed when it was saved',table_name;
             END IF;
@@ -143,7 +150,7 @@ BEGIN
     ) THEN RAISE EXCEPTION 'Snapshot sequence defaults still reference another schema'; END IF;
 
     EXECUTE format('COMMENT ON SCHEMA %I IS %L',stage_schema,
-        jsonb_build_object('format','stobe_selected_tables_v2','table_policy_version',1,
+        jsonb_build_object('format','stobe_selected_tables_v2','table_policy_version',2,
             'tables',live_names,'missing_tables',missing_tables,'source_schema',source_schema,
             'upgrade_version',2)::text);
     RETURN stage_schema;
@@ -182,4 +189,4 @@ END;
 $$ LANGUAGE plpgsql SET lock_timeout = '10s';
 
 CREATE OR REPLACE FUNCTION stobe_meta.playthrough_api_version()
-RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 2';
+RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 3';

@@ -1,48 +1,21 @@
 <?php
 
 // Explicit gameplay table policy. Shared presets/libraries and unknown plugin tables stay live.
-function pts_playthrough_tables(): array {
+function pts_table_policy(): array {
     return [
-        'audit_llm',
-        'audit_memory',
-        'audit_request',
-        'autonomy_decision',
-        'autonomy_economy_snapshot',
-        'autonomy_event',
-        'autonomy_pilot_step',
-        'autonomy_session',
-        'conf_opts',
-        'core_action',
-        'core_action_custom',
-        'core_api_badge',
-        'core_llm_connector',
-        'core_narrator',
-        'core_npc_master',
-        'core_npc_master_history',
-        'core_profile_import_rules',
-        'core_profiles',
-        'core_stt_connector',
-        'core_tts_connector',
-        'core_tts_pronunciation',
-        'database_versioning',
-        'diarylog',
-        'eventlog',
-        'faction_relation_state',
-        'general_settings',
-        'location_zones',
-        'log',
-        'memory',
-        'memory_summary',
-        'player_base_history',
-        'player_base_presence',
-        'player_bases',
-        'prompts',
-        'speech',
-        'world_knowledge',
-        'world_knowledge_context_rule',
-        'world_state',
-        'world_state_query_result',
+        'global' => explode(',', 'bio_random,bio_random_custom,bio_unique,bio_unique_custom,core_action,core_action_custom,core_api_badge,core_llm_connector,core_narrator,core_profile_import_rules,core_profiles,core_stt_connector,core_tts_connector,core_tts_pronunciation,core_voiceid,core_voiceid_custom,description_images,descriptions,descriptions_custom,location_zones,prompts,rename_global,rename_global_custom,rename_token_global,rename_token_global_custom,stobe_settings_presets,world_knowledge,world_knowledge_context_rule,world_state_addendum,world_state_addendum_custom,world_state_definition'),
+        'playthrough' => explode(',', 'audit_llm,audit_memory,audit_request,autonomy_decision,autonomy_economy_snapshot,autonomy_event,autonomy_pilot_step,autonomy_session,core_npc_master,core_npc_master_history,diarylog,eventlog,faction_relation_state,log,memory,memory_summary,player_base_history,player_base_presence,player_bases,speech,world_state,world_state_query_result'),
+        'mixed' => ['conf_opts', 'general_settings'],
+        'infrastructure' => ['database_versioning'],
+        // Tables absent from these lists are unmanaged and must never be cleared.
+
     ];
+}
+
+// Only gameplay tables and gameplay rows of mixed tables belong in a save.
+function pts_playthrough_tables(): array {
+    $policy = pts_table_policy();
+    return array_merge($policy['playthrough'], $policy['mixed']);
 }
 
 // Shared libraries excluded here include biography templates, descriptions and preset stores.
