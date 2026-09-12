@@ -64,3 +64,11 @@
 - Automatic saves and rollback failures must never pause mod processing. The rollback journal is diagnostic only; legacy pending markers and unreadable journals must not block requests, workers or cleanup. Keep the existing barrier for explicit manual playthrough switching separate from automatic saves.
 - Failed capture skips pruning for that request while normal request processing continues. A later pruning failure may be partial: keep its recovery copy pinned, report the failure, and continue processing. A new attempt captures current progress again rather than reusing a copy from before intervening gameplay writes.
 - `X-Playthrough-Save` carries fixed versioned operation IDs/statuses to the plugin's existing HTTP path. Keep all three products' notification wording aligned, deduplicate repeated notices, and display them through the game HUD after loading. Preserve each product's existing day threshold and saved preferences.
+
+### Game-time dynamic profiles
+
+`lib/dynamic_profile_scheduler.php` owns automatic scheduling. Profile metadata sets `DYNAMIC_PROFILE_INTERVAL_DAYS` (default 1), `DYNAMIC_PROFILE_MIN_EVENTS` (30), and `DYNAMIC_PROFILE_COOLDOWN_MINUTES` (5 real minutes per NPC). All three conditions must pass. Narrator settings use the same keys in `core_narrator`.
+
+`DYNAMIC_PROFILE_CLOCK` and `DYNAMIC_PROFILE_STATE_*` in `conf_opts` are playthrough data, as are explicit manual requests under `DYNAMIC_PROFILE_MANUAL_*`. Reusable profile policy stays global. Eventlog's `dynamic_profile_pending` flag lets the worker account delivered, relevant events before age cleanup; old restored rows start accounted. Combat barks remain context but do not count toward the trigger.
+
+The worker visits all known eligible NPCs, accounts at most 200 events per pass, and generates for at most one NPC per pass. It respects profile/NPC disables, locks, selected fields and the interaction switch. Failed attempts consume cooldown only. Generated fields, recovery history and progress commit together after checking the timeline and current profile. Legacy client timer batches are ignored; manual actions use the explicit manual route.

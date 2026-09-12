@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/tmpl/dynamic_profile_schedule.php';
 
 $enginePath = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'lib' . DIRECTORY_SEPARATOR . 'bootstrap.php');
@@ -90,6 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_narrator'])) {
     ];
 
     if ($saveError === '') {
+        foreach (dps_policy((array)($_POST['dynamic_schedule'] ?? [])) as $key=>$value) $payload[$key]=(string)$value;
         $narrator->setMultiple($payload);
         $narrator->setDynamicProfileFields($dynamicProfileFields);
         header('Location: ' . $_SERVER['REQUEST_URI']);
@@ -669,7 +671,8 @@ if (!$isEmbed) {
                     </label>
                     <span class="hint">Allow narrator profile fields to evolve over time.</span>
 
-                    <label class="field-selection-label">Field Selection</label>
+                    <?php dps_render_controls($narrator->getAll(), true); ?>
+                    <label class="field-selection-label">Fields to update</label>
                     <span class="hint">Select which fields dynamic profile can update:</span>
                     <div class="field-chips">
                         <label class="field-chip">
