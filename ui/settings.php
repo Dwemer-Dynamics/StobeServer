@@ -100,11 +100,6 @@ try {
                 'value' => 'http://127.0.0.1:8082',
                 'description' => 'MiniMe/TXT2VEC service base URL. Use the local DwemerDistro endpoint or a reachable remote service URL.',
             ],
-            [
-                'id' => 'DYNAMIC_PROFILE_INTERVAL_HOURS',
-                'value' => '24',
-                'description' => 'In-game hours between dynamic profile refreshes for enabled NPCs. Allowed range: 1-720.',
-            ],
         ];
 
         foreach ($requiredSettings as $requiredSetting) {
@@ -212,6 +207,8 @@ function stobeHideFromGlobalSettingsUi(string $id): bool
     if ($idUpper === '') {
         return true;
     }
+
+    if (str_starts_with($idUpper, 'DYNAMIC_PROFILE_') || $idUpper === 'CONTEXT_HISTORY_DYNAMIC_PROFILE') return true;
 
     // Internal/system keys not meant for this page.
     if ($idUpper === 'ACTIVE_CAMPAIGN') {

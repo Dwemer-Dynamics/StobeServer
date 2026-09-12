@@ -63,6 +63,9 @@ if ($retentionConn) {
     finally { pg_close($retentionConn); }
 }
 
+require_once $enginePath . 'lib/dynamic_profile_scheduler.php';
+dps_run();
+
 if (!stobeInteractionAllowed()) exit(0);
 
 if ($tickGamets <= 0) {
@@ -86,9 +89,6 @@ try {
         stobeMaybeRunRegularMemoryCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
     }
     stobeBackgroundRecordTick($tickGamets);
-    if (function_exists('stobeMaybeRunDynamicProfileCycle')) {
-        stobeMaybeRunDynamicProfileCycle($tickEventType, $tickTimestamp, $tickGamets, $tickPayload);
-    }
     stobeBackgroundRecordTick($tickGamets);
     if (function_exists('stobeMaybeRunAutoDiaryCycle')) {
         stobeMaybeRunAutoDiaryCycle($tickTimestamp, $tickGamets);
