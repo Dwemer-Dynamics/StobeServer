@@ -12270,6 +12270,7 @@ function formatResponse(
     int $ttsDurationMs = 0,
     string $utteranceId = ''
 ): string {
+    stobeInteractionRequire();
     $metadata = [];
     if ($utteranceId !== '') {
         $metadata[] = 'uid=' . $utteranceId;
@@ -13340,6 +13341,7 @@ function streamResponse(
     int $deliveryGamets = 0,
     array $options = []
 ): void {
+    stobeInteractionRequire();
     // Normalize accidental raw JSON payloads (including truncated JSON) before
     // splitting into streamed lines.
     $structuredFromMessage = stobeParseStructuredDialogueResponse($message, 'chat');
@@ -13440,6 +13442,7 @@ function streamResponse(
                 : $chunk;
             $suppressTts = boolval($options['suppress_tts'] ?? false) || $ttsText === '';
             if ($ttsEnabled && !$suppressTts && strcasecmp($action, 'ScriptQueue') === 0) {
+                stobeInteractionRequire();
                 $ttsResult = stobeSynthesizePocketTtsLine($actor, $ttsText, $actorData);
                 $ttsHash = trim(strval($ttsResult['hash'] ?? ''));
                 $ttsDurationMs = intval($ttsResult['duration_ms'] ?? 0);

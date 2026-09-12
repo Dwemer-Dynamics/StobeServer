@@ -63,6 +63,8 @@ if ($retentionConn) {
     finally { pg_close($retentionConn); }
 }
 
+if (!stobeInteractionAllowed()) exit(0);
+
 if ($tickGamets <= 0) {
     stobeLogDebug('Background manager skipped: no gamets yet');
     exit(0);

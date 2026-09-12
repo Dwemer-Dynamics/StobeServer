@@ -748,6 +748,8 @@ function stobeReadWavDurationMsFromFile(string $path): int {
 }
 
 function stobeSynthesizePocketTtsLine(string $npcName, string $line, array|false $npcData = false, ?string $filterPresetOverride = null): array {
+    require_once dirname(__DIR__) . '/lib/stobe_interaction.php';
+    stobeInteractionRequire();
     return stobeSynthesizeTtsLine($npcName, $line, $npcData, $filterPresetOverride);
 }
 

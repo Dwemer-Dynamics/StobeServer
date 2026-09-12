@@ -2573,6 +2573,7 @@ function stobePersistGeneratedSpeechChunk(
     string $defaultEventType = '',
     string $defaultListener = ''
 ): ?array {
+    stobeInteractionRequire();
     $fallbackEventType = strtolower(trim($defaultEventType));
     $fallbackListener = normalizeParticipantNameToken($defaultListener);
     if ($fallbackListener === '') {

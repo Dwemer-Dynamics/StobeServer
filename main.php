@@ -1,4 +1,9 @@
 <?php
+require_once __DIR__ . '/lib/stobe_interaction.php';
+$interactionPacket = base64_decode(strval($_GET['DATA'] ?? ''), true);
+$interactionType = explode('|', $interactionPacket ?: '', 2)[0];
+if (stobeInteractionIsTrigger($interactionType)) stobeInteractionRequire();
+
 require_once __DIR__ . "/lib/playthrough_guard.php";
 pgr_http_preflight("main");
 
@@ -344,7 +349,7 @@ try {
         $needsInlineMaintenance = !$backgroundRunning;
     }
 
-    if ($needsInlineMaintenance) {
+    if ($needsInlineMaintenance && stobeInteractionAllowed()) {
         $maintenanceGamets = stobeResolveLatestGametsForInlineMaintenance(intval($gamets));
         if ($maintenanceGamets > 0) {
             stobeTryInlineMemoryMaintenanceFallback(
