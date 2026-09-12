@@ -64,13 +64,21 @@ function dps_candidates($conn): array {
         FROM public.{$product['npc_table']} n JOIN public.core_profiles p ON p.id=n.profile_id ORDER BY n.id")) ?: [];
     $candidates = [];
     foreach ($rows as $row) {
-        $metadata = array_replace(dps_json($row['profile_metadata']), dps_json($row['metadata'] ?? ''));
-        $enabled = $metadata['DYNAMIC_PROFILE_ENABLED'] ?? $row['dynamic_profile'] ?? false;
+        // Kenshi also stores legacy NPC overrides in extended_data, with case-insensitive keys.
+        $extended = dps_json($row['extended_data'] ?? '');
+        $metadata = array_replace(
+            array_change_key_case(dps_json($row['profile_metadata']), CASE_UPPER),
+            array_change_key_case(dps_json($row['metadata'] ?? ''), CASE_UPPER),
+            array_change_key_case((array)($extended['setting_overrides'] ?? []), CASE_UPPER),
+            array_change_key_case(array_filter($extended, static fn($value)=>is_scalar($value)), CASE_UPPER)
+        );
+        $enabled = $metadata['DYNAMIC_PROFILE_ENABLED'] ?? $row['dynamic_profile'] ?? true;
         if (isset($row['dynamic_profile']) && !in_array($row['dynamic_profile'], [true,1,'1','t','true'],true)) $enabled = false;
         $name = trim((string)$row[$product['name']]);
         if ($name === '' || $name === 'The Narrator') continue;
         $allowed = $product['prefix'] === 'stobe' ? ['backstory','personality','occupation','speechstyle','goals'] : ['personality','occupation','skills','speechstyle','goals'];
         $fields = $metadata['DYNAMIC_PROFILE_FIELDS'] ?? ['personality','speechstyle','goals'];
+        if (is_string($fields)) $fields = json_decode($fields,true) ?? array_map('trim',explode(',',$fields));
         $fields = array_values(array_intersect(is_array($fields) ? $fields : [], $allowed));
         $row['key'] = 'DYNAMIC_PROFILE_STATE_NPC_' . (int)$row['id'];
         $row['name'] = $name;
