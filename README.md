@@ -11,6 +11,15 @@ It is the Kenshi-side counterpart to HerikaServer patterns (event routing, promp
 4. LLM connectors generate responses.
 5. Responses are streamed back to the plugin and optional TTS is produced/cached.
 
+## Kenshi Live Director
+
+`director_request.php` accepts a natural-language request, the plugin's current
+player-squad context, and its exact Lua API manifest. It uses the configured
+default LLM connector and returns a strict capability-declared Lua plan. The
+server rejects malformed responses, undeclared or unknown bindings, dynamic
+access to the `kenshi` API, and blocked OS-style libraries before the plugin can
+offer the script for review.
+
 ## Background Processor
 
 StobeServer now includes a Herika-style background processor:
