@@ -8,6 +8,8 @@
  * compatibility shims used by legacy Herika-style pages.
  */
 
+require_once __DIR__ . '/stobe_interaction.php';
+
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
 

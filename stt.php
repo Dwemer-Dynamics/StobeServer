@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/lib/stobe_interaction.php';
+stobeInteractionRequire();
+
 
 /**
  * StobeServer - Speech-to-Text Endpoint
