@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/playthrough_runtime.php';
 
 /**
  * PostgreSQL database driver for StobeServer.
@@ -10,6 +11,7 @@ class sql {
     private string $lastError = '';
 
     public function __construct() {
+        ptr_runtime_enter();
         $host = trim(strval(getenv('STOBE_DB_HOST') ?: 'localhost'));
         $dbname = trim(strval(getenv('STOBE_DB_NAME') ?: 'stobe'));
         $user = trim(strval(getenv('STOBE_DB_USER') ?: 'dwemer'));

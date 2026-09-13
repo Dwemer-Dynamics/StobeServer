@@ -2849,6 +2849,15 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             }
         });
 
+        $applyPatch('core_action', 202609040001, static function () use ($db): void {
+            $result = $db->exec("INSERT INTO core_action (command, action_name, description, is_activated, updated_at)
+                VALUES ('MOVE_TO', 'MoveTo', 'Move to the specified character, object, or known point and stop nearby.', TRUE, NOW())
+                ON CONFLICT (command) DO NOTHING");
+            if ($result === false) {
+                throw new RuntimeException('Could not register MoveTo.');
+            }
+        });
+
         try {
             $seededAddenda = stobeWorldStateSeedBuiltinAddenda();
             stobeLogInfo('World-state addenda seeded', ['rows' => $seededAddenda]);
@@ -2861,3 +2870,23 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
 }
 
 stobeRunDatabaseUpdates();
+
+
+// Install durable event accounting before refreshing the snapshot schema.
+if ($GLOBALS['db']->query(file_get_contents(dirname(__DIR__) . '/lib/dynamic_profile_scheduler.sql')) === false) {
+    throw new RuntimeException('Dynamic profile migration failed.');
+}
+
+// Keep the installed snapshot functions and pgAdmin comments aligned with the current table policy.
+require_once dirname(__DIR__) . '/lib/playthrough_schema.php';
+require_once dirname(__DIR__) . '/lib/playthrough_preferences.php';
+$playthroughPolicyConn = ptp_connect();
+if ($playthroughPolicyConn) {
+    try {
+        if (!pts_update_playthrough_policy($playthroughPolicyConn)) {
+            Logger::error('Playthrough Save table policy update failed; retry the database update.');
+        }
+    } finally { pg_close($playthroughPolicyConn); }
+} else {
+    Logger::error('Cannot connect to update the Playthrough Save table policy.');
+}

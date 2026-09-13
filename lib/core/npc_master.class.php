@@ -1,5 +1,7 @@
 <?php
 
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'tts_filter_presets.php';
+
 /**
  * Legacy-style NPC master adapter.
  * Exposes Herika-era method names while using Stobe core_npc data helpers.
@@ -152,6 +154,14 @@ class NpcMaster
 
         if (array_key_exists('metadata', $input)) {
             $mapped['metadata'] = self::parseJsonValue($input['metadata']);
+            $storedPreset = stobeTtsFilterPresetFromMetadata($mapped['metadata']);
+            $mapped['metadata'] = stobeMergeTtsFilterPresetIntoMetadata($mapped['metadata'], $storedPreset);
+        }
+        if (array_key_exists('tts_filter_preset', $input)) {
+            $mapped['metadata'] = stobeMergeTtsFilterPresetIntoMetadata(
+                $mapped['metadata'] ?? [],
+                $input['tts_filter_preset']
+            );
         }
         if (array_key_exists('extended_data', $input)) {
             $mapped['extended_data'] = self::parseJsonValue($input['extended_data']);
