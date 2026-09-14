@@ -32,7 +32,7 @@
                 choices.add(new Option(row.label || row.name, String(row.id)));
             }
             status.textContent = state.available
-                ? (state.auto_switch_pending && toggle.checked ? state.auto_switch_status : (result.notice || (toggle.checked ? (state.auto_switch_status || 'Automatic switching is on.') : 'Automatic switching is off.')))
+                ? (state.auto_switch_pending && toggle.checked ? state.auto_switch_status : (toggle.checked ? (state.auto_switch_status || 'Automatic switching is on.') : 'Automatic switching is off.'))
                 : 'Open Manage saves to set up Playthrough Saves first.';
         } catch (_) {
             state = null;
