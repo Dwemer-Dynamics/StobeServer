@@ -192,6 +192,12 @@ function pas_handshake($conn, array $input): array {
         ptr_write($conn, 'PLAYTHROUGH_SESSION', $session);
         $state = pth_state($conn);
         if (!$state['available']) return ['ok'=>false] + $session;
+        // Older installs can have live progress without an active manager entry.
+        // Offer it as an active candidate so exact identity matching keeps that progress.
+        if (!$state['active_id']) {
+            $live = json_decode(pg_fetch_result(pth_query($conn, "SELECT stobe_meta.playthrough_identity('public')"),0,0),true);
+            $state['playthroughs'][] = ['id'=>0,'name'=>$name,'active'=>true,'available'=>true,'last_gamets'=>$input['gamets']] + $live;
+        }
         try {
             $target = pas_select($state['playthroughs'], $input['character_id'], $name, $input['gamets'], empty($input['new_game']), ptr_read($conn, 'PLAYTHROUGH_CHARACTER_LINKS', []), $input['player_members'] ?? []);
         } catch (RuntimeException $error) {
@@ -211,6 +217,15 @@ function pas_handshake($conn, array $input): array {
             $session['message'] = 'Created playthrough for ' . $name . '. Previous playthrough saved.';
         } elseif ($target['active']) {
             pth_query($conn, 'BEGIN');
+            if ($target['id'] === 0) {
+                $label = $name; $suffix = 2;
+                while (pg_num_rows(pth_query($conn, "SELECT id FROM stobe_meta.playthrough_profiles WHERE lower(name)=lower($1)", [$label]))) {
+                    $label = $name . ' (' . $suffix++ . ')';
+                }
+                $target['id'] = (int)pth_capture($conn, $label)['id'];
+                pth_query($conn, "UPDATE stobe_meta.playthrough_profiles SET is_active=true,retention_pinned=true WHERE id=$1", [$target['id']]);
+                ptr_write($conn, 'PLAYTHROUGH_HOME_REVISION', bin2hex(random_bytes(16)));
+            }
             $session = pas_bind($conn, $session, $target['id']);
             pth_query($conn, 'COMMIT');
         } else {
