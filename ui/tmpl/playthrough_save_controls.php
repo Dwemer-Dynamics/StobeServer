@@ -27,3 +27,5 @@
 #retention-section .ps-kept-row p { flex-basis:100%; margin:0; font-size:0.9em; }
 </style>
 <script src="<?= htmlspecialchars($webRoot . '/ui/js/playthrough_retention.js?v=' . filemtime(dirname(__DIR__) . '/js/playthrough_retention.js'), ENT_QUOTES) ?>"></script>
+
+<?php include __DIR__ . '/playthrough_auto_switch.php'; ?>
