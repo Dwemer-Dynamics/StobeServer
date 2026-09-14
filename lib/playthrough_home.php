@@ -51,6 +51,7 @@ function pth_state($conn): array {
         $label = ($day !== null ? 'Day ' . $day : 'Day unknown') . ' — ' . $party;
         $gameDate = $day !== null ? 'Day ' . $day : '';
         $choices[] = ['id'=>(int)$row['id'], 'name'=>$row['name'], 'active'=>$row['is_active']==='t',
+            'available'=>$row['schema_oid']!==null, 'character_id'=>(string)($identity['character_id'] ?? ''), 'last_gamets'=>$gamets,
             'label'=>$label, 'player_name'=>$player, 'player_level'=>$level, 'player_faction_members'=>$members,
             'game_date'=>$gameDate, 'created_at'=>$row['created_at'] ?? '',
             'size_bytes'=>max(0,(int)($row['size_bytes'] ?? 0)), 'kind'=>$row['retention_kind'],
@@ -63,7 +64,18 @@ function pth_state($conn): array {
         if ($labelCounts[$choice['label']] > 1) $choice['label'] .= ' · Save #' . $choice['id'];
     }
     unset($choice);
-    return ['available'=>true, 'active_id'=>$id,
+    $live = pg_fetch_all(pth_query($conn, "SELECT CASE id WHEN 'PLAYTHROUGH_CAMPAIGN_ID' THEN 'playthrough_id' ELSE 'player_name' END AS id,value FROM public.conf_opts WHERE id IN ('PLAYTHROUGH_CAMPAIGN_ID','PLAYTHROUGH_CAMPAIGN_NAME')")) ?: [];
+    $live = array_column($live, 'value', 'id');
+    $liveIdentity = json_decode(pg_fetch_result(pth_query($conn, "SELECT stobe_meta.playthrough_identity('public')"),0,0),true);
+    foreach ($choices as &$choice) if ($choice['active']) {
+        $choice['player_faction_members'] = $liveIdentity['player_faction_members'] ?? [];
+        $choice['character_id'] = $live['playthrough_id'] ?? '';
+        $choice['player_name'] = $live['player_name'] ?? $choice['player_name'];
+    }
+    unset($choice);
+    $session = ptr_read($conn, 'PLAYTHROUGH_SESSION', []);
+    return ['available'=>true, 'active_id'=>$id, 'auto_switch'=>ptr_read($conn,'PLAYTHROUGH_AUTO_SWITCH',false)===true,
+        'auto_switch_pending'=>($session['status'] ?? '')==='pending', 'auto_switch_status'=>$session['message'] ?? '',
         'token'=>hash('sha256', json_encode([$id, $active[0]['schema_name'] ?? '', $revision])), 'playthroughs'=>$choices];
 }
 
@@ -111,11 +123,11 @@ function pth_capture($conn, string $name, ?array $existing = null, string $kind 
 }
 
 // Both the full manager and home controls use this one guarded switch/new operation.
-function pth_change($conn, string $action, array $input): array {
+function pth_change($conn, string $action, array $input, bool $runtimeManaged = false): array {
     if (!in_array($action,['switch','new'],true)) throw new InvalidArgumentException('Unknown playthrough action.');
     $runtime = null; $locked = false; $meta = ptp_product()['meta'];
     try {
-        $runtime = ptr_runtime_begin_switch(30.0,$conn);
+        if (!$runtimeManaged) $runtime = ptr_runtime_begin_switch(30.0,$conn);
         if (!ptr_lock($conn)) throw new RuntimeException('Another Playthrough Save operation is running. Try again shortly.');
         $locked = true;
         pth_query($conn,'BEGIN');
@@ -156,10 +168,21 @@ function pth_change($conn, string $action, array $input): array {
         if (empty($result['success'])) throw new RuntimeException('Could not load the playthrough. Your previous data was kept.');
         if ($action === 'new') $id = (int)pth_capture($conn,$name)['id'];
         pth_query($conn,"UPDATE {$meta}.playthrough_profiles SET is_active=(id=$1)",[$id]);
+        if (isset($input['_session'])) {
+            require_once __DIR__ . '/playthrough_switching.php';
+            pas_bind($conn, $input['_session'], $id);
+        } elseif (ptr_read($conn,'PLAYTHROUGH_AUTO_SWITCH',false) === true) {
+            // Manual restoration invalidates any previously admitted game session.
+            require_once __DIR__ . '/playthrough_switching.php';
+            // A deliberate manual restore becomes this character's destination for later loads.
+            $identity = pg_fetch_assoc(pth_query($conn, "SELECT value FROM public.conf_opts WHERE id='PLAYTHROUGH_CAMPAIGN_ID'"));
+            if (preg_match('/^[a-f0-9]{32}$/D', $identity['value'] ?? '')) pas_link($conn, $identity['value'], $id);
+            pas_invalidate($conn);
+        }
         ptr_write($conn,'PLAYTHROUGH_HOME_REVISION',bin2hex(random_bytes(16)));
         pth_query($conn,'COMMIT');
         ptr_unlock($conn); $locked = false;
-        $ready = ptr_runtime_finish_switch($runtime);
+        $ready = $runtimeManaged || ptr_runtime_finish_switch($runtime);
         return ['success'=>true,'error'=>'','id'=>$id,'name'=>$name,'runtime_ready'=>$ready,'autosave_id'=>$autosaveId,
             'message'=>($action==='new'?'New playthrough ready: ':'Playthrough loaded: ') . $name . '. ' .
                 ($ready?($action==='new'?'Start your new game.':'Load the matching game save.'):'Background processing could not be confirmed. Restart this mod server before starting the game.')];

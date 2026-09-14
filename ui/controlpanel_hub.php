@@ -259,6 +259,7 @@ if (!isset($tabMap[$activeTab])) {
                 $hasPage = ($targetSrc !== '');
             ?>
             <div id="tab-<?= h($tab['id']) ?>" class="tab-content <?= $isActive ? 'active' : '' ?>">
+                <?php if ($tab['id'] === 'storage' && $distroDataManagerAvailable) include __DIR__ . '/tmpl/playthrough_auto_switch.php'; ?>
                 <?php if ($hasPage): ?>
                     <div class="embed-wrap">
                         <iframe
