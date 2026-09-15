@@ -86,9 +86,17 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
     ];
     $config = getLlmConfigForNpc($actors[$seed]);
     $config['max_tokens'] = 4000;
+    $format = ['type' => 'json_object'];
+    if (!empty($config['config']['json_schema'])) {
+        $format = dwemerDirectorResponseFormat($actors, $catalog, $player);
+    }
     $raw = stobeCallLLM($messages, $config, ['event_type' => 'director', 'npc_name' => $seed,
-        'response_format' => ['type' => 'json_object']]);
-    $decoded = is_string($raw) ? json_decode($raw, true) : null;
+        'response_format' => $format]);
+    try {
+        $decoded = is_string($raw) ? json_decode($raw, true, 512, JSON_THROW_ON_ERROR) : null;
+    } catch (JsonException $error) {
+        throw new RuntimeException('Director did not return JSON: ' . $error->getMessage(), 0, $error);
+    }
     if (!is_array($decoded)) throw new RuntimeException('Director did not return a JSON scene');
     $scene = dwemerValidateDirectorScene($decoded, $actors, $catalog, $player);
     // Indexed transport fields use the existing Kenshi JSON reader without a new runtime dependency.
