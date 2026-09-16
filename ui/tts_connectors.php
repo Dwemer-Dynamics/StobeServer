@@ -389,7 +389,10 @@ main{padding:10px 5px 5px}.layout{display:grid;grid-template-columns:minmax(240p
 <option value="sonic-3"><option value="sonic-3.5"><option value="sonic-3.6">
 <option value="sonic-3.5-2026-05-04"><option value="sonic-3.6-2026-08-27">
 </datalist>
-<div class="help">Provider model, such as sonic-3.5, sonic-3.6, or inworld-tts-1. A dated snapshot pins a release.</div>
+<datalist id="inworld_models">
+<option value="inworld-tts-2-flash">
+</datalist>
+<div class="help">Provider model, such as sonic-3.5, sonic-3.6, or inworld-tts-2-flash. Inworld Flash prioritizes speed. A dated snapshot pins a release.</div>
 </div>
 </div>
 
@@ -472,6 +475,7 @@ main{padding:10px 5px 5px}.layout{display:grid;grid-template-columns:minmax(240p
     if (rowAccent) rowAccent.style.display = s === 'cartesia' ? '' : 'none';
     if (modelInput) {
       if (s === 'cartesia') modelInput.setAttribute('list', 'cartesia_models');
+      else if (inworld) modelInput.setAttribute('list', 'inworld_models');
       else modelInput.removeAttribute('list');
     }
     if (rowApiBadge) rowApiBadge.style.display = showApiBadge ? '' : 'none';
