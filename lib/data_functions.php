@@ -6560,6 +6560,20 @@ function DataEventLog(
                 AND {$deliveryVisibilitySql}";
     $params = [];
 
+    // Exclude user-selected types from prompt history without changing recorded events.
+    $filteredTypes = array_values(array_unique(array_filter(array_map(
+        static fn($type): string => strtolower(trim($type)),
+        explode(',', getSetting('EVENT_TYPE_FILTER', ''))
+    ), static fn($type): bool => $type !== '')));
+    if ($filteredTypes !== []) {
+        $typeParams = [];
+        foreach ($filteredTypes as $type) {
+            $params[] = $type;
+            $typeParams[] = '$' . count($params);
+        }
+        $query .= ' AND LOWER(type) NOT IN (' . implode(', ', $typeParams) . ')';
+    }
+
     if (normalizeParticipantNameToken($actorFilter) !== '') {
         $query .= ' AND ' . stobeEventAudienceSql($actorFilter, $params, $actorAliases);
     }
