@@ -2865,6 +2865,68 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             stobeLogException($exception, 'World-state addendum seed failed');
         }
 
+        $applyPatch('biography_voice_filters', 202609180001, static function () use ($db): void {
+            if ($db->exec("ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS tts_filter_preset TEXT") === false) throw new RuntimeException("Biography filter migration failed");
+            if ($db->exec("ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS tts_filter_preset TEXT") === false) throw new RuntimeException("Biography filter migration failed");
+            if ($db->exec("CREATE OR REPLACE VIEW combined_bio_random AS
+                 SELECT
+                    c.id,
+                    c.type,
+                    c.description,
+                    c.name,
+                    c.race,
+                    c.gender,
+                    c.faction,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled, c.tts_filter_preset
+                 FROM bio_random_custom c
+                 UNION ALL
+                 SELECT
+                    b.id,
+                    b.type,
+                    b.description,
+                    b.name,
+                    b.race,
+                    b.gender,
+                    b.faction,
+                    b.created_at,
+                    b.updated_at,
+                    b.is_enabled, b.tts_filter_preset
+                 FROM bio_random b
+                 LEFT JOIN bio_random_custom c
+                   ON LOWER(b.type) = LOWER(c.type)
+                  AND LOWER(b.description) = LOWER(c.description)
+                  AND LOWER(COALESCE(b.name, '')) = LOWER(COALESCE(c.name, ''))
+                 WHERE c.id IS NULL") === false) throw new RuntimeException("Biography filter view migration failed");
+            if ($db->exec("ALTER TABLE bio_unique ADD COLUMN IF NOT EXISTS tts_filter_preset TEXT") === false) throw new RuntimeException("Biography filter migration failed");
+            if ($db->exec("ALTER TABLE bio_unique_custom ADD COLUMN IF NOT EXISTS tts_filter_preset TEXT") === false) throw new RuntimeException("Biography filter migration failed");
+            if ($db->exec("CREATE OR REPLACE VIEW combined_bio_unique AS
+                 SELECT
+                    c.id,
+                    c.name,
+                    c.type,
+                    c.description,
+                    c.created_at,
+                    c.updated_at,
+                    c.is_enabled, c.tts_filter_preset
+                 FROM bio_unique_custom c
+                 UNION ALL
+                 SELECT
+                    b.id,
+                    b.name,
+                    b.type,
+                    b.description,
+                    b.created_at,
+                    b.updated_at,
+                    b.is_enabled, b.tts_filter_preset
+                 FROM bio_unique b
+                 LEFT JOIN bio_unique_custom c
+                   ON LOWER(b.name) = LOWER(c.name)
+                  AND LOWER(b.type) = LOWER(c.type)
+                 WHERE c.id IS NULL") === false) throw new RuntimeException("Biography filter view migration failed");
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

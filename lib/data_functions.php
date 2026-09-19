@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/tts_filter_presets.php";
 
 /**
  * Core data functions for StobeServer.
@@ -5391,7 +5392,7 @@ function loadBioUniqueTraitSelections(string $name): array {
     try {
         if (count($lookupKeys) === 1) {
             $rows = $db->fetchAll(
-                "SELECT name, type, description
+                "SELECT name, type, description, tts_filter_preset
                  FROM combined_bio_unique
                  WHERE LOWER(name) = $1
                    AND COALESCE(is_enabled, TRUE) = TRUE
@@ -5400,7 +5401,7 @@ function loadBioUniqueTraitSelections(string $name): array {
             );
         } else {
             $rows = $db->fetchAll(
-                "SELECT name, type, description
+                "SELECT name, type, description, tts_filter_preset
                  FROM combined_bio_unique
                  WHERE LOWER(name) IN ($1, $2)
                    AND COALESCE(is_enabled, TRUE) = TRUE
@@ -5433,6 +5434,7 @@ function loadBioUniqueTraitSelections(string $name): array {
         }
         $result[$type] = [
             'description' => $description,
+            'tts_filter_preset' => $row['tts_filter_preset'] ?? null,
         ];
     }
 
@@ -5483,7 +5485,7 @@ function loadBioRandomCandidates(
     $rows = [];
     try {
         $rows = $db->fetchAll(
-            "SELECT type, description, race, gender, faction, name
+            "SELECT type, description, race, gender, faction, name, tts_filter_preset
              FROM combined_bio_random
              WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY id ASC"
@@ -5547,6 +5549,7 @@ function loadBioRandomCandidates(
         if (!isset($candidatesByType[$type][$specificity][$descriptionKey])) {
             $candidatesByType[$type][$specificity][$descriptionKey] = [
                 'description' => $description,
+            'tts_filter_preset' => $row['tts_filter_preset'] ?? null,
             ];
         }
     }
@@ -5604,6 +5607,7 @@ function selectRandomBioTraitSelections(
             }
             $selections[$type] = [
                 'description' => trim(strval($options[$bestIndex]['description'] ?? '')),
+                'tts_filter_preset' => $options[$bestIndex]['tts_filter_preset'] ?? null,
             ];
             continue;
         }
@@ -5611,6 +5615,7 @@ function selectRandomBioTraitSelections(
         $randomIndex = random_int(0, count($options) - 1);
         $selections[$type] = [
             'description' => trim(strval($options[$randomIndex]['description'] ?? '')),
+            'tts_filter_preset' => $options[$randomIndex]['tts_filter_preset'] ?? null,
         ];
     }
 
@@ -5663,7 +5668,19 @@ function selectBioTraitsForNpc(
         $traitSources[$type] = 'default';
     }
 
+    // Unique presets win; use the established trait order within each pool.
+    $voiceFilter = null;
+    foreach (['unique' => $uniqueSelections, 'random' => $randomSelections] as $source => $selections) {
+        foreach ($requiredTypes as $type) {
+            if (($traitSources[$type] ?? '') !== $source) continue;
+            $preset = $selections[$type]['tts_filter_preset'] ?? null;
+            if ($preset === null || $preset === '') continue;
+            $voiceFilter = stobeNormalizeTtsFilterPresetId($preset);
+            break 2;
+        }
+    }
     return [
+        'tts_filter_preset' => $voiceFilter,
         'traits' => $resolvedTraits,
         'sources' => $traitSources,
     ];
@@ -9001,6 +9018,9 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
     );
 
     $metadataArray = normalizeCoreNpcMetadata($profile['metadata'] ?? '{}');
+    if (isset($traitSelection['tts_filter_preset']) && !array_key_exists('tts_filter_preset', $metadataArray)) {
+        $metadataArray['tts_filter_preset'] = $traitSelection['tts_filter_preset'];
+    }
     unset($metadataArray['bounty_info'], $metadataArray['bounty_text']);
     $metadataSource = trim(strval($metadataArray['source'] ?? ''));
     if ($isBracketName && $isPlaceholderWrite) {
@@ -9119,7 +9139,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             profile_id = COALESCE(core_npc_master.profile_id, EXCLUDED.profile_id),
             voiceid = COALESCE(NULLIF(core_npc_master.voiceid, ''), EXCLUDED.voiceid),
             metadata = CASE
-                WHEN core_npc_master.metadata IS NULL OR core_npc_master.metadata = '{}'::jsonb OR core_npc_master.metadata = '[]'::jsonb THEN EXCLUDED.metadata
+                WHEN core_npc_master.metadata IS NULL OR core_npc_master.metadata = '{}'::jsonb OR core_npc_master.metadata = '[]'::jsonb THEN (EXCLUDED.metadata - 'tts_filter_preset')
                 ELSE core_npc_master.metadata
             END,
             extended_data = CASE
@@ -10992,6 +11012,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $existingMasterMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
         $existingMasterAppearance = trim(strval($existingMasterRow['appearance'] ?? ''));
     }
+    if (!$existingMasterRow && isset($traitSelection['tts_filter_preset']) && !array_key_exists('tts_filter_preset', $metadataForStorage)) {
+        $metadataForStorage['tts_filter_preset'] = $traitSelection['tts_filter_preset'];
+    }
     $existingAppearanceShowsCutHorns = stripos($existingMasterAppearance, 'Their horns have been cut off.') !== false;
     $existingHornsCut = coerceBoolean($existingMasterMetadata['horns_cut'] ?? false) || $existingAppearanceShowsCutHorns;
     if (
@@ -11378,7 +11401,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             profile_id = COALESCE(core_npc_master.profile_id, EXCLUDED.profile_id),
             is_animal = $6,
             is_slave = $7,
-            metadata = $8::jsonb,
+            metadata = ($8::jsonb - 'tts_filter_preset') || CASE
+                WHEN core_npc_master.metadata ? 'tts_filter_preset'
+                THEN jsonb_build_object('tts_filter_preset', core_npc_master.metadata->'tts_filter_preset')
+                ELSE '{}'::jsonb END,
             gamets_last_updated = CASE
                 WHEN $9 > core_npc_master.gamets_last_updated THEN $9
                 ELSE core_npc_master.gamets_last_updated
