@@ -1,5 +1,7 @@
 # StobeServer
 
+For AI assistants and coding agents, start with [AGENTS.md](AGENTS.md), then the [architecture and custom-extension guide](docs/agent-guide.md) and [setup and validation guide](docs/building.md). These files ship with the server; preserve their relative paths in application packages.
+
 PHP backend server for the Stobe AI Framework for Kenshi. 
 It is the Kenshi-side counterpart to HerikaServer patterns (event routing, prompt building, connector model), with Stobe-specific schema and game logic.
 
