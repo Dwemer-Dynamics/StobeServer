@@ -2927,6 +2927,12 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
                  WHERE c.id IS NULL") === false) throw new RuntimeException("Biography filter view migration failed");
         });
 
+        $applyPatch('npc_plugin_extended_data', 20260919001, static function () use ($db): void {
+            if (!$db->query(file_get_contents(dirname(__DIR__) . '/lib/core/database_schema/plugin_extended_data.sql'))) {
+                throw new RuntimeException('NPC plugin data migration failed.');
+            }
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

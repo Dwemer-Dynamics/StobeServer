@@ -831,7 +831,8 @@ CREATE TABLE IF NOT EXISTS core_npc (
     is_slave BOOLEAN DEFAULT FALSE,
     world_knowledge_tags TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    plugin_extended_data JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object')
 );
 
 CREATE INDEX IF NOT EXISTS idx_core_npc_name ON core_npc (name);
@@ -887,7 +888,8 @@ CREATE TABLE IF NOT EXISTS core_npc_master_history (
     snapshot_hash TEXT DEFAULT '',
     source_created_at TIMESTAMP,
     source_updated_at TIMESTAMP,
-    created TIMESTAMP DEFAULT NOW()
+    created TIMESTAMP DEFAULT NOW(),
+    plugin_extended_data JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(plugin_extended_data) = 'object')
 );
 
 CREATE INDEX IF NOT EXISTS idx_core_npc_master_history_npc_id ON core_npc_master_history (npc_id);
