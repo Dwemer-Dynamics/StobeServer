@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/lib/playthrough_switching.php';
+pas_http_guard();
 require_once __DIR__ . '/lib/stobe_interaction.php';
 $interactionPacket = base64_decode(strval($_GET['DATA'] ?? ''), true);
 $interactionType = explode('|', $interactionPacket ?: '', 2)[0];

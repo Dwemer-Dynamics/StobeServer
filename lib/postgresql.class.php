@@ -27,6 +27,11 @@ class sql {
         if (!$this->conn) {
             throw new Exception("Database connection failed");
         }
+        if ((isset($_SERVER['HTTP_X_STOBE_PLAYTHROUGH']) && basename($_SERVER['SCRIPT_FILENAME'] ?? '') !== 'playthrough_session.php')
+            || in_array(basename($_SERVER['SCRIPT_FILENAME'] ?? ''), ['main.php','gamedata.php'], true)) {
+            require_once __DIR__ . '/playthrough_switching.php';
+            pas_guard($this->conn, true);
+        }
     }
 
     private function escapeConnectionValue(string $value): string {

@@ -3,7 +3,7 @@
 CREATE OR REPLACE FUNCTION stobe_meta.is_global_setting(table_name text, setting_id text)
 RETURNS boolean AS $$
 BEGIN
-    IF setting_id ~ '^(PLAYER_NAME|PLAYER_BIO|PLAYER_CATS|CurrentParty|PLAYER_SQUADS)$'
+    IF setting_id ~ '^(PLAYTHROUGH_CAMPAIGN_ID|PLAYTHROUGH_CAMPAIGN_NAME|PLAYER_NAME|PLAYER_BIO|PLAYER_CATS|CurrentParty|PLAYER_SQUADS)$'
         OR setting_id ~ '^(DIARY_LAST_|AUTO_DIARY_LAST_|NARRATOR_AUTO_DIARY_LAST_|DYNAMIC_PROFILE_MANUAL_|DYNAMIC_PROFILE_CLOCK$|DYNAMIC_PROFILE_STATE_|DYNAMIC_PROFILE_LAST_|DYNAMIC_PROFILE_LOAD_GRACE_|MEMORY_LAST_)' THEN
         RETURN false;
     END IF;
@@ -42,11 +42,13 @@ $$ LANGUAGE plpgsql;
 -- Identity is read from the captured schema, never from a different live playthrough.
 CREATE OR REPLACE FUNCTION stobe_meta.playthrough_identity(source_schema text)
 RETURNS jsonb AS $$
-DECLARE raw text; squads jsonb; squad jsonb; entries jsonb; entry jsonb;
+DECLARE character_id text; campaign_name text; raw text; squads jsonb; squad jsonb; entries jsonb; entry jsonb;
     member text; members jsonb := '[]'; fallback_members jsonb := '[]';
     dead_members jsonb := '[]'; npc record;
 BEGIN
     IF to_regclass(format('%I.conf_opts',source_schema)) IS NOT NULL THEN
+        EXECUTE format('SELECT value FROM %I.conf_opts WHERE id=$1',source_schema) INTO character_id USING 'PLAYTHROUGH_CAMPAIGN_ID';
+        EXECUTE format('SELECT value FROM %I.conf_opts WHERE id=$1',source_schema) INTO campaign_name USING 'PLAYTHROUGH_CAMPAIGN_NAME';
         EXECUTE format('SELECT value FROM %I.conf_opts WHERE id=$1',source_schema) INTO raw USING 'PLAYER_SQUADS';
         BEGIN squads := raw::jsonb; EXCEPTION WHEN invalid_text_representation THEN squads := NULL; END;
         IF jsonb_typeof(squads)='array' THEN
@@ -105,7 +107,7 @@ BEGIN
         WHERE NOT dead_members ? lower(value) GROUP BY lower(value)
     ) living;
 
-    RETURN jsonb_build_object('version',1,'party_policy','living_npcs_v1','player_faction_members',members);
+    RETURN jsonb_build_object('version',1,'character_id',coalesce(character_id,''),'player_name',coalesce(campaign_name,''),'party_policy','living_npcs_v1','player_faction_members',members);
 END;
 $$ LANGUAGE plpgsql STABLE;
 

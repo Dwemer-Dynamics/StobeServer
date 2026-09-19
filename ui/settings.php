@@ -16,6 +16,11 @@ try {
     if ($db) {
         $requiredSettings = [
             [
+                'id' => 'EVENT_TYPE_FILTER',
+                'value' => '',
+                'description' => 'Selected event types are excluded from AI conversation history. Events are still recorded. Custom types can be entered as comma-separated names.',
+            ],
+            [
                 'id' => 'AUTO_LOCK_PROFILE',
                 'value' => 'true',
                 'description' => 'When true, saving an NPC profile automatically locks it to prevent rollback/history overwrite updates.',
@@ -246,6 +251,9 @@ function stobeSettingLooksBoolean(string $value): bool
 function stobeSettingType(string $id, string $value): string
 {
     $idUpper = strtoupper($id);
+    if ($idUpper === 'EVENT_TYPE_FILTER') {
+        return 'textarea';
+    }
     $presetRule = stobePresetCatalog('global')[$idUpper] ?? null;
     if ($presetRule !== null) {
         return $presetRule['type'] === 'enum' ? 'select' : $presetRule['type'];
@@ -336,6 +344,9 @@ function stobeNormalizeSettingValue(string $id, string $rawValue, string $type):
 function stobeInferGroup(string $id): string
 {
     $idUpper = strtoupper($id);
+    if ($idUpper === 'EVENT_TYPE_FILTER') {
+        return 'Context';
+    }
 
     if (str_starts_with($idUpper, 'CORE_CONNECTOR_') || strpos($idUpper, 'API_KEY') !== false) {
         return 'LLM & API';
@@ -392,6 +403,7 @@ function stobeGroupSortWeight(string $group): int
         'Memory' => 10,
         'Core' => 20,
         'Bored Event' => 30,
+        'Context' => 45,
         'World Knowledge' => 50,
         'LLM & API' => 70,
         'Other' => 80,
@@ -728,6 +740,7 @@ $groupTabs = [
     'Bored Event' => 'ai-memory',
     'Other' => 'ai-memory',
     'World Knowledge' => 'context-knowledge',
+    'Context' => 'context-knowledge',
     'LLM & API' => 'global-connectors',
 ];
 
@@ -1095,7 +1108,16 @@ if (isset($grouped['LLM & API'])) {
                 text-align: left;
             }
         }
-    </style>
+    .event-type-toggles { display: grid; width: 100%; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 12px; margin-bottom: 10px; }
+.event-type-toggles label { display: flex; min-height: 30px; align-items: center; gap: 7px; color: #ddd; cursor: pointer; overflow-wrap: anywhere; min-width: 0; }
+.event-type-toggles label:focus-within { outline: 2px solid #d4a44a; outline-offset: 2px; }
+.event-type-toggles input { flex-shrink: 0; accent-color: #d4a44a; }
+.event-type-editor { flex: 1; min-width: 0; width: 100%; }
+.event-type-editor > label { display: block; margin-bottom: 5px; }
+.provider-body .event-type-editor textarea { min-height: 60px; }
+.event-type-editor p { font-size: 12px; color: #bbb; margin: 6px 0; }
+
+</style>
 </head>
 <body>
 <?php if (!$isEmbed): ?>
@@ -1274,6 +1296,64 @@ if (isset($grouped['LLM & API'])) {
     </form>
 
     <script>
+// Enhance the existing CSV field so the existing settings form share one value.
+document.querySelectorAll('textarea[name="settings[EVENT_TYPE_FILTER]"]').forEach((storage, index) => {
+    const choices = ["chat", "inputtext", "ginputtext", "infoaction", "death", "limb_loss", "itemfound", "quest", "rpg_lvlup", "combatend", "combatendmighty", "goodnight", "goodmorning", "injection"];
+    const parse = (value) => [...new Set(String(value).split(',').map((type) => type.trim().toLowerCase()).filter(Boolean))];
+    const editor = document.createElement('div');
+    editor.className = 'event-type-editor';
+    const hint = document.createElement('p');
+    hint.id = 'event-type-help-' + index;
+    hint.textContent = 'Checked types are excluded from AI context. Uncheck to include them. Save All applies your changes.';
+    const toggles = document.createElement('div');
+    toggles.className = 'event-type-toggles';
+    toggles.setAttribute('role', 'group');
+    toggles.setAttribute('aria-label', 'Event types to exclude');
+    toggles.setAttribute('aria-describedby', hint.id);
+    const customLabel = document.createElement('label');
+    customLabel.htmlFor = 'event-type-custom-' + index;
+    customLabel.textContent = 'Custom event types to exclude';
+    const custom = document.createElement('textarea');
+    custom.id = customLabel.htmlFor;
+    custom.rows = 2;
+    custom.placeholder = 'my_custom_event, another_event';
+    custom.readOnly = storage.readOnly;
+    const customHint = document.createElement('p');
+    customHint.id = 'event-type-custom-help-' + index;
+    customHint.textContent = 'Separate names with commas. Types do not need to appear in the log first.';
+    custom.setAttribute('aria-describedby', customHint.id);
+    const checkboxes = choices.map((type) => {
+        const label = document.createElement('label');
+        const labels = {"chat": "Dialogue", "inputtext": "Player Dialogue", "ginputtext": "Group Dialogue", "infoaction": "Actions", "death": "Death", "limb_loss": "Limb Loss", "itemfound": "Item Pickups", "quest": "Quests", "rpg_lvlup": "Level Up", "combatend": "Combat Ended", "combatendmighty": "Major Combat Ended", "goodnight": "Going to Sleep", "goodmorning": "Waking Up", "injection": "Injected Context"};
+        label.title = type;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = type;
+        checkbox.disabled = storage.readOnly;
+        label.append(checkbox, document.createTextNode(labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())));
+        toggles.append(label);
+        return checkbox;
+    });
+    const readStorage = () => {
+        const selected = parse(storage.value);
+        checkboxes.forEach((checkbox) => { checkbox.checked = selected.includes(checkbox.value); });
+        custom.value = selected.filter((type) => !choices.includes(type)).join(', ');
+    };
+    const writeStorage = () => {
+        storage.value = parse([...checkboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value), custom.value].join(', ')).join(', ');
+    };
+    toggles.addEventListener('change', writeStorage);
+    custom.addEventListener('input', writeStorage);
+    // Move a manually entered built-in name to its checkbox after editing.
+    custom.addEventListener('change', () => { writeStorage(); readStorage(); });
+    storage.addEventListener('change', readStorage);
+    storage.form?.addEventListener('reset', () => setTimeout(readStorage, 0));
+    readStorage();
+    editor.append(hint, toggles, customLabel, custom, customHint);
+    storage.before(editor);
+    storage.hidden = true;
+});
+
     (() => {
         const storageKey = 'stobe-global-settings-tab';
         const tabs = Array.from(document.querySelectorAll('[data-settings-tab]'));

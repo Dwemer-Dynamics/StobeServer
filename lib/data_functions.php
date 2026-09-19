@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/tts_filter_presets.php";
 
 /**
  * Core data functions for StobeServer.
@@ -5391,7 +5392,7 @@ function loadBioUniqueTraitSelections(string $name): array {
     try {
         if (count($lookupKeys) === 1) {
             $rows = $db->fetchAll(
-                "SELECT name, type, description
+                "SELECT name, type, description, tts_filter_preset
                  FROM combined_bio_unique
                  WHERE LOWER(name) = $1
                    AND COALESCE(is_enabled, TRUE) = TRUE
@@ -5400,7 +5401,7 @@ function loadBioUniqueTraitSelections(string $name): array {
             );
         } else {
             $rows = $db->fetchAll(
-                "SELECT name, type, description
+                "SELECT name, type, description, tts_filter_preset
                  FROM combined_bio_unique
                  WHERE LOWER(name) IN ($1, $2)
                    AND COALESCE(is_enabled, TRUE) = TRUE
@@ -5433,6 +5434,7 @@ function loadBioUniqueTraitSelections(string $name): array {
         }
         $result[$type] = [
             'description' => $description,
+            'tts_filter_preset' => $row['tts_filter_preset'] ?? null,
         ];
     }
 
@@ -5483,7 +5485,7 @@ function loadBioRandomCandidates(
     $rows = [];
     try {
         $rows = $db->fetchAll(
-            "SELECT type, description, race, gender, faction, name
+            "SELECT type, description, race, gender, faction, name, tts_filter_preset
              FROM combined_bio_random
              WHERE COALESCE(is_enabled, TRUE) = TRUE
              ORDER BY id ASC"
@@ -5547,6 +5549,7 @@ function loadBioRandomCandidates(
         if (!isset($candidatesByType[$type][$specificity][$descriptionKey])) {
             $candidatesByType[$type][$specificity][$descriptionKey] = [
                 'description' => $description,
+            'tts_filter_preset' => $row['tts_filter_preset'] ?? null,
             ];
         }
     }
@@ -5604,6 +5607,7 @@ function selectRandomBioTraitSelections(
             }
             $selections[$type] = [
                 'description' => trim(strval($options[$bestIndex]['description'] ?? '')),
+                'tts_filter_preset' => $options[$bestIndex]['tts_filter_preset'] ?? null,
             ];
             continue;
         }
@@ -5611,6 +5615,7 @@ function selectRandomBioTraitSelections(
         $randomIndex = random_int(0, count($options) - 1);
         $selections[$type] = [
             'description' => trim(strval($options[$randomIndex]['description'] ?? '')),
+            'tts_filter_preset' => $options[$randomIndex]['tts_filter_preset'] ?? null,
         ];
     }
 
@@ -5663,7 +5668,19 @@ function selectBioTraitsForNpc(
         $traitSources[$type] = 'default';
     }
 
+    // Unique presets win; use the established trait order within each pool.
+    $voiceFilter = null;
+    foreach (['unique' => $uniqueSelections, 'random' => $randomSelections] as $source => $selections) {
+        foreach ($requiredTypes as $type) {
+            if (($traitSources[$type] ?? '') !== $source) continue;
+            $preset = $selections[$type]['tts_filter_preset'] ?? null;
+            if ($preset === null || $preset === '') continue;
+            $voiceFilter = stobeNormalizeTtsFilterPresetId($preset);
+            break 2;
+        }
+    }
     return [
+        'tts_filter_preset' => $voiceFilter,
         'traits' => $resolvedTraits,
         'sources' => $traitSources,
     ];
@@ -6559,6 +6576,20 @@ function DataEventLog(
               WHERE type NOT IN ({$excludeTypes})
                 AND {$deliveryVisibilitySql}";
     $params = [];
+
+    // Exclude user-selected types from prompt history without changing recorded events.
+    $filteredTypes = array_values(array_unique(array_filter(array_map(
+        static fn($type): string => strtolower(trim($type)),
+        explode(',', getSetting('EVENT_TYPE_FILTER', ''))
+    ), static fn($type): bool => $type !== '')));
+    if ($filteredTypes !== []) {
+        $typeParams = [];
+        foreach ($filteredTypes as $type) {
+            $params[] = $type;
+            $typeParams[] = '$' . count($params);
+        }
+        $query .= ' AND LOWER(type) NOT IN (' . implode(', ', $typeParams) . ')';
+    }
 
     if (normalizeParticipantNameToken($actorFilter) !== '') {
         $query .= ' AND ' . stobeEventAudienceSql($actorFilter, $params, $actorAliases);
@@ -7938,6 +7969,7 @@ function stobeBuildNpcHistoryCanonicalFromRow(array $row): array {
         'goals' => strval($row['goals'] ?? ''),
         'relationships' => strval($row['relationships'] ?? ''),
         'relationship_state' => stobeSortArrayRecursive(stobeRelationshipTimelineState($row['extended_data'] ?? '{}') ?? []),
+        'plugin_extended_data' => stobeSortArrayRecursive(json_decode($row['plugin_extended_data'] ?? '{}', true, 512, JSON_THROW_ON_ERROR)),
         'voiceid' => strval($row['voiceid'] ?? ''),
         'race' => strval($row['race'] ?? ''),
         'faction' => strval($row['faction'] ?? ''),
@@ -8083,6 +8115,7 @@ function stobeBuildNpcHistorySnapshotPayloadFromRow(array $row, string $reason =
         'profile_id' => ($row['profile_id'] ?? '') === '' ? null : intval($row['profile_id']),
         'dynamic_profile' => $dynamicProfileEnabled,
         'extended_data' => $extendedData,
+        'plugin_extended_data' => $row['plugin_extended_data'] ?? '{}',
         'md5' => strval($row['md5'] ?? ''),
         'gamets_last_updated' => intval($row['gamets_last_updated'] ?? 0),
         'bounty' => $bounty,
@@ -8159,7 +8192,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
             voiceid, metadata, race, faction, gender, profile_id, dynamic_profile,
             extended_data, md5, gamets_last_updated, bounty, limbs, blood,
             hunger, tags, is_animal, is_slave, world_knowledge_tags, snapshot_reason,
-            snapshot_hash, source_created_at, source_updated_at, created
+            snapshot_hash, source_created_at, source_updated_at, plugin_extended_data, created
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8, $9, $10,
@@ -8167,7 +8200,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
             $18, $19::jsonb, $20, $21, $22, $23, $24,
             $25::jsonb, $26, $27, $28::jsonb, $29::jsonb, $30,
             $31, $32, $33, $34, $35, $36,
-            $37, $38, $39, NOW()
+            $37, $38, $39, $40::jsonb, NOW()
         )
         RETURNING history_id",
         [
@@ -8210,6 +8243,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
             $snapshotHash,
             $payload['source_created_at'],
             $payload['source_updated_at'],
+            $payload['plugin_extended_data'],
         ]
     );
 
@@ -8987,6 +9021,9 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
     );
 
     $metadataArray = normalizeCoreNpcMetadata($profile['metadata'] ?? '{}');
+    if (isset($traitSelection['tts_filter_preset']) && !array_key_exists('tts_filter_preset', $metadataArray)) {
+        $metadataArray['tts_filter_preset'] = $traitSelection['tts_filter_preset'];
+    }
     unset($metadataArray['bounty_info'], $metadataArray['bounty_text']);
     $metadataSource = trim(strval($metadataArray['source'] ?? ''));
     if ($isBracketName && $isPlaceholderWrite) {
@@ -9105,7 +9142,7 @@ function storeNpcProfile(string $name, array $profile, array $options = []): voi
             profile_id = COALESCE(core_npc_master.profile_id, EXCLUDED.profile_id),
             voiceid = COALESCE(NULLIF(core_npc_master.voiceid, ''), EXCLUDED.voiceid),
             metadata = CASE
-                WHEN core_npc_master.metadata IS NULL OR core_npc_master.metadata = '{}'::jsonb OR core_npc_master.metadata = '[]'::jsonb THEN EXCLUDED.metadata
+                WHEN core_npc_master.metadata IS NULL OR core_npc_master.metadata = '{}'::jsonb OR core_npc_master.metadata = '[]'::jsonb THEN (EXCLUDED.metadata - 'tts_filter_preset')
                 ELSE core_npc_master.metadata
             END,
             extended_data = CASE
@@ -10978,6 +11015,9 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $existingMasterMetadata = normalizeCoreNpcMetadata($existingMasterRow['metadata'] ?? []);
         $existingMasterAppearance = trim(strval($existingMasterRow['appearance'] ?? ''));
     }
+    if (!$existingMasterRow && isset($traitSelection['tts_filter_preset']) && !array_key_exists('tts_filter_preset', $metadataForStorage)) {
+        $metadataForStorage['tts_filter_preset'] = $traitSelection['tts_filter_preset'];
+    }
     $existingAppearanceShowsCutHorns = stripos($existingMasterAppearance, 'Their horns have been cut off.') !== false;
     $existingHornsCut = coerceBoolean($existingMasterMetadata['horns_cut'] ?? false) || $existingAppearanceShowsCutHorns;
     if (
@@ -11364,7 +11404,10 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             profile_id = COALESCE(core_npc_master.profile_id, EXCLUDED.profile_id),
             is_animal = $6,
             is_slave = $7,
-            metadata = $8::jsonb,
+            metadata = ($8::jsonb - 'tts_filter_preset') || CASE
+                WHEN core_npc_master.metadata ? 'tts_filter_preset'
+                THEN jsonb_build_object('tts_filter_preset', core_npc_master.metadata->'tts_filter_preset')
+                ELSE '{}'::jsonb END,
             gamets_last_updated = CASE
                 WHEN $9 > core_npc_master.gamets_last_updated THEN $9
                 ELSE core_npc_master.gamets_last_updated
@@ -12703,6 +12746,7 @@ function stobeNormalizeTtsConnectorTypeForStorage(string $rawType): string {
         'xtts', 'xtts_fastapi' => 'xtts',
         'chatterbox' => 'chatterbox',
         'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
+        'higgs' => 'higgs',
         'cartesia' => 'cartesia',
         'inworld' => 'inworld',
         default => 'pocket_tts',

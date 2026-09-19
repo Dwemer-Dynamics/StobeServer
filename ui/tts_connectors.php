@@ -14,12 +14,13 @@ function ttsSpecs(): array {
         'pocket_tts' => ['label' => 'Pocket TTS', 'local' => true],
         'xtts' => ['label' => 'XTTS', 'local' => true],
         'chatterbox' => ['label' => 'Chatterbox', 'local' => true],
+        'higgs' => ['label' => 'Higgs TTS 3', 'local' => true],
         'cartesia' => ['label' => 'Cartesia', 'local' => false],
         'inworld' => ['label' => 'Inworld', 'local' => false],
         'omnivoice' => ['label' => 'OmniVoice', 'local' => true],
     ];
 }
-function ttsDefaultUrl(string $service): string { return match ($service) { 'omnivoice' => 'http://127.0.0.1:8021', 'chatterbox' => 'http://127.0.0.1:8023', 'pocket_tts' => 'http://127.0.0.1:8024', 'xtts' => 'http://127.0.0.1:8020', default => '' }; }
+function ttsDefaultUrl(string $service): string { return match ($service) { 'omnivoice' => 'http://127.0.0.1:8021', 'higgs' => 'http://127.0.0.1:8025', 'chatterbox' => 'http://127.0.0.1:8023', 'pocket_tts' => 'http://127.0.0.1:8024', 'xtts' => 'http://127.0.0.1:8020', default => '' }; }
 function ttsOmniVoiceLanguageLabel(string $languageId): string {
     static $fallbackLabels = ['cs'=>'Czech','en'=>'English','es'=>'Spanish','ro'=>'Romanian','ru'=>'Russian','sk'=>'Slovak'];
     $languageId = strtolower(trim($languageId));
@@ -177,7 +178,7 @@ function ttsBuildFields(array $payload, ?array $existing): array {
         'is_default' => ttsBool($payload['is_default'] ?? ($existing['is_default'] ?? false)),
         'config' => $cfg,
     ];
-    if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox','omnivoice'], true)) $fields['base_url'] = ttsDefaultUrl($service);
+    if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox','omnivoice','higgs'], true)) $fields['base_url'] = ttsDefaultUrl($service);
     if ($existing && isset($existing['id'])) $fields['id'] = intval($existing['id']);
     return $fields;
 }
@@ -389,7 +390,10 @@ main{padding:10px 5px 5px}.layout{display:grid;grid-template-columns:minmax(240p
 <option value="sonic-3"><option value="sonic-3.5"><option value="sonic-3.6">
 <option value="sonic-3.5-2026-05-04"><option value="sonic-3.6-2026-08-27">
 </datalist>
-<div class="help">Provider model, such as sonic-3.5, sonic-3.6, or inworld-tts-1. A dated snapshot pins a release.</div>
+<datalist id="inworld_models">
+<option value="inworld-tts-2-flash">
+</datalist>
+<div class="help">Provider model, such as sonic-3.5, sonic-3.6, or inworld-tts-2-flash. Inworld Flash prioritizes speed. A dated snapshot pins a release.</div>
 </div>
 </div>
 
@@ -472,6 +476,7 @@ main{padding:10px 5px 5px}.layout{display:grid;grid-template-columns:minmax(240p
     if (rowAccent) rowAccent.style.display = s === 'cartesia' ? '' : 'none';
     if (modelInput) {
       if (s === 'cartesia') modelInput.setAttribute('list', 'cartesia_models');
+      else if (inworld) modelInput.setAttribute('list', 'inworld_models');
       else modelInput.removeAttribute('list');
     }
     if (rowApiBadge) rowApiBadge.style.display = showApiBadge ? '' : 'none';

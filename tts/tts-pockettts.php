@@ -761,6 +761,7 @@ function stobeNormalizeTtsConnectorType(string $type): string {
     return match ($normalized) {
         'pockettts', 'pocketts', 'pocket_tts' => 'pocket_tts',
         'xtts', 'xtts_fastapi' => 'xtts',
+        'higgs' => 'higgs',
         'chatterbox' => 'chatterbox',
         'omnivoice', 'omni_voice', 'omni_tts' => 'omnivoice',
         'cartesia' => 'cartesia',
@@ -875,9 +876,10 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
     if ($endpoint === '') {
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
-    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
+    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'higgs'], true)) {
         $endpoint = match ($provider) {
             'omnivoice' => 'http://127.0.0.1:8021',
+            'higgs' => 'http://127.0.0.1:8025',
             'chatterbox' => 'http://127.0.0.1:8023',
             'pocket_tts' => 'http://127.0.0.1:8024',
             default => 'http://127.0.0.1:8020',
@@ -1747,6 +1749,8 @@ function stobeSynthesizeTtsLine(string $npcName, string $line, array|false $npcD
         $binary = stobeSynthesizeViaPocketTts($speechText, $runtime);
     } elseif ($provider === 'xtts') {
         $binary = stobeSynthesizeViaXtts($speechText, $runtime);
+    } elseif ($provider === 'higgs') {
+        $binary = stobeSynthesizeViaHiggs($speechText, $runtime);
     } elseif ($provider === 'chatterbox') {
         $binary = stobeSynthesizeViaChatterbox($speechText, $runtime);
     } elseif ($provider === 'omnivoice') {
@@ -1815,9 +1819,10 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
     if ($endpoint === '') {
         $endpoint = trim(strval($connectorConfig['endpoint'] ?? ''));
     }
-    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice'], true)) {
+    if ($endpoint === '' && in_array($provider, ['pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'higgs'], true)) {
         $endpoint = match ($provider) {
             'omnivoice' => 'http://127.0.0.1:8021',
+            'higgs' => 'http://127.0.0.1:8025',
             'chatterbox' => 'http://127.0.0.1:8023',
             'pocket_tts' => 'http://127.0.0.1:8024',
             default => 'http://127.0.0.1:8020',
@@ -1911,6 +1916,8 @@ function stobeSynthesizeTtsFromConnector(array $connector, string $text, string 
         $binary = stobeSynthesizeViaPocketTts($speechText, $runtime);
     } elseif ($provider === 'xtts') {
         $binary = stobeSynthesizeViaXtts($speechText, $runtime);
+    } elseif ($provider === 'higgs') {
+        $binary = stobeSynthesizeViaHiggs($speechText, $runtime);
     } elseif ($provider === 'chatterbox') {
         $binary = stobeSynthesizeViaChatterbox($speechText, $runtime);
     } elseif ($provider === 'omnivoice') {
