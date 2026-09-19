@@ -14,12 +14,13 @@ function ttsSpecs(): array {
         'pocket_tts' => ['label' => 'Pocket TTS', 'local' => true],
         'xtts' => ['label' => 'XTTS', 'local' => true],
         'chatterbox' => ['label' => 'Chatterbox', 'local' => true],
+        'higgs' => ['label' => 'Higgs TTS 3', 'local' => true],
         'cartesia' => ['label' => 'Cartesia', 'local' => false],
         'inworld' => ['label' => 'Inworld', 'local' => false],
         'omnivoice' => ['label' => 'OmniVoice', 'local' => true],
     ];
 }
-function ttsDefaultUrl(string $service): string { return match ($service) { 'omnivoice' => 'http://127.0.0.1:8021', 'chatterbox' => 'http://127.0.0.1:8023', 'pocket_tts' => 'http://127.0.0.1:8024', 'xtts' => 'http://127.0.0.1:8020', default => '' }; }
+function ttsDefaultUrl(string $service): string { return match ($service) { 'omnivoice' => 'http://127.0.0.1:8021', 'higgs' => 'http://127.0.0.1:8025', 'chatterbox' => 'http://127.0.0.1:8023', 'pocket_tts' => 'http://127.0.0.1:8024', 'xtts' => 'http://127.0.0.1:8020', default => '' }; }
 function ttsOmniVoiceLanguageLabel(string $languageId): string {
     static $fallbackLabels = ['cs'=>'Czech','en'=>'English','es'=>'Spanish','ro'=>'Romanian','ru'=>'Russian','sk'=>'Slovak'];
     $languageId = strtolower(trim($languageId));
@@ -177,7 +178,7 @@ function ttsBuildFields(array $payload, ?array $existing): array {
         'is_default' => ttsBool($payload['is_default'] ?? ($existing['is_default'] ?? false)),
         'config' => $cfg,
     ];
-    if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox','omnivoice'], true)) $fields['base_url'] = ttsDefaultUrl($service);
+    if ($fields['base_url'] === '' && in_array($service, ['pocket_tts','xtts','chatterbox','omnivoice','higgs'], true)) $fields['base_url'] = ttsDefaultUrl($service);
     if ($existing && isset($existing['id'])) $fields['id'] = intval($existing['id']);
     return $fields;
 }
