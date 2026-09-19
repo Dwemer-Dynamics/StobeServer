@@ -7969,6 +7969,7 @@ function stobeBuildNpcHistoryCanonicalFromRow(array $row): array {
         'goals' => strval($row['goals'] ?? ''),
         'relationships' => strval($row['relationships'] ?? ''),
         'relationship_state' => stobeSortArrayRecursive(stobeRelationshipTimelineState($row['extended_data'] ?? '{}') ?? []),
+        'plugin_extended_data' => stobeSortArrayRecursive(json_decode($row['plugin_extended_data'] ?? '{}', true, 512, JSON_THROW_ON_ERROR)),
         'voiceid' => strval($row['voiceid'] ?? ''),
         'race' => strval($row['race'] ?? ''),
         'faction' => strval($row['faction'] ?? ''),
@@ -8114,6 +8115,7 @@ function stobeBuildNpcHistorySnapshotPayloadFromRow(array $row, string $reason =
         'profile_id' => ($row['profile_id'] ?? '') === '' ? null : intval($row['profile_id']),
         'dynamic_profile' => $dynamicProfileEnabled,
         'extended_data' => $extendedData,
+        'plugin_extended_data' => $row['plugin_extended_data'] ?? '{}',
         'md5' => strval($row['md5'] ?? ''),
         'gamets_last_updated' => intval($row['gamets_last_updated'] ?? 0),
         'bounty' => $bounty,
@@ -8190,7 +8192,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
             voiceid, metadata, race, faction, gender, profile_id, dynamic_profile,
             extended_data, md5, gamets_last_updated, bounty, limbs, blood,
             hunger, tags, is_animal, is_slave, world_knowledge_tags, snapshot_reason,
-            snapshot_hash, source_created_at, source_updated_at, created
+            snapshot_hash, source_created_at, source_updated_at, plugin_extended_data, created
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8, $9, $10,
@@ -8198,7 +8200,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
             $18, $19::jsonb, $20, $21, $22, $23, $24,
             $25::jsonb, $26, $27, $28::jsonb, $29::jsonb, $30,
             $31, $32, $33, $34, $35, $36,
-            $37, $38, $39, NOW()
+            $37, $38, $39, $40::jsonb, NOW()
         )
         RETURNING history_id",
         [
@@ -8241,6 +8243,7 @@ function stobeInsertNpcHistorySnapshotFromRow(array $row, string $reason = 'snap
             $snapshotHash,
             $payload['source_created_at'],
             $payload['source_updated_at'],
+            $payload['plugin_extended_data'],
         ]
     );
 
