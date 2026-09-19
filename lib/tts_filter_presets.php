@@ -191,3 +191,14 @@ function stobeApplyTtsFilterPresetToWavBinary(string $binary, mixed $presetValue
         @unlink($outputPath);
     }
 }
+
+/** Validate optional biography presets without silently accepting arbitrary audio graphs. */
+function stobeBiographyVoiceFilter(mixed $value): ?string
+{
+    if ($value === null || $value === '') return null;
+    if (!is_string($value)) throw new InvalidArgumentException('Invalid biography Voice Filter.');
+    $id = strtolower(trim($value));
+    if ($id === '') return null;
+    if (!isset(stobeTtsFilterPresetOptions()[$id])) throw new InvalidArgumentException('Unknown biography Voice Filter: ' . $id);
+    return $id;
+}

@@ -58,3 +58,5 @@ $pthEscape = static fn($value) => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 <script src="<?= $pthEscape($pthRoot) ?>/ui/js/playthrough_home.js?v=9"></script>
 
 <?php include __DIR__ . '/playthrough_transfer_controls.php'; ?>
+
+<?php include __DIR__ . '/playthrough_auto_switch.php'; ?>

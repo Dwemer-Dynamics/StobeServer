@@ -65,7 +65,18 @@ function pgr_capture($conn, array &$state): int {
     ptr_ensure_schema($conn);
     pth_query($conn,'BEGIN ISOLATION LEVEL REPEATABLE READ');
     try {
-        $save = pth_capture($conn, 'Automatic Playthrough Save ' . gmdate('Y-m-d H:i:s') . ' ' . substr($state['id'],0,8), null, 'dragon_break');
+        $row = pg_fetch_assoc(pth_query($conn, "SELECT value FROM public.conf_opts WHERE id='PLAYTHROUGH_CAMPAIGN_NAME'"));
+        $player = mb_substr(trim($row['value'] ?? ''), 0, 120);
+        $gamets = pgr_clock($conn);
+        $gameDate = $gamets > 0 ? 'Day ' . max(1, intdiv($gamets, 86400)) : '';
+        $baseName = implode(' - ', array_filter([$player, $gameDate]));
+        if ($baseName === '') $baseName = 'Playthrough Save';
+        $name = $baseName;
+        $suffix = 2;
+        while (pg_num_rows(pth_query($conn, "SELECT id FROM {$meta}.playthrough_profiles WHERE lower(name)=lower($1)", [$name]))) {
+            $name = $baseName . ' (' . $suffix++ . ')';
+        }
+        $save = pth_capture($conn, $name, null, 'dragon_break');
         $id = (int)$save['id'];
         if ($id < 1) throw new RuntimeException('The recovery save has no manager entry.');
         pth_query($conn, "UPDATE {$meta}.playthrough_profiles SET retention_pinned=true WHERE id=$1", [$id]);
@@ -187,6 +198,8 @@ function pgr_complete(bool $success = true): bool {
 // Inspect only routing/timestamps before bootstrap can write player data or start background work.
 function pgr_http_preflight(string $endpoint): void {
     if (PHP_SAPI === 'cli') return;
+    require_once __DIR__ . '/playthrough_switching.php';
+    pas_http_guard(true);
     $meta = ptp_product()['meta'];
     $state = pgr_state();
     $event = ''; $incoming = 0;
@@ -215,6 +228,7 @@ function pgr_http_preflight(string $endpoint): void {
         ptr_runtime_enter();
         $conn = ptp_connect();
         if ($conn) {
+            pas_guard($conn, true);
             try { $previous = pgr_clock($conn); }
             catch (Throwable $error) { $previous = 0; $GLOBALS['pgr_skip_rollback'] = true; pgr_notice(['id'=>str_repeat('0',32)],'failed'); }
             finally { pg_close($conn); }
@@ -230,6 +244,7 @@ function pgr_http_preflight(string $endpoint): void {
         ptr_runtime_enter();
         $profileClockConn = ptp_connect();
         if ($profileClockConn) {
+            pas_guard($profileClockConn, true);
             try { dps_clock($profileClockConn, $incoming, $eligible); }
             catch (Throwable $error) { error_log('Dynamic Profiles clock: '.$error->getMessage()); }
             finally { pg_close($profileClockConn); }
