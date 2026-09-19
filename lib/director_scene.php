@@ -99,11 +99,12 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
     }
     if (!is_array($decoded)) throw new RuntimeException('Director did not return a JSON scene');
     $scene = dwemerValidateDirectorScene($decoded, $actors, $catalog, $player);
+    $scene = dwemerSplitDirectorScene($scene, static fn(array $line): array =>
+        stobeSplitSentencesStream(stobeStripParentheticalDialogueText($line['text'])));
     // Indexed transport fields use the existing Kenshi JSON reader without a new runtime dependency.
-    $wire = ['schema' => 'stobe.director_scene.v1', 'id' => $scene['id'], 'line_count' => count($scene['lines'])];
+    $wire = ['schema' => 'stobe.director_scene.v2', 'id' => $scene['id'], 'line_count' => count($scene['lines'])];
     $turns = [];
     foreach ($scene['lines'] as $index => $line) {
-        $line['text'] = stobeStripParentheticalDialogueText($line['text']);
         if ($line['text'] === '' || preg_match('/[|\[\]]/', $line['text'])) throw new RuntimeException('Unsafe Director dialogue');
         $line['utterance_id'] = 'director-' . $scene['id'] . '-' . $index;
         $npc = $actors[$line['speaker']];
