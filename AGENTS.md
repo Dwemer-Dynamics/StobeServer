@@ -1,5 +1,11 @@
 # StobeServer Agent Notes
 
+## Start here
+
+This is the PHP/PostgreSQL server for the [STOBE Kenshi client](https://github.com/Dwemer-Dynamics/STOBE). Read [architecture, diagnostics and custom extensions](docs/agent-guide.md) and [setup and validation](docs/building.md) before choosing a component. Ship these guides and this file with the server application.
+
+Confirm repository, branch, working tree and requested scope. Distinguish a source checkout from a running server with user data. Preserve credentials, profiles, memories, installed extensions and unrelated changes. Keep generated/runtime files out of source PRs. Use focused draft PRs; merging, releases, migrations and deployment require their own authorization. Assess related CHIM and Dialectic server changes independently.
+
 ## Playthrough Saves
 
 ### Table policy and comments
