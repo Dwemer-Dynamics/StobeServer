@@ -1,10 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/playthrough_switching.php';
 pas_http_guard();
-require_once __DIR__ . '/lib/stobe_interaction.php';
-stobeInteractionRequire();
-
-
+// Transcription is independent of the AI interaction switch. Keep the save guard above.
 /**
  * StobeServer - Speech-to-Text Endpoint
  * 
