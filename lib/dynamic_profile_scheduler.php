@@ -168,7 +168,16 @@ function dps_context($conn, array $npc, int $gamets): string {
     $limit = dps_context_limit($npc);
     $rows = pg_fetch_all(dps_query($conn,'SELECT type,data,gamets,location FROM public.eventlog WHERE '
         . dps_event_filter(false) . " AND ($audience) AND gamets <= $gamets ORDER BY rowid DESC LIMIT $limit",$params)) ?: [];
-    return implode("\n",array_map(static fn($row)=>'['.$row['gamets'].' '.$row['type'].' '.$row['location'].'] '.mb_substr($row['data'],0,2000),array_reverse($rows)));
+    $lines = [];
+    foreach (array_reverse($rows) as $row) {
+        // Reuse dialogue parsing so legacy JSON retains its speaker and listener, not transport fields.
+        $text = stobeNormalizeContextHistoryDataLine((string)$row['data']);
+        if ($text === '') continue;
+        $location = trim(preg_replace('/\s+/u', ' ', (string)$row['location']) ?? '');
+        $lines[] = '[' . stobeGametsDateLabel($row['gamets']) . ' | gamets=' . $row['gamets']
+            . ' | ' . $row['type'] . ' | ' . $location . '] ' . mb_substr($text,0,2000);
+    }
+    return implode("\n",$lines);
 }
 
 // Only explicit manual actions carry overrides; old client timer batches have no scheduling authority.
