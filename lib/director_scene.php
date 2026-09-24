@@ -92,6 +92,13 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
     }
     $raw = stobeCallLLM($messages, $config, ['event_type' => 'director', 'npc_name' => $seed,
         'response_format' => $format]);
+    if (is_string($raw)) {
+        $raw = trim($raw);
+        // Accept one complete JSON fence, without accepting surrounding prose.
+        if (preg_match('/\A```(?:json)?[ \t]*\R(.*)\R```[ \t]*\z/is', $raw, $match)) {
+            $raw = trim($match[1]);
+        }
+    }
     try {
         $decoded = is_string($raw) ? json_decode($raw, true, 512, JSON_THROW_ON_ERROR) : null;
     } catch (JsonException $error) {
