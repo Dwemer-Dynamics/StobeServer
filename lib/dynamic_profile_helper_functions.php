@@ -5,7 +5,7 @@
  *
  * Behavior:
  * - Periodically refreshes enabled NPC profile fields via LLM.
- * - Interval is controlled by the DYNAMIC_PROFILE_INTERVAL_HOURS global setting.
+ * - Scheduling is owned by dynamic_profile_scheduler.php and web profile metadata.
  * - Interval uses Kenshi in-game gamets, not wall-clock time.
  * - Per-NPC real-time cooldown prevents bursty refresh loops.
  * - Respects NPC/profile layered setting DYNAMIC_PROFILE_ENABLED.
@@ -538,6 +538,9 @@ function stobeDynamicProfileFetchRecentContext(string $npcName, int $limit = 30)
         ? stobeBuildEventlogDeliveryVisibilitySql('eventlog')
         : '1=1';
 
+    $params = [];
+    $audienceSql = stobeEventAudienceSql($safeNpcName, $params);
+
     return $db->fetchAll(
         "SELECT rowid AS id, type, data, gamets, localts, ts, people, location
          FROM eventlog
@@ -550,13 +553,10 @@ function stobeDynamicProfileFetchRecentContext(string $npcName, int $limit = 30)
              'infoloc'
          )
            AND {$deliveryVisibilitySql}
-           AND (
-                LOWER(COALESCE(people, '')) LIKE LOWER($1)
-                OR LOWER(COALESCE(data, '')) LIKE LOWER($1)
-           )
+           AND {$audienceSql}
          ORDER BY rowid DESC
          LIMIT " . intval($limit),
-        ['%' . $safeNpcName . '%']
+        $params
     );
 }
 
@@ -682,116 +682,9 @@ function stobeDynamicProfileGenerateUpdates(string $npcName, array $npcData, str
     ];
 }
 
-function stobeMaybeRunDynamicProfileCycle(
-    string $eventType,
-    int $timestamp,
-    int $gamets,
-    string $eventData = ''
-): void {
-    if (!stobeDynamicProfileShouldRunCycle($eventType, $gamets)) {
-        return;
-    }
-
-    if (!stobeDynamicProfileTryLock()) {
-        return;
-    }
-
-    try {
-        $intervalHours = stobeDynamicProfileIntervalHours();
-        $processed = false;
-        if (stobeDynamicProfileProcessNarrator($intervalHours, $eventType, $gamets)) {
-            $processed = true;
-        }
-        $candidates = stobeDynamicProfileFetchCandidates(64);
-
-        foreach ($candidates as $candidate) {
-            if ($processed) {
-                break;
-            }
-            if (!is_array($candidate)) {
-                continue;
-            }
-
-            $npcName = normalizeParticipantNameToken(strval($candidate['name'] ?? ''));
-            if ($npcName === '') {
-                continue;
-            }
-
-            $npcData = getNpcData($npcName);
-            if (!is_array($npcData)) {
-                continue;
-            }
-            if (!stobeDynamicProfileNpcEnabled($npcData)) {
-                continue;
-            }
-            if (!stobeDynamicProfileNpcDue($npcName, $gamets, $intervalHours)) {
-                continue;
-            }
-
-            $rows = stobeDynamicProfileFetchRecentContext($npcName, 30);
-            $contextText = stobeDynamicProfileBuildContextText($rows);
-            if ($contextText === '(none)') {
-                continue;
-            }
-
-            $gen = stobeDynamicProfileGenerateUpdates($npcName, $npcData, $contextText);
-            if (!boolval($gen['ok'] ?? false)) {
-                stobeLogWarn('Dynamic profile generation skipped', [
-                    'npc_name' => $npcName,
-                    'reason' => strval($gen['reason'] ?? 'unknown'),
-                ]);
-                continue;
-            }
-
-            $updates = is_array($gen['updates'] ?? null) ? $gen['updates'] : [];
-            if (count($updates) === 0) {
-                continue;
-            }
-
-            $npcId = intval($npcData['id'] ?? 0);
-            if ($npcId <= 0) {
-                continue;
-            }
-            updateNpcById($npcId, $updates);
-
-            if ($gamets > 0) {
-                setConfOpt(stobeDynamicProfileLastGametsKey($npcName), strval($gamets), true);
-            }
-            setConfOpt(stobeDynamicProfileLastRunTsKey($npcName), strval(time()), true);
-
-            stobeLogInfo('Dynamic profile updated', [
-                'npc_name' => $npcName,
-                'npc_id' => $npcId,
-                'fields_updated' => array_keys($updates),
-                'allowed_fields' => $gen['allowed_fields'] ?? [],
-                'interval_hours' => $intervalHours,
-                'event_type' => $eventType,
-                'gamets' => $gamets,
-            ]);
-
-            $processed = true;
-            break; // One NPC per cycle to keep request latency bounded.
-        }
-
-        setConfOpt('DYNAMIC_PROFILE_LAST_RUN_TS', strval(time()), true);
-        if ($gamets > 0) {
-            setConfOpt('DYNAMIC_PROFILE_LAST_RUN_GAMETS', strval($gamets), true);
-        }
-
-        if (!$processed) {
-            stobeLogDebug('Dynamic profile cycle completed with no eligible NPC work', [
-                'event_type' => $eventType,
-                'gamets' => $gamets,
-                'candidate_count' => count($candidates),
-                'interval_hours' => $intervalHours,
-            ]);
-        }
-    } catch (Throwable $exception) {
-        stobeLogException($exception, 'Dynamic profile cycle failed', [
-            'event_type' => $eventType,
-            'gamets' => $gamets,
-        ]);
-    } finally {
-        stobeDynamicProfileUnlock();
-    }
+// Legacy callers use the same server scheduler; foreground requests never generate automatically.
+function stobeMaybeRunDynamicProfileCycle(string $eventType, int $timestamp, int $gamets, string $eventData = ''): void {
+    if (PHP_SAPI !== 'cli') return;
+    require_once __DIR__ . '/dynamic_profile_scheduler.php';
+    dps_run();
 }
