@@ -1,4 +1,5 @@
 <?php
+require_once dirname(__DIR__) . "/dwemerdistro_llm.php";
 
 // Normalize local endpoints before any probe, test, or connector write.
 function stobeLocalLlmSetupInput(array $raw, bool $requireModel = true): array
@@ -8,12 +9,13 @@ function stobeLocalLlmSetupInput(array $raw, bool $requireModel = true): array
             throw new InvalidArgumentException('Local setup fields must contain text.');
         }
     }
-    $providers = ['lmstudio' => 'LM Studio', 'ollama' => 'Ollama', 'llamacpp' => 'llama.cpp',
+    $providers = ['dwemerdistro' => 'DwemerDistro LLM Studio', 'lmstudio' => 'LM Studio', 'ollama' => 'Ollama', 'llamacpp' => 'llama.cpp',
         'koboldcpp' => 'KoboldCPP', 'custom' => 'OpenAI-compatible'];
     $provider = strval($raw['provider'] ?? '');
     if (!isset($providers[$provider])) {
         throw new InvalidArgumentException('Choose a supported local server.');
     }
+    if ($provider === 'dwemerdistro') { $raw['base_url'] = DwemerDistroLlm::ENDPOINT; $raw['api_key'] = ''; }
     $url = trim(strval($raw['base_url'] ?? ''));
     $parts = parse_url($url);
     if (strlen($url) > 2048 || preg_match('/[\x00-\x20\x7f]/', $url)
@@ -60,6 +62,10 @@ function stobeLocalLlmSetupInput(array $raw, bool $requireModel = true): array
 // Unlike the existing reachability probe, discovery needs authenticated JSON and a strict 2xx response.
 function stobeLocalLlmRequest(array $setup, bool $test): array
 {
+    if ($setup['provider'] === 'dwemerdistro') {
+        if (!$test) return ['success' => true] + DwemerDistroLlm::status();
+        DwemerDistroLlm::requireModel($setup['model']);
+    }
     if (!function_exists('curl_init')) {
         throw new RuntimeException('PHP cURL is required to connect to a local model.');
     }
@@ -137,6 +143,7 @@ function stobeLocalLlmRequest(array $setup, bool $test): array
 // Create/reuse an exact connector without changing existing connectors or background routing.
 function stobeLocalLlmApply(sql $db, array $setup, string $target): int
 {
+    if ($setup['provider'] === 'dwemerdistro') DwemerDistroLlm::requireModel($setup['model']);
     if (!in_array($target, ['default', 'player_faction', 'both'], true)) {
         throw new InvalidArgumentException('Choose the Default NPC profile, Player Faction profile, or both.');
     }
