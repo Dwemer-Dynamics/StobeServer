@@ -350,10 +350,16 @@ if (strlen($messagePreview) > 180) {
 
 $dialogueModeRaw = $_GET["mode"] ?? '';
 $dialogueMode = strtolower(trim((string)$dialogueModeRaw));
-$allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat', 'narrator', 'inject', 'inject_chat'];
+$allowedDialogueModes = ['talk', 'whisper', 'shout', 'autochat', 'cheat', 'narrator', 'inject', 'inject_chat', 'hypnosis'];
 if (!in_array($dialogueMode, $allowedDialogueModes, true)) {
     $dialogueMode = 'talk';
 }
+if ($dialogueMode === 'hypnosis') {
+    require_once __DIR__ . '/hypnosis.php';
+    stobeRunHypnosis($message, (string)($_GET['profile'] ?? ''), (string)($_GET['target_storage_id'] ?? ''), $speaker);
+    return;
+}
+
 $injectionMode = ($dialogueMode === 'inject' || $dialogueMode === 'inject_chat');
 $injectionChatMode = ($dialogueMode === 'inject_chat');
 
