@@ -23,3 +23,5 @@ $npcMaster->deletePluginData($npcId, 'chim_custom');
 - This is a trusted server-side plugin API, not an HTTP endpoint or a sandbox between installed PHP plugins. It does not automatically inject data into prompts.
 
 CHIM-Custom currently has separate actor-state storage. Adopting this API and migrating that data is a separate change; player state and actors without NPC records need their own handling.
+
+See [atomic writes](plugin-runtime.md#atomic-writes) before combining namespace updates with relationship changes, duplicate prevention or history.
