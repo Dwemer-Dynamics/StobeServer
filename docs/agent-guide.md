@@ -36,6 +36,8 @@ For missing replies, trace ingress, processor selection, connector output, strea
 
 ## Custom plugins and extensions
 
+Read the [integration runtime reference](plugin-runtime.md) for execution timing, required and optional state, atomic writes, installation/update boundaries and background work.
+
 Choose the extension boundary before coding:
 
 - Existing connector/profile/prompt configuration may be enough for a provider or behavior change. Try the existing OpenAI-compatible connector for a compatible service.
