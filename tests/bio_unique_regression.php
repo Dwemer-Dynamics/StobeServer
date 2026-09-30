@@ -254,11 +254,10 @@ runInRollbackTransaction('storeNpcProfile appends random appearance type text to
     assertContainsText($appearanceExtra, strval($row['appearance'] ?? ''), 'random appearance extra should be appended');
 });
 
-runInRollbackTransaction('storeNpcSnapshot rebuilds generated appearance before applying unique appearance and horns', function () use ($seed): void {
+runInRollbackTransaction('storeNpcSnapshot initializes empty appearance with unique appearance and horns', function () use ($seed): void {
     $db = $GLOBALS['db'];
     $name = 'UT_BIO_APPEARANCE_SNAPSHOT_' . $seed . '_Esata';
     $storageId = 'hand_' . strval(random_int(200000000, 799999999));
-    $staleAppearance = 'Stale imported appearance that should be replaced.';
     $appearanceExtra = 'A powerful female Shek whose posture reflects veteran confidence.';
 
     $db->exec(
@@ -266,26 +265,6 @@ runInRollbackTransaction('storeNpcSnapshot rebuilds generated appearance before 
          VALUES ($1, 'appearance', $2)",
         [$name, $appearanceExtra]
     );
-
-    storeNpcProfile($name, [
-        'appearance' => 'Initial placeholder appearance.',
-        'race' => 'Shek',
-        'gender' => 'female',
-        'faction' => 'Stone Golem',
-        'metadata' => ['storage_id' => $storageId],
-    ]);
-
-    $existingRow = $db->fetchOne(
-        "SELECT id
-         FROM core_npc_master
-         WHERE LOWER(name) = LOWER($1)
-         LIMIT 1",
-        [$name]
-    );
-    assertTrue(is_array($existingRow), 'existing row should exist before stale appearance overwrite');
-    updateNpcById(intval($existingRow['id'] ?? 0), [
-        'appearance' => $staleAppearance,
-    ]);
 
     $stored = storeNpcSnapshot([
         'name' => $name,
@@ -301,14 +280,102 @@ runInRollbackTransaction('storeNpcSnapshot rebuilds generated appearance before 
         'horn_sliders' => ['average' => 0.15],
     ], 991200);
 
-    assertTrue($stored, 'storeNpcSnapshot should succeed for appearance precedence test');
+    assertTrue($stored, 'storeNpcSnapshot should succeed for empty appearance test');
     $row = fetchNpcTraits($name);
-    assertTrue(is_array($row), 'snapshot row should exist for appearance precedence test');
-    assertContainsText('Female Shek with a middle-aged look.', strval($row['appearance'] ?? ''), 'snapshot should rebuild generated appearance identity');
-    assertContainsText('Build appears average.', strval($row['appearance'] ?? ''), 'snapshot should rebuild generated appearance build');
+    assertTrue(is_array($row), 'snapshot row should exist for empty appearance test');
+    assertContainsText('Female Shek with a middle-aged look.', strval($row['appearance'] ?? ''), 'snapshot should generate appearance identity');
+    assertContainsText('Build appears average.', strval($row['appearance'] ?? ''), 'snapshot should generate appearance build');
     assertContainsText($appearanceExtra, strval($row['appearance'] ?? ''), 'snapshot should append unique appearance extra');
     assertContainsText('They have very large horns.', strval($row['appearance'] ?? ''), 'snapshot should append horn detection sentence');
-    assertNotContainsText($staleAppearance, strval($row['appearance'] ?? ''), 'snapshot should not reuse stale imported appearance base');
+});
+
+runInRollbackTransaction('storeNpcSnapshot preserves existing custom appearance while tracking horns', function () use ($seed): void {
+    $db = $GLOBALS['db'];
+    $cases = [
+        ['UT_BIO_APPEARANCE_CUSTOM_' . $seed . '_Beep', 'Hive', 'male', 'A cheerful little hiver with a chipped mandible.', null],
+        ['UT_BIO_APPEARANCE_CUSTOM_' . $seed . '_Ruka', 'Shek', 'female', 'A scarred Shek warrior with braided hair.', 0.2],
+    ];
+    foreach ($cases as [$name, $race, $gender, $customAppearance, $hornAverage]) {
+        $storageId = 'hand_' . strval(random_int(200000000, 799999999));
+        $db->exec(
+            "INSERT INTO bio_unique (name, type, description)
+             VALUES ($1, 'appearance', $2)",
+            [$name, 'Unique appearance trait for ' . $name . '.']
+        );
+        storeNpcProfile($name, [
+            'appearance' => 'Initial placeholder appearance.',
+            'race' => $race,
+            'gender' => $gender,
+            'faction' => 'Nameless',
+            'metadata' => ['storage_id' => $storageId],
+        ]);
+        $existingRow = $db->fetchOne(
+            "SELECT id FROM core_npc_master WHERE LOWER(name) = LOWER($1) LIMIT 1",
+            [$name]
+        );
+        assertTrue(is_array($existingRow), 'existing row should exist before custom appearance edit');
+        updateNpcById(intval($existingRow['id'] ?? 0), ['appearance' => $customAppearance]);
+
+        foreach ([$hornAverage, $hornAverage, ($hornAverage === null ? null : 1.0)] as $index => $snapshotHornAverage) {
+            $snapshot = [
+                'name' => $name,
+                'storage_id' => $storageId,
+                'race' => $race,
+                'faction' => 'Nameless',
+                'gender' => $gender,
+                'equipment' => 'Rag shirt ' . strval($index),
+                'stats' => [],
+                'medical' => [],
+                'inventory' => [],
+                'environment' => [],
+            ];
+            if ($snapshotHornAverage !== null) {
+                $snapshot['horn_sliders'] = ['average' => $snapshotHornAverage];
+            }
+            assertTrue(storeNpcSnapshot($snapshot, 991300 + $index), 'repeated snapshot should succeed for ' . $name);
+            $row = $db->fetchOne(
+                "SELECT appearance, equipment, COALESCE(metadata->>'horns_cut', '') AS horns_cut
+                 FROM core_npc_master WHERE LOWER(name) = LOWER($1) LIMIT 1",
+                [$name]
+            );
+            assertSameText($customAppearance, strval($row['appearance'] ?? ''), 'snapshot should preserve custom appearance for ' . $name);
+            assertSameText('Rag shirt ' . strval($index), strval($row['equipment'] ?? ''), 'snapshot should still update equipment for ' . $name);
+        }
+        if ($hornAverage !== null) {
+            assertSameText('true', strval($row['horns_cut'] ?? ''), 'snapshot should still track cut horns in metadata for ' . $name);
+        }
+    }
+
+    $proseName = 'UT_BIO_APPEARANCE_CUT_PROSE_' . $seed;
+    $proseStorageId = 'hand_' . strval(random_int(200000000, 799999999));
+    $proseAppearance = 'A weathered Shek. Their horns have been cut off.';
+    storeNpcProfile($proseName, [
+        'appearance' => $proseAppearance,
+        'race' => 'Shek',
+        'gender' => 'male',
+        'faction' => 'Nameless',
+        'metadata' => ['storage_id' => $proseStorageId],
+    ]);
+    assertTrue(storeNpcSnapshot([
+        'name' => $proseName,
+        'storage_id' => $proseStorageId,
+        'race' => 'Shek',
+        'faction' => 'Nameless',
+        'gender' => 'male',
+        'stats' => [],
+        'medical' => [],
+        'inventory' => [],
+        'environment' => [],
+        'horn_sliders' => ['average' => 0.3],
+    ], 991400), 'snapshot should succeed for authored cut-horn prose');
+    $proseRow = $db->fetchOne(
+        "SELECT appearance, COALESCE(metadata->>'horns_cut', '') AS horns_cut
+         FROM core_npc_master WHERE LOWER(name) = LOWER($1) LIMIT 1",
+        [$proseName]
+    );
+    assertContainsText('Their horns have been cut off.', strval($proseRow['appearance'] ?? ''), 'authored cut-horn prose should remain');
+    assertNotContainsText('They have small horns.', strval($proseRow['appearance'] ?? ''), 'authored cut-horn prose should not gain regrown horns');
+    assertSameText('true', strval($proseRow['horns_cut'] ?? ''), 'authored cut-horn prose should still mark horns_cut metadata');
 });
 
 echo 'All bio_unique regression tests passed.' . PHP_EOL;
