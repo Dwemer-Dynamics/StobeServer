@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 $enginePath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR;
 require_once $enginePath . 'lib' . DIRECTORY_SEPARATOR . 'plugin_package_manager.php';
+require_once $enginePath . 'lib' . DIRECTORY_SEPARATOR . 'plugin_catalog.php';
 
 header('Cache-Control: no-store');
 
@@ -98,7 +99,17 @@ try {
         pluginPackageJson(['ok' => true, 'packages' => $manager->installedPackages()]);
     }
 
-    if ($method === 'POST' && in_array($action, ['browser-start-upload', 'remove'], true)) {
+    if ($action === 'inventory' && $method === 'GET') {
+        $catalog = new DwemerPluginCatalog();
+        pluginPackageJson([
+            'ok' => true,
+            'items' => $manager->extensionInventory(),
+            'catalog' => $catalog->publicEntries(),
+            'catalog_skipped' => $catalog->skippedEntries(),
+        ]);
+    }
+
+    if ($method === 'POST' && in_array($action, ['browser-start-upload', 'check-updates', 'catalog-install', 'run-job', 'remove'], true)) {
         $input = pluginPackageInput();
         $owner = pluginPackageRequireBrowserSession($input);
 
@@ -112,6 +123,29 @@ try {
                 ['type' => 'upload']
             );
             pluginPackageJson(['ok' => true, 'upload' => $upload], 201);
+        }
+
+        if ($action === 'check-updates') {
+            pluginPackageJson(['ok' => true, 'releases' => (new DwemerPluginCatalog())->checkReleases(), 'checked_at' => gmdate(DATE_ATOM)]);
+        }
+
+        if ($action === 'catalog-install') {
+            $catalog = new DwemerPluginCatalog();
+            $entry = $catalog->entry((string)($input['id'] ?? ''));
+            $channel = $catalog->channel($entry, (string)($input['channel'] ?? ''));
+            $job = $manager->createQueuedJob(
+                $entry['name'],
+                ['type' => 'catalog', 'catalog_id' => $entry['id'], 'channel' => $channel['id']],
+                $owner
+            );
+            pluginPackageJson(['ok' => true, 'job' => $job], 201);
+        }
+
+        if ($action === 'run-job') {
+            ignore_user_abort(true);
+            set_time_limit(900);
+            $job = dwemerPluginCatalogRunJob($manager, new DwemerPluginCatalog(), (string)($input['job_id'] ?? ''), $owner);
+            pluginPackageJson(['ok' => true, 'job' => $job]);
         }
 
         if ($action === 'remove') {
