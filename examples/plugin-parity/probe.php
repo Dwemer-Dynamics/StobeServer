@@ -211,6 +211,23 @@ probeCheck($castActual === array_column($castCases, 1) && stobeDirectorActorSeri
 probeCheck(stobeExtensionActionCodesForAllowlist(['FOLLOW']) === [] && stobeExtensionActionCodesForAllowlist(['EXTCMDPARITYPROBE_PING']) === ['ExtCmdParityProbe_Ping'], 'explicit ACTIONS_ALLOWLIST gates plugin actions');
 probeCheck(normalizeActionTagToken('FOLLOW@Beep', ['allowlist' => []]) === 'FOLLOW@Beep', 'native action normalization unchanged');
 
+// Follow-up registration options; the ledger route itself needs PostgreSQL (see README).
+$reportFollowup = stobeExtensionActionRegistry()['ExtCmdParityProbe_Report']['followup'] ?? null;
+probeCheck(($reportFollowup['enabled'] ?? false) === true && ($reportFollowup['arg_name'] ?? '') === 'target' && ($reportFollowup['use_functions_again'] ?? true) === false
+    && (stobeExtensionActionRegistry()['ExtCmdParityProbe_Ping']['followup'] ?? null) === [], 'opt-in follow-up registered; legacy registration has none', $reportFollowup);
+$invalidFollowups = [['enabled' => 'yes', 'prompt' => 'x'], ['enabled' => true], ['enabled' => true, 'prompt' => '  '], ['enabled' => true, 'prompt' => str_repeat('a', 1001)],
+    ['enabled' => true, 'prompt' => 'x', 'arg_name' => '9bad'], ['enabled' => true, 'prompt' => 'x', 'use_functions_again' => 1], ['enabled' => true, 'prompt' => 'x', 'extra' => 1], 'yes'];
+probeCheck(count(array_filter($invalidFollowups, static fn($f): bool => stobeRegisterExtensionAction('ExtCmdParityProbe_Bad', 'x', ['followup' => $f]))) === 0, 'invalid follow-up options reject the registration');
+probeCheck(stobeRegisterExtensionAction('ExtCmdParityProbe_Off', 'x', ['followup' => ['enabled' => false]]) && stobeExtensionActionRegistry()['ExtCmdParityProbe_Off']['followup'] === [], 'disabled follow-up registers with none');
+unset($GLOBALS['STOBE_EXTENSION_ACTIONS']['ExtCmdParityProbe_Off']);
+$_GET = [];
+probeCheck(stobeAddonFollowupIssue('Beep', 'ExtCmdParityProbe_Report@', '42') === 0, 'no aid without addon_followup=1 (old clients stay ack-only)');
+$claimCases = [[[], 'aid'], [['aid' => '1', 'sid' => '42', 'arid' => '0'], 'arid'], [['aid' => '4294967296', 'sid' => '42', 'arid' => '1'], 'aid'], [['aid' => '01', 'sid' => '42', 'arid' => '1'], 'aid']];
+foreach ($claimCases as [$query, $label]) {
+    probeCheck(!stobeAddonFollowupClaim(['funcret', '1', '2', 'command@ExtCmdParityProbe_Report@@completed'], $query)['ok'], 'claim rejects malformed ' . $label . ' before any query');
+}
+probeCheck(!stobeAddonFollowupClaim(['funcret', '1', '2', 'garbage'], ['aid' => '5', 'sid' => '42', 'arid' => '1'])['ok'], 'claim rejects a malformed result before any query');
+
 // Observer: STOBE client funcret through the real prerequest hook, addon_state, malformed payloads.
 $GLOBALS['gameRequest'] = ['funcret', '1', '2', 'command@ExtCmdParityProbe_Ping@Beep@completed: Beep heard the ping'];
 stobeRunExtensionHook('prerequest.php');

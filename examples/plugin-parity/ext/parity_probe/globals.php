@@ -33,3 +33,15 @@ stobeRegisterExtensionAction(
     'Send a harmless parity ping through the client bridge. Use only when asked to test the parity probe.',
     ['target' => 'optional']
 );
+
+// Opt-in follow-up: after an opted-in client reports this exact action completed,
+// the NPC gets one more text-only turn with the result as a tool outcome.
+stobeRegisterExtensionAction(
+    'ExtCmdParityProbe_Report',
+    'Ask the parity probe bridge for a status report. Use only when asked to test the parity probe report.',
+    ['target' => 'none', 'followup' => [
+        'enabled' => true,
+        'prompt' => 'Tell the listener the parity report result in one short in-character line.',
+        'use_functions_again' => false,
+    ]]
+);

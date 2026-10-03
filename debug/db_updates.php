@@ -2933,6 +2933,13 @@ If the resulting summary would exceed roughly 25 bullet points, merge or general
             }
         });
 
+        // 20261002002 adds runtime_generation; the file is idempotent, so 20261002001 ledgers rerun it.
+        $applyPatch('stobe_addon_action_ledger', 20261002002, static function () use ($db): void {
+            if (!$db->query(file_get_contents(dirname(__DIR__) . '/lib/core/database_schema/addon_action_ledger.sql'))) {
+                throw new RuntimeException('Addon action ledger migration failed.');
+            }
+        });
+
         stobeLogInfo('DB updates completed (release consolidator)');
     }
 }

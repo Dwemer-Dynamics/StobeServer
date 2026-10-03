@@ -359,6 +359,9 @@ function getActionRuntimeConfig(string $eventType): array {
         $actionsEnabled = $actionsEnabled && getSettingBool('BORED_ALLOW_ACTIONS', false);
     } elseif ($normalizedEventType === 'rechat') {
         $actionsEnabled = $actionsEnabled && getSettingBool('RECHAT_ALLOW_ACTIONS', true);
+    } elseif ($normalizedEventType === 'addon_followup') {
+        // Addon follow-up turns choose actions only when the registration allows it.
+        $actionsEnabled = $actionsEnabled && !empty($GLOBALS['STOBE_ADDON_FOLLOWUP_ALLOW_ACTIONS']);
     }
 
     $maxActions = getSettingInt('MAX_ACTIONS_PER_RESPONSE', 1);
@@ -12378,6 +12381,13 @@ function formatResponse(
 ): string {
     stobeInteractionRequire();
     $metadata = [];
+    $followupActor = $GLOBALS['STOBE_ADDON_FOLLOWUP_ACTOR'] ?? null;
+    if (is_array($followupActor) && $actor === $followupActor['name']
+        && ($action !== 'ActionQueue' || stripos($message, 'ExtCmd') === 0)) {
+        // Follow-up dialogue and addon lines name the exact serial the claimed
+        // action ran on; built-in action lines stay unchanged.
+        $speakerSerial = $followupActor['sid'];
+    }
     if ($speakerSerial !== '') {
         // Older clients ignore unknown metadata tokens.
         $metadata[] = 'sid=' . $speakerSerial;
@@ -13472,6 +13482,9 @@ function streamResponse(
         'chat',
         is_array($actorData) ? $actorData : false
     );
+    if (!empty($GLOBALS['STOBE_ADDON_FOLLOWUP_TURN']) && empty($GLOBALS['STOBE_ADDON_FOLLOWUP_ALLOW_ACTIONS'])) {
+        $actions = [];
+    }
     foreach ($actions as $rawAction) {
         $normalizedAction = normalizeActionTagToken(strval($rawAction), $actionConfig);
         if ($normalizedAction === '') {
@@ -13487,6 +13500,13 @@ function streamResponse(
             ? stobeExtActionSpeakerSerial($actor, strval($_GET['people'] ?? ''))
             : '';
         $wirePayload = formatResponse($actor, 'ActionQueue', $dispatchAction, '', 0, '', $speakerSerial);
+        $followupAid = $speakerSerial !== '' && function_exists('stobeAddonFollowupIssue')
+            ? stobeAddonFollowupIssue($actor, $dispatchAction, $speakerSerial)
+            : 0;
+        if ($followupAid > 0) {
+            // stobe.addon_followup.v1: only clients that sent addon_followup=1 receive it.
+            $wirePayload = substr($wirePayload, 0, -2) . '|aid=' . $followupAid . "\r\n";
+        }
         echo $wirePayload;
         stobeLogOutputToPlugin($actor, 'ActionQueue', $dispatchAction, $wirePayload);
         if (ob_get_length()) {
