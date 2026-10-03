@@ -64,7 +64,8 @@ Use an isolated server and database, never the live playthrough.
    `ExtCmdParityProbe_Ping` appears in the available actions and the
    structured `action` enum.
 3. If the model selects it, the client receives
-   `<actor>|ActionQueue|ExtCmdParityProbe_Ping@<target>`. With the STOBE
+   `<actor>|ActionQueue|ExtCmdParityProbe_Ping@<target>`, ending `|sid=<serial>`
+   when the request's `people` list names exactly one identity for the actor. With the STOBE
    client's ParityProbe addon, its `funcret` result makes the observer log
    `[parity_probe] completion: completed…`.
 4. Disable without deleting by creating `ext/parity_probe/.disabled`, or remove
