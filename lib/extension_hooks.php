@@ -193,6 +193,46 @@ if (!function_exists('requireFilesRecursively')) {
     }
 }
 
+/*
+ * Shared stage helpers for foreground model routes (processor/chat, rechat,
+ * bored, Director, diary, narrator welcome). Each hook file still runs at most
+ * once per request; a route calls only the stages its prompt shape supports.
+ */
+function stobeRunExtensionPromptStages(?array $requestView = null): void
+{
+    stobeRunExtensionHook('prompts.php', $requestView);
+    stobeRunExtensionHook('dialogue_prompt.php', $requestView);
+}
+
+// context_building.php edits role/content history in $GLOBALS['CONTEXT_BUILDING_DATA'].
+function stobeApplyExtensionContextBuilding(array $historyMessages, ?array $requestView = null): array
+{
+    $GLOBALS['CONTEXT_BUILDING_DATA'] = $historyMessages;
+    if (stobeRunExtensionHook('context_building.php', $requestView) !== [] && is_array($GLOBALS['CONTEXT_BUILDING_DATA'])) {
+        return array_values(array_filter($GLOBALS['CONTEXT_BUILDING_DATA'], 'is_array'));
+    }
+    return $historyMessages;
+}
+
+// context.php edits the complete $GLOBALS['messages'] list before the model call.
+function stobeApplyExtensionContextHook(array $messages, ?array $requestView = null): array
+{
+    $GLOBALS['messages'] = $messages;
+    if (stobeRunExtensionHook('context.php', $requestView) !== [] && is_array($GLOBALS['messages'])) {
+        $updated = array_values(array_filter($GLOBALS['messages'], 'is_array'));
+        if ($updated !== []) {
+            return $updated;
+        }
+    }
+    return $messages;
+}
+
+// main.php runs the post-response stages only when a route reaches this point.
+function stobeMarkExtensionModelTurnCompleted(): void
+{
+    $GLOBALS['STOBE_EXTENSION_DIALOGUE_TURN'] = true;
+}
+
 /**
  * Post-response stages. The client stream is already complete, so hook output
  * is discarded instead of being appended to the game protocol.
@@ -270,21 +310,28 @@ function stobeApplyBiographyBuilders(string $biography, array $npcData): string
 
 /**
  * Renders plugin prompt sections at the dialogue prompt callsites:
- * BIOGRAPHY_BUILDER + character_bottom inside <character>, prompt_bottom last.
+ * BIOGRAPHY_BUILDER + character_bottom inside <character>, then the
+ * <player_character> enrichment block, prompt_bottom last.
  */
-function stobeApplyExtensionPromptSections(
-    string $systemPrompt,
-    string $npcName,
-    array $npcData,
-    ?array $requestView = null
-): string {
-    $context = [
+function stobeExtensionPromptContext(string $npcName, ?array $requestView = null): array
+{
+    return [
         'game_request' => $requestView ?? (is_array($GLOBALS['gameRequest'] ?? null) ? $GLOBALS['gameRequest'] : []),
         'herika_name' => $npcName,
         'npc_name' => $npcName,
         'narrator_name' => function_exists('stobeNarratorName') ? stobeNarratorName() : 'The Narrator',
         'player_name' => function_exists('getSetting') ? strval(getSetting('PLAYER_NAME', 'Drifter')) : '',
     ];
+}
+
+function stobeApplyExtensionPromptSections(
+    string $systemPrompt,
+    string $npcName,
+    array $npcData,
+    ?array $requestView = null,
+    string $turnSpeaker = ''
+): string {
+    $context = stobeExtensionPromptContext($npcName, $requestView);
 
     $characterBlock = trim(stobeApplyBiographyBuilders('', $npcData))
         . stobeRenderPromptInjections('character_bottom', $context);
@@ -297,7 +344,172 @@ function stobeApplyExtensionPromptSections(
         }
     }
 
-    return $systemPrompt . stobeRenderPromptInjections('prompt_bottom', $context);
+    return $systemPrompt
+        . stobeBuildExtensionPlayerCharacterBlock($turnSpeaker, $npcName)
+        . stobeRenderPromptInjections('prompt_bottom', $context);
+}
+
+/*
+ * Actor-profile enrichment context version 2 (docs/plugin-runtime.md).
+ * Registered NPC rows are fetched in batch queries cached for the request, and
+ * only when an enricher is registered; callbacks get a bounded projection.
+ */
+const STOBE_EXTENSION_ENRICHMENT_MAX_CHARS = 600;
+const STOBE_EXTENSION_REGISTERED_NPC_BATCH = 32;
+
+function stobeExtensionHasActorProfileEnrichers(): bool
+{
+    $enrichers = $GLOBALS['PROMPT_ACTOR_PROFILE_ENRICHERS'] ?? null;
+    return is_array($enrichers) && count($enrichers) > 0;
+}
+
+function stobeExtensionRegisteredNpcProjection(array $row): array
+{
+    $metadata = function_exists('normalizeNpcMetadataPayload')
+        ? normalizeNpcMetadataPayload($row['metadata'] ?? [])
+        : (is_array($row['metadata'] ?? null) ? $row['metadata'] : []);
+    $text = static fn($value): string => mb_substr(trim(strval($value ?? '')), 0, 120);
+    return [
+        'id' => intval($row['id'] ?? 0),
+        'name' => $text($row['name'] ?? ''),
+        'original_name' => $text($row['original_name'] ?? ''),
+        'storage_id' => $text($metadata['storage_id'] ?? ''),
+        'race' => $text($row['race'] ?? ''),
+        'gender' => $text($row['gender'] ?? ''),
+        'faction' => $text($row['faction'] ?? ''),
+        'faction_id' => $text($metadata['faction_id'] ?? ($metadata['factionID'] ?? '')),
+        'profile_id' => intval($row['profile_id'] ?? 0),
+        'in_player_faction' => function_exists('npcIsInPlayerFaction') && npcIsInPlayerFaction($row),
+    ];
+}
+
+/**
+ * @return array<string, array|null> lower-case name => projection, or null when unregistered
+ */
+function stobeExtensionRegisteredNpcs(array $names): array
+{
+    static $cache = [];
+    $missing = [];
+    $result = [];
+    foreach ($names as $name) {
+        $key = strtolower(normalizeParticipantNameToken(strval($name)));
+        if ($key === '') {
+            continue;
+        }
+        if (array_key_exists($key, $cache)) {
+            $result[$key] = $cache[$key];
+        } elseif (count($missing) < STOBE_EXTENSION_REGISTERED_NPC_BATCH) {
+            $missing[$key] = true;
+        }
+    }
+    $db = $GLOBALS['db'] ?? null;
+    if ($missing === [] || !is_object($db) || !method_exists($db, 'fetchAll')) {
+        return $result;
+    }
+
+    // Same row preference as the nearby appearance lookup: exact name, then saved identity, then newest.
+    $rows = $db->fetchAll(
+        "WITH requested AS (
+            SELECT value AS lookup_name FROM jsonb_array_elements_text($1::jsonb)
+         )
+         SELECT requested.lookup_name, matched.*
+         FROM requested
+         JOIN LATERAL (
+            SELECT n.id, n.name, n.original_name, n.race, n.gender, n.faction, n.profile_id, n.metadata
+            FROM core_npc n
+            WHERE LOWER(n.name) = requested.lookup_name
+               OR LOWER(COALESCE(n.original_name, '')) = requested.lookup_name
+            ORDER BY
+                CASE WHEN LOWER(n.name) = requested.lookup_name THEN 0 ELSE 1 END,
+                CASE WHEN COALESCE(n.metadata->>'storage_id', '') <> '' THEN 0 ELSE 1 END,
+                n.gamets_last_updated DESC,
+                n.updated_at DESC
+            LIMIT 1
+         ) AS matched ON TRUE",
+        [json_encode(array_keys($missing), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]
+    );
+    foreach ($missing as $key => $_) {
+        $cache[$key] = null;
+    }
+    foreach (is_array($rows) ? $rows : [] as $row) {
+        $key = strval($row['lookup_name'] ?? '');
+        if (array_key_exists($key, $missing)) {
+            $cache[$key] = stobeExtensionRegisteredNpcProjection($row);
+        }
+    }
+    foreach ($missing as $key => $_) {
+        $result[$key] = $cache[$key];
+    }
+    return $result;
+}
+
+// Kenshi has no single player actor: the player side is a faction plus named squads.
+function stobeExtensionPlayerSide(string $name, ?bool $inPlayerFaction = null): array
+{
+    $membership = function_exists('getPlayerSquadMembershipSnapshot') ? getPlayerSquadMembershipSnapshot() : [];
+    $squads = $membership['member_to_squads'][strtolower(normalizeParticipantNameToken($name))] ?? [];
+    return [
+        'player_faction' => boolval($inPlayerFaction) || (is_array($squads) && $squads !== []),
+        'squads' => is_array($squads) ? array_slice(array_values($squads), 0, 8) : [],
+    ];
+}
+
+function stobeExtensionActorEnrichmentText(string $name, string $type, array $context): string
+{
+    $text = stobeBuildActorProfileEnrichmentText($name, $type, $context + ['context_version' => 2]);
+    return function_exists('truncatePromptValue')
+        ? truncatePromptValue($text, STOBE_EXTENSION_ENRICHMENT_MAX_CHARS)
+        : mb_substr($text, 0, STOBE_EXTENSION_ENRICHMENT_MAX_CHARS);
+}
+
+/**
+ * The character the player speaks through: the turn speaker when it is
+ * PLAYER_NAME or a member of a saved player squad, otherwise PLAYER_NAME.
+ */
+function stobeExtensionPlayerCharacterName(string $turnSpeaker): string
+{
+    $playerName = normalizeParticipantNameToken(function_exists('getSetting') ? strval(getSetting('PLAYER_NAME', 'Drifter')) : '');
+    $speaker = normalizeParticipantNameToken($turnSpeaker);
+    if ($speaker !== '' && ($playerName === '' || strcasecmp($speaker, $playerName) === 0
+        || stobeExtensionPlayerSide($speaker)['squads'] !== [])) {
+        return $speaker;
+    }
+    return $playerName;
+}
+
+// One 'player' enricher call per prompt; nothing is rendered without enricher text.
+function stobeBuildExtensionPlayerCharacterBlock(string $turnSpeaker, string $promptNpc): string
+{
+    if (!stobeExtensionHasActorProfileEnrichers()) {
+        return '';
+    }
+    $player = stobeExtensionPlayerCharacterName($turnSpeaker);
+    if ($player === '' || strcasecmp($player, $promptNpc) === 0) {
+        return '';
+    }
+    $playerKey = strtolower($player);
+    $registered = stobeExtensionRegisteredNpcs([$player])[$playerKey] ?? null;
+    $side = stobeExtensionPlayerSide($player, is_array($registered) ? $registered['in_player_faction'] : null);
+    $squadMembers = [];
+    $membership = function_exists('getPlayerSquadMembershipSnapshot') ? getPlayerSquadMembershipSnapshot() : [];
+    foreach ($side['squads'] as $squadName) {
+        foreach ($membership['squad_members'][$squadName] ?? [] as $memberKey => $memberName) {
+            if ($memberKey !== $playerKey && count($squadMembers) < 32) {
+                $squadMembers[$memberKey] = $memberName;
+            }
+        }
+    }
+    $text = stobeExtensionActorEnrichmentText($player, 'player', [
+        'source' => 'player_character',
+        'registered_npc' => $registered,
+        'player_side' => $side,
+        'squad_members' => array_values($squadMembers),
+        'turn_speaker' => normalizeParticipantNameToken($turnSpeaker),
+    ]);
+    if ($text === '') {
+        return '';
+    }
+    return "\n<player_character>\n## " . stobePromptXmlEscape($player) . ': ' . stobePromptXmlEscape($text) . "\n</player_character>";
 }
 
 /*

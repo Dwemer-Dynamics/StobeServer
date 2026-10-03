@@ -833,7 +833,7 @@ $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $targetN
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
-$systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $targetNpc, is_array($npcData) ? $npcData : []);
+$systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $targetNpc, is_array($npcData) ? $npcData : [], null, $speaker);
 $deliveryStyleInstruction = '';
 if ($dialogueMode === 'whisper') {
     $deliveryStyleInstruction = 'The player is whispering. Respond in a quiet, discreet tone.';
@@ -983,7 +983,6 @@ $messages[] = [
 ];
 // CHIM context.php stage: extensions may edit $GLOBALS['messages'] before the call.
 stobeRunExtensionHook('context.php');
-$GLOBALS['STOBE_EXTENSION_DIALOGUE_TURN'] = true;
 
 $llmConfig = getLlmConfigForNpc($npcData);
 $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
@@ -1132,3 +1131,4 @@ if ($alreadyStreamed) {
         intval($gamets)
     );
 }
+stobeMarkExtensionModelTurnCompleted();

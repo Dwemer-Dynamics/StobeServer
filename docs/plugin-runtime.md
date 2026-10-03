@@ -6,29 +6,64 @@ This guide covers StobeServer's current `unstable` source. Read the [agent guide
 
 [lib/extension_hooks.php](../lib/extension_hooks.php) loads CHIM-named hook files from `ext/<plugin>/`. The loader itself reads no manifest; packages are installed separately ([Installation and updates](#installation-and-updates)). The `ext/` tree is scanned once per request; each stage then requires its matching files once, in byte-sorted path order, with CHIM's scope (`$gameRequest` plus `$GLOBALS`). A throwing hook file is logged and skipped. Discovery skips files directly under `ext/`, dot-prefixed entries, symlinks, `private/` and `staging/` directories, top-level directories ending `.disabled` or containing a `.disabled` file, and the built-in `relationship_system` directory. A missing `ext/` is a no-op. `requireFilesRecursively($dir, $name)` uses the same rules and cache; given a plugin's own folder (for example `__DIR__`), it also loads matching files directly in that folder, skips `private/`, `staging/`, dot entries and symlinks below it, and loads nothing when the plugin's top-level folder is disabled or reserved.
 
-| Hook file | `main.php` → `processor/chat.php` | [chat.php](../chat.php) (JSON) |
+| Hook file | `main.php` → model processors ([coverage](#model-route-coverage)) | [chat.php](../chat.php) (JSON) |
 |---|---|---|
 | `globals.php` | After bootstrap, before request parsing | After bootstrap |
 | `preprocessing.php` | After `explode('|')`, before fields are derived; may rewrite `$gameRequest` | After payload validation |
 | `prerequest.php` | Before processor routing, for every event type; `$gameRequest` changes are re-read | After `preprocessing.php` |
-| `prompts.php`, `dialogue_prompt.php` | After chat early exits, before history | After history query |
+| `prompts.php`, `dialogue_prompt.php` | After the route's skip checks, before history | After history query |
 | `context_building.php` | `$GLOBALS['CONTEXT_BUILDING_DATA']` holds role/content history messages | Same |
 | `json_response_custom.php` | Once, when the first structured template is built (output contract, after `context_pre.php`); its direct edits reach that template, `HOOKS['JSON_TEMPLATE']` reaches every template | Same |
 | `context_pre.php` | Before the system prompt is built | Same |
 | `context.php` | `$GLOBALS['messages']` is complete, before the model call | Same |
-| `prepostrequest.php`, `postrequest.php` | After a dialogue turn completed and streamed; output is discarded | After the JSON response |
+| `prepostrequest.php`, `postrequest.php` | After the route completed its turn and sent its output; output is discarded | After the JSON response |
 
-Only `processor/chat.php` dialogue turns run the prompt and post-response stages; rechat, bored, director and other processors do not yet. `chat.php` has no `$gameRequest`: hooks see a temporary `['inputtext', ts, gamets, 'Speaker: message']` view. Edits to its `Speaker: message` field in `preprocessing.php`/`prerequest.php` are applied; other edits are discarded. From `prompts.php` until the model reply is parsed, the view is also `$GLOBALS['gameRequest']`, so `JSON_TEMPLATE`, `BIOGRAPHY_BUILDER` and actor-enricher callbacks can read it; it is removed before the turn is stored. Stobe has no CHIM `$PROMPTS`/`$TEMPLATE_DIALOG` arrays; use the prompt stages to register injections. `ext/relationship_system` is never loaded by this mechanism; the evaluator below remains the only relationship turn owner.
+### Model route coverage
+
+`globals.php`, `preprocessing.php` and `prerequest.php` run for every `main.php` event. The later stages run only on foreground routes that call a model, in the order shown, through the shared helpers in [lib/extension_hooks.php](../lib/extension_hooks.php). Each hook file still runs at most once per request, so a second model call in the same request sees no stage files again. A route with a different prompt shape skips stages that have nothing to act on rather than receiving an empty imitation (—).
+
+| Route (event) | Caller | Prompt stages | `context_building.php` | `context_pre.php` | `json_response_custom.php` / `JSON_TEMPLATE` | Prompt sections | `context.php` | Post stages after |
+|---|---|---|---|---|---|---|---|---|
+| Player dialogue (`inputtext`, `inputtext_s`, answered `injection`) | [processor/chat.php](../processor/chat.php) | ✓ | ✓ | ✓ | ✓ | All | ✓ | Streamed reply |
+| JSON chat | [chat.php](../chat.php) | ✓ | ✓ | ✓ | ✓ | All | ✓ | JSON response |
+| NPC follow-up (`rechat`, `limb_loss`) | [processor/rechat.php](../processor/rechat.php) | ✓ | ✓ | ✓ | ✓ | All | ✓ | Streamed reply |
+| Bored dialogue (`bored`) | [processor/bored.php](../processor/bored.php) | ✓ | ✓ | ✓ | ✓ | All | ✓ | Streamed reply |
+| Director scene (`bored`, `mode=director`) | [lib/director_scene.php](../lib/director_scene.php) | ✓ | — history is text | ✓ | — scene schema | `prompt_bottom`, cast enrichment | ✓ | Scene payload |
+| Manual diary (`diary`, `diary_narrator`) | [processor/diary.php](../processor/diary.php) | ✓ | — history is text | ✓ | — plain text | All | ✓ | At least one entry written |
+| Narrator welcome (`init`) | [processor/init.php](../processor/init.php) | ✓ | ✓ | ✓ | — plain text | All | ✓ | Welcome line |
+
+"All" prompt sections are `BIOGRAPHY_BUILDER` and `character_bottom` inside `<character>`, then the `<player_character>` enrichment block, then `prompt_bottom`. A route runs its prompt stages once it has passed its main skip checks, such as the bored chance gate, the interaction switch or a missing candidate; those skips run only the first three stages. A later exit without output (a target that cannot speak, a missing API key, a failed rechat or bored reply, a rejected Director scene, no diary entry) skips the post stages. Routes that send a fallback line instead, such as `...` for player dialogue or the default narrator welcome, count as completed. Routes without these stages: Hypnosis profile rewrites, model calls made inside another turn (autochat rewrite, random narration, relationship evaluation), background work (memory, middle-term, dynamic profiles, auto-diary, autonomy planning) and UI tools. Non-model events such as `funcret`, `addon_state`, `location` and the `info*` events run only the first three stages.
+
+`chat.php` has no `$gameRequest`: hooks see a temporary `['inputtext', ts, gamets, 'Speaker: message']` view. Edits to its `Speaker: message` field in `preprocessing.php`/`prerequest.php` are applied; other edits are discarded. From `prompts.php` until the model reply is parsed, the view is also `$GLOBALS['gameRequest']`, so `JSON_TEMPLATE`, `BIOGRAPHY_BUILDER` and actor-enricher callbacks can read it; it is removed before the turn is stored. Stobe has no CHIM `$PROMPTS`/`$TEMPLATE_DIALOG` arrays; use the prompt stages to register injections. `ext/relationship_system` is never loaded by this mechanism; the evaluator below remains the only relationship turn owner.
 
 PHP API (signatures, slots and priority ordering match CHIM; `stobe*` names are equivalent):
 
 - `chimRegisterPromptInjection($slot, $id, $content, $priority = 100)` / `chimRenderPromptInjections($slot, $context)`. Rendered slots: `character_bottom` (inside `<character>`) and `prompt_bottom` (end of the system prompt). Context keys: `game_request`, `herika_name`, `npc_name`, `narrator_name`, `player_name`.
-- `chimRegisterActorProfileEnricher($id, $callback, $priority = 100)` / `chimBuildActorProfileEnrichmentText($name, $type, $context)`. Called for each `<nearby_actors>` entry with type `npc` and context `source`, `metadata`, `npc_data` (the nearby snapshot).
+- `chimRegisterActorProfileEnricher($id, $callback, $priority = 100)` / `chimBuildActorProfileEnrichmentText($name, $type, $context)`. Stobe passes [context version 2](#actor-profile-enrichment-context); the callback signature and result handling are unchanged.
 - `$GLOBALS['HOOKS']['JSON_TEMPLATE'][]` callbacks may edit `$GLOBALS['responseTemplate']` (prompt schema) and `$GLOBALS['structuredOutputTemplate']` (provider `response_format`). Strict schemas also need new properties in `required`.
 - `$GLOBALS['HOOKS']['BIOGRAPHY_BUILDER'][$name]` receives `(&$bio, $npcData)`. Stobe has no CHIM dynamic biography fields, so `$bio` starts empty and the result joins `<character>`.
 - `stobeRegisterExtensionAction('ExtCmd<Bridge>_<Action>', $description, ['target' => 'none'|'optional'|'required'])` from `globals.php`. A registered code is added to the action guidance, the structured `action` enum and the normalizer allowlist, then dispatched unchanged as `<actor>|ActionQueue|<code>@<target>`. When the request's client `people` list names exactly one identity for that actor, the line ends `|sid=<serial>`; the STOBE client needs it to run the action for any speaker other than the request's own NPC and accepts it only if it matches an identity it sent. The server never derives the serial from stored NPC data. A name that is unlisted, listed without a serial or listed with two serials gets no `sid`, and the client fails the action as `speaker unresolved`. Older clients ignore the token; built-in action lines are unchanged. The model sees the code itself, not a display alias. Unregistered `ExtCmd*` commands are rejected. A non-empty `ACTIONS_ALLOWLIST` setting must list the code; disabling actions removes it. `|`, `@`, brackets and newlines are stripped from the argument (120 characters maximum).
 
 Client results and addon state use the existing `main.php` event transport and reach `prerequest.php`, which sees every event type. The STOBE client sends `funcret` with CHIM's data `command@<code>@<argument>@<completed|failed[: detail]>` plus a readable `infoaction` line for context: one outcome per action, and exactly one for each request an addon accepted. Besides the addon's own result it sends failures such as `speaker unresolved`, `actor unavailable`, `actor not loaded`, `rejected by handler`, `addon unregistered` and `timed out` (10 minutes); requests from before a game load are cancelled locally and never reported. Addon state arrives as `addon_state` with `<Addon>: <key>=<value>`. `main.php` acknowledges `funcret` and `addon_state` without storing them in the event log; there is no CHIM-style follow-up model call for `funcret`. A runnable example and probe are in [examples/plugin-parity](../examples/plugin-parity/README.md).
+
+### Actor-profile enrichment context
+
+Kenshi has no single player actor. The player controls squads of characters, each stored as an NPC, and `PLAYER_NAME` names the player character. Stobe therefore calls enrichers in three places. Every context has `source` and `context_version` `2`.
+
+| Type, `source` | When | Other context keys | Output |
+|---|---|---|---|
+| `npc`, `nearby_actors` | Once per person (not animal) in the nearby snapshot used for `<nearby_actors>` | `metadata`, `npc_data` and `nearby`: the nearby snapshot entry, as in version 1; `registered_npc`; `player_side` | Joins that actor's line |
+| `npc`, `director_cast` | Once per eligible Director cast member (12 at most) | `npc_data` and `registered_npc`: the same projection; `player_side` | Added to that actor's profile JSON as `extension_context` |
+| `player`, `player_character` | Once per prompt on routes with all prompt sections | `registered_npc`, `player_side`, `squad_members` (up to 32 other members of the character's squads), `turn_speaker` | `<player_character>` block before `prompt_bottom` |
+
+A Director cast member is eligible only when the request's people list gives that name exactly one serial, a positive 32-bit integer. `main.php` stores that list as `Name|hand_<serial>`, with a state tag such as `(sleeping)` after the name. The scene's `actor_id` is the client's original decimal serial. A name that is unlisted, has no serial, has a malformed or out-of-range serial, or has two different serials is left out of the cast. If the seed actor is left out, the scene fails without calling the model. The server never takes a serial from stored NPC data or guesses between people who share a name.
+
+- The player character is the turn's speaker when that speaker is `PLAYER_NAME` or a member of a saved player squad (`PLAYER_SQUADS` in `conf_opts`, which is playthrough data); otherwise it is `PLAYER_NAME`. It is never the NPC whose prompt is being built. Bored and diary turns, and rechat turns that answer an NPC, have no player speaker and use `PLAYER_NAME`. Director scenes have no player block.
+- Squad members remain `npc` entries in `<nearby_actors>`. `player_side` is `{"player_faction": bool, "squads": [...]}`: `player_faction` is true when the entry matches the current player faction or a saved squad, and `squads` lists up to eight saved squad names containing that character. Do not treat a squad member as the CHIM player.
+- `registered_npc` is `null` for an unregistered name, otherwise `id`, `name`, `original_name`, `storage_id`, `race`, `gender`, `faction`, `faction_id`, `profile_id` and `in_player_faction` (strings capped at 120 characters). It uses the nearby appearance lookup's row preference. `id` works with [`NpcMaster::getPluginData()`](plugin-npc-data.md), which is one more query per call; cache it within the request.
+- Registered rows are fetched only when an enricher is registered: one batch query for up to 32 names not yet cached, and the results (including misses) are reused for the rest of the request. A nearby list or player character adds no query when its names are already cached.
+- Each rendered enrichment is collapsed to one line and capped at 600 characters. `chimBuildActorProfileEnrichmentText()` itself does not truncate.
+- Callbacks receive the `player` type, as in CHIM. A callback that ignores `$type` now also writes the `<player_character>` block; return `''` for types you do not handle.
 
 | Boundary | Current caller | What the input means |
 |---|---|---|

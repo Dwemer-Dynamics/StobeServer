@@ -8592,6 +8592,12 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
 
     $speakerKey = strtolower(normalizeParticipantNameToken($speakerName));
     $profileAppearances = stobeLoadNearbyNpcAppearanceMap($actors);
+    $registeredActors = stobeExtensionHasActorProfileEnrichers()
+        ? stobeExtensionRegisteredNpcs(array_map(
+            static fn($entry) => is_array($entry) && stobeParseFlexibleBool($entry['is_animal'] ?? null) !== true ? strval($entry['name'] ?? '') : '',
+            $actors
+        ))
+        : [];
     $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $seen = [];
     $seenFactionLabels = [];
@@ -8765,11 +8771,17 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         if ($distanceBand !== '') {
             $detailParts[] = 'Distance: ' . $distanceBand;
         }
-        $profileExtra = stobeBuildActorProfileEnrichmentText($name, 'npc', [
-            'source' => 'nearby_actors',
-            'metadata' => $entry,
-            'npc_data' => $entry,
-        ]);
+        // Context v1 keys keep the nearby snapshot in npc_data; v2 adds registered/player-side fields.
+        $profileExtra = stobeExtensionHasActorProfileEnrichers()
+            ? stobeExtensionActorEnrichmentText($name, 'npc', [
+                'source' => 'nearby_actors',
+                'metadata' => $entry,
+                'npc_data' => $entry,
+                'nearby' => $entry,
+                'registered_npc' => $registeredActors[$nameKey] ?? null,
+                'player_side' => stobeExtensionPlayerSide($name, nearbyEntryIsInPlayerFaction($entry)),
+            ])
+            : '';
         if ($profileExtra !== '') {
             $detailParts[] = $profileExtra;
         }

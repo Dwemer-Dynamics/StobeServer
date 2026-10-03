@@ -95,6 +95,7 @@ probeWrite("{$extRoot}/globals.php", $trace('ROOT FILE'));
 probeWrite("{$extRoot}/broken_plugin/globals.php", "<?php\n\$GLOBALS['PLUGIN_PARITY_TRACE'][] = 'broken_plugin:globals';\nthrow new RuntimeException('fixture failure');\n");
 probeWrite("{$extRoot}/parity_probe_order/json_response_custom.php", "<?php\n\$GLOBALS['PLUGIN_PARITY_TRACE'][] = 'parity_probe_order:json_response_custom';\n\$GLOBALS['responseTemplate']['direct_edit'] = 'from custom file';\n\$GLOBALS['HOOKS']['JSON_TEMPLATE'][] = static function (): void { \$GLOBALS['responseTemplate']['parity_probe'] = 'optional marker'; };\n");
 probeWrite("{$extRoot}/parity_probe_order/preprocessing.php", "<?php\n\$gameRequest[3] = str_replace(': hi', ': hello there', \$gameRequest[3]);\n");
+probeWrite("{$extRoot}/parity_probe_order/context_building.php", "<?php\n\$GLOBALS['CONTEXT_BUILDING_DATA'][] = ['role' => 'user', 'content' => 'history from plugin'];\n");
 $symlinkFixture = 'skipped: symlink() unavailable';
 probeWrite("{$scratch}/outside/globals.php", $trace('SYMLINK'));
 if (function_exists('symlink') && @symlink("{$scratch}/outside", "{$extRoot}/linked_plugin")) {
@@ -118,7 +119,8 @@ probeCheck($GLOBALS['PLUGIN_PARITY_TRACE'] === ['broken_plugin:globals', 'parity
 probeCheck(stobeRunExtensionHook('globals.php') === [] && requireFilesRecursively($extRoot, 'globals.php') === [], 'second run and CHIM requireFilesRecursively() are include-once');
 $excluded = array_filter($GLOBALS['PLUGIN_PARITY_TRACE'], static fn(string $item): bool => preg_match('/^[A-Z]/', $item) === 1);
 probeCheck(count($excluded) === 0, 'disabled, hidden, private, staging, root and symlink fixtures excluded', $excluded);
-probeCheck(($hookIndex['context_pre.php'] ?? []) === [] && ($hookIndex['postrequest.php'] ?? []) === [], 'legacy ext/relationship_system hooks are not discovered');
+$legacyIndexed = array_filter(array_merge(...array_values($hookIndex)), static fn(string $path): bool => str_contains($path, 'relationship_system'));
+probeCheck($legacyIndexed === [], 'legacy ext/relationship_system hooks are not discovered', $legacyIndexed);
 probeWrite("{$extRoot}/late_plugin/context.php", $trace('LATE'));
 $contextRan = stobeRunExtensionHook('context.php', ['inputtext', '1', '2', 'Player: hi']);
 probeCheck(count($contextRan) === 1 && !in_array('LATE', $GLOBALS['PLUGIN_PARITY_TRACE'], true), 'later stages reuse the one-time directory index');
@@ -199,6 +201,13 @@ $sidPeople = json_encode(['Player|1', 'Beep|42', 'Boop|7', 'Twin|8', 'Twin|9', '
 $sidCases = [['Beep', '42'], ['beep', '42'], ['Boop', '7'], ['Twin', ''], ['Ghost', ''], ['Big', ''], ['Stranger', ''], ['', '']];
 $sidActual = array_map(static fn(array $case): string => stobeExtActionSpeakerSerial($case[0], $sidPeople), $sidCases);
 probeCheck($sidActual === array_column($sidCases, 1) && stobeExtActionSpeakerSerial('Beep', 'not json') === '', 'ExtCmd speaker serial only from one listed identity', $sidActual);
+// Director cast serials come from main.php's normalized CACHE_PEOPLE ("Name (state)|hand_<n>");
+// raw digits and signed int32 serials pass through the existing normalizeStorageIdToken() conversion.
+require_once $serverRoot . '/lib/director_scene.php';
+$castPeople = json_encode(['Beep (sleeping)|hand_42', 'Boop|hand_7', 'Twin|hand_8', 'twin|hand_9', 'Same|hand_5', 'Same (sleeping)|hand_5', 'Ghost', 'Zero|hand_0', 'Big|hand_4294967296', 'Max|hand_4294967295', 'Odd|hand_x1', 'Neg|-1', 'Raw|11', 'Dup|hand_3', 'Dup|hand_x']);
+$castCases = [['Beep', '42'], ['Boop', '7'], ['Twin', ''], ['Same', '5'], ['Ghost', ''], ['Zero', ''], ['Big', ''], ['Max', '4294967295'], ['Odd', ''], ['Neg', '4294967295'], ['Raw', '11'], ['Dup', ''], ['Stranger', '']];
+$castActual = array_map(static fn(array $case): string => stobeDirectorActorSerial($case[0], $castPeople), $castCases);
+probeCheck($castActual === array_column($castCases, 1) && stobeDirectorActorSerial('Beep', 'not json') === '' && stobeDirectorActorSerial('Beep', '5') === '', 'Director cast serial only from one normalized positive uint32 identity per name', $castActual);
 probeCheck(stobeExtensionActionCodesForAllowlist(['FOLLOW']) === [] && stobeExtensionActionCodesForAllowlist(['EXTCMDPARITYPROBE_PING']) === ['ExtCmdParityProbe_Ping'], 'explicit ACTIONS_ALLOWLIST gates plugin actions');
 probeCheck(normalizeActionTagToken('FOLLOW@Beep', ['allowlist' => []]) === 'FOLLOW@Beep', 'native action normalization unchanged');
 
@@ -210,6 +219,68 @@ probeCheck((parityProbeObserveEvent(['addon_state', '1', '2', 'ParityProbe: stat
 $malformed = [null, [], ['funcret'], ['funcret', '', '', ['array']], ['funcret', '', '', 'command@ExtCmdOther_Ping@x@y'], ['funcret', '', '', 'command@ExtCmdParityProbe_Ping@x'], ['inputtext', '', '', 'command@ExtCmdParityProbe_Ping@x@y'], ['addon_state', '', '', 'Other: a=b'], ['funcret', '', '', str_repeat('a', 5000)]];
 probeCheck(count(array_filter(array_map('parityProbeObserveEvent', $malformed))) === 0, 'malformed or foreign events ignored');
 unset($GLOBALS['gameRequest']);
+
+// Shared model-route stage helpers (rechat, bored, Director, diary and narrator welcome use these).
+$history = stobeApplyExtensionContextBuilding([['role' => 'user', 'content' => 'stored line']]);
+probeCheck(array_column($history, 'content') === ['stored line', 'history from plugin'], 'context_building.php edits returned by the shared helper', $history);
+$repeatHistory = stobeApplyExtensionContextBuilding([['role' => 'user', 'content' => 'second call']]);
+$contextMessages = stobeApplyExtensionContextHook([['role' => 'system', 'content' => 'x']]);
+probeCheck(array_column($repeatHistory, 'content') === ['second call'] && count($contextMessages) === 1, 'a second model call in the same request does not rerun stage files');
+unset($GLOBALS['STOBE_EXTENSION_DIALOGUE_TURN']);
+stobeMarkExtensionModelTurnCompleted();
+stobeRunPostResponseExtensionHooks(['inputtext', '1', '2', 'Player: hi']);
+probeCheck(!empty($GLOBALS['STOBE_EXTENSION_DIALOGUE_TURN']) && in_array('parity_probe:postrequest:inputtext', $GLOBALS['PLUGIN_PARITY_TRACE'], true), 'completed model turn arms the post-response stages');
+
+// Actor-profile enrichment context v2 against an in-memory database stub (no PostgreSQL).
+require_once $serverRoot . '/lib/settings.php';
+$GLOBALS['db'] = new class {
+    public int $npcBatchQueries = 0;
+    private array $settings = ['PLAYER_NAME' => 'Drifter', 'PLAYER_SQUADS' => '["Squad A"]', 'Squad A' => '["Drifter","Beep"]'];
+    private array $npcs = [
+        'beep' => ['id' => 42, 'name' => 'Beep', 'original_name' => '', 'race' => 'Hive Prince', 'gender' => 'male', 'faction' => 'Nameless', 'profile_id' => 3, 'metadata' => '{"storage_id":"hand_42"}'],
+        'kang' => ['id' => 7, 'name' => 'Kang', 'original_name' => '', 'race' => 'Scorchlander', 'gender' => 'male', 'faction' => 'Nomads', 'profile_id' => 1, 'metadata' => '{}'],
+        'drifter' => ['id' => 1, 'name' => 'Drifter', 'original_name' => '', 'race' => 'Greenlander', 'gender' => 'male', 'faction' => 'Nameless', 'profile_id' => 3, 'metadata' => '{}'],
+    ];
+
+    public function fetchOne(string $sql, array $params = []): array|false
+    {
+        if (str_contains($sql, 'FROM core_npc')) {
+            return $this->npcs['drifter'];
+        }
+        $key = strval($params[0] ?? '');
+        return isset($this->settings[$key]) ? ['value' => $this->settings[$key]] : false;
+    }
+
+    public function fetchAll(string $sql, array $params = []): array
+    {
+        $this->npcBatchQueries++;
+        $rows = [];
+        foreach (json_decode(strval($params[0] ?? '[]'), true) as $name) {
+            if (isset($this->npcs[$name])) {
+                $rows[] = ['lookup_name' => $name] + $this->npcs[$name];
+            }
+        }
+        return $rows;
+    }
+};
+$registered = stobeExtensionRegisteredNpcs(['Beep', 'Kang', 'Ghost']);
+probeCheck(($registered['beep']['id'] ?? 0) === 42 && ($registered['beep']['storage_id'] ?? '') === 'hand_42' && $registered['beep']['in_player_faction'] === true
+    && ($registered['kang']['in_player_faction'] ?? true) === false && array_key_exists('ghost', $registered) && $registered['ghost'] === null, 'registered NPC projection; unregistered names map to null', $registered);
+stobeExtensionRegisteredNpcs(['beep', 'GHOST', 'Kang']);
+probeCheck($GLOBALS['db']->npcBatchQueries === 1, 'one batch query; repeated names come from the request cache', $GLOBALS['db']->npcBatchQueries);
+probeCheck(stobeExtensionPlayerSide('Beep') === ['player_faction' => true, 'squads' => ['Squad A']] && stobeExtensionPlayerSide('Kang', false) === ['player_faction' => false, 'squads' => []], 'player_side reports Kenshi squad membership');
+$playerBlock = stobeBuildExtensionPlayerCharacterBlock('Beep', 'Kang');
+probeCheck($playerBlock === "\n<player_character>\n## Beep: Parity probe player in Squad A\n</player_character>", 'player enricher runs once for the squad member the player speaks through', $playerBlock);
+probeCheck(str_contains(stobeBuildExtensionPlayerCharacterBlock('Kang', 'Beep'), '## Drifter: ') && stobeBuildExtensionPlayerCharacterBlock('', 'Drifter') === '', 'non-squad speaker falls back to PLAYER_NAME; never enriches the prompt NPC as player');
+probeCheck(stobeExtensionActorEnrichmentText('Kang', 'npc', ['registered_npc' => $registered['kang']]) === 'Parity probe sees Kang (registered #7)', 'npc enricher reads registered_npc from context v2');
+chimRegisterActorProfileEnricher('probe.long', static fn(): string => str_repeat('long ', 400));
+probeCheck(mb_strlen(stobeExtensionActorEnrichmentText('Kang', 'npc', [])) <= STOBE_EXTENSION_ENRICHMENT_MAX_CHARS, 'rendered enrichment text is bounded');
+$savedEnrichers = $GLOBALS['PROMPT_ACTOR_PROFILE_ENRICHERS'];
+$GLOBALS['PROMPT_ACTOR_PROFILE_ENRICHERS'] = [];
+$queriesBefore = $GLOBALS['db']->npcBatchQueries;
+probeCheck(stobeBuildExtensionPlayerCharacterBlock('Kang', 'Ruka') === '' && $GLOBALS['db']->npcBatchQueries === $queriesBefore, 'no enrichers: no player block and no lookup');
+$GLOBALS['PROMPT_ACTOR_PROFILE_ENRICHERS'] = $savedEnrichers;
+unset($GLOBALS['PROMPT_ACTOR_PROFILE_ENRICHERS']['probe.long'], $GLOBALS['db']);
 
 probeCheck($probeWarnings === [], 'no PHP warnings or notices', $probeWarnings);
 $errorLog = is_file($scratch . '/probe-error.log') ? file_get_contents($scratch . '/probe-error.log') : '';

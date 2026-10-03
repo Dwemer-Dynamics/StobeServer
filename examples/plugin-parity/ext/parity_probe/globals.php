@@ -15,8 +15,17 @@ chimRegisterPromptInjection('prompt_bottom', 'parity_probe.footer', static funct
     return $speaker === '' ? '' : '<parity_probe_footer>Prompt built for ' . $speaker . '.</parity_probe_footer>';
 });
 
+// Context version 2 adds registered_npc and player_side; 'player' is the character the player speaks through.
 chimRegisterActorProfileEnricher('parity_probe.actor', static function (string $actorName, string $actorType, array $context): string {
-    return $actorType === 'npc' ? 'Parity probe sees ' . $actorName : '';
+    if ($actorType === 'player') {
+        $squads = $context['player_side']['squads'] ?? [];
+        return 'Parity probe player' . ($squads === [] ? '' : ' in ' . implode(', ', $squads));
+    }
+    if ($actorType !== 'npc') {
+        return '';
+    }
+    $registered = $context['registered_npc'] ?? null;
+    return 'Parity probe sees ' . $actorName . (is_array($registered) ? ' (registered #' . $registered['id'] . ')' : '');
 }, 90);
 
 stobeRegisterExtensionAction(
