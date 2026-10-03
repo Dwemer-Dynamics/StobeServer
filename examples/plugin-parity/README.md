@@ -70,10 +70,11 @@ Use an isolated server and database, never the live playthrough.
 4. Disable without deleting by creating `ext/parity_probe/.disabled`, or remove
    the directory. Restore the server's `ext/` afterwards.
 
-Action codes must match `ExtCmd<Bridge>_<Action>`, where both the bridge and
-the action start with a letter and contain only ASCII letters and digits (64
-characters at most). The STOBE client also accepts bridges that begin with a
-digit; the server does not register them, so use a leading letter.
+Action codes must match `ExtCmd<Bridge>_<Action>` (64 characters at most). The
+bridge starts with a letter and contains only ASCII letters and digits; the
+action starts with a letter and may also contain underscores, as in
+`ExtCmdParityProbe_Do_Thing`. The STOBE client also accepts bridges that begin
+with a digit; the server does not register them, so use a leading letter.
 
 ## Not verified by the probe
 

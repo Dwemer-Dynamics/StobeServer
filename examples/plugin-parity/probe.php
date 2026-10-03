@@ -124,6 +124,15 @@ $contextRan = stobeRunExtensionHook('context.php', ['inputtext', '1', '2', 'Play
 probeCheck(count($contextRan) === 1 && !in_array('LATE', $GLOBALS['PLUGIN_PARITY_TRACE'], true), 'later stages reuse the one-time directory index');
 probeCheck(in_array('parity_probe:context:inputtext', $GLOBALS['PLUGIN_PARITY_TRACE'], true) && !array_key_exists('gameRequest', $GLOBALS), 'request view reaches context.php and is removed afterwards');
 probeCheck(stobeRunExtensionHook('globals.php', null, $scratch . '/missing-ext') === [], 'missing ext root is a no-op');
+// CHIM requireFilesRecursively(__DIR__, ...) from inside one plugin folder.
+probeWrite("{$extRoot}/scoped_plugin/scoped_helper.php", "<?php\n\$GLOBALS['PLUGIN_PARITY_TRACE'][] = 'scoped:direct';\n");
+probeWrite("{$extRoot}/scoped_plugin/lib/scoped_helper.php", "<?php\n\$GLOBALS['PLUGIN_PARITY_TRACE'][] = 'scoped:nested';\n");
+probeWrite("{$extRoot}/scoped_plugin/private/scoped_helper.php", $trace('SCOPED private'));
+probeWrite("{$extRoot}/disabled_marker/scoped_helper.php", $trace('SCOPED disabled'));
+requireFilesRecursively("{$extRoot}/scoped_plugin", 'scoped_helper.php');
+requireFilesRecursively("{$extRoot}/disabled_marker", 'scoped_helper.php');
+$scopedTrace = array_values(array_filter($GLOBALS['PLUGIN_PARITY_TRACE'], static fn(string $item): bool => stripos($item, 'scoped') !== false));
+probeCheck($scopedTrace === ['scoped:nested', 'scoped:direct'] && requireFilesRecursively("{$extRoot}/scoped_plugin", 'scoped_helper.php') === [], 'plugin-folder requireFilesRecursively() loads its own and nested helpers once; private and disabled skipped', $scopedTrace);
 $requestView = ['inputtext', '1', '2', 'Player: hi'];
 stobeRunExtensionHook('preprocessing.php', $requestView, null, $requestView);
 probeCheck($requestView[3] === 'Player: hello there' && !array_key_exists('gameRequest', $GLOBALS), 'input-stage edits to a request view are returned (chat.php)', $requestView);
@@ -167,6 +176,8 @@ probeCheck(isset(stobeExtensionActionRegistry()['ExtCmdParityProbe_Ping']), 'exa
 $invalidCodes = ['ExtCmd_Ping', 'Ping', 'ExtCmdA_B C', 'ExtCmdParity', 'WebCmdParity_Ping'];
 probeCheck(count(array_filter($invalidCodes, static fn(string $code): bool => stobeRegisterExtensionAction($code, 'x'))) === 0 && !stobeRegisterExtensionAction('ExtCmdParity_NoDescription', ' '), 'invalid codes and empty descriptions rejected');
 probeCheck(!stobeRegisterExtensionAction('EXTCMDPARITYPROBE_PING', 'case clash'), 'case-insensitive duplicate code rejected');
+probeCheck(stobeRegisterExtensionAction('ExtCmdParityProbe_Do_Thing', 'Underscore action.') && !stobeRegisterExtensionAction('ExtCmd9Probe_Ping', 'x') && !stobeRegisterExtensionAction('ExtCmdParityProbe__Ping', 'x'), 'action names may contain underscores; bridge and action still start with a letter');
+unset($GLOBALS['STOBE_EXTENSION_ACTIONS']['ExtCmdParityProbe_Do_Thing']);
 $actionCases = [
     ['ExtCmdParityProbe_Ping@Beep', [], 'ExtCmdParityProbe_Ping@Beep'],
     ['EXTCMDPARITYPROBE_PING@Beep', [], 'ExtCmdParityProbe_Ping@Beep'],

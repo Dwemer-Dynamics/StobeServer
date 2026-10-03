@@ -262,6 +262,11 @@ $eventHistory = $narratorMode
     ? DataEventLog($contextHistory)
     : DataEventLog($contextHistory, $targetNpc);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $mode, $speaker);
+// Deferred CHIM callbacks (JSON_TEMPLATE, BIOGRAPHY_BUILDER, actor enrichers)
+// read $GLOBALS['gameRequest'], so the view stays installed until the reply is parsed.
+$extensionHadGameRequest = array_key_exists('gameRequest', $GLOBALS);
+$extensionPreviousGameRequest = $extensionHadGameRequest ? $GLOBALS['gameRequest'] : null;
+$GLOBALS['gameRequest'] = $extensionRequestView;
 stobeRunExtensionHook('prompts.php', $extensionRequestView);
 stobeRunExtensionHook('dialogue_prompt.php', $extensionRequestView);
 $historyLines = [];
@@ -501,6 +506,11 @@ if ($llmConfig['api_key'] === '') {
             $actions = [];
         }
     }
+}
+if ($extensionHadGameRequest) {
+    $GLOBALS['gameRequest'] = $extensionPreviousGameRequest;
+} else {
+    unset($GLOBALS['gameRequest']);
 }
 $cleanText = sanitizeForKenshi(trim(strval($responseText)));
 if (!isset($actions) || !is_array($actions)) {

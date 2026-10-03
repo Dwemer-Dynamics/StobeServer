@@ -87,16 +87,27 @@ function stobeExtensionScanDirectory(string $dir, array &$index, int $depth): vo
 
 /**
  * One traversal per root per request; later hook stages reuse the index.
+ * A folder other than the extension root is scanned as one plugin's folder
+ * (CHIM's requireFilesRecursively(__DIR__, ...)): its own files count, and it
+ * is skipped when its top-level ext/ folder is disabled or reserved.
  */
 function stobeExtensionHookIndex(?string $root = null): array
 {
     static $cache = [];
-    $root = rtrim($root ?? stobeExtensionRoot(), '/\\');
+    $extRoot = stobeExtensionRoot();
+    $root = rtrim($root ?? $extRoot, '/\\');
     $key = realpath($root) ?: $root;
     if (!isset($cache[$key])) {
         $index = [];
-        if ($root !== '' && is_dir($root) && !is_link($root)) {
-            stobeExtensionScanDirectory($root, $index, 0);
+        $realExt = realpath($extRoot) ?: $extRoot;
+        $startDepth = $key === $realExt ? 0 : 1;
+        $enabled = true;
+        if ($startDepth === 1 && str_starts_with($key, $realExt . DIRECTORY_SEPARATOR)) {
+            $topLevel = explode(DIRECTORY_SEPARATOR, substr($key, strlen($realExt) + 1))[0];
+            $enabled = stobeExtensionTopLevelEnabled($topLevel, $realExt . DIRECTORY_SEPARATOR . $topLevel);
+        }
+        if ($enabled && $root !== '' && is_dir($root) && !is_link($root)) {
+            stobeExtensionScanDirectory($root, $index, $startDepth);
         }
         $cache[$key] = $index;
     }
@@ -174,7 +185,8 @@ function stobeRunExtensionHook(
 }
 
 if (!function_exists('requireFilesRecursively')) {
-    // CHIM signature. Uses the same cached index, exclusions and include-once rules.
+    // CHIM signature. Uses the same cached index, exclusions and include-once
+    // rules; a plugin's own folder also includes its directly contained files.
     function requireFilesRecursively($dir, $name)
     {
         return stobeRunExtensionHook(strval($name), null, strval($dir));
@@ -295,7 +307,7 @@ function stobeApplyExtensionPromptSections(
 function stobeRegisterExtensionAction(string $codeName, string $description, array $options = []): bool
 {
     $codeName = trim($codeName);
-    if (strlen($codeName) > 64 || preg_match('/^ExtCmd[A-Za-z][A-Za-z0-9]*_[A-Za-z][A-Za-z0-9]*$/', $codeName) !== 1) {
+    if (strlen($codeName) > 64 || preg_match('/^ExtCmd[A-Za-z][A-Za-z0-9]*_[A-Za-z][A-Za-z0-9_]*$/', $codeName) !== 1) {
         error_log('[ExtensionActions] Rejected invalid action code: ' . substr($codeName, 0, 80));
         return false;
     }
