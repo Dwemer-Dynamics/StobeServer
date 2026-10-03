@@ -20,6 +20,8 @@ $npcMaster->deletePluginData($npcId, 'chim_custom');
 - Writes are single parameterized updates. Other namespaces are preserved; concurrent writes to the same namespace use the last committed update, without a deep merge.
 - Generic NPC create/update/upsert operations do not accept this field. Use the dedicated API so stale profile objects cannot replace plugin state.
 - Data travels with NPC history and playthrough saves under the existing capture, retention and rollback rules. Older snapshots initialize the field to `{}`. These methods do not create a history record on every call or change game timestamps.
-- This is a trusted server-side plugin API, not an HTTP endpoint or a sandbox between installed PHP plugins. It does not automatically inject data into prompts.
+- This is a trusted server-side plugin API, not an HTTP endpoint or a sandbox between installed PHP plugins. It does not automatically inject data into prompts. An [actor-profile enricher](plugin-runtime.md#actor-profile-enrichment-context) receives the NPC's `registered_npc.id` and can read its namespace.
 
 CHIM-Custom currently has separate actor-state storage. Adopting this API and migrating that data is a separate change; player state and actors without NPC records need their own handling.
+
+See [atomic writes](plugin-runtime.md#atomic-writes) before combining namespace updates with relationship changes, duplicate prevention or history.

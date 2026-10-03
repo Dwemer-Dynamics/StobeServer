@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'world_knowledge_aliases.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'extension_hooks.php';
 
 /**
  * Chat helper functions for StobeServer.
@@ -358,6 +359,9 @@ function getActionRuntimeConfig(string $eventType): array {
         $actionsEnabled = $actionsEnabled && getSettingBool('BORED_ALLOW_ACTIONS', false);
     } elseif ($normalizedEventType === 'rechat') {
         $actionsEnabled = $actionsEnabled && getSettingBool('RECHAT_ALLOW_ACTIONS', true);
+    } elseif ($normalizedEventType === 'addon_followup') {
+        // Addon follow-up turns choose actions only when the registration allows it.
+        $actionsEnabled = $actionsEnabled && !empty($GLOBALS['STOBE_ADDON_FOLLOWUP_ALLOW_ACTIONS']);
     }
 
     $maxActions = getSettingInt('MAX_ACTIONS_PER_RESPONSE', 1);
@@ -368,6 +372,7 @@ function getActionRuntimeConfig(string $eventType): array {
     }
 
     $allowlist = parseActionAllowlistSetting(getSetting('ACTIONS_ALLOWLIST', ''));
+    $extensionActions = $actionsEnabled ? stobeExtensionActionCodesForAllowlist($allowlist) : [];
     $activeActionRows = loadCoreActionRows(true);
     $activeCommands = [];
     foreach ($activeActionRows as $row) {
@@ -404,6 +409,7 @@ function getActionRuntimeConfig(string $eventType): array {
         'enabled' => $actionsEnabled,
         'max_actions' => $maxActions,
         'allowlist' => $allowlist,
+        'extension_actions' => $extensionActions,
         'active_rows' => $activeActionRows,
         'min_faction_relation' => $minFaction,
         'max_faction_relation' => $maxFaction,
@@ -539,6 +545,13 @@ function appendActionGuidanceToPrompt(string $prompt, string $eventType, array $
             }
             $rows[] = $row;
         }
+    }
+    foreach (stobeExtensionActionCodesForConfig($config) as $extensionCode) {
+        $rows[] = [
+            'command' => $extensionCode,
+            'action_name' => $extensionCode,
+            'description' => stobeExtensionActionRegistry()[$extensionCode]['description'],
+        ];
     }
 
     $guidance = buildActionGuidanceFromRows($rows, $npcData);
@@ -1043,6 +1056,10 @@ function normalizeActionTagToken(string $rawTag, array $config = []): string {
     $argument = trim(substr($value, $firstAt + 1));
     if ($command === '') {
         return '';
+    }
+    if (str_starts_with($command, 'EXTCMD')) {
+        // Plugin-registered external actions keep their exact code name.
+        return stobeNormalizeExtensionActionTag(substr($value, 0, $firstAt), $argument, $config);
     }
 
     $commandAliases = [
@@ -4982,6 +4999,9 @@ function stobeResolveStructuredDialogueContractParts(
     }
     $actions[] = 'TravelLocation';
     $actions[] = 'MoveTo';
+    foreach (stobeExtensionActionCodesForConfig($actionConfig) as $extensionCode) {
+        $actions[] = $extensionCode;
+    }
 
     $moodsCsv = '';
     if (is_array($npcData)) {
@@ -5052,6 +5072,45 @@ function stobeBuildStructuredDialogueSchemaPrompt(
     string $eventType = 'chat'
 ): array
 {
+    return stobeBuildStructuredDialogueTemplates($npcName, $actions, $moods, $strictListener, $eventType, 0);
+}
+
+/**
+ * Builds the prompt schema (0) and provider response_format (1) for one
+ * dialogue contract and runs JSON_TEMPLATE hooks once with both, as CHIM does.
+ * The hooked pair is kept until each half has been served once, so the prompt
+ * and response_format of one LLM call share a single hook run; asking for an
+ * already-served half starts a new build.
+ */
+function stobeBuildStructuredDialogueTemplates(
+    string $npcName,
+    array $actions,
+    array $moods,
+    string $strictListener,
+    string $eventType,
+    int $part
+): array {
+    static $pending = null;
+    $baseTemplates = stobeBuildStructuredDialogueBaseTemplates($npcName, $actions, $moods, $strictListener, $eventType);
+    $key = md5(serialize($baseTemplates));
+    if (!is_array($pending) || $pending['key'] !== $key || !empty($pending['served'][$part])) {
+        $pending = [
+            'key' => $key,
+            'templates' => stobeApplyJsonTemplateHooks($baseTemplates[0], $baseTemplates[1]),
+            'served' => [],
+        ];
+    }
+    $pending['served'][$part] = true;
+    return $pending['templates'][$part];
+}
+
+function stobeBuildStructuredDialogueBaseTemplates(
+    string $npcName,
+    array $actions,
+    array $moods,
+    string $strictListener,
+    string $eventType
+): array {
     $safeNpc = normalizeParticipantNameToken($npcName);
     if ($safeNpc === '') {
         $safeNpc = 'the NPC';
@@ -5065,7 +5124,7 @@ function stobeBuildStructuredDialogueSchemaPrompt(
         ? 'choose exactly one mood while speaking from this list, never combine moods: ' . implode('|', $moods)
         : 'choose exactly one mood while speaking, never combine moods';
 
-    return [
+    $responseTemplate = [
         'character' => $safeNpc,
         'listener' => $listenerDescription,
         'message' => stobeStructuredDialogueMessageDescription($safeNpc, $eventType),
@@ -5076,24 +5135,8 @@ function stobeBuildStructuredDialogueSchemaPrompt(
         'lang' => 'ISO 639-1 language code such as en; use en unless a different language is clearly appropriate',
         'amount' => 'positive integer count for GIVE_CATS/TAKE_CATS and optional stack count for GIVE_ITEM/TAKE_ITEM',
     ];
-}
 
-function stobeBuildStructuredDialogueResponseFormat(
-    string $npcName,
-    array|false $npcData = false,
-    ?bool $inPlayerFaction = null,
-    string $eventType = 'chat',
-    string $strictListener = ''
-): array {
-    $parts = stobeResolveStructuredDialogueContractParts($npcName, $npcData, $inPlayerFaction, $eventType);
-    $safeNpc = strval($parts['safe_npc'] ?? '');
-    if ($safeNpc === '') {
-        $safeNpc = 'the NPC';
-    }
-    $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
-    $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
     $messageDescription = stobeStructuredDialogueMessageDescription($safeNpc, $eventType);
-    $safeStrictListener = normalizeParticipantNameToken($strictListener);
     $listenerProperty = [
         'type' => 'string',
         'description' => $safeStrictListener !== ''
@@ -5104,7 +5147,7 @@ function stobeBuildStructuredDialogueResponseFormat(
         $listenerProperty['enum'] = [$safeStrictListener];
     }
 
-    return [
+    $responseFormat = [
         'type' => 'json_schema',
         'json_schema' => [
             'name' => 'stobe_dialogue_response',
@@ -5164,6 +5207,20 @@ function stobeBuildStructuredDialogueResponseFormat(
             ],
         ],
     ];
+    return [$responseTemplate, $responseFormat];
+}
+
+function stobeBuildStructuredDialogueResponseFormat(
+    string $npcName,
+    array|false $npcData = false,
+    ?bool $inPlayerFaction = null,
+    string $eventType = 'chat',
+    string $strictListener = ''
+): array {
+    $parts = stobeResolveStructuredDialogueContractParts($npcName, $npcData, $inPlayerFaction, $eventType);
+    $actions = is_array($parts['actions'] ?? null) ? $parts['actions'] : [];
+    $moods = is_array($parts['moods'] ?? null) ? $parts['moods'] : [];
+    return stobeBuildStructuredDialogueTemplates(strval($parts['safe_npc'] ?? ''), $actions, $moods, $strictListener, $eventType, 1);
 }
 
 function stobeBuildOutputContractUserPrompt(
@@ -5439,6 +5496,10 @@ function stobeBuildActionTagFromStructuredPayload(
 
     if ($actionUpper === '' || $actionUpper === 'TALK') {
         return '';
+    }
+    if (str_starts_with($actionUpper, 'EXTCMD')) {
+        // Validated against the plugin registry by normalizeActionTagToken().
+        return trim($action) . '@' . ($target !== '' ? $target : $item);
     }
 
     $synonyms = [
@@ -8534,6 +8595,12 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
 
     $speakerKey = strtolower(normalizeParticipantNameToken($speakerName));
     $profileAppearances = stobeLoadNearbyNpcAppearanceMap($actors);
+    $registeredActors = stobeExtensionHasActorProfileEnrichers()
+        ? stobeExtensionRegisteredNpcs(array_map(
+            static fn($entry) => is_array($entry) && stobeParseFlexibleBool($entry['is_animal'] ?? null) !== true ? strval($entry['name'] ?? '') : '',
+            $actors
+        ))
+        : [];
     $speakerFactionIdentity = getNpcFactionIdentityFromProfile($npcData);
     $seen = [];
     $seenFactionLabels = [];
@@ -8706,6 +8773,20 @@ function stobeBuildNearbyActorsPromptBlock(array $npcData, string $speakerName =
         $distanceBand = stobeDescribeDistanceBand($entry['dist'] ?? '');
         if ($distanceBand !== '') {
             $detailParts[] = 'Distance: ' . $distanceBand;
+        }
+        // Context v1 keys keep the nearby snapshot in npc_data; v2 adds registered/player-side fields.
+        $profileExtra = stobeExtensionHasActorProfileEnrichers()
+            ? stobeExtensionActorEnrichmentText($name, 'npc', [
+                'source' => 'nearby_actors',
+                'metadata' => $entry,
+                'npc_data' => $entry,
+                'nearby' => $entry,
+                'registered_npc' => $registeredActors[$nameKey] ?? null,
+                'player_side' => stobeExtensionPlayerSide($name, nearbyEntryIsInPlayerFaction($entry)),
+            ])
+            : '';
+        if ($profileExtra !== '') {
+            $detailParts[] = $profileExtra;
         }
 
         $line = '## ' . stobePromptXmlEscape($name . $descriptor);
@@ -12262,16 +12343,55 @@ function stobeTakeGeneratedSpeechChunks(): array {
     return stobeTakeGeneratedSpeechChunksSince(0);
 }
 
+/**
+ * Serial for an ExtCmd speaker, taken only from this request's client `people`
+ * list. Returns '' unless exactly one listed identity has the actor's name, so
+ * a duplicate, serial-less or unlisted name never yields a guessed actor.
+ */
+function stobeExtActionSpeakerSerial(string $actor, string $peopleRaw): string {
+    $actorName = normalizeParticipantNameToken($actor);
+    $people = json_decode($peopleRaw, true);
+    if ($actorName === '' || !is_array($people)) {
+        return '';
+    }
+    $serial = '';
+    foreach ($people as $entry) {
+        if (!is_string($entry) || strcasecmp(normalizeParticipantNameToken($entry), $actorName) !== 0) {
+            continue;
+        }
+        $parts = explode('|', $entry, 2);
+        $candidate = trim(strval($parts[1] ?? ''));
+        if (preg_match('/^[1-9][0-9]{0,9}$/', $candidate) !== 1 || intval($candidate) > 4294967295
+            || ($serial !== '' && $serial !== $candidate)) {
+            return '';
+        }
+        $serial = $candidate;
+    }
+    return $serial;
+}
+
 function formatResponse(
     string $actor,
     string $action,
     string $message,
     string $ttsHash = '',
     int $ttsDurationMs = 0,
-    string $utteranceId = ''
+    string $utteranceId = '',
+    string $speakerSerial = ''
 ): string {
     stobeInteractionRequire();
     $metadata = [];
+    $followupActor = $GLOBALS['STOBE_ADDON_FOLLOWUP_ACTOR'] ?? null;
+    if (is_array($followupActor) && $actor === $followupActor['name']
+        && ($action !== 'ActionQueue' || stripos($message, 'ExtCmd') === 0)) {
+        // Follow-up dialogue and addon lines name the exact serial the claimed
+        // action ran on; built-in action lines stay unchanged.
+        $speakerSerial = $followupActor['sid'];
+    }
+    if ($speakerSerial !== '') {
+        // Older clients ignore unknown metadata tokens.
+        $metadata[] = 'sid=' . $speakerSerial;
+    }
     if ($utteranceId !== '') {
         $metadata[] = 'uid=' . $utteranceId;
     }
@@ -13362,6 +13482,9 @@ function streamResponse(
         'chat',
         is_array($actorData) ? $actorData : false
     );
+    if (!empty($GLOBALS['STOBE_ADDON_FOLLOWUP_TURN']) && empty($GLOBALS['STOBE_ADDON_FOLLOWUP_ALLOW_ACTIONS'])) {
+        $actions = [];
+    }
     foreach ($actions as $rawAction) {
         $normalizedAction = normalizeActionTagToken(strval($rawAction), $actionConfig);
         if ($normalizedAction === '') {
@@ -13371,7 +13494,19 @@ function streamResponse(
         if ($dispatchAction === '') {
             continue;
         }
-        $wirePayload = formatResponse($actor, 'ActionQueue', $dispatchAction);
+        // Addon actions carry the request-bound speaker serial so the client can
+        // dispatch them for any group speaker; built-in action lines are unchanged.
+        $speakerSerial = stripos($dispatchAction, 'ExtCmd') === 0
+            ? stobeExtActionSpeakerSerial($actor, strval($_GET['people'] ?? ''))
+            : '';
+        $wirePayload = formatResponse($actor, 'ActionQueue', $dispatchAction, '', 0, '', $speakerSerial);
+        $followupAid = $speakerSerial !== '' && function_exists('stobeAddonFollowupIssue')
+            ? stobeAddonFollowupIssue($actor, $dispatchAction, $speakerSerial)
+            : 0;
+        if ($followupAid > 0) {
+            // stobe.addon_followup.v1: only clients that sent addon_followup=1 receive it.
+            $wirePayload = substr($wirePayload, 0, -2) . '|aid=' . $followupAid . "\r\n";
+        }
         echo $wirePayload;
         stobeLogOutputToPlugin($actor, 'ActionQueue', $dispatchAction, $wirePayload);
         if (ob_get_length()) {

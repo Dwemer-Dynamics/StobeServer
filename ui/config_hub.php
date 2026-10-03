@@ -67,6 +67,7 @@ $tabs = [
     ['id' => 'desc', 'group' => 'world-behavior', 'icon' => '&#x1F4DC;', 'label' => 'Descriptions', 'page' => 'description.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'actions', 'group' => 'world-behavior', 'icon' => '&#x2694;&#xFE0F;', 'label' => 'Action Editor', 'page' => 'action_editor.php', 'status' => 'wired', 'embed' => true],
     ['id' => 'prompts', 'group' => 'world-behavior', 'icon' => '&#x1F4DD;', 'label' => 'Prompts Manager', 'page' => 'prompts_manager.php', 'status' => 'wired', 'embed' => true],
+    ['id' => 'serverplugins', 'group' => 'world-behavior', 'icon' => '&#x1F9E9;', 'label' => 'Server Plugins', 'page' => 'server_plugins.php', 'status' => 'wired', 'embed' => true],
 ];
 
 $tabGroups = [

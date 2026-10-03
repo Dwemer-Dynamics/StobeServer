@@ -10582,7 +10582,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
         $hornAverageNormalized = $extractHornAverageNormalized($snapshot);
         $hornAppearanceSentence = $buildShekHornAppearanceSentence($hornAverageNormalized);
     }
-    $forceAppearanceUpdate = false;
 
     $stats = $statsPayload;
     $skills = '';
@@ -11168,7 +11167,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     if ($hornAppearanceSentence !== '') {
         $hornAppearanceBase = $appearance !== '' ? $appearance : $existingMasterAppearance;
         $appearance = $applyHornAppearanceSentence($hornAppearanceBase, $hornAppearanceSentence);
-        $forceAppearanceUpdate = true;
         stobeLogImport('Horn appearance sentence applied', [
             'name' => $name,
             'gamets' => max(0, $gamets),
@@ -11178,9 +11176,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
             'appearance_after' => $appearance,
             'source' => $snapshotSource,
         ], 'DEBUG');
-    }
-    if ($appearanceTrait !== '') {
-        $forceAppearanceUpdate = true;
     }
     if ($isLikelyTraderContext) {
         $mergeTraderEntry = static function (array &$bucket, array $entry) use ($resolveEntryWeaponModel): void {
@@ -11353,7 +11348,6 @@ function storeNpcSnapshot(array $snapshot, int $gamets = 0): bool {
     ], [
         'skip_history' => true,
         'defer_voice_assignment' => true,
-        'force_update_appearance' => $forceAppearanceUpdate,
     ]);
 
     $metadataJson = normalizeJsonString($metadataForStorage);

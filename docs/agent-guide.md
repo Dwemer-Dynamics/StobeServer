@@ -36,12 +36,14 @@ For missing replies, trace ingress, processor selection, connector output, strea
 
 ## Custom plugins and extensions
 
+Read the [integration runtime reference](plugin-runtime.md) for execution timing, required and optional state, atomic writes, installation/update boundaries and background work.
+
 Choose the extension boundary before coding:
 
 - Existing connector/profile/prompt configuration may be enough for a provider or behavior change. Try the existing OpenAI-compatible connector for a compatible service.
 - A new provider adapter is a source contribution: use [connector/openaijson.php](../connector/openaijson.php) and [connector/llm_dispatcher.php](../connector/llm_dispatcher.php) as current examples. Register and validate the type and any settings paths; dropping a PHP file into `connector/` does not register it.
-- [ext/relationship_system](../ext/relationship_system/README.md) is an included extension implementation, not evidence of a generic automatic plugin loader. Its README contains legacy cross-game examples; verify actual call sites and current Stobe data contracts before copying a hook pattern. Inspect [context_pre.php](../ext/relationship_system/context_pre.php), [postrequest.php](../ext/relationship_system/postrequest.php), and [worker.php](../ext/relationship_system/worker.php) together with their callers.
-- There is no general extension manifest or automatic `ext/*` hook-registration contract documented here. Identify an explicit bootstrap/request/worker integration point in this revision. If none exists for the desired feature, propose a focused source change instead of promising drop-in compatibility with CHIM plugins.
+- CHIM-named hook files in `ext/<plugin>/` run through [lib/extension_hooks.php](../lib/extension_hooks.php) at the stages listed in the runtime reference, with CHIM's prompt-injection, actor-enricher, `JSON_TEMPLATE`, `BIOGRAPHY_BUILDER` and registered `ExtCmd` action APIs. Schema-4 `.dwpkg` packages install them through [the package manager](../lib/plugin_package_manager.php) and the [Server Plugins page](../ui/server_plugins.php); installation does not prove execution. Stobe's call sites, state and actions differ from Skyrim; a CHIM plugin is not automatically compatible. Start from [examples/plugin-parity](../examples/plugin-parity/README.md).
+- [ext/relationship_system](../ext/relationship_system/README.md) is excluded from that loader. Its hook files are legacy; the active evaluator is in `lib/chat_helper_functions.php`. Verify actual call sites before copying its patterns.
 
 Keep an independently distributed extension in its own maintained repository and deploy only its own directory after authorization. Most `ext/*` files are Git-ignored; do not mistake a runtime copy for the source repository. Preserve unrelated extensions. Use idempotent migrations, explicit configuration, validated input and bounded background work. Check playthrough table policy rather than adding new tables to saves implicitly.
 
