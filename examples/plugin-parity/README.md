@@ -7,7 +7,7 @@ for the hook contract.
 
 | File | Demonstrates |
 | --- | --- |
-| `ext/parity_probe/globals.php` | `chimRegisterPromptInjection()` (`character_bottom`, `prompt_bottom`), `chimRegisterActorProfileEnricher()` reading context version 2 (`registered_npc`, the `player` type and `player_side` squads), `stobeRegisterExtensionAction('ExtCmdParityProbe_Ping', …)` |
+| `ext/parity_probe/globals.php` | `chimRegisterPromptInjection()` (`character_bottom`, `prompt_bottom`), `chimRegisterActorProfileEnricher()` reading context version 2 (`registered_npc`, the `player` type and `player_side` squads), `stobeRegisterExtensionAction('ExtCmdParityProbe_Ping', …)`, and `ExtCmdParityProbe_Report` with an opt-in `followup` |
 | `ext/parity_probe/context.php` | Context-stage marker in `$GLOBALS['PLUGIN_PARITY_TRACE']` |
 | `ext/parity_probe/postrequest.php` | Post-response marker; runs only after a model route completed its turn |
 | `ext/parity_probe/prerequest.php` | Observer for the STOBE client's `funcret` (`command@ExtCmdParityProbe_Ping@<argument>@<completed\|failed…>`) and `addon_state` (`ParityProbe: <key>=<value>`) events |
@@ -88,8 +88,26 @@ The probe does not run `main.php`, the model processors or `chat.php`, call a
 model, write the database, or start Kenshi. Its enrichment checks use an
 in-memory stand-in for the two database reads. Hook placement in those entry
 points, a model choosing the action, client `ExtCmd` dispatch and the client's
-result events remain live-test items. Stobe acknowledges `funcret` without
-CHIM's follow-up model call.
+result events remain live-test items. Stobe acknowledges `funcret` without a
+follow-up model call unless the client opts in.
+
+## Opt-in follow-up
+
+`ExtCmdParityProbe_Report` registers a text-only follow-up. The probe checks
+its validation, invalid options, no aid without `addon_followup=1` and
+rejection of malformed IDs or results before any query. The ledger claim, the
+follow-up model turn, duplicates, playthrough changes and concurrency need
+PostgreSQL and the HTTP route; the request and stream contract is in
+[action follow-ups](../../docs/plugin-runtime.md#action-follow-ups-opt-in). On a
+disposable server with the example installed and the ledger migration applied:
+
+1. Send a dialogue turn with `&addon_followup=1` and a `people` entry such as
+   `"Beep|9101"`. If the model picks the action, the line is
+   `Beep|ActionQueue|ExtCmdParityProbe_Report@|sid=9101|aid=<n>`.
+2. Send `funcret` data `command@ExtCmdParityProbe_Report@@completed: green`
+   with `&addon_followup=1&aid=<n>&sid=9101&arid=1`. The response has
+   `X-Stobe-Addon-Followup: v1 accepted aid=<n>` and Beep's `ScriptQueue` line.
+   Sending it again returns `v1 rejected` and `ok`.
 
 A separate paired check has gone further on a disposable database. It installed
 the built package through the package API, ran a `processor/chat.php` turn

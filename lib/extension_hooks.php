@@ -529,6 +529,11 @@ function stobeRegisterExtensionAction(string $codeName, string $description, arr
         error_log('[ExtensionActions] Rejected incomplete action definition: ' . $codeName);
         return false;
     }
+    $followup = stobeExtensionActionNormalizeFollowup($options['followup'] ?? null);
+    if ($followup === null) {
+        error_log('[ExtensionActions] Rejected invalid follow-up options: ' . $codeName);
+        return false;
+    }
     foreach (array_keys(stobeExtensionActionRegistry()) as $existingCode) {
         if (strcasecmp($existingCode, $codeName) === 0 && $existingCode !== $codeName) {
             return false;
@@ -539,8 +544,247 @@ function stobeRegisterExtensionAction(string $codeName, string $description, arr
         'code' => $codeName,
         'description' => substr($description, 0, 400),
         'target' => $target,
+        'followup' => $followup,
     ];
     return true;
+}
+
+/**
+ * Optional 'followup' registration option (docs/plugin-runtime.md, action follow-ups).
+ * Absent or disabled means no follow-up model call. Returns null when invalid.
+ */
+function stobeExtensionActionNormalizeFollowup($followup): ?array
+{
+    if ($followup === null) {
+        return [];
+    }
+    if (!is_array($followup) || array_diff(array_keys($followup), ['enabled', 'prompt', 'arg_name', 'use_functions_again']) !== []) {
+        return null;
+    }
+    foreach (['enabled', 'use_functions_again'] as $flag) {
+        if (array_key_exists($flag, $followup) && !is_bool($followup[$flag])) {
+            return null;
+        }
+    }
+    $prompt = $followup['prompt'] ?? '';
+    $argName = $followup['arg_name'] ?? 'target';
+    if (!is_string($prompt) || strlen($prompt) > 1000 || !is_string($argName)
+        || preg_match('/^[A-Za-z][A-Za-z0-9_]{0,31}$/', $argName) !== 1) {
+        return null;
+    }
+    if (($followup['enabled'] ?? false) !== true) {
+        return [];
+    }
+    $prompt = trim(preg_replace('/\s+/', ' ', $prompt) ?? '');
+    if ($prompt === '') {
+        return null;
+    }
+    return [
+        'enabled' => true,
+        'prompt' => $prompt,
+        'arg_name' => $argName,
+        'use_functions_again' => ($followup['use_functions_again'] ?? false) === true,
+    ];
+}
+
+/*
+ * Follow-up correlation, contract stobe.addon_followup.v1. A client that sends
+ * addon_followup=1 receives |aid=<n> on ActionQueue lines for opted-in codes;
+ * stobe_addon_action_ledger records what was issued to which serial. A result
+ * carrying the aid is claimed once by primary key, so duplicates, mismatches,
+ * other playthroughs and stale rows fail closed. This correlates requests; it
+ * does not authenticate the local HTTP caller.
+ */
+const STOBE_ADDON_FOLLOWUP_TTL_SECONDS = 660; // the client times accepted requests out after 10 minutes
+const STOBE_ADDON_FOLLOWUP_MAX_OPEN = 16;
+
+function stobeAddonFollowupRequested(): bool
+{
+    return strval($_GET['addon_followup'] ?? '') === '1';
+}
+
+function stobeAddonFollowupUint32($value): int
+{
+    $value = is_string($value) ? $value : '';
+    return preg_match('/^[1-9][0-9]{0,9}$/', $value) === 1 && intval($value) <= 4294967295 ? intval($value) : 0;
+}
+
+/**
+ * Playthrough runtime generation from ptr_runtime_enter(). A switch or restore
+ * writes a new one even when the campaign ID stays the same. Before the first
+ * switch on this install it is '', so rows only match other '' rows.
+ */
+function stobeAddonFollowupRuntimeGeneration(): string
+{
+    return substr(strval($GLOBALS['ptr_runtime_generation'] ?? ''), 0, 64);
+}
+
+/**
+ * Records an issued opted-in ExtCmd and returns its aid, or 0 when none is
+ * issued: no opt-in, a follow-up turn, no exact serial, a value the funcret
+ * packet cannot echo exactly, ledger full or failed. The row is committed
+ * before the caller writes the line, and the action is sent either way.
+ */
+function stobeAddonFollowupIssue(string $actor, string $dispatchAction, string $speakerSerial): int
+{
+    if (!stobeAddonFollowupRequested() || !empty($GLOBALS['STOBE_ADDON_FOLLOWUP_TURN'])) {
+        return 0;
+    }
+    [$code, $argument] = array_pad(explode('@', $dispatchAction, 2), 2, '');
+    $spec = stobeExtensionActionRegistry()[$code] ?? null;
+    $serial = stobeAddonFollowupUint32($speakerSerial);
+    $db = $GLOBALS['db'] ?? null;
+    if (!is_array($spec) || empty($spec['followup']['enabled']) || $serial === 0 || !is_object($db)) {
+        return 0;
+    }
+    // stobeNormalizeExtensionActionTag() already strips these; anything that
+    // still could not round-trip through the '@'/'|' fields gets no aid.
+    if ($actor === '' || mb_strlen($actor) > 120 || preg_match('/[|\r\n]/', $actor) === 1
+        || preg_match('/[@|\[\]\r\n\t]/', $argument) === 1 || !mb_check_encoding($actor . $argument, 'UTF-8')) {
+        error_log("[ExtensionActions] No follow-up id for {$code}: actor or argument cannot be echoed exactly");
+        return 0;
+    }
+    $now = time();
+    $aid = 0;
+    if ($db->exec('BEGIN ISOLATION LEVEL READ COMMITTED') === false) {
+        error_log("[ExtensionActions] No follow-up id for {$code}: could not start ledger write");
+        return 0;
+    }
+    try {
+        // Serialize only the cap check and insert. Each statement after the lock
+        // sees rows committed by earlier issuers, so the cap holds under concurrency.
+        if ($db->exec("SELECT pg_advisory_xact_lock(hashtext('stobe_addon_action_ledger'))") === false
+            || $db->exec('DELETE FROM stobe_addon_action_ledger WHERE localts < $1', [$now - 86400]) === false) {
+            throw new RuntimeException('ledger unavailable');
+        }
+        $open = $db->fetchOne(
+            "SELECT COUNT(*) AS n FROM stobe_addon_action_ledger WHERE state = 'issued' AND localts >= $1",
+            [$now - STOBE_ADDON_FOLLOWUP_TTL_SECONDS]
+        );
+        if (!is_array($open)) {
+            throw new RuntimeException('ledger unavailable');
+        }
+        if (intval($open['n']) >= STOBE_ADDON_FOLLOWUP_MAX_OPEN) {
+            error_log("[ExtensionActions] No follow-up id for {$code}: too many open follow-ups");
+        }
+        for ($attempt = 0; $attempt < 2 && $aid === 0 && intval($open['n']) < STOBE_ADDON_FOLLOWUP_MAX_OPEN; $attempt++) {
+            // A colliding aid inserts nothing and is retried once.
+            $candidate = random_int(1, 4294967295);
+            $row = $db->fetchOne(
+                "INSERT INTO stobe_addon_action_ledger
+                    (aid, playthrough_id, runtime_generation, interaction_generation, actor, actor_sid, code, argument, state, localts)
+                 VALUES ($1, COALESCE((SELECT value FROM conf_opts WHERE id = 'PLAYTHROUGH_CAMPAIGN_ID'), ''), $2, $3, $4, $5, $6, $7, 'issued', $8)
+                 ON CONFLICT (aid) DO NOTHING
+                 RETURNING aid",
+                [$candidate, stobeAddonFollowupRuntimeGeneration(), intval($GLOBALS['stobe_interaction_generation'] ?? 0),
+                    $actor, $serial, $code, $argument, $now]
+            );
+            $aid = is_array($row) && intval($row['aid'] ?? 0) === $candidate ? $candidate : 0;
+        }
+        if ($db->exec('COMMIT') === false) {
+            throw new RuntimeException('commit failed');
+        }
+    } catch (Throwable $exception) {
+        $db->exec('ROLLBACK');
+        error_log("[ExtensionActions] No follow-up id for {$code}: " . $exception->getMessage());
+        return 0;
+    }
+    return $aid;
+}
+
+/**
+ * Checks a funcret against the ledger. Any result with a valid, matching aid
+ * closes its row; only a completed result for an opted-in code is returned.
+ *
+ * @return array{ok: bool, reason: string, claim: array}
+ */
+function stobeAddonFollowupClaim(array $request, array $query): array
+{
+    $reject = static function (string $reason, string $code = ''): array {
+        error_log('[ExtensionActions] No follow-up' . ($code === '' ? '' : " for {$code}") . ": {$reason}");
+        return ['ok' => false, 'reason' => $reason, 'claim' => []];
+    };
+    $aid = stobeAddonFollowupUint32($query['aid'] ?? null);
+    $serial = stobeAddonFollowupUint32($query['sid'] ?? null);
+    $requestId = stobeAddonFollowupUint32($query['arid'] ?? null);
+    $data = $request[3] ?? null;
+    if ($aid === 0 || $serial === 0 || $requestId === 0) {
+        return $reject('missing or malformed aid, sid or arid');
+    }
+    if (($request[0] ?? '') !== 'funcret' || !is_string($data) || strlen($data) > 4096) {
+        return $reject('not a funcret result');
+    }
+    $parts = explode('@', $data, 4);
+    if (count($parts) !== 4 || $parts[0] !== 'command') {
+        return $reject('malformed result');
+    }
+    [, $code, $argument, $result] = $parts;
+    $completed = $result === 'completed' || str_starts_with($result, 'completed: ');
+    $db = $GLOBALS['db'] ?? null;
+    if (!is_object($db)) {
+        return $reject('no database', $code);
+    }
+    try {
+        // Primary-key claim: one delivery wins, and only with the issued fields.
+        $now = time();
+        $row = $db->fetchOne(
+            "UPDATE stobe_addon_action_ledger
+             SET state = $1, resolved_at = $2, client_request_id = $3
+             WHERE aid = $4 AND state = 'issued' AND localts >= $5 AND actor_sid = $6 AND code = $7 AND argument = $8
+               AND interaction_generation = $9 AND runtime_generation = $10
+               AND playthrough_id = COALESCE((SELECT value FROM conf_opts WHERE id = 'PLAYTHROUGH_CAMPAIGN_ID'), '')
+             RETURNING aid, actor, actor_sid, code, argument",
+            [$completed ? 'completed' : 'failed', $now, $requestId, $aid, $now - STOBE_ADDON_FOLLOWUP_TTL_SECONDS,
+                $serial, $code, $argument, intval($GLOBALS['stobe_interaction_generation'] ?? 0),
+                stobeAddonFollowupRuntimeGeneration()]
+        );
+        if (!is_array($row) || intval($row['aid'] ?? 0) !== $aid) {
+            $known = $db->fetchOne('SELECT state FROM stobe_addon_action_ledger WHERE aid = $1', [$aid]);
+            $reason = !is_array($known) ? "no issued action for aid {$aid}"
+                : ($known['state'] === 'issued' ? "aid {$aid} does not match this result or is stale" : "aid {$aid} already resolved");
+            return $reject($reason, $code);
+        }
+    } catch (Throwable $exception) {
+        return $reject('ledger error: ' . $exception->getMessage(), $code);
+    }
+    if (!$completed) {
+        return $reject('result is not completed', $code);
+    }
+    $spec = stobeExtensionActionRegistry()[$code] ?? null;
+    if (!is_array($spec) || empty($spec['followup']['enabled'])) {
+        return $reject('not registered with a follow-up', $code);
+    }
+    $detail = trim(substr($result, strlen('completed')), " :\t");
+    return ['ok' => true, 'reason' => '', 'claim' => [
+        'aid' => $aid,
+        'client_request_id' => $requestId,
+        'actor' => strval($row['actor']),
+        'actor_sid' => $serial,
+        'code' => $code,
+        'argument' => $argument,
+        'detail' => mb_substr($detail, 0, 400),
+        'followup' => $spec['followup'],
+    ]];
+}
+
+/**
+ * Profile for a claimed follow-up: the single core_npc row registered with
+ * storage_id hand_<sid> for the serial the action ran on, which must carry the
+ * issued name. Missing or duplicate registrations fail closed; unlike
+ * getNpcData() there is no newest-namesake or original_name fallback.
+ */
+function stobeAddonFollowupProfile(string $actor, int $serial): array|false
+{
+    $rows = $GLOBALS['db']->fetchAll(
+        "SELECT * FROM core_npc WHERE metadata->>'storage_id' = $1 ORDER BY id LIMIT 2",
+        ['hand_' . $serial]
+    );
+    $actorName = normalizeParticipantNameToken($actor);
+    if (count($rows) !== 1 || $actorName === ''
+        || strcasecmp(normalizeParticipantNameToken(strval($rows[0]['name'] ?? '')), $actorName) !== 0) {
+        return false;
+    }
+    return $rows[0];
 }
 
 function stobeExtensionActionRegistry(): array

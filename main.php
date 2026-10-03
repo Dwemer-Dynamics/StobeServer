@@ -328,6 +328,14 @@ try {
             break;
 
         case 'funcret':
+            // Opt-in clients (addon_followup=1) may get one bounded follow-up turn.
+            if (function_exists('stobeAddonFollowupRequested') && stobeAddonFollowupRequested()) {
+                require_once($path . "processor/addon_followup.php");
+                break;
+            }
+            echo "ok";
+            break;
+
         case 'addon_state':
             // Client ExtCmd results and addon state are for prerequest.php
             // observers. The client sends a readable infoaction line for context.
