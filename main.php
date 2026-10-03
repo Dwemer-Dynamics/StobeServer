@@ -2,7 +2,15 @@
 require_once __DIR__ . '/lib/playthrough_switching.php';
 pas_http_guard();
 require_once __DIR__ . '/lib/stobe_interaction.php';
-$interactionPacket = base64_decode(strval($_GET['DATA'] ?? ''), true);
+require_once __DIR__ . '/lib/playthrough_guard.php';
+
+$streamPacket = PHP_SAPI === 'cli' ? '' : stobeDecodeStreamPacket(strval($_SERVER['QUERY_STRING'] ?? ''));
+if ($streamPacket === false) {
+    http_response_code(400);
+    echo 'invalid DATA';
+    exit;
+}
+$interactionPacket = $streamPacket;
 $interactionType = explode('|', $interactionPacket ?: '', 2)[0];
 if (stobeInteractionIsTrigger($interactionType)) stobeInteractionRequire();
 
@@ -28,6 +36,7 @@ require($path . "lib/bootstrap.php");
 if (!headers_sent() && function_exists('stobeNarratorDisplayNameHeaderValue')) {
     header('X-Narrator-Display-Name: ' . stobeNarratorDisplayNameHeaderValue());
 }
+stobeRunExtensionHook('globals.php');
 
 $GLOBALS["AVOID_TTS_CACHE"] = true;
 $GLOBALS["SEMAPHORES_TIMEOUT"] = 300;
@@ -37,11 +46,7 @@ if (php_sapi_name() === "cli") {
     $playerName = getSetting('PLAYER_NAME', 'Drifter');
     $receivedData = "inputtext|" . time() . "|0|{$playerName}: {$argv[1]}";
 } else {
-    if (strpos($_SERVER["QUERY_STRING"], "&") === false) {
-        $receivedData = mb_scrub(base64_decode(substr($_SERVER["QUERY_STRING"], 5)));
-    } else {
-        $receivedData = mb_scrub(base64_decode(substr($_SERVER["QUERY_STRING"], 5, strpos($_SERVER["QUERY_STRING"], "&") - 5)));
-    }
+    $receivedData = mb_scrub($streamPacket);
 }
 
 while (ob_get_length() && ob_end_clean());
@@ -164,6 +169,8 @@ if (!function_exists('stobeTryInlineMemoryMaintenanceFallback')) {
 
 // Parse event: type|timestamp|gamets|data
 $gameRequest = explode("|", $receivedData);
+// Extensions may rewrite $gameRequest here, before any field is derived.
+stobeRunExtensionHook('preprocessing.php');
 $eventType = $gameRequest[0] ?? '';
 $timestamp = $gameRequest[1] ?? time();
 $gamets = $gameRequest[2] ?? 0;
@@ -256,6 +263,13 @@ if ($eventType === 'inputtext_s') {
 // Auto-diary runs from the background manager / inline maintenance fallback.
 // Manual in-game "Write Diary" events still use the direct diary processor below.
 
+if (stobeRunExtensionHook('prerequest.php') !== []) {
+    $eventType = $gameRequest[0] ?? '';
+    $timestamp = $gameRequest[1] ?? time();
+    $gamets = $gameRequest[2] ?? 0;
+    $eventData = $gameRequest[3] ?? '';
+}
+
 // Route event to appropriate processor
 try {
     switch ($eventType) {
@@ -313,6 +327,13 @@ try {
             require_once($path . "processor/init.php");
             break;
 
+        case 'funcret':
+        case 'addon_state':
+            // Client ExtCmd results and addon state are for prerequest.php
+            // observers. The client sends a readable infoaction line for context.
+            echo "ok";
+            break;
+
         case 'combat_start':
         case 'combat_end':
         case 'major_damage':
@@ -336,6 +357,11 @@ try {
             stobeLogWarn('Unhandled event type stored only', ['event_type' => $eventType]);
             echo "ok";
             break;
+    }
+
+    // CHIM runs these only after a completed dialogue turn; early returns skip them.
+    if (!empty($GLOBALS['STOBE_EXTENSION_DIALOGUE_TURN'])) {
+        stobeRunPostResponseExtensionHooks();
     }
 
     // Daemon-style behavior: periodic cycles run in service/manager.php.

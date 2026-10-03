@@ -13,6 +13,7 @@ pgr_http_preflight("chat_json");
 
 $path = dirname(__FILE__) . DIRECTORY_SEPARATOR;
 require($path . "lib/bootstrap.php");
+stobeRunExtensionHook('globals.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -79,6 +80,18 @@ if ($targetNpc === '' || $message === '') {
     echo json_encode(['ok' => false, 'error' => 'Missing npc or message']);
     return;
 }
+
+// This endpoint has no $gameRequest. Hooks receive a CHIM-style view; input
+// stages may rewrite its "Speaker: message" field, other edits are ignored.
+$extensionRequestView = ['inputtext', strval(time()), strval($gamets), $speaker . ': ' . $message];
+stobeRunExtensionHook('preprocessing.php', $extensionRequestView, null, $extensionRequestView);
+stobeRunExtensionHook('prerequest.php', $extensionRequestView, null, $extensionRequestView);
+$extensionLine = explode(': ', strval($extensionRequestView[3] ?? ''), 2);
+if (count($extensionLine) === 2 && trim($extensionLine[0]) !== '' && $sanitizeChatMessage($extensionLine[1]) !== '') {
+    $speaker = trim($extensionLine[0]);
+    $message = $sanitizeChatMessage($extensionLine[1]);
+}
+$extensionRequestView[3] = $speaker . ': ' . $message;
 
 $speakerProfileName = normalizeParticipantNameToken($speaker);
 if (!$narratorMode && $speakerProfileName !== '' && function_exists('stobeNpcCannotRespondInDirectChat')) {
@@ -249,6 +262,13 @@ $eventHistory = $narratorMode
     ? DataEventLog($contextHistory)
     : DataEventLog($contextHistory, $targetNpc);
 $eventHistory = stobeFilterNarratorRowsForContext($eventHistory, $targetNpc, $mode, $speaker);
+// Deferred CHIM callbacks (JSON_TEMPLATE, BIOGRAPHY_BUILDER, actor enrichers)
+// read $GLOBALS['gameRequest'], so the view stays installed until the reply is parsed.
+$extensionHadGameRequest = array_key_exists('gameRequest', $GLOBALS);
+$extensionPreviousGameRequest = $extensionHadGameRequest ? $GLOBALS['gameRequest'] : null;
+$GLOBALS['gameRequest'] = $extensionRequestView;
+stobeRunExtensionHook('prompts.php', $extensionRequestView);
+stobeRunExtensionHook('dialogue_prompt.php', $extensionRequestView);
 $historyLines = [];
 foreach (array_reverse($eventHistory) as $row) {
     $line = stobeFormatEventHistoryLine(is_array($row) ? $row : [], false);
@@ -263,6 +283,10 @@ $historyMessages = stobeBuildRecentContextMessages(
     64,
     $narratorMode ? '' : $targetNpc
 );
+$GLOBALS['CONTEXT_BUILDING_DATA'] = $historyMessages;
+if (stobeRunExtensionHook('context_building.php', $extensionRequestView) !== [] && is_array($GLOBALS['CONTEXT_BUILDING_DATA'])) {
+    $historyMessages = array_values(array_filter($GLOBALS['CONTEXT_BUILDING_DATA'], 'is_array'));
+}
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $targetNpc,
@@ -327,6 +351,7 @@ if (is_array($promptNpcData) && count($nearby) > 0) {
     $promptNpcData['extended_data'] = $extended;
 }
 
+stobeRunExtensionHook('context_pre.php', $extensionRequestView);
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
@@ -342,6 +367,12 @@ $nearbyPlayerAlliesPrompt = buildNearbyPlayerAlliesPrompt($nearby, $speaker);
 if ($nearbyPlayerAlliesPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPlayerAlliesPrompt;
 }
+$systemPrompt = stobeApplyExtensionPromptSections(
+    $systemPrompt,
+    $targetNpc,
+    is_array($npcData) ? $npcData : [],
+    $extensionRequestView
+);
 $deliveryStyleInstruction = '';
 if ($mode === 'whisper') {
     $deliveryStyleInstruction = 'The player is whispering. Respond in a quiet, discreet tone.';
@@ -432,6 +463,8 @@ $messages[] = [
         ? 'Output contract: return only a direct conversational reply to the current speaker. Do not include scene narration, atmospheric description, third-person prose, or action tags.'
         : stobeBuildOutputContractUserPrompt($targetNpc, $mode === 'cheat', false, null, 'chat', '', $npcData),
 ];
+// CHIM context.php stage: extensions may edit $GLOBALS['messages'] before the call.
+stobeRunExtensionHook('context.php', $extensionRequestView);
 
 $llmConfig = getLlmConfigForNpc($npcData);
 $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
@@ -474,6 +507,11 @@ if ($llmConfig['api_key'] === '') {
         }
     }
 }
+if ($extensionHadGameRequest) {
+    $GLOBALS['gameRequest'] = $extensionPreviousGameRequest;
+} else {
+    unset($GLOBALS['gameRequest']);
+}
 $cleanText = sanitizeForKenshi(trim(strval($responseText)));
 if (!isset($actions) || !is_array($actions)) {
     $actions = [];
@@ -514,3 +552,4 @@ echo json_encode(
     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 );
 
+stobeRunPostResponseExtensionHooks($extensionRequestView);

@@ -607,6 +607,11 @@ if ($injectionMode && !$injectionChatMode) {
     return;
 }
 
+// CHIM prompt.includes stages. Stobe has no $PROMPTS/$TEMPLATE_DIALOG arrays;
+// extensions use these points to register prompt injections and actions.
+stobeRunExtensionHook('prompts.php');
+stobeRunExtensionHook('dialogue_prompt.php');
+
 $npcData = stobeRefreshNpcDataForTraderInventory($targetNpc, is_array($npcData) ? $npcData : [], $message);
 $traderInventoryEntryCount = stobeTraderInventoryEntryCountFromNpcData($npcData);
 if ($traderInventoryEntryCount > 0 || stobeMessageLooksTradeIntent($message)) {
@@ -651,6 +656,10 @@ $historyMessages = stobeBuildRecentContextMessages(
     $narratorMode ? '' : $targetNpc,
     true
 );
+$GLOBALS['CONTEXT_BUILDING_DATA'] = $historyMessages;
+if (stobeRunExtensionHook('context_building.php') !== [] && is_array($GLOBALS['CONTEXT_BUILDING_DATA'])) {
+    $historyMessages = array_values(array_filter($GLOBALS['CONTEXT_BUILDING_DATA'], 'is_array'));
+}
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $targetNpc,
@@ -808,6 +817,7 @@ if (
     }
 }
 
+stobeRunExtensionHook('context_pre.php');
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
     . "\n\n"
     . buildSystemPrompt(
@@ -823,6 +833,7 @@ $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $targetN
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
+$systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $targetNpc, is_array($npcData) ? $npcData : []);
 $deliveryStyleInstruction = '';
 if ($dialogueMode === 'whisper') {
     $deliveryStyleInstruction = 'The player is whispering. Respond in a quiet, discreet tone.';
@@ -970,6 +981,9 @@ $messages[] = [
             $npcData
         ),
 ];
+// CHIM context.php stage: extensions may edit $GLOBALS['messages'] before the call.
+stobeRunExtensionHook('context.php');
+$GLOBALS['STOBE_EXTENSION_DIALOGUE_TURN'] = true;
 
 $llmConfig = getLlmConfigForNpc($npcData);
 $actionConfig = stobeBuildActionConfigForNpc('chat', $npcData);
