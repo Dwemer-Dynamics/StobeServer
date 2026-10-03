@@ -4,7 +4,31 @@ This guide covers StobeServer's current `unstable` source. Read the [agent guide
 
 ## Integration points and timing
 
-There is no generic CHIM-style `ext/*` hook loader or package catalog in this revision. A file named `prerequest.php` or `postrequest.php` does not register a custom extension. Choose an existing configuration surface or a reviewed source integration point. An independent extension needs an explicit loading contract before it can be installed as a working feature.
+[lib/extension_hooks.php](../lib/extension_hooks.php) loads CHIM-named hook files from `ext/<plugin>/`. The loader itself reads no manifest; packages are installed separately ([Installation and updates](#installation-and-updates)). The `ext/` tree is scanned once per request; each stage then requires its matching files once, in byte-sorted path order, with CHIM's scope (`$gameRequest` plus `$GLOBALS`). A throwing hook file is logged and skipped. Discovery skips files directly under `ext/`, dot-prefixed entries, symlinks, `private/` and `staging/` directories, top-level directories ending `.disabled` or containing a `.disabled` file, and the built-in `relationship_system` directory. A missing `ext/` is a no-op. `requireFilesRecursively($dir, $name)` is available with the same rules.
+
+| Hook file | `main.php` → `processor/chat.php` | [chat.php](../chat.php) (JSON) |
+|---|---|---|
+| `globals.php` | After bootstrap, before request parsing | After bootstrap |
+| `preprocessing.php` | After `explode('|')`, before fields are derived; may rewrite `$gameRequest` | After payload validation |
+| `prerequest.php` | Before processor routing, for every event type; `$gameRequest` changes are re-read | After `preprocessing.php` |
+| `prompts.php`, `dialogue_prompt.php` | After chat early exits, before history | After history query |
+| `context_building.php` | `$GLOBALS['CONTEXT_BUILDING_DATA']` holds role/content history messages | Same |
+| `json_response_custom.php` | Once, when the first structured template is built (output contract, after `context_pre.php`); its direct edits reach that template, `HOOKS['JSON_TEMPLATE']` reaches every template | Same |
+| `context_pre.php` | Before the system prompt is built | Same |
+| `context.php` | `$GLOBALS['messages']` is complete, before the model call | Same |
+| `prepostrequest.php`, `postrequest.php` | After a dialogue turn completed and streamed; output is discarded | After the JSON response |
+
+Only `processor/chat.php` dialogue turns run the prompt and post-response stages; rechat, bored, director and other processors do not yet. `chat.php` has no `$gameRequest`: hooks see a temporary `['inputtext', ts, gamets, 'Speaker: message']` view. Edits to its `Speaker: message` field in `preprocessing.php`/`prerequest.php` are applied; other edits are discarded. Stobe has no CHIM `$PROMPTS`/`$TEMPLATE_DIALOG` arrays; use the prompt stages to register injections. `ext/relationship_system` is never loaded by this mechanism; the evaluator below remains the only relationship turn owner.
+
+PHP API (signatures, slots and priority ordering match CHIM; `stobe*` names are equivalent):
+
+- `chimRegisterPromptInjection($slot, $id, $content, $priority = 100)` / `chimRenderPromptInjections($slot, $context)`. Rendered slots: `character_bottom` (inside `<character>`) and `prompt_bottom` (end of the system prompt). Context keys: `game_request`, `herika_name`, `npc_name`, `narrator_name`, `player_name`.
+- `chimRegisterActorProfileEnricher($id, $callback, $priority = 100)` / `chimBuildActorProfileEnrichmentText($name, $type, $context)`. Called for each `<nearby_actors>` entry with type `npc` and context `source`, `metadata`, `npc_data` (the nearby snapshot).
+- `$GLOBALS['HOOKS']['JSON_TEMPLATE'][]` callbacks may edit `$GLOBALS['responseTemplate']` (prompt schema) and `$GLOBALS['structuredOutputTemplate']` (provider `response_format`). Strict schemas also need new properties in `required`.
+- `$GLOBALS['HOOKS']['BIOGRAPHY_BUILDER'][$name]` receives `(&$bio, $npcData)`. Stobe has no CHIM dynamic biography fields, so `$bio` starts empty and the result joins `<character>`.
+- `stobeRegisterExtensionAction('ExtCmd<Bridge>_<Action>', $description, ['target' => 'none'|'optional'|'required'])` from `globals.php`. A registered code is added to the action guidance, the structured `action` enum and the normalizer allowlist, then dispatched unchanged as `<actor>|ActionQueue|<code>@<target>`. The model sees the code itself, not a display alias. Unregistered `ExtCmd*` commands are rejected. A non-empty `ACTIONS_ALLOWLIST` setting must list the code; disabling actions removes it. `|`, `@`, brackets and newlines are stripped from the argument (120 characters maximum).
+
+Client results and addon state use the existing `main.php` event transport and reach `prerequest.php`, which sees every event type. The STOBE client sends `funcret` with CHIM's data `command@<code>@<argument>@<completed|failed[: detail]>` plus a readable `infoaction` line for context, and `addon_state` as `<Addon>: <key>=<value>`. `main.php` acknowledges `funcret` and `addon_state` without storing them in the event log; there is no CHIM-style follow-up model call for `funcret`. A runnable example and probe are in [examples/plugin-parity](../examples/plugin-parity/README.md).
 
 | Boundary | Current caller | What the input means |
 |---|---|---|
@@ -109,15 +133,22 @@ After one run, affinity is `5` with one effect and one history row. Repeating th
 
 ## Installation and updates
 
-StobeServer does not implement the CHIM/Dialectic schema-4 package manager in this revision. Do not promise that a `.dwpkg`, CHIM catalog entry or MO2 sync folder will install or activate a Stobe extension.
+StobeServer uses the schema-4 ZIP-compatible `.dwpkg`/`.zip` [package manager](../lib/plugin_package_manager.php) shared with CHIM and Dialectic. A package has root `manifest.json` (`schema_version` 4, `name`, `version`, `server`), `checksums.sha256` and payload under `server/`, which installs to `ext/<name>/`. Optional `server/migrations/*.sql` run on install; `server.mutable_paths` survive updates. Build the example with [examples/plugin-parity/build_package.php](../examples/plugin-parity/README.md#build-the-package); do not commit built archives.
 
-1. Obtain the extension's own source, supported Stobe/client versions, explicit integration point and installation instructions. If no loader exists for it, resolve that source integration before distributing it.
-2. Use an isolated Stobe database for testing. Back up the extension's configuration and data before an update.
-3. Deploy only the extension-owned files through its documented route. Preserve other extensions, database state and runtime configuration. File presence is not proof of execution.
-4. Verify its version and a known integration event in the server/client logs. Use one maintained route for subsequent updates; prevent an older local sync from overwriting newer files.
-5. Treat removal of game-side files and removal of server-side code/data as separate operations. Follow the author's uninstall procedure; do not delete tables to “reset” a failed install.
+- **Game bundle.** The STOBE client syncs packages from the active mod's `Stobe/server-plugins/<name>/<version>.dwpkg` (for example `Stobe/server-plugins/parity_probe/1.0.0.dwpkg`). It probes [ui/api/plugin_packages.php](../ui/api/plugin_packages.php) and uploads only when the installed version differs or its files are missing. The folder must match the manifest `name` and the file stem its `version`. This needs a STOBE client revision with package sync; an older client syncs nothing.
+- **Server Plugins page.** [ui/server_plugins.php](../ui/server_plugins.php) uploads a package, and installs or switches catalog entries from [ui/data/plugin_repository.json](../ui/data/plugin_repository.json) on their Live or Dev channel. The page never checks releases on load; **Check for Updates** and an install or channel switch fetch them.
+- **Remove.** Only ledger-managed packages can be removed, after confirmation. The folder moves out of `ext/` into retained package storage; database tables, migration records and declared mutable data are kept, and reinstalling the same plugin restores them. A game-bundled package is reinstalled at the next game load unless its addon is disabled first.
+- **Protected.** Built-in `relationship_system` is protected. Unmanaged `ext/` folders are listed and cannot be removed through the page, but installing a package with the same folder name can replace one after backing it up.
 
-MO2-specific CHIM packaging warnings do not define a Kenshi installation contract. See the [STOBE client](https://github.com/Dwemer-Dynamics/STOBE) for game-side integration; a PHP extension cannot add a native Kenshi action by itself.
+Installing a package does not prove it executed. Then:
+
+1. Verify supported Stobe/client versions and the stage(s) the extension needs. If it needs a stage the loader does not run, resolve that source integration before distributing it.
+2. Use an isolated Stobe database for the first install. Back up the extension's configuration and data before an update.
+3. Install through one route (game bundle, upload or catalog) and keep it for updates. Manual file copies bypass the ledger and appear as unmanaged.
+4. Verify the installed version on Server Plugins and a known integration event in the server/client logs.
+5. Removing game-side files only stops future sync; server removal is a separate operation. Do not delete tables to “reset” a failed install.
+
+See the [STOBE client](https://github.com/Dwemer-Dynamics/STOBE) for game-side integration; a PHP extension cannot add a native Kenshi action by itself.
 
 ## Background model calls
 
