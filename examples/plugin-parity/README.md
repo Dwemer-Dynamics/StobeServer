@@ -44,6 +44,10 @@ Distro/WSL PHP, not the Windows CLI without `zip`):
 php examples/plugin-parity/build_package.php /tmp/parity_probe-1.0.0.dwpkg 1.0.0
 ```
 
+To list a package in the server catalog, see
+[plugin distribution](../../docs/plugin-distribution.md). CI runs the probe and
+this builder in [plugin-parity.yml](../../.github/workflows/plugin-parity.yml).
+
 Do not commit built archives. For STOBE's game-side sync, place the archive in
 the client addon mod as `Stobe/server-plugins/parity_probe/1.0.0.dwpkg`. The
 folder name must match the manifest `name` (`parity_probe`), and the file stem
