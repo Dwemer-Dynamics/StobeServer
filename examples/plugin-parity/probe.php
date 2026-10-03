@@ -195,6 +195,10 @@ foreach ($actionCases as [$raw, $config, $expected]) {
 $structured = normalizeActionTagToken(stobeBuildActionTagFromStructuredPayload('ExtCmdParityProbe_Ping', '', 'Beep', 'hello'));
 probeCheck($structured === 'ExtCmdParityProbe_Ping@Beep', 'structured response action resolves through registry', $structured);
 probeCheck(stobeTransformActionForDispatch('ExtCmdParityProbe_Ping@Beep') === 'ExtCmdParityProbe_Ping@Beep', 'ActionQueue dispatch keeps exact code');
+$sidPeople = json_encode(['Player|1', 'Beep|42', 'Boop|7', 'Twin|8', 'Twin|9', 'Ghost', 'Big|4294967296']);
+$sidCases = [['Beep', '42'], ['beep', '42'], ['Boop', '7'], ['Twin', ''], ['Ghost', ''], ['Big', ''], ['Stranger', ''], ['', '']];
+$sidActual = array_map(static fn(array $case): string => stobeExtActionSpeakerSerial($case[0], $sidPeople), $sidCases);
+probeCheck($sidActual === array_column($sidCases, 1) && stobeExtActionSpeakerSerial('Beep', 'not json') === '', 'ExtCmd speaker serial only from one listed identity', $sidActual);
 probeCheck(stobeExtensionActionCodesForAllowlist(['FOLLOW']) === [] && stobeExtensionActionCodesForAllowlist(['EXTCMDPARITYPROBE_PING']) === ['ExtCmdParityProbe_Ping'], 'explicit ACTIONS_ALLOWLIST gates plugin actions');
 probeCheck(normalizeActionTagToken('FOLLOW@Beep', ['allowlist' => []]) === 'FOLLOW@Beep', 'native action normalization unchanged');
 

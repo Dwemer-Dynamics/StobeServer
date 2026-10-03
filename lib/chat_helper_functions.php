@@ -12328,16 +12328,48 @@ function stobeTakeGeneratedSpeechChunks(): array {
     return stobeTakeGeneratedSpeechChunksSince(0);
 }
 
+/**
+ * Serial for an ExtCmd speaker, taken only from this request's client `people`
+ * list. Returns '' unless exactly one listed identity has the actor's name, so
+ * a duplicate, serial-less or unlisted name never yields a guessed actor.
+ */
+function stobeExtActionSpeakerSerial(string $actor, string $peopleRaw): string {
+    $actorName = normalizeParticipantNameToken($actor);
+    $people = json_decode($peopleRaw, true);
+    if ($actorName === '' || !is_array($people)) {
+        return '';
+    }
+    $serial = '';
+    foreach ($people as $entry) {
+        if (!is_string($entry) || strcasecmp(normalizeParticipantNameToken($entry), $actorName) !== 0) {
+            continue;
+        }
+        $parts = explode('|', $entry, 2);
+        $candidate = trim(strval($parts[1] ?? ''));
+        if (preg_match('/^[1-9][0-9]{0,9}$/', $candidate) !== 1 || intval($candidate) > 4294967295
+            || ($serial !== '' && $serial !== $candidate)) {
+            return '';
+        }
+        $serial = $candidate;
+    }
+    return $serial;
+}
+
 function formatResponse(
     string $actor,
     string $action,
     string $message,
     string $ttsHash = '',
     int $ttsDurationMs = 0,
-    string $utteranceId = ''
+    string $utteranceId = '',
+    string $speakerSerial = ''
 ): string {
     stobeInteractionRequire();
     $metadata = [];
+    if ($speakerSerial !== '') {
+        // Older clients ignore unknown metadata tokens.
+        $metadata[] = 'sid=' . $speakerSerial;
+    }
     if ($utteranceId !== '') {
         $metadata[] = 'uid=' . $utteranceId;
     }
@@ -13437,7 +13469,12 @@ function streamResponse(
         if ($dispatchAction === '') {
             continue;
         }
-        $wirePayload = formatResponse($actor, 'ActionQueue', $dispatchAction);
+        // Addon actions carry the request-bound speaker serial so the client can
+        // dispatch them for any group speaker; built-in action lines are unchanged.
+        $speakerSerial = stripos($dispatchAction, 'ExtCmd') === 0
+            ? stobeExtActionSpeakerSerial($actor, strval($_GET['people'] ?? ''))
+            : '';
+        $wirePayload = formatResponse($actor, 'ActionQueue', $dispatchAction, '', 0, '', $speakerSerial);
         echo $wirePayload;
         stobeLogOutputToPlugin($actor, 'ActionQueue', $dispatchAction, $wirePayload);
         if (ob_get_length()) {
