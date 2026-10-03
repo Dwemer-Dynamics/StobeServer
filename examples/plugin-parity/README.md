@@ -7,11 +7,12 @@ for the hook contract.
 
 | File | Demonstrates |
 | --- | --- |
-| `ext/parity_probe/globals.php` | `chimRegisterPromptInjection()` (`character_bottom`, `prompt_bottom`), `chimRegisterActorProfileEnricher()`, `stobeRegisterExtensionAction('ExtCmdParityProbe_Ping', …)` |
+| `ext/parity_probe/globals.php` | `chimRegisterPromptInjection()` (`character_bottom`, `prompt_bottom`), `chimRegisterActorProfileEnricher()` reading context version 2 (`registered_npc`, the `player` type and `player_side` squads), `stobeRegisterExtensionAction('ExtCmdParityProbe_Ping', …)` |
 | `ext/parity_probe/context.php` | Context-stage marker in `$GLOBALS['PLUGIN_PARITY_TRACE']` |
+| `ext/parity_probe/postrequest.php` | Post-response marker; runs only after a model route completed its turn |
 | `ext/parity_probe/prerequest.php` | Observer for the STOBE client's `funcret` (`command@ExtCmdParityProbe_Ping@<argument>@<completed\|failed…>`) and `addon_state` (`ParityProbe: <key>=<value>`) events |
 | `ext/parity_probe_order/globals.php` | Second plugin: load order versus injection priority |
-| `probe.php` | Real loader, include-once, exclusions, rendering and action validation |
+| `probe.php` | Real loader, include-once, exclusions, rendering, shared stage helpers, enrichment context version 2 against an in-memory database stub, action validation, and Director cast serials parsed from `main.php`'s normalized `Name (state)\|hand_<serial>` people tokens (valid, malformed, out-of-range and duplicate-name cases) |
 
 No provider, database, network or game client is used.
 
@@ -58,7 +59,11 @@ Use an isolated server and database, never the live playthrough.
    directory. Preserve other extensions.
 2. Send a normal dialogue turn. The system prompt gains the marker text inside
    the character section and the footer at the end; nearby actors gain
-   `Parity probe sees <name>`. Stobe's prompt formatter renders XML-style tags
+   `Parity probe sees <name> (registered #<id>)` (without the suffix for
+   unregistered names), and a `<player_character>` block names the player
+   character with `Parity probe player in <squad>`. Rechat, bored, Director,
+   manual diary and narrator welcome turns use the same plugin; see
+   [model route coverage](../../docs/plugin-runtime.md#model-route-coverage). Stobe's prompt formatter renders XML-style tags
    as Markdown headings (`## Parity Probe`, `# Parity Probe Footer`). Plugins
    should not rely on literal tags reaching the model.
    `ExtCmdParityProbe_Ping` appears in the available actions and the
@@ -79,8 +84,9 @@ with a digit; the server does not register them, so use a leading letter.
 
 ## Not verified by the probe
 
-The probe does not run `main.php`, `processor/chat.php` or `chat.php`, call a
-model, write the database, or start Kenshi. Hook placement in those entry
+The probe does not run `main.php`, the model processors or `chat.php`, call a
+model, write the database, or start Kenshi. Its enrichment checks use an
+in-memory stand-in for the two database reads. Hook placement in those entry
 points, a model choosing the action, client `ExtCmd` dispatch and the client's
 result events remain live-test items. Stobe acknowledges `funcret` without
 CHIM's follow-up model call.

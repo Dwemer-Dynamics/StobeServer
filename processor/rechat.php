@@ -708,6 +708,9 @@ if ($forcedReactionActive && strcasecmp($respondingNpc, $forcedResponder) !== 0)
     ]);
 }
 
+// CHIM prompt stages run once the responder is chosen, as in processor/chat.php.
+stobeRunExtensionPromptStages();
+
 $contextHistory = getNpcProfileIntegerSetting(
     $npcData,
     ['CONTEXT_HISTORY'],
@@ -737,6 +740,7 @@ $historyMessages = stobeBuildRecentContextMessages(
     64,
     $respondingNpc
 );
+$historyMessages = stobeApplyExtensionContextBuilding($historyMessages);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($npcData) ? $npcData : [],
     $respondingNpc,
@@ -773,6 +777,7 @@ if (!$hasLimbLossSpecialContext && stobeIsStrictRechatResponseEnabled()) {
     $strictRechatListener = $previousSpeaker;
 }
 
+stobeRunExtensionHook('context_pre.php');
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($npcData) ? $npcData : [])
     . "\n\n"
     . buildRechatSystemPrompt(
@@ -789,6 +794,7 @@ $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($npcData, $respond
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
+$systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $respondingNpc, is_array($npcData) ? $npcData : [], null, $previousSpeaker);
 $userLine = stobeBuildRechatPromptContent($previousSpeaker, $previousTarget, $previousMessage);
 
 $compactHistory = stobeApplyCompactChatHistory(
@@ -841,6 +847,7 @@ $messages[] = [
         $npcData
     ),
 ];
+$messages = stobeApplyExtensionContextHook($messages);
 
 $llmConfig = getLlmConfigForNpc($npcData);
 $actionConfig = stobeBuildActionConfigForNpc('rechat', $npcData);
@@ -1024,3 +1031,4 @@ if ($alreadyStreamed) {
         ['suppress_tts' => $suppressInitiatorTts]
     );
 }
+stobeMarkExtensionModelTurnCompleted();

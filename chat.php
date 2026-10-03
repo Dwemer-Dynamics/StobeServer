@@ -371,7 +371,8 @@ $systemPrompt = stobeApplyExtensionPromptSections(
     $systemPrompt,
     $targetNpc,
     is_array($npcData) ? $npcData : [],
-    $extensionRequestView
+    $extensionRequestView,
+    $speaker
 );
 $deliveryStyleInstruction = '';
 if ($mode === 'whisper') {

@@ -534,6 +534,11 @@ function stobeGenerateDiaryEntryForNpc(
         $historyLimit = max(1, min(400, $historyLimitOverride));
     }
 
+    // Only the manual diary request route opts in; background auto-diary runs no request hooks.
+    $extensionHooks = !empty($options['extension_hooks']);
+    if ($extensionHooks) {
+        stobeRunExtensionPromptStages();
+    }
     $historyText = trim(strval($options['history_text'] ?? ''));
     if ($historyText === '') {
         $historyText = stobeBuildDiaryHistoryText($safeNpcName, $historyLimit);
@@ -555,6 +560,9 @@ function stobeGenerateDiaryEntryForNpc(
     $promptNpcName = $isNarrator && function_exists('stobeNarratorRoleplayName')
         ? stobeNarratorRoleplayName()
         : $safeNpcName;
+    if ($extensionHooks) {
+        stobeRunExtensionHook('context_pre.php');
+    }
     $systemPrompt = stobeBuildGameTimePromptBlock($gamets, $npcData)
         . "\n\n"
         . buildSystemPrompt($safeNpcName, $npcData, $playerName, '', false, 'chat', intval($gamets));
@@ -580,6 +588,10 @@ function stobeGenerateDiaryEntryForNpc(
         $summaryStartGamets,
         $summaryEndGamets
     );
+
+    if ($extensionHooks) {
+        $systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $safeNpcName, $npcData, null, $playerName);
+    }
 
     $defaultDiaryPrompt = "Please write a short summary of the last #DAYS_SINCE_LAST_DIARY# in-game day(s) of #PLAYER_NAME# and #NPC_NAME#'s dialogues and events written above into #NPC_NAME#'s diary. WRITE AS IF YOU WERE #NPC_NAME#. Start the diary entry with exactly this header: \"#KENSHI_DIARY_HEADER#\".";
     $globalDiaryPrompt = function_exists('stobeGetPromptTemplateValue')
@@ -623,6 +635,10 @@ function stobeGenerateDiaryEntryForNpc(
             . "  <instruction>" . stobePromptXmlEscape($diaryPrompt) . "</instruction>\n"
             . "</diary_request>",
     ];
+
+    if ($extensionHooks) {
+        $messages = stobeApplyExtensionContextHook($messages);
+    }
 
     $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
     require_once($enginePath . 'connector/llm_dispatcher.php');

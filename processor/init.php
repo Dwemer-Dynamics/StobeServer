@@ -95,9 +95,11 @@ $contextHistory = DataEventLog($contextLimit);
 if (function_exists('stobeFilterNarratorPromptContextRows')) {
     $contextHistory = stobeFilterNarratorPromptContextRows($contextHistory);
 }
-$historyMessages = stobeBuildRecentContextMessages($contextHistory, intval($gamets));
+stobeRunExtensionPromptStages();
+$historyMessages = stobeApplyExtensionContextBuilding(stobeBuildRecentContextMessages($contextHistory, intval($gamets)));
 
 $welcomeInstruction = 'Give a brief 2-3 sentence recap of recent events and welcome the speaker back to their journey.';
+stobeRunExtensionHook('context_pre.php');
 $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets), $speakerData)
     . "\n\n"
     . buildSystemPrompt(
@@ -113,6 +115,8 @@ $systemPrompt = stobeBuildGameTimePromptBlock(intval($gamets), $speakerData)
     . "  <mode>narrator</mode>\n"
     . "  <instruction>You are " . stobePromptXmlEscape(stobeNarratorRoleplayName()) . " delivering a private welcome on game load. Address only the speaker and do not emit action tags.</instruction>\n"
     . "</speech_mode>";
+
+$systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $narratorName, $narratorData, null, $speaker);
 
 $userContent = "<narrator_welcome_event>\n"
     . "  <speaker>" . stobePromptXmlEscape($speaker) . "</speaker>\n"
@@ -142,6 +146,7 @@ $messages[] = [
     'role' => 'user',
     'content' => 'Output contract: return narrator dialogue text only. Do not include action tags.',
 ];
+$messages = stobeApplyExtensionContextHook($messages);
 
 $enginePath = $GLOBALS["ENGINE_PATH"] ?? dirname(dirname(__FILE__)) . DIRECTORY_SEPARATOR;
 require_once($enginePath . 'connector/llm_dispatcher.php');
@@ -183,6 +188,7 @@ if ($responseText === '') {
 }
 
 streamResponse($narratorName, 'ScriptQueue', $responseText, $narratorData, [], 'chat', $speaker, intval($gamets));
+stobeMarkExtensionModelTurnCompleted();
 
 $GLOBALS['CACHE_PEOPLE'] = $priorPeopleScope;
 echo "ok";

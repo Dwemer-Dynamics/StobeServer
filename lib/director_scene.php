@@ -28,17 +28,32 @@ function stobeDirectorCatalog(array $actors): array
     return $catalog;
 }
 
+// Request-bound client serial for a cast member. main.php stores people as "Name (state)|hand_<n>";
+// missing, malformed, out-of-range or conflicting serials for the same name fail closed.
+function stobeDirectorActorSerial(string $name, string $peopleJson): string
+{
+    $people = json_decode($peopleJson, true);
+    $serial = '';
+    foreach (is_array($people) ? $people : [] as $entry) {
+        $token = is_string($entry) ? extractParticipantIdentityToken($entry) : ['name' => ''];
+        if ($token['name'] === '' || strcasecmp($token['name'], $name) !== 0) continue;
+        if (preg_match('/^hand_([1-9][0-9]{0,9})$/', $token['storage_id'], $m) !== 1 || (int)$m[1] > 4294967295
+            || ($serial !== '' && $serial !== $m[1])) return '';
+        $serial = $m[1];
+    }
+    return $serial;
+}
+
 // Author all dialogue and prepare its audio before emitting a single scene payload.
 function stobeGenerateDirectorScene(array $names, string $seed, string $listener, string $instruction, int $gamets): void
 {
     require_once __DIR__ . '/../connector/llm_dispatcher.php';
     require_once __DIR__ . '/relationship_manager.php';
     $player = getSetting('PLAYER_NAME', 'Drifter');
+    $people = strval($GLOBALS['CACHE_PEOPLE'] ?? $_GET['people'] ?? '[]');
     $identities = [];
-    foreach (json_decode(strval($GLOBALS['CACHE_PEOPLE'] ?? $_GET['people'] ?? '[]'), true) ?: [] as $participant) {
-        if (!is_string($participant)) continue;
-        $parts = explode('|', $participant, 2);
-        if (count($parts) === 2 && ctype_digit($parts[1])) $identities[$parts[0]] = $parts[1];
+    foreach ($names as $name) {
+        if (($serial = stobeDirectorActorSerial($name, $people)) !== '') $identities[$name] = $serial;
     }
     usort($names, static fn($a, $b) => (int)($b === $seed || stripos($instruction, $b) !== false)
         <=> (int)($a === $seed || stripos($instruction, $a) !== false));
@@ -64,6 +79,13 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
             if (is_numeric($time) && (int)$time <= $gamets && is_string($memory)) $bio['past_events'][] = mb_substr($memory, 0, 2000);
         }
         $bio['past_events'] = array_slice($bio['past_events'], -2);
+        if (stobeExtensionHasActorProfileEnrichers()) {
+            $registered = stobeExtensionRegisteredNpcProjection($npc);
+            $extra = stobeExtensionActorEnrichmentText($name, 'npc', ['source' => 'director_cast',
+                'npc_data' => $registered, 'registered_npc' => $registered,
+                'player_side' => stobeExtensionPlayerSide($name, $registered['in_player_faction'])]);
+            if ($extra !== '') $bio['extension_context'] = $extra;
+        }
         $context[] = $bio;
     }
     if (!$actors || !isset($actors[$seed])) throw new RuntimeException('No eligible Director cast');
@@ -77,13 +99,17 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
     if (class_exists('RelationshipManager')) $world .= "\n# Present cast relationships\n" . RelationshipManager::buildDirectorContext(array_keys($actors));
     if (trim($instruction) === '') $instruction = "Start a natural conversation between {$seed} and {$listener} about the current situation.";
     $catalog = stobeDirectorCatalog($actors);
+    // Scene prompts have no single <character> or dialogue JSON template; only prompt_bottom applies.
+    stobeRunExtensionHook('context_pre.php');
     $messages = [
-        ['role' => 'system', 'content' => dwemerDirectorPrompt('Kenshi', $catalog)],
+        ['role' => 'system', 'content' => dwemerDirectorPrompt('Kenshi', $catalog)
+            . stobeRenderPromptInjections('prompt_bottom', stobeExtensionPromptContext($seed))],
         ['role' => 'user', 'content' => "# World context and history\n" . $world
             . "\n# Present eligible NPC profiles\n" . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             . "\n# Player name\n" . $player],
         ['role' => 'user', 'content' => $instruction],
     ];
+    $messages = stobeApplyExtensionContextHook($messages);
     $config = getLlmConfigForNpc($actors[$seed]);
     $config['max_tokens'] = 4000;
     $format = ['type' => 'json_object'];
@@ -152,5 +178,6 @@ function stobeGenerateDirectorScene(array $names, string $seed, string $listener
     } catch (Throwable $error) { $db->exec('ROLLBACK'); throw $error; }
     echo $payload;
     stobeLogOutputToPlugin('rolemaster', 'DirectorScene', '', $payload);
+    stobeMarkExtensionModelTurnCompleted();
     stobeLogInfo('Director scene queued', ['scene_id' => $scene['id'], 'turns' => count($turns)]);
 }
