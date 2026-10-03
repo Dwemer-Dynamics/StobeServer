@@ -1,0 +1,51 @@
+name: Plugin parity
+
+# Runs the committed plugin parity probe and the example package builder.
+# No database, provider, network fetch or package install is involved.
+on:
+  pull_request:
+  push:
+    branches: [stobe, unstable]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner's preinstalled PHP (8.2 or later) ships mbstring and zip.
+      - name: PHP version and extensions
+        run: |
+          php -v
+          php -r 'exit(PHP_VERSION_ID >= 80200 && extension_loaded("mbstring") && extension_loaded("zip") ? 0 : 1);'
+
+      - name: Lint
+        run: |
+          for file in examples/plugin-parity/*.php examples/plugin-parity/ext/*/*.php \
+              lib/plugin_catalog.php lib/plugin_package_manager.php lib/extension_hooks.php lib/prompt_injections.php; do
+            php -l "$file"
+          done
+
+      - name: Parity probe (including the symlink fixture)
+        run: |
+          php examples/plugin-parity/probe.php | tee "$RUNNER_TEMP/probe.log"
+          grep -qx 'Symlink fixture: created' "$RUNNER_TEMP/probe.log"
+          grep -qx 'RESULT PASS' "$RUNNER_TEMP/probe.log"
+
+      - name: Build example package twice and check checksums
+        run: |
+          out="$RUNNER_TEMP/package"
+          mkdir -p "$out/a" "$out/b" "$out/x"
+          php examples/plugin-parity/build_package.php "$out/a/parity_probe-1.0.0.dwpkg" 1.0.0
+          php examples/plugin-parity/build_package.php "$out/b/parity_probe-1.0.0.dwpkg" 1.0.0
+          cmp "$out/a/parity_probe-1.0.0.dwpkg" "$out/b/parity_probe-1.0.0.dwpkg"
+          unzip -q "$out/a/parity_probe-1.0.0.dwpkg" -d "$out/x"
+          cd "$out/x"
+          sha256sum -c --strict checksums.sha256
+          diff <(find . -type f ! -name checksums.sha256 | sed 's|^\./||' | sort) <(awk '{print $2}' checksums.sha256 | sort)
+          php -r '$m = json_decode(file_get_contents("manifest.json"), true); exit($m["schema_version"] === 4 && $m["name"] === "parity_probe" && $m["version"] === "1.0.0" ? 0 : 1);'
