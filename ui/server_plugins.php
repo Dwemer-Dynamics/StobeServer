@@ -57,6 +57,7 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
 .plugin-message:empty { display: none; }
 .plugin-message.is-error { border-color: rgba(198, 83, 83, 0.6); color: #ff9d9d; }
 .plugin-message.is-success { border-color: rgba(66, 163, 109, 0.55); color: #8fdcab; }
+.plugin-message-note { display: block; margin-top: 3px; color: #f0cf85; }
 .plugin-section { margin-bottom: 12px; }
 .plugin-section h2 { margin: 0 0 6px; font-family: 'MagicCards', sans-serif; font-weight: normal; font-size: 1.05rem; color: var(--pp-accent); }
 .plugin-list { display: grid; gap: 4px; }
@@ -102,10 +103,10 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
         </header>
 
         <div class="plugin-toolbar">
-            <button id="plugin-upload" class="btn btn-primary btn-sm" type="button" aria-describedby="plugin-trust-note">Upload Package</button>
+            <button id="plugin-upload" class="btn btn-primary btn-sm" type="button" aria-describedby="plugin-trust-note" data-focus-key="toolbar:upload">Upload Package</button>
             <input id="plugin-file" type="file" accept=".dwpkg,.zip" hidden>
-            <button id="plugin-check" class="btn btn-secondary btn-sm" type="button">Check for Updates</button>
-            <button id="plugin-refresh" class="btn btn-secondary btn-sm" type="button">Refresh</button>
+            <button id="plugin-check" class="btn btn-secondary btn-sm" type="button" data-focus-key="toolbar:check">Check for Updates</button>
+            <button id="plugin-refresh" class="btn btn-secondary btn-sm" type="button" data-focus-key="toolbar:refresh">Refresh</button>
             <span class="plugin-spacer"></span>
             <span id="plugin-checked" class="plugin-checked"></span>
         </div>
@@ -132,15 +133,13 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
     </div>
 </main>
 
-<dialog id="plugin-remove-dialog" class="plugin-dialog" aria-labelledby="plugin-remove-title">
+<dialog id="plugin-confirm-dialog" class="plugin-dialog" aria-labelledby="plugin-confirm-title" aria-describedby="plugin-confirm-body">
     <form method="dialog">
-        <h3 id="plugin-remove-title">Remove plugin</h3>
-        <p id="plugin-remove-body"></p>
-        <p id="plugin-remove-data"></p>
-        <p id="plugin-remove-game"></p>
+        <h3 id="plugin-confirm-title"></h3>
+        <div id="plugin-confirm-body"></div>
         <div class="plugin-dialog-actions">
             <button value="cancel" class="btn btn-secondary btn-sm" type="submit" autofocus>Cancel</button>
-            <button value="confirm" id="plugin-remove-confirm" class="btn btn-danger btn-sm" type="submit">Remove</button>
+            <button value="confirm" id="plugin-confirm-button" class="btn btn-danger btn-sm" type="submit"></button>
         </div>
     </form>
 </dialog>
@@ -168,13 +167,49 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
     const checkButton = el('plugin-check');
     const refreshButton = el('plugin-refresh');
     const checkedLabel = el('plugin-checked');
-    const dialog = el('plugin-remove-dialog');
+    const dialog = el('plugin-confirm-dialog');
 
     const state = { items: [], catalog: [], releases: {}, busy: false };
 
     function setMessage(text, kind) {
         message.className = 'plugin-message' + (kind ? ' is-' + kind : '');
         message.textContent = text || '';
+    }
+
+    // Keeps the current result visible and adds secondary warnings beneath it.
+    function noteWarning(text) {
+        if (!message.textContent) {
+            setMessage(text, 'error');
+            return;
+        }
+        const note = document.createElement('span');
+        note.className = 'plugin-message-note';
+        note.textContent = text;
+        message.appendChild(note);
+    }
+
+    function focusKeyOf(node) {
+        return node && node.dataset ? node.dataset.focusKey || '' : '';
+    }
+
+    // Rows are rebuilt after every action, so return focus to the same control,
+    // then to the same plugin's row, then to Refresh.
+    function restoreFocus(key, rowKey) {
+        const active = document.activeElement;
+        if (active && active !== document.body && document.body.contains(active) && !active.disabled) return;
+        const usable = function (node) { return node && !node.disabled && node.offsetParent !== null; };
+        const keyed = Array.prototype.find.call(document.querySelectorAll('#plugin-shell [data-focus-key]'), function (node) {
+            return node.dataset.focusKey === key && usable(node);
+        });
+        if (keyed) {
+            keyed.focus();
+            return;
+        }
+        const row = rowKey && Array.prototype.find.call(document.querySelectorAll('#plugin-shell [data-focus-row]'), function (node) {
+            return node.dataset.focusRow === rowKey;
+        });
+        const inRow = row && Array.prototype.find.call(row.querySelectorAll('button, select, a[href]'), usable);
+        (inRow || refreshButton).focus();
     }
 
     function showProgress(label, percent, detail) {
@@ -236,14 +271,40 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
         return payload;
     }
 
-    function button(label, className, onClick) {
+    function button(label, className, focusKey, onClick) {
         const node = document.createElement('button');
         node.type = 'button';
         node.className = 'btn btn-sm ' + className;
         node.textContent = label;
         node.disabled = state.busy;
+        node.dataset.focusKey = focusKey;
         node.addEventListener('click', onClick);
         return node;
+    }
+
+    function link(label, href, focusKey, ariaLabel, newTab) {
+        const node = document.createElement('a');
+        node.href = href;
+        node.textContent = label;
+        node.dataset.focusKey = focusKey;
+        if (ariaLabel) node.setAttribute('aria-label', ariaLabel);
+        if (newTab) {
+            node.target = '_blank';
+            node.rel = 'noopener noreferrer';
+        }
+        return node;
+    }
+
+    // The server validates these URLs; the page also accepts only http(s), and only HTTPS for downloads.
+    function safeUrl(value, httpsOnly) {
+        if (typeof value !== 'string' || !value) return '';
+        try {
+            const url = new URL(value, window.location.href);
+            if (url.protocol === 'https:' || (!httpsOnly && url.protocol === 'http:')) return url.href;
+        } catch (error) {
+            return '';
+        }
+        return '';
     }
 
     function tag(text, kind, title) {
@@ -270,7 +331,8 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
             return tags;
         }
         if (item.kind === 'unmanaged') {
-            tags.push(tag('Unmanaged folder', 'warn', 'Not installed through the package ledger, so this page leaves it untouched.'));
+            tags.push(tag('Unmanaged folder', 'warn', 'Not installed through the package ledger. This page replaces it only if you install its catalog release.'));
+            if (item.disabled) tags.push(tag('Disabled', 'warn', 'A .disabled marker is present, so the server skips its hooks.'));
             return tags;
         }
         if (item.kind === 'retained') {
@@ -289,6 +351,8 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
         }
         if (item.state === 'missing_files') {
             tags.push(tag('Files missing', 'warn', 'The ledger lists this package, but its ext/ folder is gone.'));
+        } else if (item.disabled) {
+            tags.push(tag('Disabled', 'warn', 'A .disabled marker is present, so the server skips its hooks.'));
         } else {
             tags.push(tag('Installed', 'ok', 'Files and migrations are active. This does not confirm the plugin has run in game.'));
         }
@@ -298,6 +362,7 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
     function rowShell(nameText, descriptionText, tags) {
         const row = document.createElement('div');
         row.className = 'plugin-row';
+        row.dataset.focusRow = canonical(nameText);
         const main = document.createElement('div');
         main.className = 'plugin-main';
         const name = document.createElement('div');
@@ -358,29 +423,37 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
 
             const actions = document.createElement('div');
             actions.className = 'plugin-actions';
-            if (item.kind === 'package') {
-                const entry = catalogFor(item.name);
+            const keyBase = 'installed:' + canonical(item.name) + ':';
+            if (item.kind !== 'retained') {
+                const configUrl = safeUrl(item.config_url, false);
+                if (configUrl) actions.appendChild(link('Settings', configUrl, keyBase + 'config', 'Settings for ' + item.name, false));
+                const downloadUrl = safeUrl(item.mod_download_url, true);
+                if (downloadUrl) actions.appendChild(link('Get mod', downloadUrl, keyBase + 'download', 'Get the game mod for ' + item.name + ' (opens in a new tab)', true));
+            }
+            const entry = item.kind === 'package' || item.kind === 'unmanaged' ? catalogFor(item.name) : null;
+            if (entry) {
+                // Built-in folders never get catalog actions; the server also refuses to manage them.
                 const origin = item.origin || { type: 'game' };
-                if (entry) {
-                    entry.channels.forEach(function (channel) {
-                        const release = releaseFor(entry.id, channel.id);
-                        const sameChannel = origin.type === 'catalog' && origin.channel === channel.id;
-                        if (sameChannel) {
-                            if (release && release.version && release.version !== item.version) {
-                                actions.appendChild(button('Update to v' + release.version, 'btn-save', function () { installFromCatalog(entry, channel.id); }));
-                            } else if (release && release.version) {
-                                actions.appendChild(tag('Up to date', 'ok'));
-                            }
-                        } else {
-                            const label = origin.type === 'catalog' ? 'Switch to ' + channel.label : 'Install ' + channel.label;
-                            actions.appendChild(button(release && release.version ? label + ' v' + release.version : label, 'btn-secondary', function () { installFromCatalog(entry, channel.id); }));
+                entry.channels.forEach(function (channel) {
+                    const release = releaseFor(entry.id, channel.id);
+                    const key = keyBase + 'channel:' + channel.id;
+                    if (item.kind === 'package' && origin.type === 'catalog' && origin.channel === channel.id) {
+                        if (release && release.version && release.version !== item.version) {
+                            actions.appendChild(button('Update to v' + release.version, 'btn-save', key, function () { installFromCatalog(entry, channel.id); }));
+                        } else if (release && release.version) {
+                            actions.appendChild(tag('Up to date', 'ok'));
                         }
-                    });
-                }
-                if (item.removable) {
-                    const label = item.state === 'missing_files' ? 'Forget' : 'Remove';
-                    actions.appendChild(button(label, 'btn-danger', function (event) { confirmRemove(item, event.currentTarget); }));
-                }
+                        return;
+                    }
+                    const label = item.kind === 'package' && origin.type === 'catalog' ? 'Switch to ' + channel.label : 'Install ' + channel.label;
+                    actions.appendChild(button(release && release.version ? label + ' v' + release.version : label, 'btn-secondary', key, function (event) {
+                        confirmCatalogInstall(item, entry, channel.id, event.currentTarget);
+                    }));
+                });
+            }
+            if (item.kind === 'package' && item.removable) {
+                const label = item.state === 'missing_files' ? 'Forget' : 'Remove';
+                actions.appendChild(button(label, 'btn-danger', keyBase + 'remove', function (event) { confirmRemove(item, event.currentTarget); }));
             }
             row.appendChild(actions);
             installedList.appendChild(row);
@@ -409,18 +482,15 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
             row.appendChild(versionNode);
             const actions = document.createElement('div');
             actions.className = 'plugin-actions';
+            const keyBase = 'available:' + canonical(entry.name) + ':';
             if (entry.homepage) {
-                const link = document.createElement('a');
-                link.href = entry.homepage;
-                link.target = '_blank';
-                link.rel = 'noopener noreferrer';
-                link.textContent = 'Details';
-                actions.appendChild(link);
+                actions.appendChild(link('Details', entry.homepage, keyBase + 'details', 'Details for ' + entry.name + ' (opens in a new tab)', true));
             }
             let select = null;
             if (entry.channels.length > 1) {
                 select = document.createElement('select');
                 select.setAttribute('aria-label', 'Channel for ' + entry.name);
+                select.dataset.focusKey = keyBase + 'channel';
                 entry.channels.forEach(function (channel) {
                     const option = document.createElement('option');
                     option.value = channel.id;
@@ -431,7 +501,7 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
                 select.disabled = state.busy;
                 actions.appendChild(select);
             }
-            actions.appendChild(button('Install', 'btn-save', function () {
+            actions.appendChild(button('Install', 'btn-save', keyBase + 'install', function () {
                 installFromCatalog(entry, select ? select.value : entry.default_channel);
             }));
             row.appendChild(actions);
@@ -451,16 +521,19 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
             state.catalog = Array.isArray(payload.catalog) ? payload.catalog : [];
             render();
             if (payload.catalog_skipped > 0) {
-                setMessage(payload.catalog_skipped === 1 ? '1 catalog entry was skipped because it is incomplete or not HTTPS.' : payload.catalog_skipped + ' catalog entries were skipped because they are incomplete or not HTTPS.', 'error');
+                noteWarning(payload.catalog_skipped === 1 ? '1 catalog entry was skipped because it is incomplete or not HTTPS.' : payload.catalog_skipped + ' catalog entries were skipped because they are incomplete or not HTTPS.');
             }
         } catch (error) {
             installedList.setAttribute('aria-busy', 'false');
-            setMessage(error.message, 'error');
+            noteWarning(message.textContent ? 'The plugin list could not be refreshed: ' + error.message : error.message);
         }
     }
 
     async function runExclusive(work) {
         if (state.busy) return;
+        const active = document.activeElement;
+        const focusKey = focusKeyOf(active);
+        const row = active && active.closest ? active.closest('[data-focus-row]') : null;
         setBusy(true);
         try {
             await work();
@@ -470,6 +543,7 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
         } finally {
             setBusy(false);
             await loadInventory();
+            if (focusKey) restoreFocus(focusKey, row ? row.dataset.focusRow : '');
         }
     }
 
@@ -585,38 +659,92 @@ body .plugin-heading { margin: 0 0 10px; padding: 0 0 8px; border-bottom: 1px so
         });
     }
 
-    function confirmRemove(item, opener) {
-        const origin = item.origin || { type: 'game' };
-        el('plugin-remove-title').textContent = (item.state === 'missing_files' ? 'Forget ' : 'Remove ') + item.name + '?';
-        el('plugin-remove-body').textContent = item.state === 'missing_files'
-            ? 'Its ext/ folder is already gone. This clears the package ledger entry.'
-            : 'Its folder leaves ext/ and moves into package storage. Nothing is deleted.';
-        el('plugin-remove-data').textContent = item.state === 'missing_files'
-            ? ''
-            : 'Database tables and the plugin’s declared settings and data are kept. Installing the same plugin again restores them.';
-        el('plugin-remove-game').textContent = origin.type === 'game'
-            ? 'This package came from the game. If its addon is still enabled in your mod manager, ' + PRODUCT + ' reinstalls it the next time the game loads. Disable the addon first to keep it removed.'
-            : '';
-        el('plugin-remove-confirm').textContent = item.state === 'missing_files' ? 'Forget' : 'Remove';
+    function paragraph(text) {
+        const node = document.createElement('p');
+        node.textContent = text;
+        return node;
+    }
+
+    // Shared confirmation dialog. Cancel takes focus first; focus returns to the opener.
+    function confirmAction(options, onConfirm) {
+        const body = el('plugin-confirm-body');
+        const confirmButton = el('plugin-confirm-button');
+        const lines = options.lines.filter(Boolean);
+        el('plugin-confirm-title').textContent = options.title;
+        body.replaceChildren.apply(body, lines.map(paragraph));
+        confirmButton.textContent = options.confirmLabel;
+        confirmButton.className = 'btn btn-sm ' + (options.danger ? 'btn-danger' : 'btn-save');
         dialog.returnValue = '';
         dialog.onclose = function () {
-            if (opener && document.body.contains(opener)) opener.focus();
-            if (dialog.returnValue !== 'confirm') return;
+            if (options.opener && document.body.contains(options.opener)) options.opener.focus();
+            if (dialog.returnValue === 'confirm') onConfirm();
+        };
+        if (typeof dialog.showModal === 'function') {
+            dialog.showModal();
+        } else if (window.confirm([options.title].concat(lines).join(' '))) {
+            dialog.returnValue = 'confirm';
+            dialog.onclose();
+        }
+    }
+
+    function confirmRemove(item, opener) {
+        const origin = item.origin || { type: 'game' };
+        const forget = item.state === 'missing_files';
+        confirmAction({
+            title: (forget ? 'Forget ' : 'Remove ') + item.name + '?',
+            lines: [
+                forget
+                    ? 'Its ext/ folder is already gone. This clears the package ledger entry.'
+                    : 'Its folder leaves ext/ and moves into package storage. Nothing is deleted.',
+                forget ? '' : 'Database tables and the plugin’s declared settings and data are kept. Installing the same plugin again restores them.',
+                origin.type === 'game'
+                    ? 'This package came from the game. If its addon is still enabled in your mod manager, ' + PRODUCT + ' reinstalls it the next time the game loads. Disable the addon first to keep it removed.'
+                    : '',
+            ],
+            confirmLabel: forget ? 'Forget' : 'Remove',
+            danger: true,
+            opener: opener,
+        }, function () {
             runExclusive(async function () {
                 setMessage('');
                 showProgress('Removing ' + item.name);
                 await api('remove', { body: { name: item.name, confirm: item.name } });
                 hideProgress();
                 const reinstall = origin.type === 'game' ? ' If the game addon is still enabled, it returns on the next game load.' : '';
-                setMessage(item.name + ' was ' + (item.state === 'missing_files' ? 'forgotten.' : 'removed. Its data is retained.') + reinstall, 'success');
+                setMessage(item.name + ' was ' + (forget ? 'forgotten.' : 'removed. Its data is retained.') + reinstall, 'success');
             });
-        };
-        if (typeof dialog.showModal === 'function') {
-            dialog.showModal();
-        } else if (window.confirm(el('plugin-remove-title').textContent + ' ' + el('plugin-remove-body').textContent)) {
-            dialog.returnValue = 'confirm';
-            dialog.onclose();
+        });
+    }
+
+    // A catalog install over a game, uploaded or unmanaged copy replaces it, so confirm first.
+    // Channel switches between catalog installs keep the existing one-click behaviour.
+    function confirmCatalogInstall(item, entry, channelId, opener) {
+        const origin = item.origin || { type: 'game' };
+        if (item.kind === 'package' && origin.type === 'catalog') {
+            installFromCatalog(entry, channelId);
+            return;
         }
+        let lines;
+        if (item.kind === 'unmanaged') {
+            lines = [
+                'The ' + item.name + ' folder in ext/ was not installed through this page. The catalog release replaces it after the folder is backed up.',
+                'Files the package does not declare as its data may not carry over.',
+            ];
+        } else if (origin.type === 'upload') {
+            lines = ['This replaces the uploaded copy of ' + item.name + '. Its declared settings and data are kept.'];
+        } else {
+            lines = [
+                'This replaces the game-bundled copy of ' + item.name + '. Its declared settings and data are kept.',
+                'While its addon stays enabled in your mod manager, the next game load may reinstall the game’s version if the versions differ.',
+            ];
+        }
+        confirmAction({
+            title: 'Install ' + item.name + ' from the ' + channelLabel(entry, channelId) + ' channel?',
+            lines: lines,
+            confirmLabel: 'Install',
+            danger: false,
+            opener: opener,
+        }, function () { installFromCatalog(entry, channelId); });
     }
 
     function checkUpdates() {
