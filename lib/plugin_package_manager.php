@@ -100,17 +100,21 @@ final class DwemerPluginPackageManager
         foreach ($this->installedPackages() as $package) {
             $installName = (string)($package['server']['install_name'] ?? $package['name']);
             $managed[$this->canonicalName($installName)] = true;
+            $present = $package['state'] === 'installed';
             $items[] = [
                 'name' => (string)$package['name'],
                 'version' => (string)$package['version'],
                 'description' => $this->shortText($package['manifest']['description'] ?? ''),
                 'kind' => 'package',
                 'state' => (string)$package['state'],
+                'disabled' => $present && !$this->extensionFolderEnabled($installName),
                 'origin' => $package['origin'],
                 'installed_at' => (string)($package['installed_at'] ?? ''),
                 'mutable_paths' => array_values(array_map('strval', (array)($package['manifest']['server']['mutable_paths'] ?? []))),
                 'removable' => true,
-            ];
+            ] + ($present
+                ? $this->pluginLinks($installName, (string)$package['version'], (array)$package['manifest'])
+                : ['config_url' => null, 'mod_download_url' => null]);
         }
 
         $extRoot = $this->extRoot();
@@ -123,17 +127,19 @@ final class DwemerPluginPackageManager
                 continue;
             }
             $manifest = $this->readSmallManifest($path . DIRECTORY_SEPARATOR . 'manifest.json');
+            $version = $this->shortText($manifest['version'] ?? '', 64);
             $items[] = [
                 'name' => $entry,
-                'version' => $this->shortText($manifest['version'] ?? '', 64),
+                'version' => $version,
                 'description' => $this->shortText($manifest['description'] ?? ''),
                 'kind' => $this->isBuiltInName($entry) ? 'built_in' : 'unmanaged',
                 'state' => 'present',
+                'disabled' => !$this->extensionFolderEnabled($entry),
                 'origin' => null,
                 'installed_at' => '',
                 'mutable_paths' => [],
                 'removable' => false,
-            ];
+            ] + $this->pluginLinks($entry, $version, []);
         }
 
         foreach (glob($this->stateRoot . DIRECTORY_SEPARATOR . 'retained' . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . 'record.json') ?: [] as $recordPath) {
@@ -152,16 +158,72 @@ final class DwemerPluginPackageManager
                 'description' => '',
                 'kind' => 'retained',
                 'state' => 'removed',
+                'disabled' => false,
                 'origin' => $this->normalizeOrigin($record['origin'] ?? null),
                 'installed_at' => '',
                 'removed_at' => (string)($record['removed_at'] ?? ''),
                 'mutable_paths' => [],
                 'removable' => false,
+                'config_url' => null,
+                'mod_download_url' => null,
             ];
         }
 
         usort($items, static fn(array $left, array $right): int => strcasecmp($left['name'], $right['name']));
         return $items;
+    }
+
+    /** Matches the hook loader: a top-level folder ending in .disabled or holding a .disabled file is skipped. */
+    private function extensionFolderEnabled(string $folder): bool
+    {
+        return !str_ends_with(strtolower($folder), '.disabled')
+            && !file_exists($this->extRoot() . DIRECTORY_SEPARATOR . $folder . DIRECTORY_SEPARATOR . '.disabled');
+    }
+
+    /**
+     * CHIM manifest links. config_url must name an existing file inside this plugin's
+     * ext/ folder and is returned relative to ui/; mod_download_url must be HTTPS.
+     * The plugin's ext/ manifest.json takes precedence over the package manifest.
+     */
+    private function pluginLinks(string $folder, string $version, array $packageManifest): array
+    {
+        $folderPath = $this->extRoot() . DIRECTORY_SEPARATOR . $folder;
+        $manifest = $this->readSmallManifest($folderPath . DIRECTORY_SEPARATOR . 'manifest.json') + $packageManifest;
+        $links = ['config_url' => null, 'mod_download_url' => null];
+
+        $config = is_string($manifest['config_url'] ?? null) ? trim($manifest['config_url']) : '';
+        $query = '';
+        if (($queryAt = strpos($config, '?')) !== false) {
+            $query = substr($config, $queryAt);
+            $config = substr($config, 0, $queryAt);
+        }
+        // Accepts 'settings.php', 'ext/<folder>/settings.php' or '/<web root>/ext/<folder>/settings.php'.
+        $marker = 'ext/' . strtolower($folder) . '/';
+        $markerAt = strpos(strtolower($config), $marker);
+        if ($markerAt !== false && ($markerAt === 0 || $config[$markerAt - 1] === '/')) {
+            $config = substr($config, $markerAt + strlen($marker));
+        }
+        if (
+            $config !== '' && strlen($config) <= 255
+            && preg_match('#^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$#', $config) === 1
+            && preg_match('#^(\?[A-Za-z0-9_.~%=&+-]*)?$#', $query) === 1
+        ) {
+            $realFolder = realpath($folderPath);
+            $realFile = realpath($folderPath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $config));
+            if ($realFolder !== false && $realFile !== false && is_file($realFile) && str_starts_with($realFile, $realFolder . DIRECTORY_SEPARATOR)) {
+                $links['config_url'] = '../ext/' . rawurlencode($folder) . '/' . implode('/', array_map('rawurlencode', explode('/', $config))) . $query;
+            }
+        }
+
+        $download = is_string($manifest['mod_download_url'] ?? null) ? trim(strtr($manifest['mod_download_url'], ['<version>' => rawurlencode($version)])) : '';
+        $parts = $download !== '' && strlen($download) <= 2048 ? parse_url($download) : false;
+        if (
+            is_array($parts) && strtolower((string)($parts['scheme'] ?? '')) === 'https' && ($parts['host'] ?? '') !== ''
+            && !isset($parts['user']) && !isset($parts['pass']) && filter_var($download, FILTER_VALIDATE_URL) !== false
+        ) {
+            $links['mod_download_url'] = $download;
+        }
+        return $links;
     }
 
     public function installArchive(
@@ -453,6 +515,7 @@ final class DwemerPluginPackageManager
                     $retainedRoot . DIRECTORY_SEPARATOR . 'record.json',
                     json_encode([
                         'name' => (string)$installed['name'],
+                        'install_name' => $installName,
                         'version' => (string)$installed['version'],
                         'origin' => $this->normalizeOrigin($installed['origin'] ?? null),
                         'removed_at' => gmdate(DATE_ATOM),
@@ -714,10 +777,13 @@ final class DwemerPluginPackageManager
     private function activateServerComponent(array $job): array
     {
         $name = (string)$job['name'];
+        // Keep the folder already recorded for this package, so a manifest that only
+        // changes letter case updates the same ext/ folder on case-sensitive filesystems.
+        $installName = $this->recordedInstallName($name) ?? $name;
         $source = (string)$job['stage_root'] . DIRECTORY_SEPARATOR . 'server';
-        $target = $this->extRoot() . DIRECTORY_SEPARATOR . $name;
-        $backup = $this->stateRoot . DIRECTORY_SEPARATOR . 'backups' . DIRECTORY_SEPARATOR . $job['id'] . DIRECTORY_SEPARATOR . $name;
-        $failed = $this->stateRoot . DIRECTORY_SEPARATOR . 'failed' . DIRECTORY_SEPARATOR . $job['id'] . DIRECTORY_SEPARATOR . $name;
+        $target = $this->extRoot() . DIRECTORY_SEPARATOR . $installName;
+        $backup = $this->stateRoot . DIRECTORY_SEPARATOR . 'backups' . DIRECTORY_SEPARATOR . $job['id'] . DIRECTORY_SEPARATOR . $installName;
+        $failed = $this->stateRoot . DIRECTORY_SEPARATOR . 'failed' . DIRECTORY_SEPARATOR . $job['id'] . DIRECTORY_SEPARATOR . $installName;
         if (!is_dir($source)) {
             throw new DwemerPluginPackageException('Staged server payload is missing.');
         }
@@ -755,7 +821,7 @@ final class DwemerPluginPackageManager
             @rename($retainedRoot, dirname($backup) . DIRECTORY_SEPARATOR . 'retained');
         }
         return [
-            'install_name' => $name,
+            'install_name' => $installName,
             'path' => $target,
             'backup_path' => $hadPrevious ? $backup : null,
             'restored_retained_data' => $restoreRetained,
@@ -867,6 +933,36 @@ final class DwemerPluginPackageManager
     {
         $path = $this->installedPackagePath($name);
         return is_file($path) ? $this->readJsonFile($path) : null;
+    }
+
+    /** Folder recorded by the package ledger, or by retained data after a removal; null when neither is valid. */
+    private function recordedInstallName(string $name): ?string
+    {
+        $candidates = [];
+        try {
+            $installed = $this->installedPackage($name);
+            if (is_array($installed)) $candidates[] = $installed['server']['install_name'] ?? $installed['name'] ?? null;
+        } catch (Throwable) {
+        }
+        $recordPath = $this->retainedRoot($name) . DIRECTORY_SEPARATOR . 'record.json';
+        if (is_file($recordPath)) {
+            try {
+                $record = $this->readJsonFile($recordPath);
+                $candidates[] = $record['install_name'] ?? $record['name'] ?? null;
+            } catch (Throwable) {
+            }
+        }
+        foreach ($candidates as $candidate) {
+            if (!is_string($candidate) || $this->canonicalName($candidate) !== $this->canonicalName($name)) continue;
+            try {
+                $this->validatePluginName($candidate);
+                $this->rejectBuiltInName($candidate);
+            } catch (Throwable) {
+                continue;
+            }
+            return $candidate;
+        }
+        return null;
     }
 
     private function installedTargetExists(array $package): bool
