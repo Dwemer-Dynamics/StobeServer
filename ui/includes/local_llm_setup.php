@@ -58,6 +58,12 @@ function stobeLocalLlmSetupCsrfToken(): string
 function stobeLocalLlmSetupProviders(): array
 {
     return [
+        'dwemerdistro' => [
+            'label' => 'DwemerDistro LLM Studio',
+            'base_url' => 'http://127.0.0.1:1234/v1/chat/completions',
+            'model_hint' => 'Choose a loaded model below, then send a test message.',
+            'bind_hint' => 'Runs inside DwemerDistro WSL. No API key or network exposure required.',
+        ],
         'lmstudio' => [
             'label' => 'LM Studio',
             'base_url' => 'http://127.0.0.1:1234/v1/chat/completions',
