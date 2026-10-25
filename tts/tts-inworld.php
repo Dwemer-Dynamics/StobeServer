@@ -1,5 +1,7 @@
 <?php
 
+require_once dirname(__DIR__) . "/lib/tts_shared_keys.php";
+
 if (!function_exists('stobeSynthesizeViaInworld')) {
     function stobeSynthesizeViaInworld(string $speechText, array &$runtime): string|false {
         $requestedVoiceId = trim(strval($runtime['voiceid'] ?? ''));
@@ -14,7 +16,7 @@ if (!function_exists('stobeSynthesizeViaInworld')) {
             'model_id' => trim(strval($runtime['model_id'] ?? 'inworld-tts-1')),
         ]);
 
-        $apiCredential = trim(strval($runtime['api_key'] ?? ''));
+        $apiCredential = stobeTtsCredential($runtime, 'https://api.inworld.ai/tts/v1/voice:stream');
         if ($apiCredential === '') {
             return false;
         }
