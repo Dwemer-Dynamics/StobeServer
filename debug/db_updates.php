@@ -1193,6 +1193,18 @@ PROMPT;
                 true
             );
         });
+        // Targeted seed: fixes the old Gurgler occupation without replaying the whole occupation import.
+        $applyPatch('bio_random_fishman', 202610250001, static function () use ($runSqlSeedFile): void {
+            $fishmanSeed = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . 'import' . DIRECTORY_SEPARATOR . 'kenshi_fishman_bio_random_upsert.sql';
+            $runSqlSeedFile(
+                $fishmanSeed,
+                'bio_random Fishman seed file missing',
+                'bio_random Fishman seed file empty',
+                'bio_random Fishman seed normalized to empty SQL',
+                true,
+                true
+            );
+        });
         $applyPatch('bio_random', 202606150001, static function () use ($db): void {
             $db->exec("ALTER TABLE bio_random ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
             $db->exec("ALTER TABLE bio_random_custom ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE");
