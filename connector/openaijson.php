@@ -676,6 +676,16 @@ function callLLM(array $messages, array $config, array $meta = []): string|false
 
     $requestStartedAt = microtime(true);
     $url = "{$baseUrl}/chat/completions";
+    // Resolve only after provider adapters/defaults have selected the actual network origin, for stream and non-stream.
+    if (!empty($config['shared_key_id'])) {
+        $apiKey = '';
+        $bridge = '/usr/local/lib/dwemerdistro/shared_keys.php';
+        if (!is_file($bridge)) {
+            throw new RuntimeException('Shared API key service is unavailable');
+        }
+        require_once $bridge;
+        $apiKey = DistroSharedKeys::resolve((string)$config['shared_key_id'], 'llm', $url);
+    }
     $payload = [
         'model' => $model,
         'messages' => $messages,
@@ -1031,6 +1041,16 @@ function callLLMStream(
 
     $requestStartedAt = microtime(true);
     $url = "{$baseUrl}/chat/completions";
+    // Resolve only after provider adapters/defaults have selected the actual network origin, for stream and non-stream.
+    if (!empty($config['shared_key_id'])) {
+        $apiKey = '';
+        $bridge = '/usr/local/lib/dwemerdistro/shared_keys.php';
+        if (!is_file($bridge)) {
+            throw new RuntimeException('Shared API key service is unavailable');
+        }
+        require_once $bridge;
+        $apiKey = DistroSharedKeys::resolve((string)$config['shared_key_id'], 'llm', $url);
+    }
     $payload = [
         'model' => $model,
         'messages' => $messages,

@@ -1,5 +1,6 @@
 <?php
 
+require_once dirname(__DIR__) . '/lib/tts_shared_keys.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'tts_pronunciation.php';
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'tts_filter_presets.php';
 
@@ -779,7 +780,7 @@ function stobeGetApiBadgeKeyByLabel(string $label): string {
 
     $db = $GLOBALS["db"];
     $row = $db->fetchOne(
-        "SELECT api_key
+        "SELECT CASE WHEN to_jsonb(core_api_badge)->>'shared_key_id' IS NULL THEN api_key ELSE '' END AS api_key
          FROM core_api_badge
          WHERE LOWER(label) = LOWER($1)
          LIMIT 1",
@@ -806,7 +807,7 @@ function stobeGetApiBadgeKeyById(int $id): string {
     }
 
     $row = $db->fetchOne(
-        "SELECT api_key
+        "SELECT CASE WHEN to_jsonb(core_api_badge)->>'shared_key_id' IS NULL THEN api_key ELSE '' END AS api_key
          FROM core_api_badge
          WHERE id = $1
          LIMIT 1",
@@ -936,6 +937,7 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         $settings[$key] = stobePocketTtsNormalizeSettingValue($key, $connectorConfig[$key]);
     }
 
+    $sharedKeyId = stobeTtsSharedKeyId(is_array($connector) ? $connector : [], $connectorConfig, $provider);
     return [
         'enabled' => $enabled,
         'provider' => $provider,
@@ -953,7 +955,8 @@ function stobeResolveTtsRuntimeConfig(string $npcName, array|false $npcData = fa
         'settings' => $settings,
         'model_id' => trim(strval($connectorConfig['model_id'] ?? ($connectorConfig['model'] ?? ''))),
         'workspace' => trim(strval($connectorConfig['workspace'] ?? '')),
-        'api_key' => stobeResolveConnectorApiKey($connectorConfig, $provider),
+        'shared_key_id' => $sharedKeyId,
+        'api_key' => $sharedKeyId !== '' ? '' : stobeResolveConnectorApiKey($connectorConfig, $provider),
         'connector_config' => $connectorConfig,
     ];
 }
@@ -1345,7 +1348,7 @@ function stobeGetOrCreateInworldVoiceId(string $voiceId, array $runtime): string
         return $voiceId;
     }
 
-    $apiCredential = trim(strval($runtime['api_key'] ?? ''));
+    $apiCredential = stobeTtsCredential($runtime, 'https://api.inworld.ai/voices/v1/voices');
     if ($apiCredential === '') {
         return $voiceId;
     }
@@ -1848,6 +1851,7 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         $settings[$key] = stobePocketTtsNormalizeSettingValue($key, $connectorConfig[$key]);
     }
 
+    $sharedKeyId = stobeTtsSharedKeyId(is_array($connector) ? $connector : [], $connectorConfig, $provider);
     return [
         'enabled' => $enabled,
         'provider' => $provider,
@@ -1863,7 +1867,8 @@ function stobeResolveTtsRuntimeFromConnector(array $connector, string $voiceOver
         'settings' => $settings,
         'model_id' => trim(strval($connectorConfig['model_id'] ?? ($connectorConfig['model'] ?? ''))),
         'workspace' => trim(strval($connectorConfig['workspace'] ?? '')),
-        'api_key' => stobeResolveConnectorApiKey($connectorConfig, $provider),
+        'shared_key_id' => $sharedKeyId,
+        'api_key' => $sharedKeyId !== '' ? '' : stobeResolveConnectorApiKey($connectorConfig, $provider),
         'connector_config' => $connectorConfig,
     ];
 }
