@@ -6433,7 +6433,12 @@ function persistManualRename(
             $existingMetadata['storage_id'] = $storageIdNormalized;
             $resolvedBootstrap['metadata'] = $existingMetadata;
         }
-        storeNpcProfile($newNormalized, $resolvedBootstrap);
+        // Later snapshots keep these first traits, so match them by the pre-rename name too.
+        $profileForTraits = $resolvedBootstrap;
+        if (trim(strval($profileForTraits['original_name'] ?? '')) === '') {
+            $profileForTraits['original_name'] = baseNameWithoutBracketSuffix($oldNormalized);
+        }
+        storeNpcProfile($newNormalized, $profileForTraits);
         if (strpos($newNormalized, '[') !== false) {
             stobeLogImport('Manual rename bootstrap created row', [
                 'requested_old_name' => $oldNormalized,
