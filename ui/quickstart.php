@@ -986,6 +986,19 @@ $quickstartSttConnector = new STTConnector();
 $quickstartSttRow = $quickstartSttConnector->getActive() ?: [];
 $quickstartSttDriver = $quickstartSttConnector->normalizeDriverValue($quickstartSttRow['driver'] ?? 'parakeet');
 $localLlmProviders = stobeLocalLlmSetupProviders();
+// Restore only the managed engine selection; credentials never return to the browser.
+$localLlmSaved = [];
+$localLlmSavedTarget = 'both';
+foreach (['default' => $defaultProfile, 'player_faction' => $playerFactionProfile] as $role => $profile) {
+    $row = $db->fetchOne("SELECT model FROM core_llm_connector WHERE id = $1 AND config->>'quickstart_local_provider' = 'dwemerdistro'",
+        [intval($profile['llm_primary_id'] ?? 0)]);
+    if (!empty($row['model'])) {
+        $localLlmSaved = $row;
+        $localLlmSavedTarget = intval($defaultProfile['llm_primary_id'] ?? 0) === intval($playerFactionProfile['llm_primary_id'] ?? 0) ? 'both' : $role;
+        break;
+    }
+}
+
 $localLlmCsrfToken = stobeLocalLlmSetupCsrfToken();
 $localLlmReady = $localLlmSetupAvailable && $localLlmCsrfToken !== '';
 $player2ConnectorId = stobeQuickstartEnsurePlayer2ConnectorId($db);
@@ -1291,13 +1304,11 @@ foreach ($targetProfileRows as $profileRow) {
             <div class="qs-field">
                 <label for="local_llm_provider">Provider</label>
                 <select id="local_llm_provider" name="provider">
-                    <?php $localLlmFirstProvider = true; ?>
                     <?php foreach ($localLlmProviders as $providerKey => $providerInfo): ?>
                         <option value="<?= h($providerKey) ?>" data-url="<?= h($providerInfo['base_url']) ?>"
                             data-model-hint="<?= h($providerInfo['model_hint']) ?>"
-                            data-bind-hint="<?= h($providerInfo['bind_hint']) ?>"<?= $localLlmFirstProvider ? ' selected' : '' ?>><?= h($providerInfo['label']) ?></option>
-                        <?php $localLlmFirstProvider = false; ?>
-                    <?php endforeach; ?>
+                            data-bind-hint="<?= h($providerInfo['bind_hint']) ?>"<?= ($providerKey === ($localLlmSaved ? 'dwemerdistro' : 'lmstudio')) ? ' selected' : '' ?>><?= h($providerInfo['label']) ?></option>
+                        <?php endforeach; ?>
                 </select>
                 <p class="qs-hint" id="local_llm_bind_hint"></p>
             </div>
@@ -1311,7 +1322,7 @@ foreach ($targetProfileRows as $profileRow) {
         <div class="qs-grid">
             <div class="qs-field">
                 <label for="local_llm_model">Model</label>
-                <input id="local_llm_model" type="text" name="model" list="local_llm_model_options" value="" placeholder="Probe for models, or type a model id" spellcheck="false" autocomplete="off">
+                <input id="local_llm_model" type="text" name="model" list="local_llm_model_options" value="<?= h($localLlmSaved['model'] ?? '') ?>" placeholder="Probe for models, or type a model id" spellcheck="false" autocomplete="off">
                 <datalist id="local_llm_model_options"></datalist>
                 <p class="qs-hint" id="local_llm_model_hint"></p>
             </div>
@@ -1328,9 +1339,9 @@ foreach ($targetProfileRows as $profileRow) {
         <div class="qs-field">
             <label for="local_llm_target">Apply to</label>
             <select id="local_llm_target" name="target">
-                <option value="both">Default Profile and Player Faction</option>
-                <option value="default">Default Profile only</option>
-                <option value="player_faction">Player Faction only</option>
+                <option value="both"<?= $localLlmSavedTarget === 'both' ? ' selected' : '' ?>>Default Profile and Player Faction</option>
+                <option value="default"<?= $localLlmSavedTarget === 'default' ? ' selected' : '' ?>>Default Profile only</option>
+                <option value="player_faction"<?= $localLlmSavedTarget === 'player_faction' ? ' selected' : '' ?>>Player Faction only</option>
             </select>
         </div>
 
@@ -1805,6 +1816,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initLocalLlmSetup();
 });
 </script>
+<script defer data-distro-llm data-status-url="api/dwemerdistro_llm.php" src="js/dwemerdistro_llm.js"></script>
 </body>
 </html>
 

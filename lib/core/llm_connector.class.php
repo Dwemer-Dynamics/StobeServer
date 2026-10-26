@@ -111,6 +111,9 @@ if (!class_exists('LLMConnector')) {
 
         private function resolveApiKey(array $row): string
         {
+            if (!empty($row['shared_key_id'])) {
+                return '';
+            }
             $directKey = trim(strval($row['api_key'] ?? ''));
             if ($directKey !== '') {
                 return $directKey;
@@ -194,7 +197,14 @@ if (!class_exists('LLMConnector')) {
                 $config['provider'] = $mapped['provider'];
             }
 
+            // Preserve the direct-key precedence of this legacy path; resolve shared badge references only at dispatch.
+            $sharedKeyId = $connector['shared_key_id'] ?? null;
+            if ($sharedKeyId === null && trim(strval($connector['api_key'] ?? '')) === '' && intval($connector['api_badge_id'] ?? 0) > 0) {
+                $badge = getApiBadgeById(intval($connector['api_badge_id']));
+                $sharedKeyId = is_array($badge) ? ($badge['shared_key_id'] ?? null) : null;
+            }
             return [
+                'shared_key_id' => $sharedKeyId,
                 'connector_type' => $driver,
                 'api_key' => strval($mapped['api_key'] ?? ''),
                 'base_url' => strval($mapped['url'] ?? ''),

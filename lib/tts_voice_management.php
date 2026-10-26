@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . "/tts_shared_keys.php";
+
 function stobeVoiceProviderNormalize(string $provider): string
 {
     $provider = strtolower(trim($provider));
@@ -50,6 +52,10 @@ function stobeVoiceProviderTarget(array $connector): array
         };
     }
     $apiKey = trim(strval($connector['api_badge_key'] ?? ($connector['api_key'] ?? ($config['api_key'] ?? ''))));
+    $sharedKeyId = stobeTtsSharedKeyId($connector, $config, $provider);
+    if ($sharedKeyId !== '') {
+        $apiKey = '';
+    }
     $workspace = trim(strval($config['workspace'] ?? ''));
     $isCloud = in_array($provider, ['cartesia', 'inworld'], true);
     $modelId = trim(strval($config['model_id'] ?? ''));
@@ -65,12 +71,13 @@ function stobeVoiceProviderTarget(array $connector): array
         'endpoint' => rtrim($endpoint, '/'),
         'language' => strtolower(trim(strval($config['language'] ?? ''))),
         'api_key' => $apiKey,
+        'shared_key_id' => $sharedKeyId,
         'workspace' => $workspace,
         'model_id' => $modelId,
         'config' => $config,
         'cloud' => $isCloud,
         'can_manage' => $provider !== ''
-            && ($isCloud ? ($apiKey !== '' && ($provider !== 'inworld' || $workspace !== '')) : $endpoint !== '')
+            && ($isCloud ? (($apiKey !== '' || $sharedKeyId !== '') && ($provider !== 'inworld' || $workspace !== '')) : $endpoint !== '')
             && !stobeVoiceProviderIsAudioCpp($provider, $endpoint),
     ];
 }
@@ -104,7 +111,7 @@ function stobeVoiceCloudDeleteConfOpt(string $key): void
 function stobeVoiceCloudDeleteRemote(array $target, string $remoteId): array
 {
     $provider = strval($target['provider'] ?? '');
-    $apiKey = trim(strval($target['api_key'] ?? ''));
+    $apiKey = stobeTtsCredential($target, 'https://api.inworld.ai/voices/v1/voices');
     $remoteId = trim($remoteId);
     if ($apiKey === '' || $remoteId === '') {
         return ['success' => false, 'message' => 'Cloud API credential or remote voice ID is missing.'];
@@ -139,7 +146,7 @@ function stobeVoiceCloudDeleteRemote(array $target, string $remoteId): array
 function stobeVoiceCloudClone(array $target, string $voiceId, string $samplePath): array
 {
     $provider = strval($target['provider'] ?? '');
-    $apiKey = trim(strval($target['api_key'] ?? ''));
+    $apiKey = stobeTtsCredential($target, 'https://api.inworld.ai/voices/v1/voices');
     $voiceToken = stobeSanitizeVoiceToken($voiceId);
     if ($apiKey === '' || $voiceToken === '' || !is_file($samplePath)) {
         return ['success' => false, 'message' => 'A cloud API credential, voice ID, and WAV sample are required.'];
@@ -206,6 +213,7 @@ function stobeVoiceCloudValidate(array $target, string $remoteId): bool
         'connector_id' => intval($target['id'] ?? 0),
         'voiceid' => $remoteId,
         'api_key' => strval($target['api_key'] ?? ''),
+        'shared_key_id' => strval($target['shared_key_id'] ?? ''),
         'workspace' => strval($target['workspace'] ?? ''),
         'language' => strval($target['language'] ?? 'en'),
         'model_id' => strval($target['model_id'] ?? ''),

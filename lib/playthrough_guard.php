@@ -195,6 +195,16 @@ function pgr_complete(bool $success = true): bool {
     return true;
 }
 
+// Shared with main.php so the rollback guard reads the same packet.
+// The client sends DATA=<percent-encoded base64> (Comm.cpp BuildStreamQueryData);
+// older senders used raw base64. rawurldecode restores %2B/%2F/%3D and, unlike
+// $_GET, keeps a literal '+'. Returns false for a payload that is not base64.
+function stobeDecodeStreamPacket(string $queryString): string|false
+{
+    $data = strncasecmp($queryString, 'DATA=', 5) === 0 ? explode('&', substr($queryString, 5), 2)[0] : '';
+    return base64_decode(rawurldecode($data), true);
+}
+
 // Inspect only routing/timestamps before bootstrap can write player data or start background work.
 function pgr_http_preflight(string $endpoint): void {
     if (PHP_SAPI === 'cli') return;
@@ -204,12 +214,9 @@ function pgr_http_preflight(string $endpoint): void {
     $state = pgr_state();
     $event = ''; $incoming = 0;
     if ($endpoint === 'main' && $meta !== 'dialectic_meta') {
-        $query = (string)($_SERVER['QUERY_STRING'] ?? '');
-        if (str_starts_with($query,'DATA=')) {
-            $packet = base64_decode(explode('&',substr($query,5),2)[0],true);
-            $fields = $packet === false ? [] : explode('|',$packet,4);
-            $event = strtolower($fields[0] ?? ''); $incoming = (int)($fields[2] ?? 0);
-        }
+        $packet = stobeDecodeStreamPacket((string)($_SERVER['QUERY_STRING'] ?? ''));
+        $fields = $packet === false ? [] : explode('|',$packet,4);
+        $event = strtolower($fields[0] ?? ''); $incoming = (int)($fields[2] ?? 0);
     } else {
         $body = json_decode((string)file_get_contents('php://input'),true);
         $body = is_array($body) ? $body : [];

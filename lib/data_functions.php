@@ -6433,7 +6433,12 @@ function persistManualRename(
             $existingMetadata['storage_id'] = $storageIdNormalized;
             $resolvedBootstrap['metadata'] = $existingMetadata;
         }
-        storeNpcProfile($newNormalized, $resolvedBootstrap);
+        // Later snapshots keep these first traits, so match them by the pre-rename name too.
+        $profileForTraits = $resolvedBootstrap;
+        if (trim(strval($profileForTraits['original_name'] ?? '')) === '') {
+            $profileForTraits['original_name'] = baseNameWithoutBracketSuffix($oldNormalized);
+        }
+        storeNpcProfile($newNormalized, $profileForTraits);
         if (strpos($newNormalized, '[') !== false) {
             stobeLogImport('Manual rename bootstrap created row', [
                 'requested_old_name' => $oldNormalized,
@@ -7639,27 +7644,35 @@ function getNpcData(string $name): array|false {
     );
 }
 
+// Metadata/UI reads must never expose an obsolete copied secret for a shared-key badge.
+function stobeHideSharedBadgeCopy(array|false $row): array|false {
+    if (is_array($row) && !empty($row['shared_key_id'])) {
+        $row['api_key'] = '';
+    }
+    return $row;
+}
+
 function getApiBadgeById(int $id): array|false {
     $db = $GLOBALS["db"];
-    return $db->fetchOne(
+    return stobeHideSharedBadgeCopy($db->fetchOne(
         "SELECT * FROM core_api_badge WHERE id = $1",
         [$id]
-    );
+    ));
 }
 
 function getApiBadgeByLabel(string $label): array|false {
     $db = $GLOBALS["db"];
-    return $db->fetchOne(
+    return stobeHideSharedBadgeCopy($db->fetchOne(
         "SELECT * FROM core_api_badge WHERE LOWER(label) = LOWER($1) LIMIT 1",
         [$label]
-    );
+    ));
 }
 
 function getAllApiBadges(): array {
     $db = $GLOBALS["db"];
-    return $db->fetchAll(
+    return array_map('stobeHideSharedBadgeCopy', $db->fetchAll(
         "SELECT * FROM core_api_badge ORDER BY LOWER(label) ASC"
-    );
+    ));
 }
 
 function saveApiBadge(array $fields): int {
@@ -12562,7 +12575,7 @@ function getAllLlmConnectors(): array {
 function getLlmConnectorById(int $id): array|false {
     $db = $GLOBALS["db"];
     return $db->fetchOne(
-        "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key,
+        "SELECT c.*, b.label AS api_badge_label, CASE WHEN to_jsonb(b)->>'shared_key_id' IS NOT NULL THEN '' ELSE COALESCE(b.api_key, '') END AS api_badge_key, to_jsonb(b)->>'shared_key_id' AS api_badge_shared_key_id,
                 CASE WHEN COALESCE(b.api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_api_key
          FROM core_llm_connector c
          LEFT JOIN core_api_badge b ON b.id = c.api_badge_id
@@ -12574,7 +12587,7 @@ function getLlmConnectorById(int $id): array|false {
 function getDefaultLlmConnector(): array|false {
     $db = $GLOBALS["db"];
     $defaultConnector = $db->fetchOne(
-        "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key
+        "SELECT c.*, b.label AS api_badge_label, CASE WHEN to_jsonb(b)->>'shared_key_id' IS NOT NULL THEN '' ELSE COALESCE(b.api_key, '') END AS api_badge_key, to_jsonb(b)->>'shared_key_id' AS api_badge_shared_key_id
          FROM core_llm_connector c
          LEFT JOIN core_api_badge b ON b.id = c.api_badge_id
          WHERE c.is_default = TRUE
@@ -12585,7 +12598,7 @@ function getDefaultLlmConnector(): array|false {
         return $defaultConnector;
     }
     return $db->fetchOne(
-        "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key
+        "SELECT c.*, b.label AS api_badge_label, CASE WHEN to_jsonb(b)->>'shared_key_id' IS NOT NULL THEN '' ELSE COALESCE(b.api_key, '') END AS api_badge_key, to_jsonb(b)->>'shared_key_id' AS api_badge_shared_key_id
          FROM core_llm_connector c
          LEFT JOIN core_api_badge b ON b.id = c.api_badge_id
          ORDER BY c.id ASC
@@ -13542,6 +13555,7 @@ function stobeBuildLlmConfigFromConnector(array|false $connector): array {
 
     return [
         'api_key' => $resolvedApiKey,
+        'shared_key_id' => $connector['shared_key_id'] ?? ($connector['api_badge_shared_key_id'] ?? null),
         'base_url' => $baseUrl,
         'model' => $model,
         'max_tokens' => $maxTokens,
@@ -13841,7 +13855,7 @@ function stobeFetchLlmConnectorById(int $connectorId): array|false {
     }
     $db = $GLOBALS["db"];
     $row = $db->fetchOne(
-        "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key
+        "SELECT c.*, b.label AS api_badge_label, CASE WHEN to_jsonb(b)->>'shared_key_id' IS NOT NULL THEN '' ELSE COALESCE(b.api_key, '') END AS api_badge_key, to_jsonb(b)->>'shared_key_id' AS api_badge_shared_key_id
          FROM core_llm_connector c
          LEFT JOIN core_api_badge b ON b.id = c.api_badge_id
          WHERE c.id = $1
@@ -13895,7 +13909,7 @@ function getProfileLlmConnectorForNpcByPurpose(array|false $npcData, string $pur
 
     $profileColumn = stobePurposeToProfileConnectorColumn($purposeKey);
     $row = $db->fetchOne(
-        "SELECT c.*, b.label AS api_badge_label, COALESCE(b.api_key, '') AS api_badge_key
+        "SELECT c.*, b.label AS api_badge_label, CASE WHEN to_jsonb(b)->>'shared_key_id' IS NOT NULL THEN '' ELSE COALESCE(b.api_key, '') END AS api_badge_key, to_jsonb(b)->>'shared_key_id' AS api_badge_shared_key_id
          FROM core_profiles p
          LEFT JOIN core_llm_connector c ON c.id = p.{$profileColumn}
          LEFT JOIN core_api_badge b ON b.id = c.api_badge_id

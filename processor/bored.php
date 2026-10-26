@@ -131,6 +131,9 @@ if ($listener === '') {
     return;
 }
 
+// Both bored dialogue and Director scenes generate from here on.
+stobeRunExtensionPromptStages();
+
 if ($forceDirectorMode) {
     require_once dirname(__DIR__) . '/lib/director_scene.php';
     try {
@@ -180,6 +183,7 @@ $historyMessages = stobeBuildRecentContextMessages(
     64,
     $speakerNpc
 );
+$historyMessages = stobeApplyExtensionContextBuilding($historyMessages);
 $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     is_array($speakerData) ? $speakerData : [],
     $speakerNpc,
@@ -187,6 +191,7 @@ $memoryContextMessages = stobeBuildMemoryEventContextMessages(
     intval($gamets)
 );
 
+stobeRunExtensionHook('context_pre.php');
 $systemPrompt = stobeBuildGameTimePromptBlock($gamets, is_array($speakerData) ? $speakerData : [])
     . "\n\n"
     . buildSystemPrompt($speakerNpc, is_array($speakerData) ? $speakerData : [], $listener, '', false, 'bored', intval($gamets));
@@ -194,6 +199,7 @@ $nearbyPartyPrompt = stobeBuildNearbyPlayerFactionPartyPrompt($speakerData, $spe
 if ($nearbyPartyPrompt !== '') {
     $systemPrompt .= "\n\n" . $nearbyPartyPrompt;
 }
+$systemPrompt = stobeApplyExtensionPromptSections($systemPrompt, $speakerNpc, is_array($speakerData) ? $speakerData : []);
 $compactHistory = stobeApplyCompactChatHistory(
     $systemPrompt,
     $historyMessages,
@@ -239,6 +245,7 @@ $messages[] = [
         'bored'
     ),
 ];
+$messages = stobeApplyExtensionContextHook($messages);
 
 $llmConfig = getLlmConfigForNpc($speakerData);
 $actionConfig = stobeBuildActionConfigForNpc('bored', $speakerData);
@@ -334,3 +341,4 @@ if ($alreadyStreamed) {
         intval($gamets)
     );
 }
+stobeMarkExtensionModelTurnCompleted();

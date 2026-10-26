@@ -94,6 +94,8 @@ function stobe_llm_db_row_to_ui_row(array $row): array {
     $ui['label'] = strval($row['name'] ?? '');
     $ui['driver'] = strval($row['connector_type'] ?? '');
     $ui['url'] = strval($row['base_url'] ?? '');
+    if (($config['quickstart_local_provider'] ?? '') === 'dwemerdistro' && in_array($service, ['', 'custom'], true)
+        && ($row['base_url'] ?? '') === 'http://127.0.0.1:1234/v1/chat/completions') $service = 'dwemerdistro';
     $ui['service'] = $service;
     $ui['provider'] = strval($config['provider'] ?? '');
     $ui['presence_penalty'] = $config['presence_penalty'] ?? '';
@@ -233,6 +235,15 @@ function stobe_llm_payload_to_save_fields(array $payload, ?array $existingDbRow 
     }
 
     $fields['config'] = stobe_llm_compose_config_from_payload($payload, $existingConfig);
+    if (($fields['config']['service'] ?? '') === 'dwemerdistro') {
+        $fields['base_url'] = 'http://127.0.0.1:1234/v1/chat/completions';
+        $fields['connector_type'] = 'openaijson';
+        $fields['api_badge_id'] = null;
+        $fields['api_key'] = '';
+        $fields['config']['provider'] = 'local';
+    } elseif (($fields['config']['quickstart_local_provider'] ?? '') === 'dwemerdistro') {
+        $fields['config']['quickstart_local_provider'] = 'other';
+    }
     return $fields;
 }
 
@@ -400,6 +411,7 @@ function find_player2_api_badge_id() {
 }
 
 function normalize_player2_connector_payload($payload) {
+    if (($payload['service'] ?? '') === 'dwemerdistro') return $payload;
     $service = strtolower(trim((string)($payload["service"] ?? "")));
     $driver = strtolower(trim((string)($payload["driver"] ?? "")));
     $url = strtolower(trim((string)($payload["url"] ?? "")));
@@ -737,7 +749,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
 
                 <label id="service_label">Service</label>
                 <div class="service-picker">
-                    <div class="service-icons">
+                    <div class="service-icons" style="flex-wrap:wrap">
+                        <button type="button" class="service-icon btn-primary" data-service="dwemerdistro" style="padding:0" title="DwemerDistro LLM Studio" aria-label="DwemerDistro LLM Studio"><img src="<?= $webRoot; ?>/ui/images/core/icons/dwemerdistro.webp" alt="" style="width:100%;height:100%;object-fit:contain"></button>
                         <img src="<?= $webRoot; ?>/ui/images/core/icons/openrouter.jpg" alt="OpenRouter" class="service-icon" data-service="openrouter" />
                         <img src="<?= $webRoot; ?>/ui/images/core/icons/openai.jpg" alt="OpenAI" class="service-icon" data-service="openai" />
                         <img src="<?= $webRoot; ?>/ui/images/core/icons/google.jpg" alt="Google" class="service-icon" data-service="google" />
@@ -992,7 +1005,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         </div>
     </form>
     
-    <script src='https://cdnjs.cloudflare.com/ajax/libs/ace/1.23.4/ace.js'></script>
+    <script defer data-distro-connector data-status-url="<?= $webRoot; ?>/ui/api/dwemerdistro_llm.php" src="<?= $webRoot; ?>/ui/js/dwemerdistro_connector.js"></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/ace/1.23.4/ace.js'></script>
     <script src='https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js'></script>
     <script>
     (function(){
@@ -1049,11 +1063,11 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         const apiKeyRow = document.getElementById('api_key_row');
         const icons = document.querySelectorAll('.service-icon');
         const serviceLabelEl = document.getElementById('service_label');
-        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
+        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
 
         function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
 
-        function applyService(service, fromUser){
+        function applyService(service, fromUser){ document.dispatchEvent(new CustomEvent('llm-service-change', {detail: service}));
             try {
                 if (serviceInput) serviceInput.value = service;
                 // Defaults for non-custom
@@ -1102,7 +1116,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
             }
         }
 
-        function detectService(){
+        function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro';
             const u = (urlInput && String(urlInput.value||'').toLowerCase()) || '';
             if (u){
                 if (u.includes('openai.com')) return 'openai';
@@ -1115,7 +1129,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
             }
             const sValRaw = (serviceInput && String(serviceInput.value||'')) || '';
             const sVal = sValRaw.toLowerCase();
-            if (['openrouter','openai','google','groq','nanogpt','player2','custom'].includes(sVal)) return sVal;
+            if (['openrouter','openai','google','groq','nanogpt','player2','custom','dwemerdistro'].includes(sVal)) return sVal;
             const d = (driverInput && String(driverInput.value||'').toLowerCase()) || '';
             if (d.includes('openai')) return 'openai';
             if (d.includes('google')) return 'google';
@@ -1191,13 +1205,13 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         const icons = document.querySelectorAll('.service-icon');
         const apiKeyRow = document.getElementById('api_key_row');
         const serviceLabelEl = document.getElementById('service_label');
-        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
+        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
         function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
         const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: '' };
         const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
         function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
         function applyService(service){ try {const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (defaults[service]) { const currentUrl = String((urlInput && urlInput.value) || ''); if (currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } providerRow.style.display = (service === 'openrouter') ? '' : 'none'; const savedDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverRow) driverRow.style.display = ''; if (driverSelect) driverSelect.style.display = ''; if (driverInput) driverInput.style.display = 'none'; if (driverSelect) { if (savedDriver) { driverSelect.value = savedDriver; } else if (!driverSelect.value) { driverSelect.value = 'openaijson'; } } if (driverInput && !savedDriver) { driverInput.value = driverSelect ? driverSelect.value : 'openaijson'; } } else { if (driverRow) driverRow.style.display = 'none'; if (driverSelect) driverSelect.style.display = 'none'; if (driverInput) driverInput.style.display = ''; if (driverInput && !savedDriver && driverDefaults[service]) { driverInput.value = driverDefaults[service]; } } syncApiBadge(service); setActive(service); if (apiKeyRow) apiKeyRow.style.display = ''; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); document.querySelectorAll('.orm-dropdown').forEach(function(el){ el.style.display='none'; }); } catch (e) {console.log(e);console.log("Check this bug")}}
-        function detectService(){ const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const sVal=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||'').toLowerCase())||''; if (['openrouter','openai','google','groq','nanogpt','player2','custom'].includes(sVal)) return sVal; const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('openrouter')) return 'openrouter'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; return 'openrouter'; }
+        function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro'; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const sVal=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||'').toLowerCase())||''; if (['openrouter','openai','google','groq','nanogpt','player2','custom','dwemerdistro'].includes(sVal)) return sVal; const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('openrouter')) return 'openrouter'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; return 'openrouter'; }
         (function init(){ const service = detectService(); applyService(service); })();
         icons.forEach(ic=>{ ic.addEventListener('click', ()=> applyService(ic.dataset.service)); });
         if (driverInput){ driverInput.addEventListener('input', ()=> applyService(detectService())); driverInput.addEventListener('change', ()=> applyService(detectService())); }
@@ -2084,7 +2098,8 @@ if (typeof window.consolidation !== 'function') {
 
             <label id="service_label">Service</label>
             <div class="service-picker">
-                <div class="service-icons">
+                <div class="service-icons" style="flex-wrap:wrap">
+                        <button type="button" class="service-icon btn-primary" data-service="dwemerdistro" style="padding:0" title="DwemerDistro LLM Studio" aria-label="DwemerDistro LLM Studio"><img src="<?= $webRoot; ?>/ui/images/core/icons/dwemerdistro.webp" alt="" style="width:100%;height:100%;object-fit:contain"></button>
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/openrouter.jpg" alt="OpenRouter" class="service-icon" data-service="openrouter" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/openai.jpg" alt="OpenAI" class="service-icon" data-service="openai" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/google.jpg" alt="Google" class="service-icon" data-service="google" />
@@ -2396,12 +2411,12 @@ if (typeof window.consolidation !== 'function') {
     const icons = document.querySelectorAll('.service-icon');
     const apiKeyRow = document.getElementById('api_key_row');
     const serviceLabelEl = document.getElementById('service_label');
-    const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom' };
+    const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
     function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
-    const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: 'openaijson' };
+    const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: 'openaijson', dwemerdistro: 'openaijson' };
     const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
     function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
-    function applyService(service, fromUser){ const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (service !== 'custom' && defaults[service]) { const currentUrl = urlInput ? String(urlInput.value||'') : ''; if (fromUser || currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } const urlRow = document.getElementById('url_row'); if (urlRow) urlRow.style.display = (service==='custom') ? '' : 'none'; providerRow.style.display = (service === 'openrouter' || service === 'custom') ? '' : 'none'; if (modelRow) modelRow.style.display = (service === 'player2') ? 'none' : ''; const driverSelect = document.getElementById('driver_select'); const currentDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverSelect) { driverSelect.style.display = ''; } if (driverInput) { driverInput.style.display = 'none'; } // reflect saved driver in select; default only if empty
+    function applyService(service, fromUser){ document.dispatchEvent(new CustomEvent('llm-service-change', {detail: service})); const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (service !== 'custom' && defaults[service]) { const currentUrl = urlInput ? String(urlInput.value||'') : ''; if (fromUser || currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } const urlRow = document.getElementById('url_row'); if (urlRow) urlRow.style.display = (service==='custom') ? '' : 'none'; providerRow.style.display = (service === 'openrouter' || service === 'custom') ? '' : 'none'; if (modelRow) modelRow.style.display = (service === 'player2') ? 'none' : ''; const driverSelect = document.getElementById('driver_select'); const currentDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverSelect) { driverSelect.style.display = ''; } if (driverInput) { driverInput.style.display = 'none'; } // reflect saved driver in select; default only if empty
         if (driverSelect) {
             if (currentDriver) {
                 driverSelect.value = currentDriver;
@@ -2422,7 +2437,7 @@ if (typeof window.consolidation !== 'function') {
         }
     }
     const btnWSL = document.getElementById('btn_wsl_ip'); const btnHost = document.getElementById('btn_host_ip'); const isCustom = (service==='custom'); if (btnWSL) btnWSL.style.display = isCustom ? '' : 'none'; if (btnHost) btnHost.style.display = isCustom ? '' : 'none'; const customNote = document.getElementById('custom_note'); if (customNote) customNote.style.display = isCustom ? '' : 'none'; syncApiBadge(service); setActive(service); if (apiKeyRow) apiKeyRow.style.display = (service === 'player2') ? 'none' : ''; if (service === 'player2' && modelInput) { const currentModel = String(modelInput.value || '').trim().toLowerCase(); if (fromUser || currentModel === 'player2-app-selected') { modelInput.value = ''; } } if (driverRow) driverRow.style.display = (service === 'custom') ? '' : 'none'; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); }
-    function detectService(){ const sValRaw=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||''))||''; const sVal=sValRaw.toLowerCase(); if (['openrouter','openai','google','groq','nanogpt','player2','custom'].includes(sVal)) return sVal; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; if (d.includes('openrouter')) return 'openrouter'; return 'openrouter'; }
+    function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro'; const sValRaw=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||''))||''; const sVal=sValRaw.toLowerCase(); if (['openrouter','openai','google','groq','nanogpt','player2','custom','dwemerdistro'].includes(sVal)) return sVal; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; if (d.includes('openrouter')) return 'openrouter'; return 'openrouter'; }
     (function init(){ const service = detectService(); applyService(service, false); const driverSelect = document.getElementById('driver_select'); if (driverSelect) { driverSelect.addEventListener('change', function(){ if (driverInput) driverInput.value = this.value; }); if (driverInput && driverInput.value) driverSelect.value = driverInput.value; } const btnWSL = document.getElementById('btn_wsl_ip'); const btnHost = document.getElementById('btn_host_ip'); function fillFrom(buttonEl, ip){ if (!buttonEl) return; const form = buttonEl.closest('form'); const urlEl = form ? form.querySelector('input[name="url"]') : document.querySelector('input[name="url"]'); if (!ip || !urlEl) return; urlEl.value = 'http://' + ip + ':5001'; try { urlEl.dispatchEvent(new Event('input', { bubbles:true })); } catch(_e){} try { urlEl.dispatchEvent(new Event('change', { bubbles:true })); } catch(_e){} try { urlEl.focus(); } catch(_e){} } if (btnWSL) btnWSL.addEventListener('click', function(){ let ip = this.getAttribute('data-ip')||''; if (!ip) { ip = '<?= htmlspecialchars($WSL_IP) ?>'; } fillFrom(this, String(ip).trim()); }); if (btnHost) btnHost.addEventListener('click', function(){ let ip = this.getAttribute('data-ip')||''; if (!ip) { ip = '<?= htmlspecialchars($HOST_IP) ?>'; } fillFrom(this, String(ip).trim()); }); })();
     icons.forEach(ic=>{ ic.addEventListener('click', ()=> applyService(ic.dataset.service, true)); });
     if (driverInput){ driverInput.addEventListener('input', ()=> applyService(detectService(), false)); driverInput.addEventListener('change', ()=> applyService(detectService(), false)); }
@@ -2774,6 +2789,7 @@ function llmClamp(rangeId, numberId, min, max){ const r = document.getElementByI
  include(__DIR__."/tmpl/metadata_json_editor.php");
  ?>
 
+<script defer data-distro-connector data-status-url="<?= $webRoot; ?>/ui/api/dwemerdistro_llm.php" src="<?= $webRoot; ?>/ui/js/dwemerdistro_connector.js"></script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/ace/1.23.4/ace.js'></script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js'></script>
 <script>
