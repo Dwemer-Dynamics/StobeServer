@@ -82,7 +82,10 @@ foreach ($candidates as $candidateName) {
         intval($timestamp),
         intval($gamets),
         $normalizedEventType !== '' ? $normalizedEventType : 'diary',
-        $respectAutoFlags
+        $respectAutoFlags,
+        false,
+        false,
+        ['extension_hooks' => true]
     );
     $results[] = $result;
     if (boolval($result['ok'] ?? false)) {
@@ -118,6 +121,7 @@ foreach ($results as $result) {
 $response['reason'] = $firstReason;
 
 if ($generated > 0) {
+    stobeMarkExtensionModelTurnCompleted();
     $response['ok'] = true;
     $response['status_message'] = 'Diary written for ' . strval($generated) . ' NPC(s).';
 } elseif ($failed === 0 && $skipped > 0) {

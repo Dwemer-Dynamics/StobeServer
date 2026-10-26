@@ -240,6 +240,41 @@ try {
     mainIngressAssertSameInt(1, count($unknownRows), 'unhandled main.php event should store exactly one row');
     mainIngressAssertSame('ut_unhandled_event', strval($unknownRows[0]['type'] ?? ''), 'unhandled event row should preserve event type');
     mainIngressAssertSame('payload stored only', strval($unknownRows[0]['data'] ?? ''), 'unhandled event row should preserve event data');
+
+    // DATA transport: the client percent-encodes base64 (Comm.cpp UrlEncode),
+    // older senders used raw base64. Payloads are chosen so base64 contains '+'
+    // or '/' plus '=' padding.
+    $plusPayload = 'ProbeTarget ?>~ ~?>';
+    $slashPayload = 'ProbeTarget ~?> ?>>';
+    $plusBase64 = base64_encode('ut_transport_event|1790000000|999010|' . $plusPayload);
+    $slashBase64 = base64_encode('ut_transport_event|1790000000|999010|' . $slashPayload);
+    mainIngressAssert(str_contains($plusBase64, '+') && str_ends_with($plusBase64, '='), 'plus sample should contain + and padding');
+    mainIngressAssert(str_contains($slashBase64, '/') && str_ends_with($slashBase64, '='), 'slash sample should contain / and padding');
+    $transportCases = [
+        'client percent-encoded padding and plus' => [rawurlencode($plusBase64) . '&tts_enabled=0', $plusPayload],
+        'client percent-encoded padding and slash' => [rawurlencode($slashBase64), $slashPayload],
+        'legacy raw base64 with literal plus and padding' => [$plusBase64 . '&tts_enabled=0', $plusPayload],
+        'legacy raw base64 without padding' => [rtrim($slashBase64, '='), $slashPayload],
+    ];
+    mainIngressAssert(str_contains($transportCases['client percent-encoded padding and plus'][0], '%2B') && str_contains($transportCases['client percent-encoded padding and plus'][0], '%3D&'), 'client sample should percent-encode + and =');
+    mainIngressAssert(str_contains($transportCases['client percent-encoded padding and slash'][0], '%2F') && str_ends_with($transportCases['client percent-encoded padding and slash'][0], '%3D'), 'client sample should percent-encode / and =');
+    foreach ($transportCases as $label => [$query, $expectedData]) {
+        $GLOBALS['db']->exec('DELETE FROM eventlog');
+        $transportResponse = mainIngressHttpRequest($port, '/stream.php?DATA=' . $query);
+        mainIngressAssertSameInt(200, intval($transportResponse['status']), $label . ' should return HTTP 200');
+        mainIngressAssertSame('ok', trim(strval($transportResponse['body'])), $label . ' should return ok');
+        $transportRows = mainIngressEventRows();
+        mainIngressAssertSameInt(1, count($transportRows), $label . ' should store exactly one row');
+        mainIngressAssertSame('ut_transport_event', strval($transportRows[0]['type'] ?? ''), $label . ' should preserve event type');
+        mainIngressAssertSame($expectedData, strval($transportRows[0]['data'] ?? ''), $label . ' should decode data without trailing bytes');
+    }
+
+    $GLOBALS['db']->exec('DELETE FROM eventlog');
+    foreach (['%25%25not*base64', rawurlencode($plusBase64) . '%3D%3D%3D'] as $invalidData) {
+        $invalidResponse = mainIngressHttpRequest($port, '/stream.php?DATA=' . $invalidData);
+        mainIngressAssertSameInt(400, intval($invalidResponse['status']), 'invalid DATA should return HTTP 400 (' . $invalidData . ')');
+    }
+    mainIngressAssertSameInt(0, count(mainIngressEventRows()), 'invalid DATA should not store an event');
 } finally {
     mainIngressStopServer($serverProcess, $serverPipes);
 }
