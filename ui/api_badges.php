@@ -44,6 +44,11 @@ $presetProviders = [
         'usage' => 'LLM connectors routed through Nano-GPT',
         'key_url' => 'https://nano-gpt.com/',
     ],
+    'ploofy' => [
+        'label' => 'Ploofy',
+        'usage' => 'LLM connectors using Ploofy models',
+        'key_url' => 'https://ploofy.ai/portal#api-key-card',
+    ],
     'google' => [
         'label' => 'Google',
         'usage' => 'LLM connectors using Google model endpoints',
