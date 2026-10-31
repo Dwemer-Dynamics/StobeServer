@@ -19,6 +19,9 @@ function stobe_llm_guess_service_from_driver_url(string $driver, string $url): s
     if ($d === 'player2json' || str_contains($u, '127.0.0.1:4315') || str_contains($u, 'localhost:4315')) {
         return 'player2';
     }
+    if (str_contains($u, 'ploofy.ai')) {
+        return 'ploofy';
+    }
     if ($d === 'google_openaijson' || str_contains($u, 'generativelanguage.googleapis.com')) {
         return 'google';
     }
@@ -628,6 +631,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
     .service-icons { display:flex; gap:8px; align-items:center; }
     .service-icon { width:56px; height:56px; border:1px solid rgba(138,155,182,0.3); border-radius:8px; cursor:pointer; opacity:0.8; }
     .service-icon.active { outline:2px solid #e6b76c; opacity:1; }
+    .service-icons .service-icon-ploofy { flex:0 0 56px; min-height:0 !important; margin:0 !important; padding:0 !important; border:1px solid rgba(138,155,182,0.3) !important; background:transparent !important; overflow:hidden; }
+    .service-icons .service-icon-ploofy img { display:block; width:100%; height:100%; max-width:none; margin:0; object-fit:contain; }
     .tip-label { position: relative; cursor: help; }
     .tip-label::after { content: attr(data-tip); position: absolute; left: 0; top: 120%; max-width: 560px; padding: 8px 10px; background: #0c0f14; color: #cfe0ff; border: 1px solid rgba(138,155,182,0.35); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.35); white-space: normal; line-height: 1.3; font-size: 12px; opacity: 0; transform: translateY(-4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; z-index: 9999; }
     .tip-label:hover::after { opacity: 1; transform: translateY(0); }
@@ -756,6 +761,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                         <img src="<?= $webRoot; ?>/ui/images/core/icons/google.jpg" alt="Google" class="service-icon" data-service="google" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/groq.jpg" alt="Groq" class="service-icon" data-service="groq" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/nanogpt.jpg" alt="NanoGPT" class="service-icon" data-service="nanogpt" />
+                    <button type="button" class="service-icon service-icon-ploofy" data-service="ploofy" title="Ploofy" aria-label="Ploofy"><img src="<?= $webRoot; ?>/ui/images/core/icons/ploofy.png" alt=""></button>
                         <img src="<?= $webRoot; ?>/ui/images/core/icons/player2.jpg" alt="Player2" class="service-icon" data-service="player2" />
                         <img src="<?= $webRoot; ?>/ui/images/core/icons/custom.jpg" alt="Custom" class="service-icon" data-service="custom" />
                     </div>
@@ -1006,6 +1012,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
     </form>
     
     <script defer data-distro-connector data-status-url="<?= $webRoot; ?>/ui/api/dwemerdistro_llm.php" src="<?= $webRoot; ?>/ui/js/dwemerdistro_connector.js"></script>
+    <script defer data-ploofy-connector data-models-url="<?= $webRoot; ?>/ui/cmd/action_ploofy_get_models.php" src="<?= $webRoot; ?>/ui/js/ploofy_connector.js"></script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/ace/1.23.4/ace.js'></script>
     <script src='https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js'></script>
     <script>
@@ -1049,6 +1056,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
             google: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
             groq: 'https://api.groq.com/openai/v1/chat/completions',
             nanogpt: 'https://nano-gpt.com/api/v1/chat/completions',
+            ploofy: 'https://ploofy.ai/llm/v1/chat/completions',
             player2: 'http://127.0.0.1:4315/v1/chat/completions'
         };
         const serviceInput = document.getElementById('service_input');
@@ -1063,7 +1071,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         const apiKeyRow = document.getElementById('api_key_row');
         const icons = document.querySelectorAll('.service-icon');
         const serviceLabelEl = document.getElementById('service_label');
-        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
+        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', ploofy: 'Ploofy', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
 
         function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
 
@@ -1124,12 +1132,13 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 if (u.includes('openrouter.ai')) return 'openrouter';
                 if (u.includes('groq.com')) return 'groq';
                 if (u.includes('nano-gpt.com')) return 'nanogpt';
+                if (u.includes('ploofy.ai')) return 'ploofy';
                 if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2';
                 return 'custom';
             }
             const sValRaw = (serviceInput && String(serviceInput.value||'')) || '';
             const sVal = sValRaw.toLowerCase();
-            if (['openrouter','openai','google','groq','nanogpt','player2','custom','dwemerdistro'].includes(sVal)) return sVal;
+            if (['openrouter','openai','google','groq','nanogpt','ploofy','player2','custom','dwemerdistro'].includes(sVal)) return sVal;
             const d = (driverInput && String(driverInput.value||'').toLowerCase()) || '';
             if (d.includes('openai')) return 'openai';
             if (d.includes('google')) return 'google';
@@ -1194,6 +1203,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
             openai: 'https://api.openai.com/v1/chat/completions',
             google: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
             nanogpt: 'https://nano-gpt.com/api/v1/chat/completions',
+            ploofy: 'https://ploofy.ai/llm/v1/chat/completions',
             player2: 'http://127.0.0.1:4315/v1/chat/completions'
         };
         // No dropdown; selection by icons only
@@ -1205,13 +1215,13 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         const icons = document.querySelectorAll('.service-icon');
         const apiKeyRow = document.getElementById('api_key_row');
         const serviceLabelEl = document.getElementById('service_label');
-        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
+        const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', ploofy: 'Ploofy', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
         function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
-        const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: '' };
-        const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
+        const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', ploofy: 'openaijson', player2: 'player2json', custom: '' };
+        const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], ploofy: ['ploofy'], player2: ['player2','stobe'] };
         function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
         function applyService(service){ try {const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (defaults[service]) { const currentUrl = String((urlInput && urlInput.value) || ''); if (currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } providerRow.style.display = (service === 'openrouter') ? '' : 'none'; const savedDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverRow) driverRow.style.display = ''; if (driverSelect) driverSelect.style.display = ''; if (driverInput) driverInput.style.display = 'none'; if (driverSelect) { if (savedDriver) { driverSelect.value = savedDriver; } else if (!driverSelect.value) { driverSelect.value = 'openaijson'; } } if (driverInput && !savedDriver) { driverInput.value = driverSelect ? driverSelect.value : 'openaijson'; } } else { if (driverRow) driverRow.style.display = 'none'; if (driverSelect) driverSelect.style.display = 'none'; if (driverInput) driverInput.style.display = ''; if (driverInput && !savedDriver && driverDefaults[service]) { driverInput.value = driverDefaults[service]; } } syncApiBadge(service); setActive(service); if (apiKeyRow) apiKeyRow.style.display = ''; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); document.querySelectorAll('.orm-dropdown').forEach(function(el){ el.style.display='none'; }); } catch (e) {console.log(e);console.log("Check this bug")}}
-        function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro'; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const sVal=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||'').toLowerCase())||''; if (['openrouter','openai','google','groq','nanogpt','player2','custom','dwemerdistro'].includes(sVal)) return sVal; const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('openrouter')) return 'openrouter'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; return 'openrouter'; }
+        function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro'; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('ploofy.ai')) return 'ploofy'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const sVal=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||'').toLowerCase())||''; if (['openrouter','openai','google','groq','nanogpt','ploofy','player2','custom','dwemerdistro'].includes(sVal)) return sVal; const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('openrouter')) return 'openrouter'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; return 'openrouter'; }
         (function init(){ const service = detectService(); applyService(service); })();
         icons.forEach(ic=>{ ic.addEventListener('click', ()=> applyService(ic.dataset.service)); });
         if (driverInput){ driverInput.addEventListener('input', ()=> applyService(detectService())); driverInput.addEventListener('change', ()=> applyService(detectService())); }
@@ -1227,7 +1237,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
             openai: 'https://platform.openai.com/signup',
             google: 'https://ai.google.dev/',
             groq: 'https://console.groq.com/keys',
-            nanogpt: 'https://nano-gpt.com/'
+            nanogpt: 'https://nano-gpt.com/',
+            ploofy: 'https://ploofy.ai/portal#api-key-card'
         };
         function updateSignupLink(){
             const serviceInput = document.getElementById('service_input');
@@ -1652,7 +1663,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["import"])) {
             if (($payload['service'] ?? '') === '') {
                 $d = strtolower((string)($payload['driver'] ?? ''));
                 $u = strtolower((string)($payload['url'] ?? ''));
-                if (strpos($d,'openai')!==false || strpos($u,'openai.com')!==false) $payload['service']='openai';
+                if (strpos($u,'ploofy.ai')!==false) $payload['service']='ploofy';
+                elseif (strpos($d,'openai')!==false || strpos($u,'openai.com')!==false) $payload['service']='openai';
                 elseif (strpos($d,'google')!==false || strpos($u,'generativelanguage.googleapis.com')!==false) $payload['service']='google';
                 elseif (strpos($d,'groq')!==false || strpos($u,'groq.com')!==false) $payload['service']='groq';
                 elseif (strpos($u,'nano-gpt.com')!==false) $payload['service']='nanogpt';
@@ -1900,6 +1912,8 @@ if (isset($_GET["edit"])) {
 .service-icons { display:flex; gap:8px; align-items:center; }
 .service-icon { width:56px; height:56px; border:1px solid rgba(138,155,182,0.3); border-radius:8px; cursor:pointer; opacity:0.8; }
 .service-icon.active { outline:2px solid #e6b76c; opacity:1; }
+.service-icons .service-icon-ploofy { flex:0 0 56px; min-height:0 !important; margin:0 !important; padding:0 !important; border:1px solid rgba(138,155,182,0.3) !important; background:transparent !important; overflow:hidden; }
+.service-icons .service-icon-ploofy img { display:block; width:100%; height:100%; max-width:none; margin:0; object-fit:contain; }
 /* Fancy tooltip for slider labels */
 .tip-label { position: relative; cursor: help; }
 .tip-label::after { content: attr(data-tip); position: absolute; left: 0; top: 120%; max-width: 560px; padding: 8px 10px; background: #0c0f14; color: #cfe0ff; border: 1px solid rgba(138,155,182,0.35); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.35); white-space: normal; line-height: 1.3; font-size: 12px; opacity: 0; transform: translateY(-4px); transition: opacity .12s ease, transform .12s ease; pointer-events: none; z-index: 9999; }
@@ -2105,6 +2119,7 @@ if (typeof window.consolidation !== 'function') {
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/google.jpg" alt="Google" class="service-icon" data-service="google" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/groq.jpg" alt="Groq" class="service-icon" data-service="groq" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/nanogpt.jpg" alt="NanoGPT" class="service-icon" data-service="nanogpt" />
+                    <button type="button" class="service-icon service-icon-ploofy" data-service="ploofy" title="Ploofy" aria-label="Ploofy"><img src="<?= $webRoot; ?>/ui/images/core/icons/ploofy.png" alt=""></button>
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/player2.jpg" alt="Player2" class="service-icon" data-service="player2" />
                     <img src="<?= $webRoot; ?>/ui/images/core/icons/custom.jpg" alt="Custom" class="service-icon" data-service="custom" />                </div>
                 </div>
@@ -2398,6 +2413,7 @@ if (typeof window.consolidation !== 'function') {
         google: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
         groq: 'https://api.groq.com/openai/v1/chat/completions',
         nanogpt: 'https://nano-gpt.com/api/v1/chat/completions',
+        ploofy: 'https://ploofy.ai/llm/v1/chat/completions',
         player2: 'http://127.0.0.1:4315/v1/chat/completions'
     };
     // No dropdown; selection by icons only
@@ -2411,11 +2427,11 @@ if (typeof window.consolidation !== 'function') {
     const icons = document.querySelectorAll('.service-icon');
     const apiKeyRow = document.getElementById('api_key_row');
     const serviceLabelEl = document.getElementById('service_label');
-    const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
+    const displayNames = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', groq: 'Groq', nanogpt: 'Nano-GPT', ploofy: 'Ploofy', player2: 'Player2', custom: 'Custom', dwemerdistro: 'DwemerDistro LLM Studio' };
     function setActive(service){ icons.forEach(ic=>{ if (ic.dataset.service === service) ic.classList.add('active'); else ic.classList.remove('active'); }); }
-    const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', player2: 'player2json', custom: 'openaijson', dwemerdistro: 'openaijson' };
-    const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], player2: ['player2','stobe'] };
-    function syncApiBadge(service){ if (!apiBadgeSelect) return; const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
+    const driverDefaults = { openrouter: 'openrouterjson', openai: 'openaijson', google: 'google_openaijson', groq: 'groqjson', nanogpt: 'openrouterjson', ploofy: 'openaijson', player2: 'player2json', custom: 'openaijson', dwemerdistro: 'openaijson' };
+    const apiBadgeLabelMatch = { openrouter: ['openrouter'], openai: ['openai'], google: ['google'], groq: ['groq'], nanogpt: ['nano-gpt','nanogpt'], ploofy: ['ploofy'], player2: ['player2','stobe'] };
+    function syncApiBadge(service, fromUser){ if (!apiBadgeSelect) return; if (service === 'ploofy' && !fromUser) return; /* keep a saved Ploofy key on edits */ const targets = (apiBadgeLabelMatch[service] || []).map(s => s.toLowerCase()); if (targets.length === 0) return; let selectedVal = ''; for (let i = 0; i < apiBadgeSelect.options.length; i++) { const opt = apiBadgeSelect.options[i]; const label = (opt.textContent || opt.innerText || '').toLowerCase(); if (targets.some(t => label.includes(t))) { selectedVal = opt.value; break; } } if (selectedVal !== '') apiBadgeSelect.value = selectedVal; else apiBadgeSelect.value = ''; }
     function applyService(service, fromUser){ document.dispatchEvent(new CustomEvent('llm-service-change', {detail: service})); const serviceInput = document.getElementById('service_input'); if (serviceInput) serviceInput.value = service; if (service !== 'custom' && defaults[service]) { const currentUrl = urlInput ? String(urlInput.value||'') : ''; if (fromUser || currentUrl === '' || currentUrl === 'about:blank') { urlInput.value = defaults[service]; } } const urlRow = document.getElementById('url_row'); if (urlRow) urlRow.style.display = (service==='custom') ? '' : 'none'; providerRow.style.display = (service === 'openrouter' || service === 'custom') ? '' : 'none'; if (modelRow) modelRow.style.display = (service === 'player2') ? 'none' : ''; const driverSelect = document.getElementById('driver_select'); const currentDriver = driverInput ? String(driverInput.value || '') : ''; if (service === 'custom') { if (driverSelect) { driverSelect.style.display = ''; } if (driverInput) { driverInput.style.display = 'none'; } // reflect saved driver in select; default only if empty
         if (driverSelect) {
             if (currentDriver) {
@@ -2436,8 +2452,8 @@ if (typeof window.consolidation !== 'function') {
             driverInput.value = nextDefault;
         }
     }
-    const btnWSL = document.getElementById('btn_wsl_ip'); const btnHost = document.getElementById('btn_host_ip'); const isCustom = (service==='custom'); if (btnWSL) btnWSL.style.display = isCustom ? '' : 'none'; if (btnHost) btnHost.style.display = isCustom ? '' : 'none'; const customNote = document.getElementById('custom_note'); if (customNote) customNote.style.display = isCustom ? '' : 'none'; syncApiBadge(service); setActive(service); if (apiKeyRow) apiKeyRow.style.display = (service === 'player2') ? 'none' : ''; if (service === 'player2' && modelInput) { const currentModel = String(modelInput.value || '').trim().toLowerCase(); if (fromUser || currentModel === 'player2-app-selected') { modelInput.value = ''; } } if (driverRow) driverRow.style.display = (service === 'custom') ? '' : 'none'; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); }
-    function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro'; const sValRaw=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||''))||''; const sVal=sValRaw.toLowerCase(); if (['openrouter','openai','google','groq','nanogpt','player2','custom','dwemerdistro'].includes(sVal)) return sVal; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; if (d.includes('openrouter')) return 'openrouter'; return 'openrouter'; }
+    const btnWSL = document.getElementById('btn_wsl_ip'); const btnHost = document.getElementById('btn_host_ip'); const isCustom = (service==='custom'); if (btnWSL) btnWSL.style.display = isCustom ? '' : 'none'; if (btnHost) btnHost.style.display = isCustom ? '' : 'none'; const customNote = document.getElementById('custom_note'); if (customNote) customNote.style.display = isCustom ? '' : 'none'; syncApiBadge(service, fromUser); setActive(service); if (apiKeyRow) apiKeyRow.style.display = (service === 'player2') ? 'none' : ''; if (service === 'player2' && modelInput) { const currentModel = String(modelInput.value || '').trim().toLowerCase(); if (fromUser || currentModel === 'player2-app-selected') { modelInput.value = ''; } } if (driverRow) driverRow.style.display = (service === 'custom') ? '' : 'none'; if (serviceLabelEl) serviceLabelEl.textContent = 'Service: ' + (displayNames[service] || ''); }
+    function detectService(){ if (document.getElementById('service_input')?.value === 'dwemerdistro') return 'dwemerdistro'; const sValRaw=(document.getElementById('service_input')&&String(document.getElementById('service_input').value||''))||''; const sVal=sValRaw.toLowerCase(); if (['openrouter','openai','google','groq','nanogpt','ploofy','player2','custom','dwemerdistro'].includes(sVal)) return sVal; const u=(urlInput&&String(urlInput.value||'').toLowerCase())||''; if (u){ if (u.includes('openai.com')) return 'openai'; if (u.includes('generativelanguage.googleapis.com')) return 'google'; if (u.includes('openrouter.ai')) return 'openrouter'; if (u.includes('groq.com')) return 'groq'; if (u.includes('nano-gpt.com')) return 'nanogpt'; if (u.includes('ploofy.ai')) return 'ploofy'; if (u.includes('127.0.0.1:4315') || u.includes('localhost:4315')) return 'player2'; return 'custom'; } const d=(driverInput&&String(driverInput.value||'').toLowerCase())||''; if (d.includes('openai')) return 'openai'; if (d.includes('google')) return 'google'; if (d.includes('groq')) return 'groq'; if (d.includes('nanogpt')) return 'nanogpt'; if (d.includes('player2')) return 'player2'; if (d.includes('openrouter')) return 'openrouter'; return 'openrouter'; }
     (function init(){ const service = detectService(); applyService(service, false); const driverSelect = document.getElementById('driver_select'); if (driverSelect) { driverSelect.addEventListener('change', function(){ if (driverInput) driverInput.value = this.value; }); if (driverInput && driverInput.value) driverSelect.value = driverInput.value; } const btnWSL = document.getElementById('btn_wsl_ip'); const btnHost = document.getElementById('btn_host_ip'); function fillFrom(buttonEl, ip){ if (!buttonEl) return; const form = buttonEl.closest('form'); const urlEl = form ? form.querySelector('input[name="url"]') : document.querySelector('input[name="url"]'); if (!ip || !urlEl) return; urlEl.value = 'http://' + ip + ':5001'; try { urlEl.dispatchEvent(new Event('input', { bubbles:true })); } catch(_e){} try { urlEl.dispatchEvent(new Event('change', { bubbles:true })); } catch(_e){} try { urlEl.focus(); } catch(_e){} } if (btnWSL) btnWSL.addEventListener('click', function(){ let ip = this.getAttribute('data-ip')||''; if (!ip) { ip = '<?= htmlspecialchars($WSL_IP) ?>'; } fillFrom(this, String(ip).trim()); }); if (btnHost) btnHost.addEventListener('click', function(){ let ip = this.getAttribute('data-ip')||''; if (!ip) { ip = '<?= htmlspecialchars($HOST_IP) ?>'; } fillFrom(this, String(ip).trim()); }); })();
     icons.forEach(ic=>{ ic.addEventListener('click', ()=> applyService(ic.dataset.service, true)); });
     if (driverInput){ driverInput.addEventListener('input', ()=> applyService(detectService(), false)); driverInput.addEventListener('change', ()=> applyService(detectService(), false)); }
@@ -2453,7 +2469,8 @@ if (typeof window.consolidation !== 'function') {
             openai: 'https://platform.openai.com/signup',
             google: 'https://ai.google.dev/',
             groq: 'https://console.groq.com/keys',
-            nanogpt: 'https://nano-gpt.com/'
+            nanogpt: 'https://nano-gpt.com/',
+            ploofy: 'https://ploofy.ai/portal#api-key-card'
         };
         function updateSignupLink(){
             const serviceInput = document.getElementById('service_input');
@@ -2790,6 +2807,7 @@ function llmClamp(rangeId, numberId, min, max){ const r = document.getElementByI
  ?>
 
 <script defer data-distro-connector data-status-url="<?= $webRoot; ?>/ui/api/dwemerdistro_llm.php" src="<?= $webRoot; ?>/ui/js/dwemerdistro_connector.js"></script>
+<script defer data-ploofy-connector data-models-url="<?= $webRoot; ?>/ui/cmd/action_ploofy_get_models.php" src="<?= $webRoot; ?>/ui/js/ploofy_connector.js"></script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/ace/1.23.4/ace.js'></script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js'></script>
 <script>
