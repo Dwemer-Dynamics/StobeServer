@@ -15,13 +15,17 @@ permissions:
 
 jobs:
   regressions:
-    name: PHP Regression Tests
+    name: PHP Regression Tests (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 17, 18]
 
     services:
       postgres:
-        image: pgvector/pgvector:pg18-trixie
+        image: pgvector/pgvector:pg${{ matrix.postgres }}-trixie
         env:
           POSTGRES_DB: stobe_test
           POSTGRES_USER: dwemer
@@ -45,7 +49,9 @@ jobs:
           extensions: pgsql
           coverage: none
 
-      - name: Install PostgreSQL 18 client
+      - name: Install matching PostgreSQL client
+        env:
+          PG_MAJOR: ${{ matrix.postgres }}
         run: |
           sudo apt-get update
           sudo apt-get install -y ca-certificates curl
@@ -64,8 +70,8 @@ jobs:
             'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' \
             | sudo tee /etc/apt/sources.list.d/pgdg.sources >/dev/null
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-18
-          echo '/usr/lib/postgresql/18/bin' >> "$GITHUB_PATH"
+          sudo apt-get install -y "postgresql-client-$PG_MAJOR"
+          echo "/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_PATH"
 
       - name: Verify database service
         env:
