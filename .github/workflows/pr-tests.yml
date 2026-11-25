@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        postgres: [17, 18]
+        postgres: [15, 17, 18]
 
     services:
       postgres:
